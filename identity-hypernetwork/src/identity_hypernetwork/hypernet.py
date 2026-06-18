@@ -1,0 +1,159 @@
+"""Core implementation of the Identity Hypernetwork.
+
+A tiny hypernetwork maps a compact latent identity into adapter score deltas.
+The four identity components (user, domain, style, mistakes) are stored in
+:class:`IdentityLatents` and projected through a learned linear layer.
+
+This is intentionally minimal: NumPy only, small fixed concept vocabulary, and
+a simple Hebbian-style update that moves the relevant identity slice toward
+the weight vector of the target concept so that future adapter scores shift.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+from .latents import IdentityLatents
+
+
+# Fixed concept vocabulary for the first prototype.  Each string maps to one
+# output score in the generated adapter.
+CONCEPT_VOCABULARY: list[str] = [
+    "profile",
+    "account",
+    "business",
+    "vertical",
+    "project",
+    "domain",
+    "formal",
+    "casual",
+    "concise",
+    "verbose",
+    "error",
+    "bug",
+    "mistake",
+    "correct",
+]
+
+
+class IdentityHypernetwork:
+    """Compact latent identity vectors generated into adapter score deltas."""
+
+    _Z_FIELDS: tuple[str, str, str, str] = (
+        "z_user",
+        "z_domain",
+        "z_style",
+        "z_mistakes",
+    )
+
+    def __init__(
+        self,
+        latent_dim: int = 8,
+        seed: int = 0,
+        learning_rate: float = 0.1,
+    ) -> None:
+        """Create the hypernetwork.
+
+        Args:
+            latent_dim: dimensionality of each of the four identity vectors.
+            seed: random seed for the tiny projection matrix.
+            learning_rate: step size used when a lesson updates an identity slice.
+        """
+        self.latents = IdentityLatents(dim=latent_dim)
+        self.rng = np.random.default_rng(seed)
+        self.latent_dim = latent_dim
+        self.input_dim = 4 * latent_dim
+        self.concepts = list(CONCEPT_VOCABULARY)
+        self.concept_index = {concept: i for i, concept in enumerate(self.concepts)}
+        self.output_dim = len(self.concepts)
+        # Small random projection so different concepts receive different scores.
+        scale = 1.0 / np.sqrt(self.input_dim)
+        self.W = self.rng.standard_normal((self.output_dim, self.input_dim)) * scale
+        self.lr = learning_rate
+
+    def generate_adapters(self) -> dict[str, dict[str, float]]:
+        """Return adapter score deltas derived from the current identity latent.
+
+        Returns a dictionary with a single key ``concept_scores`` mapping each
+        known concept to a scalar delta.
+        """
+        z = self.latents.to_array()
+        scores = self.W @ z
+        return {"concept_scores": {concept: float(scores[i]) for i, concept in enumerate(self.concepts)}}
+
+    def update_identity(self, lesson: dict) -> None:
+        """Apply a learning signal to the relevant identity component.
+
+        ``lesson`` must contain at least:
+
+        - ``source``: one of ``user_correction`` / ``user`` -> ``z_user``,
+          ``domain`` / ``project`` -> ``z_domain``,
+          ``style`` / ``tone`` -> ``z_style``,
+          ``mistake`` / ``error`` / ``bug`` -> ``z_mistakes``.
+        - ``correct_label`` (or ``token``): text from which the target concept is
+          extracted.  The first known concept found in ``correct_label`` (or
+          ``token``) is the one whose score will be increased.
+        """
+        source = str(lesson.get("source", "user_correction")).lower()
+        label_text = str(lesson.get("correct_label", lesson.get("token", ""))).lower()
+
+        z_field = self._resolve_source(source)
+        target_concept = self._extract_first_concept(label_text)
+        if target_concept is None or z_field is None:
+            return
+
+        target_idx = self.concept_index[target_concept]
+        # Gradient of score[target_idx] with respect to the full identity vector
+        # is W[target_idx].  Moving the relevant slice in that direction raises the
+        # target score.
+        direction = self.W[target_idx]
+        start, end = self._field_slice(z_field)
+        slice_dir = direction[start:end]
+        norm = float(np.linalg.norm(slice_dir))
+        if norm == 0:
+            return
+        # Normalised step keeps updates stable regardless of the random matrix.
+        step = self.lr * slice_dir / norm
+        updated = getattr(self.latents, z_field).copy()
+        updated += step
+        setattr(self.latents, z_field, updated)
+
+    def status(self) -> dict:
+        """Return a serialisable status snapshot."""
+        return {
+            "project": "identity_hypernetwork",
+            "ready": True,
+            "latent_dim": self.latent_dim,
+            "num_concepts": self.output_dim,
+            "latents": self.latents.to_dict(),
+        }
+
+    def _resolve_source(self, source: str) -> str | None:
+        mapping: dict[str, str] = {
+            "user_correction": "z_user",
+            "user": "z_user",
+            "profile": "z_user",
+            "domain": "z_domain",
+            "project": "z_domain",
+            "style": "z_style",
+            "tone": "z_style",
+            "communication": "z_style",
+            "mistake": "z_mistakes",
+            "error": "z_mistakes",
+            "bug": "z_mistakes",
+            "failure": "z_mistakes",
+        }
+        return mapping.get(source)
+
+    def _extract_first_concept(self, text: str) -> str | None:
+        words = text.split()
+        for word in words:
+            clean = "".join(ch for ch in word if ch.isalnum()).lower()
+            if clean in self.concept_index:
+                return clean
+        return None
+
+    def _field_slice(self, field: str) -> tuple[int, int]:
+        idx = self._Z_FIELDS.index(field)
+        start = idx * self.latent_dim
+        return start, start + self.latent_dim

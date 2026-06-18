@@ -1,0 +1,16 @@
+[project]
+name = "skill-immune-cortex"
+version = "0.1.0"
+description = "Mistake detectors and option-like executable skills distilled into adapter weights."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "KinoThe-Kafkaesque" }]
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/skill_immune_cortex"]
+

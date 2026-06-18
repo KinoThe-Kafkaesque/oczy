@@ -1,0 +1,20 @@
+[project]
+name = "plastic-cortex"
+version = "0.1.0"
+description = "Correction-gated recurrent / state-space backbone with fast-weight (TTT-style) session adaptation."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "KinoThe-Kafkaesque" }]
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/plastic_cortex"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.0",
+]

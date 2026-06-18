@@ -1,0 +1,850 @@
+You are pointing at a real gap. The thing you want is not “LLM + memory.” It is closer to:
+
+> **a self-updating predictive agent where experience becomes state, state becomes fast weights, fast weights become slow priors, and old raw memory disappears after consolidation.**
+
+Current systems have pieces of this, but no clean full organism yet. Continual-learning surveys still treat catastrophic forgetting and stable knowledge integration as open problems for LLMs, and agent-memory work like ReasoningBank still mostly distills experience into retrievable reasoning memory rather than truly blending it into a unified substrate. ([arXiv][1])
+
+## The target shape
+
+The architecture should have a continuum:
+
+```text
+activation / context
+    ↓
+fast state
+    ↓
+fast weights
+    ↓
+neural memory
+    ↓
+slow weights / priors
+```
+
+Not:
+
+```text
+chat log → vector DB → prompt stuffing
+```
+
+The important shift is that memory should eventually stop being “retrieved content” and become **changed dynamics**.
+
+A rough formal sketch:
+
+```text
+θ      = slow weights / long-term priors
+φ_t    = fast weights / session adaptation
+m_t    = neural memory state
+z_t    = identity/task latent state
+x_t    = current input
+c_t    = correction/outcome signal
+
+h_t = Core(x_t, θ, φ_t, m_t, z_t)
+ŷ_t = Decode(h_t)
+
+error_t = PredictionError(ŷ_t, c_t)
+
+φ_{t+1} = FastUpdate(φ_t, error_t)
+m_{t+1} = MemoryUpdate(m_t, h_t, error_t)
+z_{t+1} = IdentityUpdate(z_t, error_t)
+
+θ ← SlowConsolidation(θ, replay(m), constraints)
+```
+
+That is the skeleton of the creature.
+
+---
+
+# 1. Recurrent / state-space cortex
+
+This direction replaces “every token attends to every other token” with an evolving state that carries forward what matters.
+
+Relevant previous art: **Mamba**, **xLSTM**, **RWKV**, **RetNet**, and **Hyena**. Mamba uses selective state spaces where the model can decide what to propagate or forget; xLSTM revives LSTM-like gated memory at modern scale; RWKV tries to combine Transformer-like parallel training with RNN-like inference; RetNet creates a “retention” mechanism that supports parallel, recurrent, and chunkwise modes; Hyena replaces attention with long convolutions plus gating. ([arXiv][2])
+
+The intuition:
+
+```text
+Transformer:
+  I remember by re-reading the whole context.
+
+Recurrent/state-space agent:
+  I remember because I have become a new state.
+```
+
+For your system, this matters because an agent that evolves through conversation needs a persistent internal trajectory. A pure transformer is stateless between calls unless you keep feeding it context. A recurrent/SSM agent can carry forward a compressed state naturally.
+
+But this alone is not enough. A recurrent state can forget, smear details, or compress too hard. It gives you **continuity**, not necessarily **learning from correction**.
+
+The useful design would be:
+
+```text
+input token
+  ↓
+state update gate
+  ↓
+surprise/correction modulates gate
+  ↓
+persistent latent state changes
+```
+
+So if you correct it, the correction is not merely another token; it becomes a high-priority state update.
+
+I would call this architecture:
+
+> **Correction-Gated SSM Cortex**
+
+Each correction opens a stronger write gate than normal text. Ordinary conversation is low-plasticity. Corrections are high-plasticity. The model learns that “No, that is wrong” has a different update role than normal continuation.
+
+---
+
+# 2. Fast-weight conversation organ
+
+This is probably the most important direction.
+
+Instead of storing the correction in text memory, the system creates temporary parameter changes during the conversation.
+
+Fast-weight work shows that linear transformers can be understood as fast-weight programmers: a slow network dynamically writes key-value-like associations into temporary weights. ([arXiv][3])
+
+Test-Time Training layers go further: the hidden state is itself a small learnable model, and the update rule is a self-supervised training step performed during inference. The TTT paper explicitly frames the hidden state as a machine learning model updated even on test sequences. ([arXiv][4])
+
+For your desired agent:
+
+```text
+User: No, when I say profile, I mean business vertical, not user profile.
+
+Agent:
+  does not store sentence only
+  updates fast weights so future "profile" activations map differently
+```
+
+The architecture:
+
+```text
+Backbone produces:
+  query q_t
+  predicted answer a_t
+  confidence u_t
+  update target r_t
+
+Correction arrives:
+  c_t
+
+Fast learner updates:
+  φ_t ← φ_t - α ∇ L(a_t, c_t)
+```
+
+Where `φ_t` is not the base model. It is a small fast-weight module, adapter, or TTT layer.
+
+This gives you immediate learning without corrupting the whole model.
+
+Speculative design:
+
+> **Synaptic Scratchpad**
+
+A bounded matrix of fast weights sits inside each layer. Normal tokens read from it. Corrections write into it. At the end of the session, only compressed deltas are eligible for consolidation.
+
+```text
+normal text       → weak write
+explicit correction → strong write
+repeated correction → candidate slow update
+contradiction     → isolate, do not consolidate
+```
+
+This is much closer to “experience becoming dynamics.”
+
+---
+
+# 3. Neural hippocampus, not vector memory
+
+External vector memory is fragmented because it grows as notes. A better version is a **neural memory module** that trains itself at test time.
+
+Titans is important here because it introduces a neural long-term memory module that learns to memorize historical context, framing attention as short-term memory and neural memory as more persistent memory. MIRAS generalizes this direction by treating sequence models as associative memory modules with choices for memory architecture, retention gate, attentional bias objective, and memory learning algorithm. ([arXiv][5])
+
+This is the right direction because the memory is not:
+
+```text
+retrieve text chunk
+```
+
+but:
+
+```text
+update neural memory parameters/state
+```
+
+A design:
+
+```text
+Cortex:
+  handles active reasoning
+
+Neural hippocampus:
+  stores high-surprise experiences
+
+Replay loop:
+  replays compressed traces into cortex
+
+Cortex:
+  slowly absorbs repeated structure
+```
+
+This mirrors complementary learning systems theory: fast hippocampal-like learning stores new experiences rapidly, while slower neocortical-like learning integrates structure gradually through replay/interleaving. ([PubMed][6])
+
+Speculative design:
+
+> **Hippocampal Adapter Bank**
+
+The system has a small set of trainable neural memory slots. Each slot is not a text note. It is a tiny adapter. A correction writes to one or more slots. During future reasoning, the slots modulate the main model. During consolidation, frequently used slots are merged into a slower adapter or base model.
+
+```text
+correction
+  ↓
+neural slot update
+  ↓
+slot influences future answers
+  ↓
+replay confirms usefulness
+  ↓
+merge or decay
+```
+
+This prevents unbounded memory growth because old raw traces are replaced by learned low-rank behavioral changes.
+
+---
+
+# 4. Learned plasticity instead of hand-coded updates
+
+The deepest version is not “run gradient descent when corrected.” The deepest version is:
+
+> the model learns **how it should change** when corrected.
+
+Differentiable plasticity work trains not only normal weights, but also plasticity coefficients controlling how connections update during experience. Miconi et al. showed that plasticity can be optimized by gradient descent in recurrent networks, allowing networks to memorize novel high-dimensional examples where non-plastic recurrent networks fail. ([Proceedings of Machine Learning Research][7])
+
+The core form:
+
+```text
+effective_weight_ij = W_ij + α_ij H_ij
+
+H_ij ← λ H_ij + η · modulator_t · pre_i · post_j
+```
+
+Where:
+
+* `W_ij` is slow knowledge.
+* `H_ij` is temporary experience.
+* `α_ij` says how plastic that connection is.
+* `modulator_t` comes from surprise, correction, reward, or failure.
+
+For conversation, the modulator could be:
+
+```text
+user correction detected
+failed tool call
+test failed
+answer rejected
+contradiction discovered
+```
+
+Speculative design:
+
+> **Correction-Modulated Plastic Network**
+
+The model has a special “correction neuromodulator.” When the user says “no,” “wrong,” “not what I mean,” or provides a corrected solution, the system does not merely parse that text. It emits a plasticity signal that changes specific pathways.
+
+```text
+ordinary sentence:
+  low plasticity
+
+explicit correction:
+  high plasticity
+
+angry correction:
+  high error signal, but lower consolidation trust
+
+repeated successful correction:
+  high consolidation trust
+```
+
+This is more organism-like. The agent is not just remembering; it is being shaped.
+
+---
+
+# 5. Hypernetwork identity: generate the changed model
+
+Another direction: do not store experiences directly. Maintain a compact latent identity vector, then use a hypernetwork to generate the model’s adapters.
+
+HyperNetworks introduced the idea of one network generating the weights of another network. ([arXiv][8]) More recent work like Text-to-LoRA and Doc-to-LoRA applies a similar idea to LLM adaptation: a hypernetwork can generate LoRA adapters from a task description or document/context, enabling fast adaptation without normal fine-tuning. ([arXiv][9])
+
+For your system:
+
+```text
+experience stream
+  ↓
+identity latent z
+  ↓
+hypernetwork H(z)
+  ↓
+LoRA/adapters for current model
+```
+
+The agent’s “memory” becomes a compressed latent that produces its current behavior.
+
+Speculative design:
+
+> **Self-Model Hypernetwork**
+
+The agent maintains:
+
+```text
+z_user       = what I have learned about this user
+z_domain     = what I have learned about this project/domain
+z_style      = how I should communicate
+z_mistakes   = what errors I must avoid
+```
+
+A hypernetwork converts these into adapter weights:
+
+```text
+adapter_weights = HyperNet(z_user, z_domain, z_style, z_mistakes)
+```
+
+Then corrections update `z`, not a growing database.
+
+This is elegant because identity becomes **generative**. The model does not ask, “What memories should I retrieve?” It asks, “Given who I have become, what weights should I run with?”
+
+The risk is opacity. If `z` becomes a dense latent, debugging is harder. You would need probes, evals, and rollback.
+
+---
+
+# 6. World-model-first agent
+
+A language model predicts tokens. But the thing you want should predict **outcomes**.
+
+World Models and Dreamer-style systems learn latent models of environments and improve behavior by imagining future scenarios; DreamerV3 in particular learns a world model and uses imagined rollouts across many tasks. ([arXiv][10])
+
+For an interactive conversational agent, the “world” is not only physical. It includes:
+
+```text
+user intent
+project state
+domain assumptions
+conversation trajectory
+tool outcomes
+answer acceptance
+future correction probability
+```
+
+The model should predict:
+
+```text
+Will this answer satisfy the user?
+Will this code compile?
+Will this architectural suggestion violate a constraint?
+Will the user correct my interpretation?
+```
+
+Then correction becomes prediction error.
+
+Speculative design:
+
+> **Conversation World Model**
+
+Before answering, the agent simulates:
+
+```text
+state S:
+  user goal
+  project context
+  uncertainty
+  expected objections
+  likely correction points
+
+candidate answer A:
+  predicted acceptance
+  predicted correction type
+  predicted missing assumptions
+```
+
+When the user corrects it:
+
+```text
+prediction: user accepts interpretation of "profile"
+actual: user says profile means business vertical
+error: semantic mis-grounding
+update: future latent state maps profile differently in this domain
+```
+
+This is better than memory because the correction updates the model of the interaction, not just facts.
+
+---
+
+# 7. Energy / attractor memory
+
+Modern Hopfield networks are relevant because attention can be interpreted as a modern associative memory update rule. The Hopfield paper argues that the update rule is equivalent to transformer attention and can retrieve stored patterns with strong capacity properties. ([arXiv][11])
+
+You can push this further.
+
+Instead of:
+
+```text
+retrieve memory by similarity
+```
+
+think:
+
+```text
+settle into the right interpretation basin
+```
+
+Speculative design:
+
+> **Semantic Attractor Cortex**
+
+Concepts are basins in an energy landscape. A correction reshapes the basin.
+
+Example:
+
+```text
+"profile" normally falls into:
+  user account profile
+
+In Kino's multi-tenant app, correction reshapes basin:
+  profile → business vertical configuration
+```
+
+Future ambiguous inputs settle into the corrected basin automatically. No explicit note retrieval required.
+
+This could be implemented as:
+
+```text
+latent state h
+energy E(h, context)
+correction lowers energy of desired interpretation
+correction raises energy of wrong interpretation
+```
+
+The beauty: memory becomes a tendency. The model “leans” correctly.
+
+The danger: overgeneralization. If the basin gets reshaped globally, “profile” might become business vertical everywhere. So the basin must be scoped by context.
+
+---
+
+# 8. Skill cortex: experience becomes executable competence
+
+Voyager is important because it does not only remember. It turns experience into reusable executable skills in Minecraft, using an automatic curriculum, skill library, and iterative prompting from environment feedback. ([arXiv][12]) Reflexion similarly lets agents reflect on failure and use verbal feedback in later trials, while ReasoningBank distills successful and failed experiences into generalizable reasoning strategies. ([arXiv][13])
+
+But these are still mostly memory/skill-library systems. The next step is to compile skills into the model.
+
+Speculative design:
+
+> **Differentiable Skill Cortex**
+
+Each repeated experience becomes an option-like latent skill:
+
+```text
+skill: review_sql_query_safety
+trigger: Rust/sqlx query review
+policy:
+  check injection safety
+  check compile-time query validation
+  check schema drift
+  check result typing
+  check migration assumptions
+```
+
+At first, this skill is explicit. Later, it is distilled into adapter weights.
+
+This echoes hierarchical reinforcement learning’s options framework, where temporally extended actions let agents operate above primitive actions. ([www-anw.cs.umass.edu][14])
+
+Pipeline:
+
+```text
+raw failure
+  ↓
+explicit skill patch
+  ↓
+skill used successfully many times
+  ↓
+distill into adapter
+  ↓
+remove explicit patch from hot memory
+```
+
+So the system avoids memory bloat by turning repeated lessons into reusable competence.
+
+---
+
+# 9. Experience autoencoder
+
+This is a more speculative architecture I think is worth inventing.
+
+Call it:
+
+> **Experience Autoencoder**
+
+Instead of storing episodes, encode each episode into a latent “learning delta.”
+
+```text
+episode:
+  situation
+  model answer
+  correction
+  revised answer
+  outcome
+
+encoder:
+  Δz = ExperienceEncoder(episode)
+
+decoder:
+  reconstructs:
+    corrected behavior
+    failure class
+    trigger conditions
+    counterexamples
+```
+
+The important part is that `Δz` is not retrieved as text. It updates the agent’s latent identity:
+
+```text
+z_{t+1} = z_t + Δz
+```
+
+Then only `z` remains active. Old episodes are used for replay/testing, not prompt-time recall.
+
+A good training objective:
+
+```text
+L = behavior_improvement
+  + reconstruction_of_correction
+  + compression_penalty
+  + anti-overgeneralization_penalty
+  + replay_consistency
+```
+
+This is basically “experience as a learned gradient.”
+
+Why this is interesting: it gives you bounded growth. The system can have thousands of corrections, but the active agent only carries a compressed latent identity plus a small replay buffer.
+
+---
+
+# 10. Mistake immune system
+
+This is another speculative but practical design.
+
+Call it:
+
+> **Cognitive Immune Layer**
+
+Every serious correction creates a detector, not a memory.
+
+Example:
+
+```text
+past mistake:
+  treated SQL injection safety as equivalent to full query safety
+
+detector:
+  activate when user asks about "safe query", "sqlx", "ORM", "compile-time query"
+
+immune response:
+  force distinction:
+    injection safety ≠ compile-time correctness ≠ schema drift safety
+```
+
+The detector is small and bounded. It does not contain the full conversation. It contains a failure signature.
+
+Over time, detectors merge:
+
+```text
+mistake detector A: SQLx typing
+mistake detector B: query string schema drift
+mistake detector C: ORM compile-time guarantees
+
+merged detector:
+  database safety review requires multiple axes
+```
+
+This gives the agent a kind of learned caution without relying on giant memory retrieval.
+
+---
+
+# 11. Nested learning stack
+
+A very promising modern framing is to treat the model as nested learners: the outer model learns generally, while inner modules learn online. Google’s MIRAS/Nested Learning framing points in this direction by viewing architectures through online optimization, associative memory, retention, and smaller nested learning problems. ([arXiv][15])
+
+A full architecture could look like:
+
+```text
+Level 0: token dynamics
+  immediate activations
+
+Level 1: conversation learner
+  fast weights updated during one session
+
+Level 2: project learner
+  neural memory/adapters updated across sessions
+
+Level 3: identity learner
+  long-term user/domain style and values
+
+Level 4: cortex
+  slow consolidated base competence
+```
+
+Each level has different plasticity:
+
+```text
+Level 0: milliseconds / tokens
+Level 1: minutes
+Level 2: days
+Level 3: months
+Level 4: rare consolidation
+```
+
+This is how you avoid chaos. The core can evolve, but not every correction rewrites everything.
+
+---
+
+# 12. The architecture I would actually build
+
+I would build a hybrid named:
+
+> **Plastic World Model Agent**
+
+Diagram:
+
+```text
+                    ┌────────────────────────┐
+input / correction →│  recurrent cortex       │
+                    │  Mamba/xLSTM/TTT blocks │
+                    └──────────┬─────────────┘
+                               │
+                               ▼
+                    ┌────────────────────────┐
+                    │ fast-weight organ       │
+                    │ session adaptation      │
+                    └──────────┬─────────────┘
+                               │
+                               ▼
+                    ┌────────────────────────┐
+                    │ neural hippocampus      │
+                    │ surprise-gated memory   │
+                    └──────────┬─────────────┘
+                               │
+                               ▼
+                    ┌────────────────────────┐
+                    │ replay consolidator     │
+                    │ slow adapter updates    │
+                    └──────────┬─────────────┘
+                               │
+                               ▼
+                    ┌────────────────────────┐
+                    │ regression immune system│
+                    │ prevents old mistakes   │
+                    └────────────────────────┘
+```
+
+Runtime:
+
+```text
+1. Agent answers.
+2. Critic predicts whether answer will be accepted.
+3. User corrects or environment fails.
+4. Correction creates prediction error.
+5. Fast weights update immediately.
+6. Neural hippocampus stores compressed surprise.
+7. Repeated surprise becomes adapter update.
+8. Replay checks old failures.
+9. Raw memory decays after consolidation.
+```
+
+This is not “memory engine continuously growing.” This is:
+
+```text
+experience → fast change → replay → compression → slow change → forgetting raw trace
+```
+
+---
+
+# 13. How to train it
+
+You need tasks where correction is part of the data.
+
+A good training sample is not:
+
+```text
+prompt → answer
+```
+
+It is:
+
+```text
+state_0
+user_request
+agent_answer_wrong
+user_correction
+agent_answer_fixed
+future_similar_request
+expected_behavior_changed
+```
+
+Training objective:
+
+```text
+L_total =
+  L_next_token
++ L_outcome_prediction
++ L_correction_uptake
++ L_future_transfer
++ L_no_overgeneralization
++ L_replay_retention
+```
+
+Meaning:
+
+* **Correction uptake**: after one correction, behavior changes.
+* **Future transfer**: the lesson applies to similar cases.
+* **No overgeneralization**: the lesson does not apply outside its scope.
+* **Replay retention**: new learning does not destroy old skills.
+
+Continual-learning work like GEM, MER, and CLEAR is relevant here because they try to prevent new learning from damaging old capabilities using episodic constraints or replay. ([arXiv][16])
+
+---
+
+# 14. The most important benchmark
+
+Forget normal chat benchmarks. You need a benchmark called something like:
+
+> **Correction-to-Competence Benchmark**
+
+Each task has:
+
+```text
+1. Initial ambiguous request.
+2. Model makes plausible but wrong assumption.
+3. User gives correction.
+4. Model must fix current answer.
+5. Later task tests whether correction transferred.
+6. Another later task tests whether it overgeneralized.
+7. Old task tests whether it forgot something else.
+```
+
+Metrics:
+
+```text
+correction uptake latency:
+  how many turns until it changes?
+
+one-shot transfer:
+  does one correction help related cases?
+
+scope control:
+  does it avoid applying correction everywhere?
+
+forgetting:
+  did old competence degrade?
+
+compression:
+  how much active memory grows per correction?
+
+consolidation:
+  can raw traces be deleted without losing behavior?
+
+identity drift:
+  does the agent remain stable under many corrections?
+```
+
+The key metric for your idea:
+
+```text
+behavior_delta_per_byte_of_persistent_memory
+```
+
+High score means it learns a lot without hoarding memory.
+
+---
+
+# 15. What previous art to read
+
+I would read in this order.
+
+## Memory and attention foundations
+
+Start with **Neural Turing Machines** and **Differentiable Neural Computers** to understand differentiable read/write memory. Then read **Hopfield Networks is All You Need** to see attention as associative memory rather than just “token lookup.” ([arXiv][17])
+
+## Attention alternatives
+
+Read **Mamba**, **xLSTM**, **RWKV**, **RetNet**, and **Hyena** as the main alternatives to vanilla attention for sequence modeling. They give you the vocabulary of state, retention, recurrence, selective propagation, and long convolution. ([arXiv][2])
+
+## Fast adaptation
+
+Read **Fast Weight Programmers**, **TTT layers**, **Differentiable Plasticity**, **MAML**, and **Learning to Learn by Gradient Descent by Gradient Descent**. This cluster is closest to “the model changes because of experience.” ([arXiv][3])
+
+## Neural long-term memory
+
+Read **Titans**, **MIRAS**, and **ATLAS**. These are important because they move from context-window memory toward trainable neural memory modules that memorize at test time. ([arXiv][5])
+
+## Hypernetwork adaptation
+
+Read **HyperNetworks**, **Text-to-LoRA**, and **Doc-to-LoRA**. These suggest a path where experiences produce adapter weights directly, instead of being kept as textual memory. ([arXiv][8])
+
+## Agent experience
+
+Read **Reflexion**, **Voyager**, **Generative Agents**, and **ReasoningBank**. They are not the final architecture you want, but they show the current state of experience-driven agents. ([arXiv][13])
+
+## Consolidation and forgetting
+
+Read **Complementary Learning Systems**, **GEM**, **MER**, **CLEAR**, and recent continual-learning surveys for LLMs. This is where the stability/plasticity problem lives. ([PubMed][6])
+
+## World models
+
+Read **World Models** and **DreamerV3**. They shift the frame from predicting text to predicting consequences, which is necessary for an agent that learns from failure. ([arXiv][10])
+
+---
+
+# My strongest design thesis
+
+The winning architecture probably will not be “Transformer but with bigger memory.”
+
+It will look like:
+
+```text
+state-space / recurrent backbone
++ fast-weight or TTT layers
++ neural hippocampal memory
++ learned plasticity rule
++ world-model critic
++ replay-based consolidation
++ immune-style regression tests
++ hypernetwork-generated adapters
+```
+
+In one sentence:
+
+> **An agent should not store experiences; it should metabolize them.**
+
+Raw memory is food.
+Experience is digestion.
+Fast weights are blood sugar.
+Skills are muscle.
+Slow weights are bone.
+
+The missing art is the metabolism.
+
+[1]: https://arxiv.org/abs/2603.12658?utm_source=chatgpt.com "Continual Learning in Large Language Models: Methods, Challenges, and Opportunities"
+[2]: https://arxiv.org/abs/2312.00752?utm_source=chatgpt.com "Mamba: Linear-Time Sequence Modeling with Selective State Spaces"
+[3]: https://arxiv.org/abs/2102.11174?utm_source=chatgpt.com "Linear Transformers Are Secretly Fast Weight Programmers"
+[4]: https://arxiv.org/abs/2407.04620?utm_source=chatgpt.com "Learning to (Learn at Test Time): RNNs with Expressive Hidden States"
+[5]: https://arxiv.org/abs/2501.00663?utm_source=chatgpt.com "Titans: Learning to Memorize at Test Time"
+[6]: https://pubmed.ncbi.nlm.nih.gov/7624455/?utm_source=chatgpt.com "Why there are complementary learning systems in ... - PubMed"
+[7]: https://proceedings.mlr.press/v80/miconi18a.html?utm_source=chatgpt.com "Differentiable plasticity: training plastic neural networks with ..."
+[8]: https://arxiv.org/abs/1609.09106?utm_source=chatgpt.com "HyperNetworks"
+[9]: https://arxiv.org/abs/2506.06105?utm_source=chatgpt.com "Text-to-LoRA: Instant Transformer Adaption"
+[10]: https://arxiv.org/abs/1803.10122?utm_source=chatgpt.com "World Models"
+[11]: https://arxiv.org/abs/2008.02217?utm_source=chatgpt.com "Hopfield Networks is All You Need"
+[12]: https://arxiv.org/abs/2305.16291?utm_source=chatgpt.com "Voyager: An Open-Ended Embodied Agent with Large Language Models"
+[13]: https://arxiv.org/abs/2303.11366?utm_source=chatgpt.com "Reflexion: Language Agents with Verbal Reinforcement Learning"
+[14]: https://www-anw.cs.umass.edu/~barto/courses/cs687/Sutton-Precup-Singh-AIJ99.pdf?utm_source=chatgpt.com "A framework for temporal abstraction in reinforcement ..."
+[15]: https://arxiv.org/abs/2504.13173?utm_source=chatgpt.com "It's All Connected: A Journey Through Test-Time Memorization, Attentional Bias, Retention, and Online Optimization"
+[16]: https://arxiv.org/abs/1706.08840?utm_source=chatgpt.com "Gradient Episodic Memory for Continual Learning"
+[17]: https://arxiv.org/abs/1410.5401?utm_source=chatgpt.com "Neural Turing Machines"
+

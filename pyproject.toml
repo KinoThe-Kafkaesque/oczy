@@ -1,0 +1,58 @@
+[project]
+name = "oczy"
+version = "0.1.0"
+description = "Plastic World Model Agent monorepo: experience becomes state, state becomes fast weights, fast weights become slow priors."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "KinoThe-Kafkaesque" }]
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/oczy"]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8",
+    "plastic-cortex",
+    "neural-hippocampus",
+    "world-model-critic",
+    "identity-hypernetwork",
+    "skill-immune-cortex",
+    "experience-autoencoder",
+    "correction-benchmark",
+]
+
+[tool.uv.workspace]
+members = [
+    "plastic-cortex",
+    "neural-hippocampus",
+    "world-model-critic",
+    "identity-hypernetwork",
+    "skill-immune-cortex",
+    "experience-autoencoder",
+    "correction-benchmark",
+]
+
+[tool.uv.sources]
+plastic-cortex = { workspace = true }
+neural-hippocampus = { workspace = true }
+world-model-critic = { workspace = true }
+identity-hypernetwork = { workspace = true }
+skill-immune-cortex = { workspace = true }
+experience-autoencoder = { workspace = true }
+correction-benchmark = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = [
+    "plastic-cortex/tests",
+    "neural-hippocampus/tests",
+    "world-model-critic/tests",
+    "identity-hypernetwork/tests",
+    "skill-immune-cortex/tests",
+    "experience-autoencoder/tests",
+    "correction-benchmark/tests",
+]
