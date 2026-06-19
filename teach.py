@@ -18,12 +18,16 @@ import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from plastic_cortex.lm_cortex import LMPlasticCortex
 
 
 DEFAULT_CHECKPOINT = Path("plastic-cortex/checkpoints/lm/model.pkl")
 _REPRIMAND_MARKERS = ("no,", "no!", "wrong,", "bad,", "bad:")
+CURIOSITY_ENABLED_DEFAULT = True
+UNCERTAINTY_THRESHOLD = 1.5
+NOVELTY_THRESHOLD = 0.30
 
 
 def _session_dir() -> Path:
@@ -60,16 +64,74 @@ def _is_correction(text: str) -> tuple[bool, str]:
     return False, ""
 
 
+class _CuriosityLine(str):
+    """A formatted curiosity line that also carries its numeric values."""
+    __slots__ = ("uncertainty", "novelty")
+
+    def __new__(cls, value: str, uncertainty: float, novelty: float) -> "_CuriosityLine":
+        obj = str.__new__(cls, value)
+        obj.uncertainty = float(uncertainty)
+        obj.novelty = float(novelty)
+        return obj
+
+
+def _first_text_token(value: Any) -> str:
+    """Return the first text-like entry in a wonder-report value."""
+    if isinstance(value, (list, tuple)) and value:
+        candidate = value[0]
+        if isinstance(candidate, str):
+            return candidate.strip()
+        if isinstance(candidate, (list, tuple)) and candidate:
+            return str(candidate[0]).strip()
+    if isinstance(value, str):
+        return value.strip()
+    return ""
+
+
+def _extract_most_novel_topic(report: dict[str, Any]) -> str:
+    """Pick the most novel token or bigram from a wonder report."""
+    if not isinstance(report, dict):
+        return ""
+    for key in ("most_novel_recent", "most_uncertain"):
+        value = report.get(key)
+        token = _first_text_token(value)
+        if token:
+            return token
+    return ""
+
+
+def _format_curiosity(model: LMPlasticCortex, query: str, answer: str) -> str:
+    """Return a one-line uncertainty/novelty report for the last answer."""
+    uncertainty = float(model.uncertainty(query))
+    novelty = float(model.novelty(query))
+    return _CuriosityLine(
+        f"[uncertainty: {uncertainty:.2f} | novelty: {novelty:.2f}]",
+        uncertainty,
+        novelty,
+    )
+
+
+def _ask_clarifying_question(model: LMPlasticCortex, query: str) -> str:
+    """Generate a clarification question from the model's current wonder report."""
+    topic = _extract_most_novel_topic(model.wonder())
+    if not topic:
+        words = [w for w in query.split() if w.isalpha()]
+        topic = words[0] if words else "that"
+    return f"Could you explain more about '{topic}'?"
+
+
 def _print_help() -> None:
     markers = ", ".join(repr(m) for m in _REPRIMAND_MARKERS)
     print(
         "Commands:\n"
-        "  /help       show this message\n"
-        "  /quit       leave the REPL\n"
-        "  /reset      reset model state and delete the session file\n"
-        "  /status     print a JSON status snapshot\n"
-        "  /forget     reset fast-weight correction state\n"
-        "  /save       persist model state immediately\n"
+        "  /help                 show this message\n"
+        "  /quit                 leave the REPL\n"
+        "  /reset                reset model state and delete the session file\n"
+        "  /status               print a JSON status snapshot\n"
+        "  /forget               reset fast-weight correction state\n"
+        "  /save                 persist model state immediately\n"
+        "  /wonder               print the model's current wonder report\n"
+        "  /curiosity [on|off]   toggle or set active curiosity questions\n"
         "\n"
         f"Corrections: start with {markers}\n"
         "  /bad <expected>   correct the last query/answer pair"
@@ -103,7 +165,7 @@ def _load_model(checkpoint_path: Path, reset: bool, session_path: Path) -> LMPla
     return LMPlasticCortex()
 
 
-def _teach_loop(model: LMPlasticCortex, session_path: Path) -> None:
+def _teach_loop(model: LMPlasticCortex, session_path: Path, *, curiosity_enabled: bool = CURIOSITY_ENABLED_DEFAULT) -> None:
     last_query: str | None = None
     last_answer: str | None = None
 
@@ -134,6 +196,10 @@ def _teach_loop(model: LMPlasticCortex, session_path: Path) -> None:
             print(json.dumps(model.status(), indent=2, default=str))
             continue
 
+        if lowered == "/wonder":
+            print(json.dumps(model.wonder(), indent=2, default=str))
+            continue
+
         if lowered == "/forget":
             model.reset_state()
             last_query = None
@@ -154,6 +220,21 @@ def _teach_loop(model: LMPlasticCortex, session_path: Path) -> None:
         if lowered == "/save":
             _save_model(model, session_path)
             print("[session saved]")
+            continue
+
+        if lowered == "/curiosity" or lowered.startswith("/curiosity "):
+            arg = user_input[len("/curiosity") :].strip().lower()
+            if arg == "on":
+                curiosity_enabled = True
+            elif arg == "off":
+                curiosity_enabled = False
+            elif not arg:
+                curiosity_enabled = not curiosity_enabled
+            else:
+                print("[usage: /curiosity [on|off]]")
+                continue
+            state = "on" if curiosity_enabled else "off"
+            print(f"[curiosity {state}]")
             continue
 
         if lowered.startswith("/bad "):
@@ -188,7 +269,16 @@ def _teach_loop(model: LMPlasticCortex, session_path: Path) -> None:
         answer = model.answer(user_input)
         last_query = user_input
         last_answer = answer
+        curiosity = _format_curiosity(model, user_input, answer)
         print(answer)
+        print(curiosity)
+        if (
+            curiosity_enabled
+            and curiosity.uncertainty > UNCERTAINTY_THRESHOLD
+            and curiosity.novelty > NOVELTY_THRESHOLD
+        ):
+            print("Teach > (?)")
+            print(_ask_clarifying_question(model, user_input))
         _save_model(model, session_path)
 
 
@@ -212,6 +302,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=DEFAULT_CHECKPOINT,
         help="Path to a trained LMPlasticCortex checkpoint.",
     )
+    parser.add_argument(
+        "--no-curiosity",
+        action="store_true",
+        help="Start with active curiosity questions disabled.",
+    )
     args = parser.parse_args(argv)
 
     session_path = _session_path(args.session)
@@ -232,7 +327,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         loaded_from = "blank model"
     print(f"LMPlasticCortex ready (loaded from {loaded_from}).")
 
-    _teach_loop(model, session_path)
+    _teach_loop(model, session_path, curiosity_enabled=not args.no_curiosity)
     return 0
 
 

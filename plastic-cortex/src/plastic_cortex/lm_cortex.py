@@ -15,6 +15,7 @@ plus training and serialization helpers.
 from __future__ import annotations
 
 import math
+import collections
 import pickle
 import re
 from pathlib import Path
@@ -169,10 +170,52 @@ class LMPlasticCortex:
 
         # Transient generation / training state.
         self._h: np.ndarray = np.zeros(self.hidden_dim, dtype=np.float32)
+        # Observation statistics for curiosity signals.
+        self._seen_tokens: collections.Counter[int] = collections.Counter()
+        self._seen_bigrams: collections.Counter[tuple[int, int]] = collections.Counter()
+        self._token_total: int = 0
+        self._recent_novel: collections.deque[tuple[str, float]] = collections.deque(maxlen=100)
         self.correction_count = 0
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Migrate pickled objects created before curiosity signals existed."""
+        self.__dict__.update(state)
+        # Ensure observation statistics exist for unpickled old models.
+        if "_seen_tokens" not in self.__dict__:
+            self._seen_tokens: collections.Counter[int] = collections.Counter()
+        if "_seen_bigrams" not in self.__dict__:
+            self._seen_bigrams: collections.Counter[tuple[int, int]] = collections.Counter()
+        if "_token_total" not in self.__dict__:
+            self._token_total = 0
+        if "_recent_novel" not in self.__dict__:
+            self._recent_novel = collections.deque(maxlen=100)
     # ------------------------------------------------------------------
     # Forward helpers
     # ------------------------------------------------------------------
+    def _update_seen(self, tokens: list[int]) -> None:
+        """Update token and bigram observation statistics."""
+        if not tokens:
+            return
+        self._seen_tokens.update(tokens)
+        self._token_total += len(tokens)
+        for i in range(len(tokens) - 1):
+            self._seen_bigrams[(tokens[i], tokens[i + 1])] += 1
+
+    def _record_recent_novel(self, tokens: list[int]) -> None:
+        """Remember rare tokens/bigrams observed during this session."""
+        if self._token_total == 0 or not tokens:
+            return
+        total = max(1, self._token_total)
+        for tok in tokens:
+            if self._seen_tokens[tok] <= 2:
+                freq = self._seen_tokens[tok] / total
+                score = -math.log10(freq + 1e-12)
+                self._recent_novel.append((self.tokenizer.decode([tok]), score))
+        for i in range(len(tokens) - 1):
+            bigram = (tokens[i], tokens[i + 1])
+            if self._seen_bigrams[bigram] <= 2:
+                freq = self._seen_bigrams[bigram] / total
+                score = -math.log10(freq + 1e-12)
+                self._recent_novel.append((self.tokenizer.decode(list(bigram)), score))
     def _reset_hidden(self) -> None:
         self._h = np.zeros(self.hidden_dim, dtype=np.float32)
 
@@ -228,8 +271,84 @@ class LMPlasticCortex:
             context = query + self.tokenizer.decode(generated_ids)
             self._step(next_id)
 
+        full_ids = query_ids + generated_ids
+        self._update_seen(full_ids)
+        self._record_recent_novel(full_ids)
         return self.tokenizer.decode(generated_ids)
 
+    def uncertainty(self, query: str, max_tokens: int = 40) -> float:
+        """Return the mean per-step entropy of the model continuation.
+
+        The hidden state is reset, the query is fed in, and *max_tokens*
+        characters are generated with a small non-zero temperature.  For each
+        step the entropy of the temperature-scaled softmax is computed; the
+        returned value is the mean entropy over generated tokens.
+        """
+        self._reset_hidden()
+        query_ids = self.tokenizer.encode(query)
+        for tok in query_ids:
+            self._step(tok)
+
+        temperature = 0.5
+        entropies: list[float] = []
+        for _ in range(max_tokens):
+            logits = self._h @ self.W_vocab + self.b_vocab
+            scaled = logits / max(temperature, 1e-12)
+            log_p = log_softmax(scaled)
+            probs = np.exp(log_p)
+            ent = -np.sum(probs * log_p)
+            entropies.append(float(ent))
+            next_id = sample_token(scaled, 1.0, self._rng)
+            self._step(next_id)
+
+        if not entropies:
+            return 0.0
+        return float(np.mean(entropies))
+
+    def novelty(self, query: str) -> float:
+        """Return a novelty score in [0, 1] relative to observed statistics."""
+        tokens = self.tokenizer.encode(query)
+        if not tokens:
+            return 0.0
+
+        total = max(1, self._token_total)
+        eps = 1e-12
+        scores: list[float] = []
+        for tok in tokens:
+            freq = self._seen_tokens.get(tok, 0) / total
+            scores.append(-math.log10(freq + eps))
+        for i in range(len(tokens) - 1):
+            bigram = (tokens[i], tokens[i + 1])
+            freq = self._seen_bigrams.get(bigram, 0) / total
+            scores.append(-math.log10(freq + eps))
+
+        raw = sum(scores) / len(scores)
+        return 1.0 / (1.0 + raw)
+
+    def wonder(self, top_k: int = 5) -> dict[str, Any]:
+        """Return curiosity summary: most uncertain bigrams and recent novel items."""
+        # Bigrams observed fewest times are the most "uncertain"/novel.
+        rarest_bigrams = sorted(self._seen_bigrams.items(), key=lambda kv: kv[1])[:top_k]
+        most_uncertain: list[list[Any]] = []
+        for (a, b), count in rarest_bigrams:
+            ngram = self.tokenizer.decode([a, b])
+            most_uncertain.append([ngram, float(count)])
+
+        recent_novel: list[list[Any]] = [
+            [ngram, float(score)] for ngram, score in list(self._recent_novel)[-top_k:]
+        ]
+
+        suggested_question = "Can you explain something more?"
+        if recent_novel:
+            suggested_question = f"Can you explain {recent_novel[-1][0]} more?"
+        elif most_uncertain:
+            suggested_question = f"Can you explain {most_uncertain[0][0]} more?"
+
+        return {
+            "most_uncertain": most_uncertain,
+            "most_novel_recent": recent_novel,
+            "suggested_question": suggested_question,
+        }
     def correct(self, correction_text: str, expected_answer: str) -> None:
         """Apply an explicit correction through the fast-weight adapter.
 
