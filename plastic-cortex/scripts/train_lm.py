@@ -330,13 +330,13 @@ def main(argv: list[str] | None = None) -> int:
     tokenizer.save(outdir / "tokenizer.json")
     print(f"Corpus: {corpus_path} ({len(base_lines)} base + {len(adaptive_lines)} adaptive lines, vocab_size={tokenizer.vocab_size})")
 
-    best_path = outdir / "model_best.pkl"
     global_best_loss = float("inf")
     global_best_path = outdir / "model_global_best.pkl"
     patience = 0
     grow_phase = 0
     max_grow_phases = 5
-    min_improvement_ratio = 0.01  # at least 1% relative gain to justify growth
+    min_improvement_ratio = 0.01  # at least 1% relative gain to justify more capacity
+    last_phase_best = float("inf")
 
     while grow_phase <= max_grow_phases:
         phase_best_loss = float("inf")
@@ -368,19 +368,14 @@ def main(argv: list[str] | None = None) -> int:
             global_best_loss = phase_best_loss
             global_best_path.write_bytes(phase_best_path.read_bytes())
 
-        if grow_phase == 0:
-            previous_best = float("inf")
-        else:
-            previous_best = global_best_loss
-
         can_grow = (
             args.auto_grow
             and grow_phase < max_grow_phases
             and int(model.hidden_dim * args.grow_factor) <= args.max_hidden_dim
         )
-        # Only grow if the current phase actually improved enough to justify more capacity.
-        if grow_phase > 0 and previous_best > 0:
-            improvement = (previous_best - phase_best_loss) / previous_best
+        # Only consider further growth if the previous expansion actually helped.
+        if grow_phase > 0:
+            improvement = (last_phase_best - phase_best_loss) / last_phase_best
             if improvement < min_improvement_ratio:
                 print(f"\n[auto-grow] improvement {improvement:.2%} below {min_improvement_ratio:.0%}; stopping.")
                 can_grow = False
@@ -389,6 +384,7 @@ def main(argv: list[str] | None = None) -> int:
             new_dim = min(int(model.hidden_dim * args.grow_factor), args.max_hidden_dim)
             print(f"\n[auto-grow phase {grow_phase + 1}] phase_best={phase_best_loss:.4f}; expanding hidden_dim: {model.hidden_dim} -> {new_dim}")
             model = model.grow(new_dim)
+            last_phase_best = phase_best_loss
             grow_phase += 1
         else:
             break
@@ -397,9 +393,6 @@ def main(argv: list[str] | None = None) -> int:
     if global_best_path.exists():
         final_path.write_bytes(global_best_path.read_bytes())
         print(f"Saved best model (loss={global_best_loss:.4f}) to {final_path}")
-    elif best_path.exists():
-        final_path.write_bytes(best_path.read_bytes())
-        print(f"Saved model to {final_path}")
     else:
         model.save(final_path)
         print(f"Saved model to {final_path}")
