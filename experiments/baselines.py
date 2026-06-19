@@ -17,16 +17,17 @@ import re
 import sys
 from typing import Any
 
+from experiments.profiler import AgentProfiler
+
 from plastic_cortex import PlasticCortex
 from neural_hippocampus import NeuralHippocampus
 from identity_hypernetwork import IdentityHypernetwork
-
-
 class ZeroMemoryAgent:
     """Ignores all corrections and always emits the same default wrong answer."""
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         self._answer: str = (config or {}).get("answer", "default wrong answer")
+        self.profiler = AgentProfiler([])
 
     def answer(self, _request: str) -> str:
         return self._answer
@@ -45,6 +46,9 @@ class ZeroMemoryAgent:
     def memory_bytes(self) -> int:
         return sys.getsizeof(self._answer)
 
+    def profile_summary(self) -> dict[str, Any]:
+        return self.profiler.summary()
+
 
 class ContextOnlyAgent:
     """Remembers raw correction strings and answers by substring matching."""
@@ -52,6 +56,7 @@ class ContextOnlyAgent:
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         self._context: list[dict[str, str]] = []
         self._default: str = (config or {}).get("answer", "I don't know.")
+        self.profiler = AgentProfiler([])
 
     def answer(self, request: str) -> str:
         lowered = request.lower()
@@ -90,6 +95,9 @@ class ContextOnlyAgent:
             total += sum(sys.getsizeof(v) for v in entry.values())
         return total
 
+    def profile_summary(self) -> dict[str, Any]:
+        return self.profiler.summary()
+
     @staticmethod
     def _extract_expected_from_correction(correction: str) -> str:
         text = correction.lower()
@@ -107,18 +115,22 @@ class FastOnlyAgent:
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         self.cortex = PlasticCortex(config)
+        self.profiler = AgentProfiler(["plastic_cortex"])
 
     def answer(self, request: str) -> str:
-        return self.cortex.answer(request)
+        with self.profiler.profile("plastic_cortex"):
+            return self.cortex.answer(request)
 
     def correct(self, correction: str, expected_answer: str) -> None:
-        self.cortex.correct(correction, expected_answer)
+        with self.profiler.profile("plastic_cortex"):
+            self.cortex.correct(correction, expected_answer)
 
     def learn(self, request: str, correction: str) -> None:
         expected = self._extract_expected_from_correction(correction)
         # Make sure the request has entered the recurrent context first.
-        self.cortex.answer(request)
-        self.cortex.correct(correction, expected)
+        with self.profiler.profile("plastic_cortex"):
+            self.cortex.answer(request)
+            self.cortex.correct(correction, expected)
 
     def consolidate(self) -> None:
         """Fast weights are retained; no separate consolidation step."""
@@ -126,6 +138,9 @@ class FastOnlyAgent:
 
     def memory_bytes(self) -> int:
         return sys.getsizeof(self.cortex)
+
+    def profile_summary(self) -> dict[str, Any]:
+        return self.profiler.summary()
 
     @staticmethod
     def _extract_expected_from_correction(correction: str) -> str:
@@ -153,9 +168,11 @@ class HippocampusOnlyAgent:
         self._surprise_threshold: float = float(
             config.get("surprise_threshold", 0.5)
         )
+        self.profiler = AgentProfiler(["neural_hippocampus"])
 
     def answer(self, request: str) -> str:
-        replays = self.memory.reinforce(query=request, k=1)
+        with self.profiler.profile("neural_hippocampus"):
+            replays = self.memory.reinforce(query=request, k=1)
         if replays:
             corrected = replays[0].get("corrected_answer")
             if corrected:
@@ -168,21 +185,22 @@ class HippocampusOnlyAgent:
         answer = self._last_answer or ""
         prediction_error = 1.0  # Assume maximal surprise in this ablation.
         if prediction_error > self._surprise_threshold:
-            self.memory.store(
-                query=request,
-                answer=answer,
-                correction=correction,
-                prediction_error=prediction_error,
-            )
-            # Also remember the corrected answer so answer() can return it later.
-            episode = {
-                "query": request,
-                "answer": answer,
-                "correction": correction,
-                "prediction_error": prediction_error,
-                "corrected_answer": expected_answer,
-            }
-            self.memory.memory.write(episode)
+            with self.profiler.profile("neural_hippocampus"):
+                self.memory.store(
+                    query=request,
+                    answer=answer,
+                    correction=correction,
+                    prediction_error=prediction_error,
+                )
+                # Also remember the corrected answer so answer() can return it later.
+                episode = {
+                    "query": request,
+                    "answer": answer,
+                    "correction": correction,
+                    "prediction_error": prediction_error,
+                    "corrected_answer": expected_answer,
+                }
+                self.memory.memory.write(episode)
 
     def learn(self, request: str, correction: str) -> None:
         self._last_request = request
@@ -191,10 +209,14 @@ class HippocampusOnlyAgent:
         self.correct(correction, expected)
 
     def consolidate(self) -> None:
-        self.memory.consolidate()
+        with self.profiler.profile("neural_hippocampus"):
+            self.memory.consolidate()
 
     def memory_bytes(self) -> int:
         return int(self.memory.status().get("trace_bytes", 0))
+
+    def profile_summary(self) -> dict[str, Any]:
+        return self.profiler.summary()
 
     @staticmethod
     def _extract_expected_from_correction(correction: str) -> str:
@@ -219,9 +241,11 @@ class IdentityOnlyAgent:
             **(config.get("identity_hypernetwork") or {})
         )
         self._default: str = config.get("answer", "I don't know.")
+        self.profiler = AgentProfiler(["identity_hypernetwork"])
 
     def answer(self, request: str) -> str:
-        adapters = self.identity.generate_adapters()
+        with self.profiler.profile("identity_hypernetwork"):
+            adapters = self.identity.generate_adapters()
         concept_scores = adapters.get("concept_scores", {})
         request_tokens = set(_tokenize(request))
 
@@ -237,23 +261,25 @@ class IdentityOnlyAgent:
         return best_concept if best_concept is not None else self._default
 
     def correct(self, correction: str, expected_answer: str) -> None:
-        self.identity.update_identity(
-            {
-                "source": "user_correction",
-                "correct_label": expected_answer,
-                "token": expected_answer,
-            }
-        )
+        with self.profiler.profile("identity_hypernetwork"):
+            self.identity.update_identity(
+                {
+                    "source": "user_correction",
+                    "correct_label": expected_answer,
+                    "token": expected_answer,
+                }
+            )
 
     def learn(self, request: str, correction: str) -> None:
         expected = self._extract_expected_from_correction(correction)
-        self.identity.update_identity(
-            {
-                "source": "user_correction",
-                "correct_label": expected,
-                "token": expected,
-            }
-        )
+        with self.profiler.profile("identity_hypernetwork"):
+            self.identity.update_identity(
+                {
+                    "source": "user_correction",
+                    "correct_label": expected,
+                    "token": expected,
+                }
+            )
 
     def consolidate(self) -> None:
         """Identity is a slow latent; nothing to drop."""
@@ -262,6 +288,9 @@ class IdentityOnlyAgent:
     def memory_bytes(self) -> int:
         status = self.identity.status()
         return len(str(status).encode("utf-8"))
+
+    def profile_summary(self) -> dict[str, Any]:
+        return self.profiler.summary()
 
     @staticmethod
     def _extract_expected_from_correction(correction: str) -> str:

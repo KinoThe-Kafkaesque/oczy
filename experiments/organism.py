@@ -12,6 +12,8 @@ import re
 import sys
 from typing import Any
 
+from experiments.profiler import AgentProfiler
+
 from plastic_cortex import PlasticCortex
 from neural_hippocampus import NeuralHippocampus
 from world_model_critic import WorldModelCritic
@@ -40,6 +42,16 @@ class OrganismAgent:
         self.experience_autoencoder = ExperienceAutoencoder(
             config.get("experience_autoencoder")
         )
+        self.profiler = AgentProfiler(
+            [
+                "plastic_cortex",
+                "neural_hippocampus",
+                "world_model_critic",
+                "identity_hypernetwork",
+                "skill_immune_cortex",
+                "experience_autoencoder",
+            ]
+        )
 
         self._last_request: str | None = None
         self._last_answer: str | None = None
@@ -52,7 +64,8 @@ class OrganismAgent:
         """Produce an answer using the full organ stack."""
         # 1. Immune check: see if any previous mistake detector fires for the raw
         # request.  We do not have a proposed answer yet, so pass an empty one.
-        immune_responses = self.skill_immune_cortex.check(request, "")
+        with self.profiler.profile("skill_immune_cortex"):
+            immune_responses = self.skill_immune_cortex.check(request, "")
         if immune_responses:
             # Surface immune guidance in-line so downstream modules can see it.
             meta = "[immune] " + " ".join(immune_responses)
@@ -61,12 +74,14 @@ class OrganismAgent:
             request_with_meta = request
 
         # 2. Fast-weight / recurrent answer.
-        fast_answer = self.plastic_cortex.answer(request_with_meta)
+        with self.profiler.profile("plastic_cortex"):
+            fast_answer = self.plastic_cortex.answer(request_with_meta)
 
         # 3. World-model confidence check.
-        critic_pred = self.world_model_critic.predict_acceptance(
-            query=request, proposed_answer=fast_answer
-        )
+        with self.profiler.profile("world_model_critic"):
+            critic_pred = self.world_model_critic.predict_acceptance(
+                query=request, proposed_answer=fast_answer
+            )
         accepted_prob = float(critic_pred.get("accepted_prob", 0.0))
         correction_likelihood = float(critic_pred.get("correction_likelihood", 0.0))
         low_confidence = (
@@ -77,7 +92,8 @@ class OrganismAgent:
         candidate_answers = list(self.plastic_cortex.labels)
         replay_hint: str | None = None
         if low_confidence:
-            replays = self.neural_hippocampus.reinforce(query=request, k=3)
+            with self.profiler.profile("neural_hippocampus"):
+                replays = self.neural_hippocampus.reinforce(query=request, k=3)
             if replays:
                 # Try to recover the corrected sense stored in the replay.
                 for episode in replays:
@@ -89,7 +105,8 @@ class OrganismAgent:
 
         # 4. Apply identity-hypernetwork concept-score deltas to rank the
         # candidate labels.
-        adapters = self.identity_hypernetwork.generate_adapters()
+        with self.profiler.profile("identity_hypernetwork"):
+            adapters = self.identity_hypernetwork.generate_adapters()
         concept_scores = adapters.get("concept_scores", {})
         final_answer = self._rank_answer(
             request=request,
@@ -172,7 +189,8 @@ class OrganismAgent:
         expected_answer = self._extract_expected_from_correction(correction)
         self._last_request = request
         # Need a prior answer to compute critic surprise.
-        prior_answer = self.plastic_cortex.answer(request)
+        with self.profiler.profile("plastic_cortex"):
+            prior_answer = self.plastic_cortex.answer(request)
         self._last_answer = prior_answer
         self._learn_from_correction(request, correction, expected_answer)
 
@@ -182,34 +200,41 @@ class OrganismAgent:
         correction: str,
         expected_answer: str,
     ) -> None:
-        request = request or ""
-        prior_answer = self._last_answer or self.plastic_cortex.answer(request)
+        if self._last_answer:
+            prior_answer = self._last_answer
+        else:
+            with self.profiler.profile("plastic_cortex"):
+                prior_answer = self.plastic_cortex.answer(request)
 
         # a. Critic surprise / prediction error.
-        pred = self.world_model_critic.predict_acceptance(
-            query=request, proposed_answer=prior_answer
-        )
+        with self.profiler.profile("world_model_critic"):
+            pred = self.world_model_critic.predict_acceptance(
+                query=request, proposed_answer=prior_answer
+            )
         accepted_prob = float(pred.get("accepted_prob", 0.0))
         # The user corrected us, so the true outcome is "corrected" (accepted=0).
         prediction_error = accepted_prob
 
         # b. Update the fast-weight organ.
-        self.plastic_cortex.correct(correction, expected_answer)
+        with self.profiler.profile("plastic_cortex"):
+            self.plastic_cortex.correct(correction, expected_answer)
 
         # Also update the world model with the observed correction.
-        self.world_model_critic.record_outcome(
-            query=request, proposed_answer=prior_answer, correction=correction
-        )
+        with self.profiler.profile("world_model_critic"):
+            self.world_model_critic.record_outcome(
+                query=request, proposed_answer=prior_answer, correction=correction
+            )
 
         # c. If prediction error is high, store the episode in slow memory and
         # update long-term identity / immune structures.
         if prediction_error > self._surprise_threshold:
-            self.neural_hippocampus.store(
-                query=request,
-                answer=prior_answer,
-                correction=correction,
-                prediction_error=prediction_error,
-            )
+            with self.profiler.profile("neural_hippocampus"):
+                self.neural_hippocampus.store(
+                    query=request,
+                    answer=prior_answer,
+                    correction=correction,
+                    prediction_error=prediction_error,
+                )
 
             episode = {
                 "situation": request,
@@ -220,21 +245,24 @@ class OrganismAgent:
                 "source": "user_correction",
                 "corrected_answer": expected_answer,
             }
-            self.experience_autoencoder.encode(episode)
+            with self.profiler.profile("experience_autoencoder"):
+                self.experience_autoencoder.encode(episode)
 
-            self.identity_hypernetwork.update_identity(
-                {
-                    "source": "user_correction",
-                    "correct_label": expected_answer,
-                    "token": expected_answer,
-                }
-            )
+            with self.profiler.profile("identity_hypernetwork"):
+                self.identity_hypernetwork.update_identity(
+                    {
+                        "source": "user_correction",
+                        "correct_label": expected_answer,
+                        "token": expected_answer,
+                    }
+                )
 
-            self.skill_immune_cortex.add_detector(
-                correction_text=correction,
-                mistake_class="corrected_sense",
-                response=expected_answer,
-            )
+            with self.profiler.profile("skill_immune_cortex"):
+                self.skill_immune_cortex.add_detector(
+                    correction_text=correction,
+                    mistake_class="corrected_sense",
+                    response=expected_answer,
+                )
 
     @staticmethod
     def _extract_expected_from_correction(correction: str) -> str:
@@ -255,7 +283,8 @@ class OrganismAgent:
         Identity / hypernetwork adapters are retained; they are the consolidated
         slow knowledge.
         """
-        self.neural_hippocampus.consolidate()
+        with self.profiler.profile("neural_hippocampus"):
+            self.neural_hippocampus.consolidate()
         self._last_request = None
         self._last_answer = None
 
@@ -271,7 +300,12 @@ class OrganismAgent:
             self.experience_autoencoder,
         ):
             total += self._module_bytes(module)
+
         return total
+
+    def profile_summary(self) -> dict[str, Any]:
+        """Return per-component call counts, elapsed time, and peak memory."""
+        return self.profiler.summary()
 
     @staticmethod
     def _module_bytes(module: Any) -> int:
