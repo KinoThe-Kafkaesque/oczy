@@ -280,6 +280,8 @@ def main(argv: list[str] | None = None) -> int:
 
     tokenizer = CharTokenizer()
 
+    all_lines = list(base_lines)
+
     # If adaptive/resume is requested, try to load a checkpoint.
     model: LMPlasticCortex | None = None
     model_path = outdir / "model.pkl"
@@ -295,6 +297,7 @@ def main(argv: list[str] | None = None) -> int:
                 "[adaptive] no checkpoint found; generating curriculum from fresh model",
                 file=sys.stderr,
             )
+            tokenizer.fit(base_lines)
             model = LMPlasticCortex(
                 {"hidden_dim": args.hidden_dim, "vocab_size": tokenizer.vocab_size, "seed": 42}
             )
@@ -303,6 +306,19 @@ def main(argv: list[str] | None = None) -> int:
             model, budget=args.curriculum_budget, seed=42
         )
         print(f"[adaptive] generated {len(adaptive_lines)} targeted lines")
+        # Incorporate adaptive lines before final tokenizer fit so their tokens
+        # are part of the model's vocabulary.
+        chunk = max(1, len(base_lines) // max(1, len(adaptive_lines)))
+        idx = 0
+        for line in adaptive_lines:
+            idx = min(idx, len(all_lines))
+            all_lines.insert(idx, line)
+            idx += chunk + 1
+
+    # Fit tokenizer on the actual corpus (base + adaptive) and build the model
+    # with the real vocabulary size.
+    tokenizer.fit(all_lines)
+    tokenizer.save(outdir / "tokenizer.json")
 
     # Fresh start if no checkpoint was loaded and no fresh model was made above.
     if model is None:
@@ -315,19 +331,6 @@ def main(argv: list[str] | None = None) -> int:
 
     model.tokenizer = tokenizer
 
-    all_lines = list(base_lines)
-    if adaptive_lines:
-        # Mix adaptive items throughout the corpus instead of appending them all.
-        chunk = max(1, len(base_lines) // max(1, len(adaptive_lines)))
-        idx = 0
-        for line in adaptive_lines:
-            idx = min(idx, len(all_lines))
-            all_lines.insert(idx, line)
-            idx += chunk + 1
-
-    # Fit tokenizer on the combined corpus.
-    tokenizer.fit(all_lines)
-    tokenizer.save(outdir / "tokenizer.json")
     print(f"Corpus: {corpus_path} ({len(base_lines)} base + {len(adaptive_lines)} adaptive lines, vocab_size={tokenizer.vocab_size})")
 
     global_best_loss = float("inf")

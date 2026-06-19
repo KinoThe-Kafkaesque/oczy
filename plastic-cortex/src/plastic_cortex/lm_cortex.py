@@ -150,11 +150,11 @@ class LMPlasticCortex:
         self.seed = int(self.config.get("seed", 0))
 
         self.tokenizer = CharTokenizer()
-        # The model vocabulary is taken from the tokenizer.  A configured value
-        # larger than the tokenizer cannot be represented, so we clamp.
-        self.vocab_size = min(
-            int(self.config.get("vocab_size", self.tokenizer.vocab_size)),
-            self.tokenizer.vocab_size,
+        # Use the configured vocabulary size when provided; otherwise fall back
+        # to the default tokenizer size. Callers that fit a larger tokenizer
+        # should pass its size explicitly in the config.
+        self.vocab_size = int(
+            self.config.get("vocab_size", self.tokenizer.vocab_size)
         )
 
         self.fast = FastWeightLM(self.vocab_size)

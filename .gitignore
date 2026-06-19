@@ -11,5 +11,6 @@ build/
 experiments/logs/*.json
 plastic-cortex/checkpoints/
 plastic-cortex/data/adaptive_curriculum*.txt
+plastic-cortex/data/codex_corpus*.txt
 sessions/
 *.pkl
