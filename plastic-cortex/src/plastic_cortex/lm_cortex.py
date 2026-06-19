@@ -550,7 +550,7 @@ class LMPlasticCortex:
 
         self.E -= lr * dE
         self.W_xh -= lr * dW_xh
-        self.W_hh = _spectral_normalize(self.W_hh - lr * dW_hh)
+        self.W_hh -= lr * dW_hh
         self.b_h -= lr * db_h
         self.W_vocab -= lr * dW_vocab
         self.b_vocab -= lr * db_vocab
