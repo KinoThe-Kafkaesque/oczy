@@ -391,7 +391,7 @@ def main(argv: list[str] | None = None) -> int:
                 epoch_loss += model.train_step(line, lr=args.lr, grad_clip=args.grad_clip)
             avg_loss = epoch_loss / len(all_lines)
             global_epoch = epoch + grow_phase * args.epochs
-            print(f"Epoch {global_epoch:03d}: hidden={model.hidden_dim} avg_loss={avg_loss:.6f}")
+            print(f"Epoch {global_epoch:03d}: hidden={model.hidden_dim} avg_loss={avg_loss:.6f}", flush=True)
 
             if avg_loss < phase_best_loss:
                 phase_best_loss = avg_loss
@@ -400,7 +400,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 patience += 1
                 if patience >= 5:
-                    print(f"Early stopping at epoch {global_epoch} (no improvement for 5 epochs).")
+                    print(f"Early stopping at epoch {global_epoch} (no improvement for 5 epochs).", flush=True)
                     break
 
         # Update global best across all phases.
