@@ -184,6 +184,15 @@ class LMPlasticCortex:
         self.W_vocab = _xavier_uniform(self._rng, self.hidden_dim, self.vocab_size)
         self.b_vocab = np.zeros(self.vocab_size, dtype=np.float32)
 
+        # RMSprop moving-average buffers (initialized to zero; used when the
+        # trainer requests rmsprop optimization).
+        self._rms_E = np.zeros_like(self.E)
+        self._rms_W_xh = np.zeros_like(self.W_xh)
+        self._rms_W_hh = np.zeros_like(self.W_hh)
+        self._rms_b_h = np.zeros_like(self.b_h)
+        self._rms_W_vocab = np.zeros_like(self.W_vocab)
+        self._rms_b_vocab = np.zeros_like(self.b_vocab)
+
         # Transient generation / training state.
         self._h: np.ndarray = np.zeros(self.hidden_dim, dtype=np.float32)
         # Observation statistics for curiosity signals.
@@ -452,16 +461,21 @@ class LMPlasticCortex:
         self.correction_count += 1
 
     def train_step(
-        self, text: str, lr: float = 0.01, grad_clip: float | None = None
+        self,
+        text: str,
+        lr: float = 0.01,
+        grad_clip: float | None = None,
+        use_rmsprop: bool = False,
     ) -> float:
-        """One unrolled BPTT step on *text* using SGD.
+        """One unrolled BPTT step on *text*.
 
         Returns the mean cross-entropy loss over the sequence.
 
         Args:
             text: Training sequence.
-            lr: SGD learning rate.
+            lr: Learning rate.
             grad_clip: If provided, clip total gradient norm to this value.
+            use_rmsprop: If True, use RMSprop instead of vanilla SGD.
         """
         tokens, hiddens, logits = self._forward_string(text)
         T = len(tokens) - 1  # number of next-token predictions
@@ -516,10 +530,27 @@ class LMPlasticCortex:
             if norm > max_grad_norm:
                 grad *= max_grad_norm / norm
 
-        # SGD update.
+        # SGD or RMSprop update.
+        if use_rmsprop:
+            beta2 = 0.99
+            eps = 1e-8
+            buffers_and_grads = [
+                (self._rms_E, dE),
+                (self._rms_W_xh, dW_xh),
+                (self._rms_W_hh, dW_hh),
+                (self._rms_b_h, db_h),
+                (self._rms_W_vocab, dW_vocab),
+                (self._rms_b_vocab, db_vocab),
+            ]
+            updates: list[np.ndarray] = []
+            for rms, grad in buffers_and_grads:
+                rms[:] = beta2 * rms + (1 - beta2) * (grad * grad)
+                updates.append(grad / (np.sqrt(rms) + eps))
+            dE, dW_xh, dW_hh, db_h, dW_vocab, db_vocab = updates
+
         self.E -= lr * dE
         self.W_xh -= lr * dW_xh
-        self.W_hh -= lr * dW_hh
+        self.W_hh = _spectral_normalize(self.W_hh - lr * dW_hh)
         self.b_h -= lr * db_h
         self.W_vocab -= lr * dW_vocab
         self.b_vocab -= lr * db_vocab

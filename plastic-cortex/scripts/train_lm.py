@@ -296,6 +296,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=5.0,
         help="Clip gradient norms to this value (default: 5.0).",
     )
+    parser.add_argument(
+        "--rmsprop",
+        action="store_true",
+        help="Use RMSprop instead of vanilla SGD.",
+    )
     return parser.parse_args(argv)
 
 
@@ -388,7 +393,7 @@ def main(argv: list[str] | None = None) -> int:
             epoch_loss = 0.0
             for line in all_lines:
                 model.reset_state()
-                epoch_loss += model.train_step(line, lr=args.lr, grad_clip=args.grad_clip)
+                epoch_loss += model.train_step(line, lr=args.lr, grad_clip=args.grad_clip, use_rmsprop=args.rmsprop)
             avg_loss = epoch_loss / len(all_lines)
             global_epoch = epoch + grow_phase * args.epochs
             print(f"Epoch {global_epoch:03d}: hidden={model.hidden_dim} avg_loss={avg_loss:.6f}", flush=True)
