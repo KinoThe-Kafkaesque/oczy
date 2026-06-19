@@ -214,6 +214,9 @@ class OrganismAgent:
         accepted_prob = float(pred.get("accepted_prob", 0.0))
         # The user corrected us, so the true outcome is "corrected" (accepted=0).
         prediction_error = accepted_prob
+        # If no explicit expected answer was given, extract one from the correction text.
+        if not expected_answer:
+            expected_answer = self._extract_expected_from_correction(correction)
 
         # b. Update the fast-weight organ.
         with self.profiler.profile("plastic_cortex"):
@@ -267,15 +270,35 @@ class OrganismAgent:
     @staticmethod
     def _extract_expected_from_correction(correction: str) -> str:
         """Very small heuristic to pull the corrected label out of free text."""
-        text = correction.lower()
-        for marker in ("means ", "is ", "refers to ", "should be ", "use "):
-            idx = text.find(marker)
-            if idx != -1:
-                candidate = correction[idx + len(marker) :].strip().strip(".'\"")
+        text = correction.lower().strip().strip(".'\"")
+
+        # Remove leading correction markers.
+        for marker in (
+            "no, ", "no:", "wrong, ", "wrong:", "correction:", "correct:", "expected:",
+        ):
+            if text.startswith(marker):
+                text = text[len(marker) :].strip()
+                break
+
+        # Look for phrases like "X means Y", "X is Y", "Y means X".
+        for template in (
+            r"(.*?)\s+means\s+(.*)",
+            r"(.*?)\s+is\s+(.*)",
+            r"(.*?)\s+refers to\s+(.*)",
+            r"(.*?)\s+should be\s+(.*)",
+            r"use\s+(.*)",
+        ):
+            match = re.search(template, text)
+            if match:
+                left, right = match.group(1), match.group(2)
+                # Prefer the right-hand side (definition) unless it is much shorter.
+                candidate = right if len(right) >= len(left) / 2 else left
+                candidate = candidate.strip().strip(".'\"")
                 if candidate:
                     return candidate
+
         # Fall back to the whole correction text.
-        return correction
+        return correction.strip().strip(".'\"")
 
     def consolidate(self) -> None:
         """Move hippocampal traces to slow updates and clear raw trace state.
@@ -302,6 +325,19 @@ class OrganismAgent:
             total += self._module_bytes(module)
 
         return total
+
+    def status(self) -> dict[str, Any]:
+        """Return a serializable snapshot of the organism state."""
+        return {
+            "memory_bytes": self.memory_bytes(),
+            "profile_summary": self.profile_summary(),
+        }
+
+    def reset_state(self) -> None:
+        """Reset the plastic cortex session state and scratchpads."""
+        self.plastic_cortex.reset_state()
+        self._last_request = None
+        self._last_answer = None
 
     def profile_summary(self) -> dict[str, Any]:
         """Return per-component call counts, elapsed time, and peak memory."""
