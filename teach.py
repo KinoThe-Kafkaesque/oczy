@@ -139,6 +139,14 @@ def _print_help() -> None:
     )
 
 
+def _latest_checkpoint(base: Path = Path("plastic-cortex/checkpoints")) -> Path | None:
+    """Return the most recently modified model.pkl under *base*, or None."""
+    candidates = list(base.rglob("model.pkl"))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
 def _load_model(checkpoint_path: Path, reset: bool, session_path: Path) -> LMPlasticCortex:
     """Load from session, checkpoint, or start fresh."""
     if session_path.exists() and not reset:
@@ -148,11 +156,22 @@ def _load_model(checkpoint_path: Path, reset: bool, session_path: Path) -> LMPla
             print(f"[failed to load session: {exc}; starting fresh]")
             session_path.unlink(missing_ok=True)
 
-    if checkpoint_path.exists():
-        try:
-            return LMPlasticCortex.load(checkpoint_path)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[failed to load checkpoint {checkpoint_path}: {exc}; starting fresh]")
+    resolved = checkpoint_path if checkpoint_path.exists() else _latest_checkpoint()
+    if resolved is None:
+        if not reset:
+            print(
+                "No trained checkpoint found.\n"
+                "Run: uv run python plastic-cortex/scripts/train_lm.py\n"
+                "Or start with --reset to use a blank model."
+            )
+            raise SystemExit(1)
+        print("[starting with a blank model]")
+        return LMPlasticCortex()
+
+    try:
+        return LMPlasticCortex.load(resolved)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[failed to load checkpoint {resolved}: {exc}; starting fresh]")
 
     if not reset:
         print(
@@ -376,10 +395,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if session_path.exists() and not args.reset:
         loaded_from = "session"
-    elif args.checkpoint.exists():
-        loaded_from = "checkpoint"
     else:
-        loaded_from = "blank model"
+        resolved = args.checkpoint if args.checkpoint.exists() else _latest_checkpoint()
+        loaded_from = f"checkpoint ({resolved})" if resolved is not None else "blank model"
     print(f"LMPlasticCortex ready (loaded from {loaded_from}).")
 
     _teach_loop(
@@ -389,6 +407,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         auto_learn=args.auto_learn,
     )
     return 0
+
 
 
 if __name__ == "__main__":
