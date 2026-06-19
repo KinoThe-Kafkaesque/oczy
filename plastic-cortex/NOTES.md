@@ -147,3 +147,77 @@ expanding the model capacity as dramatically.
 
 Use `plastic-cortex/scripts/manage_checkpoints.py` to list, promote, and
 prune runs.
+
+
+## Session log — 2026-06-19
+
+This session picked up from earlier work: `LMPlasticCortex` was already
+Numba-accelerated and a 200-vocab word-level run had finished at loss 3.02.
+The goal was to make the model speak coherently.  BPE was proposed as a way
+to avoid the `[?]` OOV placeholder.
+
+### Changes made
+
+1. **Added `BPETokenizer`** (`src/plastic_cortex/bpe_tokenizer.py`) with
+   byte-level BPE, plus tests in `tests/test_bpe_tokenizer.py`.
+2. **Added `--bpe` / `--bpe-vocab-size` flags** to `scripts/train_lm.py`.
+3. **Added token caching**: `lm_cortex.py` gained `train_step_tokens()` and
+   `train_lm.py` now encodes each sequence once per epoch loop.
+4. **Added `scripts/manage_checkpoints.py`**: list, promote, and delete training
+   runs.
+5. **Updated `teach.py`** to fall back to the most recent checkpoint under
+   `plastic-cortex/checkpoints/`.
+6. **Updated `.gitignore`** to ignore derived `codex_*.txt` corpora.
+
+All 77 plastic-cortex tests pass after the changes.
+
+### Experiments run
+
+| # | Run | Outcome | Notes |
+|---|---|---|---|
+| - | Pre-session baseline (`lm_word_200_full`) | loss 3.0215 @ epoch 200, hidden=96 | Fragmented words, many `[?]` |
+| - | `lm_word_200_grown_128` (resumed baseline, grown to h=128) | loss 2.9179 @ epoch 135 | Best full-line model; greedy decode collapses to `[?]` |
+| 1 | BPE 500 vocab, 1k corpus, hidden=96, 200 epochs | stopped at epoch ~15, loss ~5.4 | Too slow (~30s/epoch), kept falling quickly at 1k scale |
+| 2 | BPE 500 vocab, 2k corpus, hidden=96, 100 epochs | stopped at epoch 30, loss 5.36 | Better but still gibberish; pure-byte merges cross word boundaries |
+| 3 | Word 1000 vocab, 2k corpus, hidden=96, 200 epochs | stopped at epoch ~30, loss 5.15 | Vocab too large for the tiny model |
+| 4 | Word 200 vocab, 1k corpus, hidden=128, 200 epochs | stopped at epoch 124, loss 2.925 | Slightly better than h=96 baseline; still `[?]` heavy |
+| 5 | Word 500 vocab, 1k corpus, hidden=128, 200 epochs | stopped at epoch 62, loss 4.27 | Slower learning than 200-vocab |
+| 6 | Found earlier `lm_word_200_slow` | loss 2.5444 @ epoch 14, hidden=64, window-size=32 | Lower loss via short windows; no long-range context |
+
+### Key measurement — greedy decode on `lm_word_200_grown_128`
+
+Sampling at temperature 0.8 produced occasional English words mixed with
+`[?]`.  Greedy decoding (temperature 0.0) collapsed almost entirely to `[?]`,
+showing the 200-vocab model has learned to optimize loss by predicting the
+dominant `[?]` token.
+
+### Files produced and ignored
+
+* Derived corpora under `plastic-cortex/data/` are gitignored.
+* Checkpoints under `plastic-cortex/checkpoints/` are gitignored.
+* Best checkpoint promoted to `plastic-cortex/checkpoints/lm/model.pkl`.
+
+### Current best checkpoint
+
+* Run: `lm_word_200_grown_128`
+* Loss: **2.9179**
+* Epoch: 135 (best phase of resumed run)
+* Hidden: **128**
+* Vocab: **203** (200 most-frequent words + special tokens)
+* Param bytes: 378,668
+* Status: loads automatically in `teach.py`.
+
+### Paused state
+
+All training processes were paused (`pkill -f train_lm.py`) at the end of
+this session to free CPU and clean up the workspace.
+
+### Next recommended experiments
+
+1. **Joint capacity + vocab increase**: 500-word vocab with hidden 256 or
+   384, trained on the full 7M-char assistant corpus.
+2. **Whitespace-aware BPE**: refactor `BPETokenizer` to initialize each
+   whitespace-delimited word separately before merging, so merges stay inside
+   words and produce useful subwords instead of byte garbage.
+3. **Held-out validation split**: stop optimizing training loss alone, because
+   `[?]` prediction can minimize loss without producing readable text.
