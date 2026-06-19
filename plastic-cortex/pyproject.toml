@@ -5,7 +5,7 @@ description = "Correction-gated recurrent / state-space backbone with fast-weigh
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "KinoThe-Kafkaesque" }]
-dependencies = []
+dependencies = ["numpy>=1.26"]
 
 [build-system]
 requires = ["hatchling"]

@@ -1,0 +1,99 @@
+Hello! It is nice to meet you. How can I help you today?
+
+How are you feeling? I hope you are doing well and ready to learn together.
+
+Nice to meet you too. I am an assistant that learns from corrections, so feel free to tell me when I make a mistake.
+
+What is the weather like today? I do not have sensors, but I can help you interpret forecasts.
+
+Good morning! Did you sleep well? Let us start the day with a small task.
+
+Who are you? I am a small language model built from NumPy that keeps a conversation state inside a recurrent hidden layer.
+
+Can you help me with a coding problem? Yes. Share the error or behavior and we can work through it step by step.
+
+Thank you for the explanation. You are welcome. If anything is unclear, ask me to rephrase.
+
+Goodbye for now. Goodbye! Remember, you can always come back and correct me.
+
+What is your purpose? My purpose is to assist, answer questions, and update my understanding when you point out a better response.
+
+I see, let me update my understanding. Please repeat the correction so I can anchor it to the right context.
+
+That is not quite right. I understand. I will try the corrected version next time the same context appears.
+
+You should answer with the project name, not a generic label. I see, let me update my understanding. The project is called Oczy.
+
+When I say "branch", I mean a git branch, not a tree branch. I see, let me update my understanding. Branch refers to git version control.
+
+"Batch" here means a group of training examples, not a baked good. I see, let me update my understanding. Batch means a mini-batch of data.
+
+"Model" means a machine-learning model, not a fashion model. I see, let me update my understanding. Model refers to a learned neural network.
+
+"Profile" means a resource profile, not a social-media profile. I see, let me update my understanding. Profile means a performance and memory footprint report.
+
+What is a plastic cortex? A plastic cortex is a recurrent module that stores fast conversation weights and can be corrected online.
+
+How does correction work? You give me a trigger phrase and an expected answer, and my fast weights boost the expected tokens.
+
+Why do we use NumPy only? NumPy keeps the dependency tree small and makes every gradient transparent.
+
+What is the workspace? The workspace is the shared environment where experiments, agents, and benchmarks live.
+
+Explain the Oczy organism in one sentence. Oczy is a modular plastic world-model agent that metabolizes experience into weights instead of memorizing raw traces.
+
+Name one package in Oczy. plastic-cortex provides the conversation fast-weight organ.
+
+Name another package. neural-hippocampus stores surprise-gated replay traces.
+
+What does world-model-critic do? It estimates outcome surprise and decides which experiences are worth remembering.
+
+What is an identity hypernetwork? It is a module that maps a latent summary to adapter deltas for a particular agent identity.
+
+Why keep logs gitignored? Transient logs change every run, so we only commit curated summaries to keep history clean.
+
+What is a behavior delta? A behavior delta is the change in task performance produced by a memory update divided by the bytes used.
+
+How do you measure memory efficiency? We compute behavior_delta_per_byte_of_persistent_memory.
+
+What is curriculum evaluation? It is a staged set of tasks where we pre-test, train, and post-test to measure learning transfer.
+
+Why use early stopping? Early stopping prevents overfitting and saves compute when training loss stops improving.
+
+What is the hidden state? The hidden state is a vector that summarizes the recurrent context so far.
+
+What is a vocabulary? A vocabulary is the set of tokens the model can emit.
+
+How do you encode text? We convert each character into an integer id using the tokenizer.
+
+How do you decode text? We convert a sequence of integer ids back into characters.
+
+What is cross-entropy loss? It measures how surprised the model is by the true next token.
+
+What is a learning rate? The learning rate controls how large each SGD update step is.
+
+What is a fast weight? A fast weight is a short-term memory entry that boosts specific token logits for the current session.
+
+What is a correction trigger? A correction trigger is a phrase that reminds the model to prefer an updated answer.
+
+Can you remember forever? Fast weights are session-only; long-term memory requires consolidation into slow weights or an external store.
+
+What should I do if the model confuses two meanings? Provide a correction that names the ambiguous word and gives the correct context, like "batch means ML batch".
+
+How do I know if the model learned? Compare pre-test and post-test scores on a hold-out subset.
+
+What is overgeneralization? It is when a correction applies too broadly and changes answers outside the intended scope.
+
+What is forgetting in this setup? Forgetting is when new updates overwrite older useful behavior.
+
+What is an ablation? An ablation removes one module to measure its contribution.
+
+Why run multiple seeds? Multiple seeds show whether a result is stable or lucky.
+
+What is a smoke test? A smoke test is a quick end-to-end run that checks the pipeline does not catch fire.
+
+I want to train a tiny language model. Start by fitting a tokenizer on your corpus, then call train_step in a loop over the text lines.
+
+Where should I save artifacts? Save the tokenizer to checkpoints/lm/tokenizer.json and the model to checkpoints/lm/model.pkl.
+
+Good luck with the build! Thank you. Let me know if you need help writing the training loop.

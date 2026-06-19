@@ -63,7 +63,8 @@ def _print_help() -> None:
     print(
         "Commands:  /help  /reset  /status  /consolidate  /quit\n"
         "Corrections: start with 'no,' / 'wrong,' / 'correct:' / 'expected:'\n"
-        f"Domain: this agent only handles ambiguous software commands: {tokens}"
+        f"Domain: this agent only handles ambiguous software commands: {tokens}\n"
+        "Backend: pass --backend lm (and --lm-checkpoint PATH) to use LMPlasticCortex."
     )
 
 
@@ -78,17 +79,21 @@ def _save_agent(agent: OrganismAgent, path: Path) -> None:
 def _chat_loop(
     agent: OrganismAgent,
     session_path: Path,
+    backend: str = "default",
     initial_messages: Sequence[str] | None = None,
 ) -> None:
     tokens = ", ".join(_TASK_TOKENS)
-    fallback = (
-        "I can help with ambiguous software commands such as "
-        f"{tokens}. Try one of those, or type /help."
-    )
+    if backend == "lm":
+        fallback = None
+    else:
+        fallback = (
+            "I can help with ambiguous software commands such as "
+            f"{tokens}. Try one of those, or type /help."
+        )
     if initial_messages:
         for message in initial_messages:
             print(f">>> {message}")
-            if _has_task_token(message):
+            if fallback is None or _has_task_token(message):
                 print(f"<-- {agent.answer(message)}\n")
             else:
                 print(f"<-- {fallback}\n")
@@ -135,7 +140,7 @@ def _chat_loop(
             agent.correct(user_input, "")  # expected answer is extracted heuristically
             print("[correction recorded]")
             _save_agent(agent, session_path)
-        elif _has_task_token(user_input):
+        elif fallback is None or _has_task_token(user_input):
             answer = agent.answer(user_input)
             print(f"<-- {answer}")
             _save_agent(agent, session_path)
@@ -165,13 +170,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         default="{}",
         help="JSON config passed to OrganismAgent (default: '{}').",
     )
+    parser.add_argument(
+        "--backend",
+        choices=["default", "lm"],
+        default="default",
+        help="Fast organ backend to use: default PlasticCortex or LMPlasticCortex (default: default).",
+    )
+    parser.add_argument(
+        "--lm-checkpoint",
+        default="plastic-cortex/checkpoints/lm/model.pkl",
+        help="Path to a saved LMPlasticCortex checkpoint (only used with --backend lm).",
+    )
     args = parser.parse_args(argv)
 
-    config: dict = {}
+    config: dict = {"backend": args.backend, "lm_checkpoint": args.lm_checkpoint}
     if args.config:
         import json
 
-        config = json.loads(args.config)
+        config.update(json.loads(args.config))
 
     session_path = _session_path(args.session)
 
@@ -190,8 +206,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         agent = OrganismAgent(config)
         print("Oczy OrganismAgent ready (new session).")
-
-    _chat_loop(agent, session_path, initial_messages=args.messages)
+    _chat_loop(agent, session_path, backend=args.backend, initial_messages=args.messages)
     return 0
 
 

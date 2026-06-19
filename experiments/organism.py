@@ -24,6 +24,11 @@ from skill_immune_cortex import SkillImmuneCortex
 from experience_autoencoder import ExperienceAutoencoder
 
 
+try:
+    from plastic_cortex.lm_cortex import LMPlasticCortex
+except Exception:
+    LMPlasticCortex = None
+
 class OrganismAgent:
     """End-to-end plastic-world-model agent.
 
@@ -32,9 +37,21 @@ class OrganismAgent:
     """
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
-        config = dict(config or {})
+        self.config = dict(config or {})
+        config = self.config
 
-        self.plastic_cortex = PlasticCortex(config.get("plastic_cortex"))
+        if config.get("backend") == "lm":
+            if LMPlasticCortex is None:
+                raise RuntimeError("LM backend not available")
+            checkpoint = config.get(
+                "lm_checkpoint", "plastic-cortex/checkpoints/lm/model.pkl"
+            )
+            if Path(checkpoint).exists():
+                self.plastic_cortex = LMPlasticCortex.load(checkpoint)
+            else:
+                self.plastic_cortex = LMPlasticCortex(config.get("lm", {}))
+        else:
+            self.plastic_cortex = PlasticCortex(config.get("plastic_cortex"))
         self.neural_hippocampus = NeuralHippocampus(config.get("neural_hippocampus"))
         self.world_model_critic = WorldModelCritic(config.get("world_model_critic"))
         self.identity_hypernetwork = IdentityHypernetwork(
@@ -74,9 +91,13 @@ class OrganismAgent:
             request_with_meta = f"{meta} {request}"
         else:
             request_with_meta = request
-
         # 2. Fast-weight / recurrent answer.
         with self.profiler.profile("plastic_cortex"):
+            if self.config.get("backend") == "lm":
+                fast_answer = self.plastic_cortex.answer(
+                    request_with_meta, max_tokens=100, temperature=1.0
+                )
+                return fast_answer
             fast_answer = self.plastic_cortex.answer(request_with_meta)
 
         # 3. World-model confidence check.
