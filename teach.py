@@ -132,6 +132,7 @@ def _print_help() -> None:
         "  /save                 persist model state immediately\n"
         "  /wonder               print the model's current wonder report\n"
         "  /curiosity [on|off]   toggle or set active curiosity questions\n"
+        "  /learn                run train_step over the conversation log\n"
         "\n"
         f"Corrections: start with {markers}\n"
         "  /bad <expected>   correct the last query/answer pair"
@@ -165,9 +166,29 @@ def _load_model(checkpoint_path: Path, reset: bool, session_path: Path) -> LMPla
     return LMPlasticCortex()
 
 
-def _teach_loop(model: LMPlasticCortex, session_path: Path, *, curiosity_enabled: bool = CURIOSITY_ENABLED_DEFAULT) -> None:
+def _teach_loop(model: LMPlasticCortex, session_path: Path, *, curiosity_enabled: bool = CURIOSITY_ENABLED_DEFAULT, auto_learn: bool = False) -> None:
     last_query: str | None = None
     last_answer: str | None = None
+    conversation_log: list[str] = []
+    turn_count = 0
+
+    def _record_turn(query: str, response: str) -> None:
+        nonlocal turn_count
+        turn_count += 1
+        conversation_log.append(f"{query}\t{response}")
+
+    def _run_learning(lr: float = 0.005) -> float:
+        if not conversation_log:
+            return 0.0
+        total_loss = 0.0
+        for entry in conversation_log:
+            # Each log entry is "query\tresponse"; train on the full exchange
+            # so the model learns to map prompts to replies and vice versa.
+            text = entry.replace("\t", " ")
+            model.reset_state()
+            total_loss += model.train_step(text, lr=lr)
+        avg_loss = total_loss / len(conversation_log)
+        return avg_loss
 
     while True:
         try:
@@ -200,6 +221,12 @@ def _teach_loop(model: LMPlasticCortex, session_path: Path, *, curiosity_enabled
             print(json.dumps(model.wonder(), indent=2, default=str))
             continue
 
+        if lowered == "/learn":
+            avg_loss = _run_learning()
+            print(f"[learned from {len(conversation_log)} turns; avg_loss={avg_loss:.4f}]")
+            _save_model(model, session_path)
+            continue
+
         if lowered == "/forget":
             model.reset_state()
             last_query = None
@@ -214,6 +241,8 @@ def _teach_loop(model: LMPlasticCortex, session_path: Path, *, curiosity_enabled
                 session_path.unlink()
             last_query = None
             last_answer = None
+            conversation_log.clear()
+            turn_count = 0
             print("[session state reset and persisted state deleted]")
             continue
 
@@ -247,6 +276,7 @@ def _teach_loop(model: LMPlasticCortex, session_path: Path, *, curiosity_enabled
                 continue
             model.correct(last_query, expected)
             last_answer = expected
+            _record_turn(last_query, expected)
             print("[recorded correction]")
             _save_model(model, session_path)
             continue
@@ -261,6 +291,7 @@ def _teach_loop(model: LMPlasticCortex, session_path: Path, *, curiosity_enabled
                 continue
             model.correct(last_query, expected)
             last_answer = expected
+            _record_turn(last_query, expected)
             print("[recorded correction]")
             _save_model(model, session_path)
             continue
@@ -269,6 +300,7 @@ def _teach_loop(model: LMPlasticCortex, session_path: Path, *, curiosity_enabled
         answer = model.answer(user_input)
         last_query = user_input
         last_answer = answer
+        _record_turn(user_input, answer)
         curiosity = _format_curiosity(model, user_input, answer)
         print(answer)
         print(curiosity)
@@ -279,6 +311,9 @@ def _teach_loop(model: LMPlasticCortex, session_path: Path, *, curiosity_enabled
         ):
             print("Teach > (?)")
             print(_ask_clarifying_question(model, user_input))
+        if auto_learn and turn_count % 10 == 0 and turn_count > 0:
+            avg_loss = _run_learning()
+            print(f"[auto-learn from {len(conversation_log)} turns; avg_loss={avg_loss:.4f}]")
         _save_model(model, session_path)
 
 
@@ -307,6 +342,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Start with active curiosity questions disabled.",
     )
+    parser.add_argument(
+        "--auto-learn",
+        action="store_true",
+        help="Run train_step on the conversation log every 10 turns.",
+    )
     args = parser.parse_args(argv)
 
     session_path = _session_path(args.session)
@@ -327,7 +367,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         loaded_from = "blank model"
     print(f"LMPlasticCortex ready (loaded from {loaded_from}).")
 
-    _teach_loop(model, session_path, curiosity_enabled=not args.no_curiosity)
+    _teach_loop(
+        model,
+        session_path,
+        curiosity_enabled=not args.no_curiosity,
+        auto_learn=args.auto_learn,
+    )
     return 0
 
 
