@@ -21,27 +21,44 @@ from experiments.organism import OrganismAgent
 
 
 _CORRECTION_MARKERS = ("no,", "no:", "wrong,", "wrong:", "correct:", "expected:", "correction:")
+_TASK_TOKENS = (
+    "profile", "model", "batch", "file", "key", "module",
+    "service", "branch", "table", "cell", "record", "run",
+)
+
+
+def _has_task_token(text: str) -> bool:
+    lowered = text.lower()
+    return any(token in lowered for token in _TASK_TOKENS)
 
 
 def _is_correction(text: str) -> bool:
     lowered = text.strip().lower()
     return any(lowered.startswith(marker) for marker in _CORRECTION_MARKERS)
 
-
 def _print_help() -> None:
+    tokens = ", ".join(_TASK_TOKENS)
     print(
         "Commands:  /help  /reset  /status  /consolidate  /quit\n"
-        "Corrections: start with 'no,' / 'wrong,' / 'correct:' / 'expected:'"
+        "Corrections: start with 'no,' / 'wrong,' / 'correct:' / 'expected:'\n"
+        f"Domain: this agent only handles ambiguous software commands: {tokens}"
     )
 
 
 def _chat_loop(agent: OrganismAgent, initial_messages: Sequence[str] | None = None) -> None:
+    tokens = ", ".join(_TASK_TOKENS)
+    fallback = (
+        "I can help with ambiguous software commands such as "
+        f"{tokens}. Try one of those, or type /help."
+    )
     if initial_messages:
         for message in initial_messages:
             print(f">>> {message}")
-            answer = agent.answer(message)
-            print(f"<-- {answer}\n")
-
+            if _has_task_token(message):
+                answer = agent.answer(message)
+                print(f"<-- {answer}\n")
+            else:
+                print(f"<-- {fallback}\n")
     while True:
         try:
             user_input = input(">>> ").strip()
@@ -68,17 +85,14 @@ def _chat_loop(agent: OrganismAgent, initial_messages: Sequence[str] | None = No
 
             print(json.dumps(agent.status(), indent=2, default=str))
             continue
-        if lowered == "/consolidate":
-            agent.consolidate()
-            print("[consolidated raw traces]")
-            continue
-
         if _is_correction(user_input):
             agent.correct(user_input, "")  # expected answer is extracted heuristically
             print("[correction recorded]")
-        else:
+        elif _has_task_token(user_input):
             answer = agent.answer(user_input)
             print(f"<-- {answer}")
+        else:
+            print(f"<-- {fallback}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
