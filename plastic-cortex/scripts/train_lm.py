@@ -10,6 +10,13 @@ Adaptive mode:
 Adaptive mode first probes the existing checkpoint (if any) to generate a
 curriculum targeted at the model's current uncertainty / novelty level, then
 mixes that curriculum with the base corpus for training.
+
+Auto-grow mode:
+    uv run python plastic-cortex/scripts/train_lm.py --auto-grow
+
+If early stopping fires and the loss is still above --grow-loss-threshold,
+the model expands its hidden dimension by --grow-factor and resumes training
+(up to five growth phases).
 """
 
 from __future__ import annotations
@@ -233,6 +240,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Load an existing model.pkl from --outdir before training.",
     )
+    parser.add_argument(
+        "--auto-grow",
+        action="store_true",
+        help="If early stopping hits and loss is still high, increase hidden_dim and keep training.",
+    )
+    parser.add_argument(
+        "--grow-factor",
+        type=float,
+        default=1.5,
+        help="Multiplier for hidden_dim on auto-grow (default: 1.5).",
+    )
+    parser.add_argument(
+        "--max-hidden-dim",
+        type=int,
+        default=1024,
+        help="Ceiling for auto-grow hidden_dim (default: 1024).",
+    )
+    parser.add_argument(
+        "--grow-loss-threshold",
+        type=float,
+        default=2.5,
+        help="Loss above which auto-grow is considered (default: 2.5).",
+    )
     return parser.parse_args(argv)
 
 
@@ -250,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
 
     tokenizer = CharTokenizer()
 
-    # If adaptive mode is requested, try to load a checkpoint to probe it.
+    # If adaptive/resume is requested, try to load a checkpoint.
     model: LMPlasticCortex | None = None
     model_path = outdir / "model.pkl"
     if args.resume or args.adaptive:
@@ -274,6 +304,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"[adaptive] generated {len(adaptive_lines)} targeted lines")
 
+    # Fresh start if no checkpoint was loaded and no fresh model was made above.
+    if model is None:
+        config = {
+            "hidden_dim": args.hidden_dim,
+            "vocab_size": tokenizer.vocab_size,
+            "seed": 42,
+        }
+        model = LMPlasticCortex(config)
+
+    model.tokenizer = tokenizer
+
     all_lines = list(base_lines)
     if adaptive_lines:
         # Mix adaptive items throughout the corpus instead of appending them all.
@@ -289,48 +330,80 @@ def main(argv: list[str] | None = None) -> int:
     tokenizer.save(outdir / "tokenizer.json")
     print(f"Corpus: {corpus_path} ({len(base_lines)} base + {len(adaptive_lines)} adaptive lines, vocab_size={tokenizer.vocab_size})")
 
-    if model is None:
-        config = {
-            "hidden_dim": args.hidden_dim,
-            "vocab_size": tokenizer.vocab_size,
-            "seed": 42,
-        }
-        model = LMPlasticCortex(config)
-    else:
-        # Ensure the resumed model has a tokenizer that covers the combined corpus.
-        model.tokenizer = tokenizer
-
-    assert model is not None
-
-    best_loss = float("inf")
-    patience = 0
     best_path = outdir / "model_best.pkl"
+    global_best_loss = float("inf")
+    global_best_path = outdir / "model_global_best.pkl"
+    patience = 0
+    grow_phase = 0
+    max_grow_phases = 5
+    min_improvement_ratio = 0.01  # at least 1% relative gain to justify growth
 
-    for epoch in range(1, args.epochs + 1):
-        random.shuffle(all_lines)
-        epoch_loss = 0.0
-        for line in all_lines:
-            model.reset_state()
-            epoch_loss += model.train_step(line, lr=args.lr)
-        avg_loss = epoch_loss / len(all_lines)
-        print(f"Epoch {epoch:03d}/{args.epochs}: avg_loss={avg_loss:.6f}")
+    while grow_phase <= max_grow_phases:
+        phase_best_loss = float("inf")
+        phase_best_path = outdir / f"model_phase_{grow_phase:02d}_best.pkl"
+        patience = 0
 
-        if avg_loss < best_loss:
-            best_loss = avg_loss
-            patience = 0
-            model.save(best_path)
+        for epoch in range(1, args.epochs + 1):
+            random.shuffle(all_lines)
+            epoch_loss = 0.0
+            for line in all_lines:
+                model.reset_state()
+                epoch_loss += model.train_step(line, lr=args.lr)
+            avg_loss = epoch_loss / len(all_lines)
+            global_epoch = epoch + grow_phase * args.epochs
+            print(f"Epoch {global_epoch:03d}: hidden={model.hidden_dim} avg_loss={avg_loss:.6f}")
+
+            if avg_loss < phase_best_loss:
+                phase_best_loss = avg_loss
+                patience = 0
+                model.save(phase_best_path)
+            else:
+                patience += 1
+                if patience >= 5:
+                    print(f"Early stopping at epoch {global_epoch} (no improvement for 5 epochs).")
+                    break
+
+        # Update global best across all phases.
+        if phase_best_path.exists() and phase_best_loss < global_best_loss:
+            global_best_loss = phase_best_loss
+            global_best_path.write_bytes(phase_best_path.read_bytes())
+
+        if grow_phase == 0:
+            previous_best = float("inf")
         else:
-            patience += 1
-            if patience >= 5:
-                print(f"Early stopping at epoch {epoch} (no improvement for 5 epochs).")
-                break
+            previous_best = global_best_loss
+
+        can_grow = (
+            args.auto_grow
+            and grow_phase < max_grow_phases
+            and int(model.hidden_dim * args.grow_factor) <= args.max_hidden_dim
+        )
+        # Only grow if the current phase actually improved enough to justify more capacity.
+        if grow_phase > 0 and previous_best > 0:
+            improvement = (previous_best - phase_best_loss) / previous_best
+            if improvement < min_improvement_ratio:
+                print(f"\n[auto-grow] improvement {improvement:.2%} below {min_improvement_ratio:.0%}; stopping.")
+                can_grow = False
+
+        if can_grow:
+            new_dim = min(int(model.hidden_dim * args.grow_factor), args.max_hidden_dim)
+            print(f"\n[auto-grow phase {grow_phase + 1}] phase_best={phase_best_loss:.4f}; expanding hidden_dim: {model.hidden_dim} -> {new_dim}")
+            model = model.grow(new_dim)
+            grow_phase += 1
+        else:
+            break
 
     final_path = outdir / "model.pkl"
-    if best_path.exists():
+    if global_best_path.exists():
+        final_path.write_bytes(global_best_path.read_bytes())
+        print(f"Saved best model (loss={global_best_loss:.4f}) to {final_path}")
+    elif best_path.exists():
         final_path.write_bytes(best_path.read_bytes())
+        print(f"Saved model to {final_path}")
     else:
         model.save(final_path)
-    print(f"Saved model to {final_path}")
+        print(f"Saved model to {final_path}")
+
 
     # Smoke test: generate a response for "hello".
     model.reset_state()

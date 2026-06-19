@@ -176,6 +176,7 @@ class LMPlasticCortex:
         self._token_total: int = 0
         self._recent_novel: collections.deque[tuple[str, float]] = collections.deque(maxlen=100)
         self.correction_count = 0
+
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Migrate pickled objects created before curiosity signals existed."""
         self.__dict__.update(state)
@@ -188,6 +189,54 @@ class LMPlasticCortex:
             self._token_total = 0
         if "_recent_novel" not in self.__dict__:
             self._recent_novel = collections.deque(maxlen=100)
+
+    def grow(self, new_hidden_dim: int) -> LMPlasticCortex:
+        """Return a larger-capacity cortex with preserved behavioral state.
+
+        The current slow weights are expanded by padding with small random
+        values, while fast weights, observation statistics, and the tokenizer
+        are copied over unchanged.  This lets the organism respond to training
+        difficulty by increasing capacity without losing what it already knows.
+        """
+        if new_hidden_dim <= self.hidden_dim:
+            raise ValueError(
+                f"new_hidden_dim ({new_hidden_dim}) must exceed "
+                f"current hidden_dim ({self.hidden_dim})"
+            )
+
+        new_config = dict(self.config)
+        new_config["hidden_dim"] = new_hidden_dim
+        new_config["vocab_size"] = self.vocab_size
+        new_config["seed"] = self.seed
+
+        child = LMPlasticCortex(new_config)
+        child.tokenizer = self.tokenizer
+        child.fast = self.fast
+        child._seen_tokens = self._seen_tokens.copy()
+        child._seen_bigrams = self._seen_bigrams.copy()
+        child._token_total = self._token_total
+        child._recent_novel = collections.deque(self._recent_novel, maxlen=100)
+        child.correction_count = self.correction_count
+
+        rng = self._rng
+        pad_E = _xavier_uniform(rng, self.vocab_size, new_hidden_dim - self.hidden_dim)
+        child.E = np.concatenate([self.E, pad_E], axis=1)
+
+        pad_W_xh = _xavier_uniform(rng, self.vocab_size, new_hidden_dim - self.hidden_dim)
+        child.W_xh = np.concatenate([self.W_xh, pad_W_xh], axis=1)
+
+        pad_top = _xavier_uniform(rng, self.hidden_dim, new_hidden_dim - self.hidden_dim)
+        W_hh_old = np.concatenate([self.W_hh, pad_top], axis=1)
+        pad_bottom = _xavier_uniform(rng, new_hidden_dim - self.hidden_dim, new_hidden_dim)
+        child.W_hh = np.concatenate([W_hh_old, pad_bottom], axis=0)
+
+        child.b_h[: self.hidden_dim] = self.b_h
+
+        pad_W_vocab_rows = _xavier_uniform(rng, new_hidden_dim - self.hidden_dim, self.vocab_size)
+        child.W_vocab = np.concatenate([self.W_vocab, pad_W_vocab_rows], axis=0)
+        child.b_vocab = self.b_vocab.copy()
+
+        return child
     # ------------------------------------------------------------------
     # Forward helpers
     # ------------------------------------------------------------------

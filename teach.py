@@ -227,6 +227,21 @@ def _teach_loop(model: LMPlasticCortex, session_path: Path, *, curiosity_enabled
             _save_model(model, session_path)
             continue
 
+        if lowered == "/grow" or lowered.startswith("/grow "):
+            arg = user_input[len("/grow") :].strip()
+            try:
+                new_dim = int(arg)
+            except ValueError:
+                new_dim = int(model.hidden_dim * 1.5)
+            try:
+                model = model.grow(new_dim)
+                print(f"[grew model to hidden_dim={model.hidden_dim}]")
+            except ValueError as exc:
+                print(f"[cannot grow: {exc}]")
+            conversation_log.clear()
+            _save_model(model, session_path)
+            continue
+
         if lowered == "/forget":
             model.reset_state()
             last_query = None
