@@ -86,3 +86,64 @@ can actually change future behavior.
    priors.
 5. **Benchmark.**  Build the Correction-to-Competence task described in
    `experiments.txt` section 14 and measure uptake latency and transfer.
+
+## LMPlasticCortex training experiments
+
+A trainable NumPy/Numba RNN was added to `lm_cortex.py`.  The goal was to
+make it emit recognizable assistant-like text when trained on the user's
+`.codex` logs, while staying CPU-only and tiny.
+
+### What worked
+
+* **Word-level tokenization** is far more stable than character-level on this
+  data.  Character-level sequences are ~300 tokens/line and repeatedly
+  exploded; word-level sequences are ~30-50 tokens/line.
+* **Full-line training** is faster than windowed training once the forward/
+  backward pass is Numba-compiled, because it avoids per-window overhead.
+* **Numba kernels** in `_numba_kernels.py` removed the per-token Python
+  bottleneck without adding PyTorch/JAX/scipy dependencies.
+* **Caching pre-encoded tokens** in `train_lm.py` removed repeated tokenizer
+  work inside `train_step`.
+* **Spectral normalization of `W_hh`** + **gradient clipping** + **small
+  learning rate** kept the vanilla tanh RNN stable.
+* **Growing hidden dimension from 96 → 128** broke a long plateau and pushed
+  full-line loss below 3.0 for the first time.
+
+### What did not
+
+* **Character-level** repeatedly diverged despite spectral init; too many
+  time steps for a tiny RNN.
+* **BPE (byte-pair encoding)** removed the `[?]` OOV problem, but on this
+  small model it converged much slower than word-level and remained
+  unintelligible after 30 epochs.  A pure-byte greedy BPE also spends many
+  merges crossing word boundaries instead of learning useful subwords.
+* **Windowed training** achieved a lower headline loss (2.54 at h=64), but
+  because sequences were only 32 tokens the model did not learn long-range
+  structure; generation produced one- or two-word fragments.
+* **Vocab 1000 with h=96** was unlearnable; the capacity was too small for
+  so many embeddings.
+* **Greedy decoding** discovered that the 200-word model simply predicts `[?]`
+  over and over, because `[?]` is the most common token in targets.
+
+### Checkpoints
+
+| Run | Loss | Epochs | Hidden | Notes |
+|---|---|---|---|
+| `lm_word_200_slow` | 2.5444 | 14 | 64 | `--window-size 32`, low loss but no context |
+| `lm_word_200_full` | 3.0215 | 200 | 96 | First coherent full-line run |
+| `lm_word_200_grown_128` | 2.9179 | 135 (best phase) | 128 | Grown from `lm_word_200_full`, best full-line model so far |
+| `lm_word_1k_slow` | 3.5578 | 46 | 64 | Vocab too large for h=64 |
+| `lm_bpe_500_full` | 5.2789 | 200 | 96 | BPE converged too slowly |
+| `lm_assistant_1k_*` | >>10 | <102 | 96 | Pre-spectral-init character-level runs that diverged |
+
+### Current status
+
+The best usable checkpoint is `lm_word_200_grown_128` at loss 2.92 on
+full-line sequences.  Output is still dominated by `[?]` placeholders because
+the 200-word vocabulary cannot cover this domain.  The next experiments should
+either (1) increase vocabulary **and** hidden dimension together, or (2) use
+a whitespace-aware subword tokenizer so every word is representable without
+expanding the model capacity as dramatically.
+
+Use `plastic-cortex/scripts/manage_checkpoints.py` to list, promote, and
+prune runs.
