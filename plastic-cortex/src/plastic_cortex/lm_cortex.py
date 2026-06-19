@@ -435,10 +435,17 @@ class LMPlasticCortex:
             )
         self.correction_count += 1
 
-    def train_step(self, text: str, lr: float = 0.01) -> float:
+    def train_step(
+        self, text: str, lr: float = 0.01, grad_clip: float | None = None
+    ) -> float:
         """One unrolled BPTT step on *text* using SGD.
 
         Returns the mean cross-entropy loss over the sequence.
+
+        Args:
+            text: Training sequence.
+            lr: SGD learning rate.
+            grad_clip: If provided, clip total gradient norm to this value.
         """
         tokens, hiddens, logits = self._forward_string(text)
         T = len(tokens) - 1  # number of next-token predictions
@@ -487,7 +494,7 @@ class LMPlasticCortex:
             dh_next = dtanh @ self.W_hh.T
 
         # Gradient clipping to prevent recurrent explosions.
-        max_grad_norm = 5.0
+        max_grad_norm = grad_clip if grad_clip is not None else 5.0
         for grad in (dE, dW_xh, dW_hh, db_h, dW_vocab, db_vocab):
             norm = float(np.sqrt(np.sum(grad * grad)) + 1e-12)
             if norm > max_grad_norm:

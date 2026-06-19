@@ -14,9 +14,15 @@ mixes that curriculum with the base corpus for training.
 Auto-grow mode:
     uv run python plastic-cortex/scripts/train_lm.py --auto-grow
 
-If early stopping fires and the loss is still above --grow-loss-threshold,
-the model expands its hidden dimension by --grow-factor and resumes training
-(up to five growth phases).
+If early stopping fires, the model expands its hidden dimension and resumes
+training, but only continues growing while each phase improves by at least
+1% relative loss. The best model across all phases is saved.
+
+Windowed mode:
+    uv run python plastic-cortex/scripts/train_lm.py --window-size 64
+
+Chops long lines into overlapping fixed-length windows. This bounds the BPTT
+horizon and makes epochs much faster on corpora with long lines.
 """
 
 from __future__ import annotations
@@ -125,6 +131,21 @@ def load_corpus(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
     lines = [line.strip() for line in text.splitlines()]
     return [line for line in lines if line and not line.startswith("# ")]
+
+
+def _windowed_lines(lines: list[str], window_size: int, stride: int | None = None) -> list[str]:
+    """Chop each line into overlapping fixed-length windows."""
+    stride = stride or max(1, window_size // 2)
+    windows: list[str] = []
+    for line in lines:
+        start = 0
+        while start + window_size <= len(line):
+            windows.append(line[start : start + window_size])
+            start += stride
+        # Always include the tail if the line is shorter than the window.
+        if len(line) < window_size:
+            windows.append(line)
+    return windows
 
 
 def _score_item(model: LMPlasticCortex, prompt: str, target: str) -> dict[str, float]:
@@ -243,7 +264,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--auto-grow",
         action="store_true",
-        help="If early stopping hits and loss is still high, increase hidden_dim and keep training.",
+        help="If early stopping hits, increase hidden_dim and keep training.",
     )
     parser.add_argument(
         "--grow-factor",
@@ -258,10 +279,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Ceiling for auto-grow hidden_dim (default: 1024).",
     )
     parser.add_argument(
-        "--grow-loss-threshold",
+        "--window-size",
+        type=int,
+        default=None,
+        help="Chop each line into fixed-length windows. Faster, more epochs per hour.",
+    )
+    parser.add_argument(
+        "--stride",
+        type=int,
+        default=None,
+        help="Stride for overlapping windows (default: window_size // 2).",
+    )
+    parser.add_argument(
+        "--grad-clip",
         type=float,
-        default=2.5,
-        help="Loss above which auto-grow is considered (default: 2.5).",
+        default=5.0,
+        help="Clip gradient norms to this value (default: 5.0).",
     )
     return parser.parse_args(argv)
 
@@ -331,6 +364,10 @@ def main(argv: list[str] | None = None) -> int:
 
     model.tokenizer = tokenizer
 
+    if args.window_size:
+        all_lines = _windowed_lines(all_lines, args.window_size, args.stride)
+        print(f"[windowed] {len(all_lines)} windows of size <= {args.window_size}")
+
     print(f"Corpus: {corpus_path} ({len(base_lines)} base + {len(adaptive_lines)} adaptive lines, vocab_size={tokenizer.vocab_size})")
 
     global_best_loss = float("inf")
@@ -351,7 +388,7 @@ def main(argv: list[str] | None = None) -> int:
             epoch_loss = 0.0
             for line in all_lines:
                 model.reset_state()
-                epoch_loss += model.train_step(line, lr=args.lr)
+                epoch_loss += model.train_step(line, lr=args.lr, grad_clip=args.grad_clip)
             avg_loss = epoch_loss / len(all_lines)
             global_epoch = epoch + grow_phase * args.epochs
             print(f"Epoch {global_epoch:03d}: hidden={model.hidden_dim} avg_loss={avg_loss:.6f}")
@@ -400,13 +437,14 @@ def main(argv: list[str] | None = None) -> int:
         model.save(final_path)
         print(f"Saved model to {final_path}")
 
-
-    # Smoke test: generate a response for "hello".
+    # Smoke test: generate a few continuations.
     model.reset_state()
-    prompt = "hello"
-    response = model.answer(prompt, max_tokens=100, temperature=0.8)
-    print(f"\nSmoke test -- prompt: {prompt!r}")
-    print(f"Generated: {response!r}")
+    test_prompts = ["hello", "what", "the"]
+    print("\nSmoke test:")
+    for prompt in test_prompts:
+        model.reset_state()
+        response = model.answer(prompt, max_tokens=80, temperature=0.8)
+        print(f"  {prompt!r} -> {response!r}")
 
     return 0
 
