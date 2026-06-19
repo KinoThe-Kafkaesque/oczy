@@ -51,3 +51,19 @@ class IdentityLatents:
         for field in cls._FIELDS:
             setattr(inst, field, np.asarray(data[field], dtype=np.float64))
         return inst
+
+    def grow(self, new_dim: int) -> "IdentityLatents":
+        """Return a larger IdentityLatents with old values in the leading slice."""
+        if new_dim <= self.dim:
+            raise ValueError(
+                f"new_dim ({new_dim}) must exceed current dim ({self.dim})"
+            )
+
+        grown = IdentityLatents(dim=new_dim)
+        for field in self._FIELDS:
+            old = getattr(self, field)
+            padded = np.zeros(new_dim, dtype=np.float64)
+            padded[: self.dim] = old
+            setattr(grown, field, padded)
+        return grown
+

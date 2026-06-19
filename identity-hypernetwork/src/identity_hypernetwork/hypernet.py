@@ -153,6 +153,36 @@ class IdentityHypernetwork:
                 return clean
         return None
 
+    def grow(self, new_latent_dim: int) -> "IdentityHypernetwork":
+        """Return a larger-capacity hypernetwork preserving learned latents.
+
+        Each latent vector is zero-padded and the projection matrix ``W`` is
+        expanded with small random columns matching the original initializer.
+        """
+        if new_latent_dim <= self.latent_dim:
+            raise ValueError(
+                f"new_latent_dim ({new_latent_dim}) must exceed "
+                f"current latent_dim ({self.latent_dim})"
+            )
+
+        child = IdentityHypernetwork(
+            latent_dim=new_latent_dim, seed=self.rng.integers(2**31), learning_rate=self.lr
+        )
+        # Restore deterministic RNG state so new columns use same distribution.
+        child.rng = self.rng
+        child.latents = self.latents.grow(new_latent_dim)
+        child.concepts = list(self.concepts)
+        child.concept_index = dict(self.concept_index)
+        child.output_dim = self.output_dim
+
+        new_input_dim = 4 * new_latent_dim
+        new_cols = new_input_dim - self.input_dim
+        scale = 1.0 / np.sqrt(new_input_dim)
+        pad = self.rng.standard_normal((self.output_dim, new_cols)) * scale
+        child.W = np.concatenate([self.W, pad], axis=1)
+        return child
+
+
     def _field_slice(self, field: str) -> tuple[int, int]:
         idx = self._Z_FIELDS.index(field)
         start = idx * self.latent_dim

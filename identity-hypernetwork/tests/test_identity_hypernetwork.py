@@ -87,3 +87,72 @@ def test_latents_roundtrip():
     data = latents.to_dict()
     restored = IdentityLatents.from_dict(data)
     assert np.allclose(latents.to_array(), restored.to_array())
+
+
+def test_latents_grow_increases_dim():
+    latents = IdentityLatents(dim=4)
+    latents.z_user += [0.1, 0.2, 0.3, 0.4]
+    grown = latents.grow(8)
+    assert grown.dim == 8
+    assert grown.z_user.shape == (8,)
+    assert np.allclose(grown.z_user[:4], [0.1, 0.2, 0.3, 0.4])
+    assert np.allclose(grown.z_user[4:], 0)
+
+
+def test_latents_grow_rejects_invalid_dim():
+    latents = IdentityLatents(dim=4)
+    with pytest.raises(ValueError):
+        latents.grow(4)
+    with pytest.raises(ValueError):
+        latents.grow(2)
+
+
+def test_hypernetwork_grow_increases_latent_dim():
+    agent = IdentityHypernetwork(latent_dim=4, seed=1)
+    agent.update_identity(
+        {"token": "profile", "correct_label": "business", "source": "user_correction"}
+    )
+    before_latent = agent.latents.to_array().copy()
+
+    grown = agent.grow(8)
+    assert grown.latent_dim == 8
+    assert grown.latents.dim == 8
+    assert grown.W.shape == (14, 32)
+    assert grown.status()["latent_dim"] == 8
+    assert np.allclose(grown.latents.to_array()[:16], before_latent)
+    assert np.allclose(grown.latents.to_array()[16:], 0)
+
+    # Old concept ranking should be preserved because the learned latents are.
+    after_scores = grown.generate_adapters()["concept_scores"]
+    assert after_scores["business"] > after_scores["account"]
+
+
+def test_hypernetwork_grow_rejects_invalid_dim():
+    agent = IdentityHypernetwork(latent_dim=8)
+    with pytest.raises(ValueError):
+        agent.grow(8)
+    with pytest.raises(ValueError):
+        agent.grow(4)
+
+
+def test_hypernetwork_grow_preserves_learning_rate_and_concepts():
+    agent = IdentityHypernetwork(latent_dim=4, seed=2, learning_rate=0.42)
+    grown = agent.grow(8)
+    assert grown.lr == 0.42
+    assert grown.concepts == agent.concepts
+    assert grown.concept_index == agent.concept_index
+
+
+def test_hypernetwork_grow_can_continue_learning():
+    agent = IdentityHypernetwork(latent_dim=4, seed=3)
+    agent.update_identity(
+        {"token": "profile", "correct_label": "business", "source": "user_correction"}
+    )
+    grown = agent.grow(8)
+
+    formal_before = grown.generate_adapters()["concept_scores"]["formal"]
+    grown.update_identity(
+        {"token": "tone", "correct_label": "formal", "source": "style"}
+    )
+    formal_after = grown.generate_adapters()["concept_scores"]["formal"]
+    assert formal_after > formal_before + 1e-6
