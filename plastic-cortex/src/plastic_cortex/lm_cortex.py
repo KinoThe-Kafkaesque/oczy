@@ -24,6 +24,13 @@ from typing import Any
 import numpy as np
 
 from .char_tokenizer import CharTokenizer
+from ._numba_kernels import (
+    _log_softmax as _kernel_log_softmax,
+    _rnn_step,
+    _rnn_forward,
+    _rnn_backward,
+    HAS_NUMBA,
+)
 
 
 def _xavier_uniform(rng: np.random.RandomState, rows: int, cols: int) -> np.ndarray:
@@ -37,6 +44,24 @@ def log_softmax(logits: np.ndarray) -> np.ndarray:
     logits = np.asarray(logits, dtype=np.float64)
     shifted = logits - np.max(logits)
     return shifted - np.log(np.sum(np.exp(shifted)))
+
+def sample_token(logits: np.ndarray, temperature: float, rng: np.random.RandomState) -> int:
+    """Sample one token from *logits*.
+
+    * ``temperature == 0`` returns the argmax.
+    * ``temperature > 0`` returns a softmax-normalized sample.
+    """
+    if temperature == 0.0:
+        return int(np.argmax(logits))
+    scaled = logits / max(temperature, 1e-8)
+    probs = np.exp(log_softmax(scaled))
+    probs = np.maximum(probs, 0.0)
+    total = probs.sum()
+    if total <= 0.0:
+        return int(np.argmax(logits))
+    probs /= total
+    return int(rng.choice(probs.shape[0], p=probs))
+
 
 def _spectral_normalize(matrix: np.ndarray) -> np.ndarray:
     """Scale a square matrix so its spectral radius is at most 1.
@@ -55,22 +80,6 @@ def _spectral_normalize(matrix: np.ndarray) -> np.ndarray:
 
 
 
-def sample_token(logits: np.ndarray, temperature: float, rng: np.random.RandomState) -> int:
-    """Sample one token from *logits*.
-
-    * ``temperature == 0`` returns the argmax.
-    * ``temperature > 0`` returns a softmax-normalized sample.
-    """
-    if temperature == 0.0:
-        return int(np.argmax(logits))
-    scaled = logits / max(temperature, 1e-8)
-    probs = np.exp(log_softmax(scaled))
-    probs = np.maximum(probs, 0.0)
-    total = probs.sum()
-    if total <= 0.0:
-        return int(np.argmax(logits))
-    probs /= total
-    return int(rng.choice(probs.shape[0], p=probs))
 
 
 class FastWeightLM:
@@ -172,10 +181,10 @@ class LMPlasticCortex:
         self.vocab_size = int(
             self.config.get("vocab_size", self.tokenizer.vocab_size)
         )
-
-        self.fast = FastWeightLM(self.vocab_size)
         self._rng = np.random.RandomState(self.seed)
-
+        # Mutable state for the JIT xorshift sampler.
+        self._rng_state = np.array([self.seed + 1], dtype=np.int64)
+        self.fast = FastWeightLM(self.vocab_size)
         # Xavier-ish initialization for all weight matrices.
         self.E = _xavier_uniform(self._rng, self.vocab_size, self.hidden_dim)
         self.W_xh = _xavier_uniform(self._rng, self.vocab_size, self.hidden_dim)
@@ -214,6 +223,16 @@ class LMPlasticCortex:
             self._token_total = 0
         if "_recent_novel" not in self.__dict__:
             self._recent_novel = collections.deque(maxlen=100)
+        if "_rng_state" not in self.__dict__:
+            self._rng_state = np.array([getattr(self, "seed", 0) + 1], dtype=np.int64)
+        # RMSprop buffers added after initial release.
+        if "_rms_E" not in self.__dict__:
+            self._rms_E = np.zeros_like(self.E)
+            self._rms_W_xh = np.zeros_like(self.W_xh)
+            self._rms_W_hh = np.zeros_like(self.W_hh)
+            self._rms_b_h = np.zeros_like(self.b_h)
+            self._rms_W_vocab = np.zeros_like(self.W_vocab)
+            self._rms_b_vocab = np.zeros_like(self.b_vocab)
 
     def grow(self, new_hidden_dim: int) -> LMPlasticCortex:
         """Return a larger-capacity cortex with preserved behavioral state.
@@ -297,21 +316,29 @@ class LMPlasticCortex:
         """Advance the recurrent state by one token and return logits."""
         if self._h is None:
             self._reset_hidden()
-        x_proj = self.E[token_id] + self.W_xh[token_id]
-        self._h = np.tanh(x_proj + self._h @ self.W_hh + self.b_h)
+        self._h = _rnn_step(token_id, self.E, self.W_xh, self.W_hh, self.b_h, self._h)
         return self._h @ self.W_vocab + self.b_vocab
 
-    def _forward_string(self, text: str) -> tuple[list[int], list[np.ndarray], list[np.ndarray]]:
+    def _forward_string(self, text: str) -> tuple[list[int], np.ndarray, np.ndarray]:
         """Feed *text* through the network and return tokens, hidden states, logits."""
         # Each training string is treated as a fresh sequence.
         self._reset_hidden()
         tokens = self.tokenizer.encode(text) + [self.tokenizer.eos_id]
-        hiddens: list[np.ndarray] = []
-        logits: list[np.ndarray] = []
-        for tok in tokens:
-            hiddens.append(np.array(self._h, copy=True))
-            logit = self._step(tok)
-            logits.append(logit)
+        tokens_arr = np.array(tokens, dtype=np.int32)
+        hiddens, logits = _rnn_forward(
+            tokens_arr,
+            self.E,
+            self.W_xh,
+            self.W_hh,
+            self.b_h,
+            self.W_vocab,
+            self.b_vocab,
+        )
+        # Restore final hidden state so generation can continue from the EOS.
+        if hiddens.shape[0] > 0:
+            self._h = _rnn_step(tokens_arr[-1], self.E, self.W_xh, self.W_hh, self.b_h, hiddens[-1])
+        else:
+            self._h = np.zeros(self.hidden_dim, dtype=np.float32)
         return tokens, hiddens, logits
 
     # ------------------------------------------------------------------
@@ -338,7 +365,7 @@ class LMPlasticCortex:
         for _ in range(max_tokens):
             logits = self._h @ self.W_vocab + self.b_vocab
             logits = self.fast.boost(logits, self.tokenizer, context)
-            next_id = sample_token(logits, temperature, self._rng)
+            next_id = sample_token(logits, float(temperature), self._rng)
             if stop_at_eos and next_id == self.tokenizer.eos_id:
                 break
             generated_ids.append(next_id)
@@ -477,51 +504,15 @@ class LMPlasticCortex:
             grad_clip: If provided, clip total gradient norm to this value.
             use_rmsprop: If True, use RMSprop instead of vanilla SGD.
         """
-        tokens, hiddens, logits = self._forward_string(text)
-        T = len(tokens) - 1  # number of next-token predictions
+        tokens_list, hiddens, logits = self._forward_string(text)
+        T = len(tokens_list) - 1  # number of next-token predictions
         if T <= 0:
             return 0.0
 
-        loss = 0.0
-        probs = np.zeros((T, self.vocab_size), dtype=np.float64)
-        for t in range(T):
-            log_p = log_softmax(logits[t])
-            target = tokens[t + 1]
-            probs[t] = np.exp(log_p)
-            loss -= log_p[target]
-        loss /= T
-
-        # Accumulators for gradients.
-        dE = np.zeros_like(self.E)
-        dW_xh = np.zeros_like(self.W_xh)
-        dW_hh = np.zeros_like(self.W_hh)
-        db_h = np.zeros_like(self.b_h)
-        dW_vocab = np.zeros_like(self.W_vocab)
-        db_vocab = np.zeros_like(self.b_vocab)
-
-        dh_next = np.zeros(self.hidden_dim, dtype=np.float32)
-        for t in range(T - 1, -1, -1):
-            target = tokens[t + 1]
-            d_logit = probs[t].copy()
-            d_logit[target] -= 1.0
-            d_logit /= float(T)
-
-            h_t = hiddens[t]
-            dW_vocab += np.outer(h_t, d_logit)
-            db_vocab += d_logit
-            dh = d_logit @ self.W_vocab.T + dh_next
-            dtanh = dh * (1.0 - h_t * h_t)
-
-            token_id = tokens[t]
-            dE[token_id] += dtanh
-            dW_xh[token_id] += dtanh
-            if t > 0:
-                h_prev = hiddens[t - 1]
-            else:
-                h_prev = np.zeros(self.hidden_dim, dtype=np.float32)
-            dW_hh += np.outer(h_prev, dtanh)
-            db_h += dtanh
-            dh_next = dtanh @ self.W_hh.T
+        tokens = np.array(tokens_list, dtype=np.int32)
+        loss, dE, dW_xh, dW_hh, db_h, dW_vocab, db_vocab = _rnn_backward(
+            tokens, hiddens, logits, self.W_vocab, self.W_hh
+        )
 
         # Gradient clipping to prevent recurrent explosions.
         max_grad_norm = grad_clip if grad_clip is not None else 5.0
