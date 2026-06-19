@@ -31,6 +31,7 @@ import argparse
 import random
 import sys
 from pathlib import Path
+import numpy as np
 from typing import Any
 
 # Make the trainer importable/runnable from repo root.
@@ -40,6 +41,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from plastic_cortex.char_tokenizer import CharTokenizer
 from plastic_cortex.word_tokenizer import WordTokenizer
+from plastic_cortex.bpe_tokenizer import BPETokenizer
 from plastic_cortex.lm_cortex import LMPlasticCortex
 
 
@@ -214,7 +216,7 @@ def generate_adaptive_lines(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train a tiny NumPy LM on a character-level corpus."
+        description="Train a tiny NumPy LM on a character, word, or BPE-level corpus."
     )
     parser.add_argument(
         "--corpus",
@@ -302,16 +304,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Use RMSprop instead of vanilla SGD.",
     )
-    parser.add_argument(
+    tok_group = parser.add_mutually_exclusive_group()
+    tok_group.add_argument(
         "--word-level",
         action="store_true",
         help="Use WordTokenizer instead of CharTokenizer. Trains 5-10x faster.",
+    )
+    tok_group.add_argument(
+        "--bpe",
+        action="store_true",
+        help="Use BPETokenizer instead of CharTokenizer. Enables subword OOV handling.",
     )
     parser.add_argument(
         "--word-vocab-size",
         type=int,
         default=1000,
         help="Word vocabulary size when --word-level is used (default: 1000).",
+    )
+    parser.add_argument(
+        "--bpe-vocab-size",
+        type=int,
+        default=500,
+        help="BPE vocabulary size when --bpe is used (default: 500).",
     )
     return parser.parse_args(argv)
 
@@ -327,10 +341,22 @@ def main(argv: list[str] | None = None) -> int:
 
     outdir = _resolve_default(str(args.outdir))
     outdir.mkdir(parents=True, exist_ok=True)
-    tokenizer: CharTokenizer | WordTokenizer
-    if args.word_level:
+
+    if args.bpe:
+        tokenizer_name = f"bpe_{args.bpe_vocab_size}"
+        outdir = outdir / tokenizer_name
+        outdir.mkdir(parents=True, exist_ok=True)
+        tokenizer_path = outdir / f"tokenizer_{tokenizer_name}.json"
+        tokenizer: CharTokenizer | WordTokenizer | BPETokenizer = BPETokenizer(
+            vocab_size=args.bpe_vocab_size
+        )
+    elif args.word_level:
+        tokenizer_name = f"word_{args.word_vocab_size}"
+        tokenizer_path = outdir / "tokenizer.json"
         tokenizer = WordTokenizer(vocab_size=args.word_vocab_size)
     else:
+        tokenizer_name = "char"
+        tokenizer_path = outdir / "tokenizer.json"
         tokenizer = CharTokenizer()
 
     all_lines = list(base_lines)
@@ -374,7 +400,7 @@ def main(argv: list[str] | None = None) -> int:
     # current corpus so any new tokens are added as <UNK>.
     active_tokenizer = model.tokenizer if model is not None else tokenizer
     active_tokenizer.fit(all_lines)
-    active_tokenizer.save(outdir / "tokenizer.json")
+    active_tokenizer.save(tokenizer_path)
 
     if model is None:
         config = {
@@ -386,12 +412,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if model.tokenizer is not active_tokenizer:
         model.tokenizer = active_tokenizer
+    assert model is not None
 
     if args.window_size:
         all_lines = _windowed_lines(all_lines, args.window_size, args.stride)
         print(f"[windowed] {len(all_lines)} windows of size <= {args.window_size}")
-
-    print(f"Corpus: {corpus_path} ({len(base_lines)} base + {len(adaptive_lines)} adaptive lines, vocab_size={active_tokenizer.vocab_size})")
+    # Encode every training sequence once. BPE tokenization is expensive in
+    # pure Python, so we avoid repeating it inside each train_step.
+    encoded_lines = [
+        np.array(active_tokenizer.encode(line) + [active_tokenizer.eos_id], dtype=np.int32)
+        for line in all_lines
+    ]
+    print(f"Corpus: {corpus_path} ({len(base_lines)} base + {len(adaptive_lines)} adaptive lines, tokenizer={tokenizer_name}, vocab_size={active_tokenizer.vocab_size})")
 
     global_best_loss = float("inf")
     global_best_path = outdir / "model_global_best.pkl"
@@ -407,12 +439,12 @@ def main(argv: list[str] | None = None) -> int:
         patience = 0
 
         for epoch in range(1, args.epochs + 1):
-            random.shuffle(all_lines)
+            random.shuffle(encoded_lines)
             epoch_loss = 0.0
-            for line in all_lines:
+            for tokens in encoded_lines:
                 model.reset_state()
-                epoch_loss += model.train_step(line, lr=args.lr, grad_clip=args.grad_clip, use_rmsprop=args.rmsprop)
-            avg_loss = epoch_loss / len(all_lines)
+                epoch_loss += model.train_step_tokens(tokens, lr=args.lr, grad_clip=args.grad_clip, use_rmsprop=args.rmsprop)
+            avg_loss = epoch_loss / len(encoded_lines)
             global_epoch = epoch + grow_phase * args.epochs
             print(f"Epoch {global_epoch:03d}: hidden={model.hidden_dim} avg_loss={avg_loss:.6f}", flush=True)
 

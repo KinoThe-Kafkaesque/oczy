@@ -99,9 +99,12 @@ class FastWeightLM:
 
     def _char_id(self, token: str, tokenizer: CharTokenizer) -> int:
         if not token:
-            return tokenizer.unk_id
+            return getattr(tokenizer, "unk_id", 0)
         ch = token[-1]  # last character is the trigger/target character
-        return tokenizer._token_to_id.get(ch, tokenizer.unk_id)
+        char_map = getattr(tokenizer, "_token_to_id", None)
+        if char_map is None:
+            return getattr(tokenizer, "eos_id", 0)
+        return char_map.get(ch, tokenizer.unk_id)
 
     def update(
         self,
@@ -124,10 +127,13 @@ class FastWeightLM:
         """Add relevant stored boosts to *logits* based on recent *context*."""
         if not context:
             return logits
+        char_map = getattr(tokenizer, "_token_to_id", None)
+        if char_map is None:
+            return np.array(logits, dtype=np.float32, copy=True)
         boosted = np.array(logits, dtype=np.float32, copy=True)
         window = context[-self.context_window :]
         for ch in window:
-            token_id = tokenizer._token_to_id.get(ch)
+            token_id = char_map.get(ch)
             if token_id is not None:
                 boosted += self.boosts[token_id]
         return boosted
@@ -340,6 +346,27 @@ class LMPlasticCortex:
         else:
             self._h = np.zeros(self.hidden_dim, dtype=np.float32)
         return tokens, hiddens, logits
+    def _forward_tokens(self, tokens: list[int]) -> tuple[np.ndarray, np.ndarray]:
+        """Feed a pre-tokenized integer sequence through the network.
+
+        *tokens* must already include the EOS token. Returns hiddens and logits.
+        """
+        self._reset_hidden()
+        tokens_arr = np.array(tokens, dtype=np.int32)
+        hiddens, logits = _rnn_forward(
+            tokens_arr,
+            self.E,
+            self.W_xh,
+            self.W_hh,
+            self.b_h,
+            self.W_vocab,
+            self.b_vocab,
+        )
+        if hiddens.shape[0] > 0:
+            self._h = _rnn_step(tokens_arr[-1], self.E, self.W_xh, self.W_hh, self.b_h, hiddens[-1])
+        else:
+            self._h = np.zeros(self.hidden_dim, dtype=np.float32)
+        return hiddens, logits
 
     # ------------------------------------------------------------------
     # Public API
@@ -486,6 +513,59 @@ class LMPlasticCortex:
                 strength=50.0 + 5.0 * i,
             )
         self.correction_count += 1
+
+    def train_step_tokens(
+        self,
+        tokens: list[int] | np.ndarray,
+        lr: float = 0.01,
+        grad_clip: float | None = None,
+        use_rmsprop: bool = False,
+    ) -> float:
+        """One unrolled BPTT step on a pre-tokenized integer sequence.
+
+        The caller is responsible for appending the EOS token.
+        """
+        tokens_list: list[int]
+        if isinstance(tokens, np.ndarray):
+            tokens_list = tokens.tolist()
+        else:
+            tokens_list = list(tokens)
+        T = len(tokens_list) - 1
+        if T <= 0:
+            return 0.0
+        hiddens, logits = self._forward_tokens(tokens_list)
+        tokens_arr = np.array(tokens_list, dtype=np.int32)
+        loss, dE, dW_xh, dW_hh, db_h, dW_vocab, db_vocab = _rnn_backward(
+            tokens_arr, hiddens, logits, self.W_vocab, self.W_hh
+        )
+        max_grad_norm = grad_clip if grad_clip is not None else 5.0
+        for grad in (dE, dW_xh, dW_hh, db_h, dW_vocab, db_vocab):
+            norm = float(np.sqrt(np.sum(grad * grad)) + 1e-12)
+            if norm > max_grad_norm:
+                grad *= max_grad_norm / norm
+        if use_rmsprop:
+            beta2 = 0.99
+            eps = 1e-8
+            buffers_and_grads = [
+                (self._rms_E, dE),
+                (self._rms_W_xh, dW_xh),
+                (self._rms_W_hh, dW_hh),
+                (self._rms_b_h, db_h),
+                (self._rms_W_vocab, dW_vocab),
+                (self._rms_b_vocab, db_vocab),
+            ]
+            updates: list[np.ndarray] = []
+            for rms, grad in buffers_and_grads:
+                rms[:] = beta2 * rms + (1 - beta2) * (grad * grad)
+                updates.append(grad / (np.sqrt(rms) + eps))
+            dE, dW_xh, dW_hh, db_h, dW_vocab, db_vocab = updates
+        self.E -= lr * dE
+        self.W_xh -= lr * dW_xh
+        self.W_hh -= lr * dW_hh
+        self.b_h -= lr * db_h
+        self.W_vocab -= lr * dW_vocab
+        self.b_vocab -= lr * db_vocab
+        return float(loss)
 
     def train_step(
         self,
