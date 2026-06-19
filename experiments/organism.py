@@ -8,8 +8,10 @@ use.
 from __future__ import annotations
 
 import json
+import pickle
 import re
 import sys
+from pathlib import Path
 from typing import Any
 
 from experiments.profiler import AgentProfiler
@@ -342,6 +344,21 @@ class OrganismAgent:
     def profile_summary(self) -> dict[str, Any]:
         """Return per-component call counts, elapsed time, and peak memory."""
         return self.profiler.summary()
+
+    def save(self, path: Path | str) -> None:
+        """Persist the full organism state to *path* using pickle."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with tmp.open("wb") as fh:
+            pickle.dump(self, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        tmp.replace(path)
+
+    @classmethod
+    def load(cls, path: Path | str) -> OrganismAgent:
+        """Load a previously saved organism state."""
+        with Path(path).open("rb") as fh:
+            return pickle.load(fh)
 
     @staticmethod
     def _module_bytes(module: Any) -> int:
