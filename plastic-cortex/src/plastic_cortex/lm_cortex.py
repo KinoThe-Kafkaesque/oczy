@@ -38,6 +38,22 @@ def log_softmax(logits: np.ndarray) -> np.ndarray:
     shifted = logits - np.max(logits)
     return shifted - np.log(np.sum(np.exp(shifted)))
 
+def _spectral_normalize(matrix: np.ndarray) -> np.ndarray:
+    """Scale a square matrix so its spectral radius is at most 1.
+
+    This helps keep vanilla tanh-RNN hidden states and gradients from
+    exploding during long unrolls.
+    """
+    if matrix.shape[0] != matrix.shape[1]:
+        return matrix
+    # RandomState path: use numpy.linalg.eig for square matrices.
+    eigenvalues = np.linalg.eigvals(matrix)
+    radius = float(np.max(np.abs(eigenvalues)))
+    if radius > 1.0 and radius > 1e-12:
+        matrix = matrix / radius
+    return matrix
+
+
 
 def sample_token(logits: np.ndarray, temperature: float, rng: np.random.RandomState) -> int:
     """Sample one token from *logits*.
@@ -163,7 +179,7 @@ class LMPlasticCortex:
         # Xavier-ish initialization for all weight matrices.
         self.E = _xavier_uniform(self._rng, self.vocab_size, self.hidden_dim)
         self.W_xh = _xavier_uniform(self._rng, self.vocab_size, self.hidden_dim)
-        self.W_hh = _xavier_uniform(self._rng, self.hidden_dim, self.hidden_dim)
+        self.W_hh = _spectral_normalize(_xavier_uniform(self._rng, self.hidden_dim, self.hidden_dim))
         self.b_h = np.zeros(self.hidden_dim, dtype=np.float32)
         self.W_vocab = _xavier_uniform(self._rng, self.hidden_dim, self.vocab_size)
         self.b_vocab = np.zeros(self.vocab_size, dtype=np.float32)
@@ -228,7 +244,7 @@ class LMPlasticCortex:
         pad_top = _xavier_uniform(rng, self.hidden_dim, new_hidden_dim - self.hidden_dim)
         W_hh_old = np.concatenate([self.W_hh, pad_top], axis=1)
         pad_bottom = _xavier_uniform(rng, new_hidden_dim - self.hidden_dim, new_hidden_dim)
-        child.W_hh = np.concatenate([W_hh_old, pad_bottom], axis=0)
+        child.W_hh = _spectral_normalize(np.concatenate([W_hh_old, pad_bottom], axis=0))
 
         child.b_h[: self.hidden_dim] = self.b_h
 
