@@ -39,6 +39,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from plastic_cortex.char_tokenizer import CharTokenizer
+from plastic_cortex.word_tokenizer import WordTokenizer
 from plastic_cortex.lm_cortex import LMPlasticCortex
 
 
@@ -301,6 +302,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Use RMSprop instead of vanilla SGD.",
     )
+    parser.add_argument(
+        "--word-level",
+        action="store_true",
+        help="Use WordTokenizer instead of CharTokenizer. Trains 5-10x faster.",
+    )
+    parser.add_argument(
+        "--word-vocab-size",
+        type=int,
+        default=1000,
+        help="Word vocabulary size when --word-level is used (default: 1000).",
+    )
     return parser.parse_args(argv)
 
 
@@ -315,8 +327,11 @@ def main(argv: list[str] | None = None) -> int:
 
     outdir = _resolve_default(str(args.outdir))
     outdir.mkdir(parents=True, exist_ok=True)
-
-    tokenizer = CharTokenizer()
+    tokenizer: CharTokenizer | WordTokenizer
+    if args.word_level:
+        tokenizer = WordTokenizer(vocab_size=args.word_vocab_size)
+    else:
+        tokenizer = CharTokenizer()
 
     all_lines = list(base_lines)
 
@@ -354,26 +369,29 @@ def main(argv: list[str] | None = None) -> int:
             idx += chunk + 1
 
     # Fit tokenizer on the actual corpus (base + adaptive) and build the model
-    # with the real vocabulary size.
-    tokenizer.fit(all_lines)
-    tokenizer.save(outdir / "tokenizer.json")
+    # with the real vocabulary size. When resuming, keep the checkpoint's own
+    # tokenizer (it already has the right vocabulary), but refit it to the
+    # current corpus so any new tokens are added as <UNK>.
+    active_tokenizer = model.tokenizer if model is not None else tokenizer
+    active_tokenizer.fit(all_lines)
+    active_tokenizer.save(outdir / "tokenizer.json")
 
-    # Fresh start if no checkpoint was loaded and no fresh model was made above.
     if model is None:
         config = {
             "hidden_dim": args.hidden_dim,
-            "vocab_size": tokenizer.vocab_size,
+            "vocab_size": active_tokenizer.vocab_size,
             "seed": 42,
         }
         model = LMPlasticCortex(config)
 
-    model.tokenizer = tokenizer
+    if model.tokenizer is not active_tokenizer:
+        model.tokenizer = active_tokenizer
 
     if args.window_size:
         all_lines = _windowed_lines(all_lines, args.window_size, args.stride)
         print(f"[windowed] {len(all_lines)} windows of size <= {args.window_size}")
 
-    print(f"Corpus: {corpus_path} ({len(base_lines)} base + {len(adaptive_lines)} adaptive lines, vocab_size={tokenizer.vocab_size})")
+    print(f"Corpus: {corpus_path} ({len(base_lines)} base + {len(adaptive_lines)} adaptive lines, vocab_size={active_tokenizer.vocab_size})")
 
     global_best_loss = float("inf")
     global_best_path = outdir / "model_global_best.pkl"
