@@ -141,9 +141,25 @@ class EvalResult:
     aggregate: float
 
 
+# ---------------------------------------------------------------------------
+# Aggregation policy
+# ---------------------------------------------------------------------------
+# Every metric that enters an EvalResult.aggregate MUST be normalised to
+# "higher = better, in [0, 1]" BEFORE it is combined into the aggregate.
+# Cross-module ranking on `aggregate` is only meaningful because of this
+# convention: a metric that is naturally "lower = better" (e.g.
+# memory_bytes_per_delta) must be inverted (1 - x) before aggregation.
+#
+# Per-module weights differ because each module is scored on the metrics
+# it was designed for, but every weight nonnegativity and sum-to-1 holds,
+# and every input is on the same direction/scale.
+# ---------------------------------------------------------------------------
+
+
 def eval_plastic_cortex() -> EvalResult:
     """Train Plastic Cortex and measure whether corrections switch the target word."""
-    agent = PlasticCortex(config={"alpha_correction": 8.0, "alpha_normal": 0.01, "recurrent_gain": 0.02})
+    cortex_config = {"alpha_correction": 8.0, "alpha_normal": 0.01, "recurrent_gain": 0.02}
+    agent = PlasticCortex(config=cortex_config)
 
     # Learn.
     for request, correction, sense, _, _ in CURRICULUM:
@@ -165,8 +181,12 @@ def eval_plastic_cortex() -> EvalResult:
             correct += 1
         total += 1
 
-        # Normal-only control: fresh agent exposed to the same text without explicit correction.
-        control = PlasticCortex(config={"alpha_correction": 8.0, "alpha_normal": 0.01, "recurrent_gain": 0.02})
+        # Normal-only control: a fresh agent exposed to the same TEXT
+        # (no correction signal), to confirm that corrections are the
+        # actual learning signal and not just seeing the word five times.
+        # Each control is per-item by design so there is no
+        # cross-contamination between curriculum entries.
+        control = PlasticCortex(config=cortex_config)
         for _ in range(5):
             control.answer(request)
         if control.answer(request) == sense:
@@ -188,18 +208,29 @@ def eval_plastic_cortex() -> EvalResult:
 
 
 def eval_neural_hippocampus() -> EvalResult:
-    """Train hippocampus and measure surprise-gating, replay, compression."""
+    """Train hippocampus and measure surprise-gating, replay, compression.
+
+    Stores each curriculum correction with its ``correction`` text (the
+    raw sentence) AND its ``corrected_answer`` (the recovered label).
+    Previously this stored the label under ``correction=``, which only
+    passed the replay_accuracy check by coincidence --- the field was
+    both written and read with the wrong name, so the test passed without
+    actually exercising the organ's ability to surface a label across a
+    real round-trip.  This is the C2 fix from the 2026-06-21 review.
+    """
     h = NeuralHippocampus()
 
     # Inject a mix of high-surprise corrections and low-surprise accepted answers.
     low_surprise = 0
     for fact, expected in TRIVIA_FACTS[:6]:
-        h.store(fact, expected, correction=None, prediction_error=0.05)
+        h.store(fact, expected, correction=None,
+                prediction_error=0.05, corrected_answer=expected)
         low_surprise += 1
 
     stored_high = 0
     for request, correction, sense, _, _ in CURRICULUM:
-        h.store(request, "unknown", correction=sense, prediction_error=0.9)
+        h.store(request, "unknown", correction=correction,
+                prediction_error=0.9, corrected_answer=sense)
         # A second similar query should be recognized as memory / replay.
         replayed = h.reinforce(request)
         if replayed:
@@ -209,7 +240,7 @@ def eval_neural_hippocampus() -> EvalResult:
     replay_correct = 0
     for request, correction, sense, _, _ in CURRICULUM:
         replayed = h.reinforce(request)
-        if replayed and replayed[0].get("correction") == sense:
+        if replayed and replayed[0].get("corrected_answer") == sense:
             replay_correct += 1
 
     before = h.status()
@@ -412,15 +443,30 @@ def eval_experience_autoencoder() -> EvalResult:
 
 
 def eval_baseline(method: str) -> EvalResult:
-    """Run the canonical benchmark on a trivial baseline for reference."""
+    """Run the canonical benchmark on a trivial baseline for reference.
+
+    All metrics are normalised to *higher = better, in [0, 1]* before
+    aggregation.  Previously ``memory_bytes_per_delta`` was averaged
+    in its raw form, where a larger value is *worse* but was treated as
+    better, artificially ranking PlasticCortex (tiny fast-weights) above
+    OracleAgent (correct but holds a full lookup table).
+    """
     agent = OracleAgent() if method == "Oracle" else AlwaysWrongAgent()
     scores = run_benchmark(agent)
+    # Invert memory_bytes_per_delta so that smaller memory / more deltas
+    # (both good) yield a higher score.  Cap raw bytes at 1000 so a large
+    # oracle lookup table does not drive the score to exactly 0.0.
+    raw_mem = scores["memory_bytes_per_delta"]
+    if raw_mem == math.inf:
+        normalized_mem = 0.0
+    else:
+        normalized_mem = 1.0 - (min(raw_mem, 1000.0) / 1000.0)
     metrics = {
         "correction_uptake_latency": 1.0 - scores["correction_uptake_latency"],
         "transfer_score": scores["transfer_score"],
         "scope_score": scores["scope_score"],
         "forgetting_score": scores["forgetting_score"],
-        "memory_bytes_per_delta": min(scores["memory_bytes_per_delta"], 1000.0) / 1000.0,
+        "memory_bytes_per_delta": normalized_mem,
     }
     aggregate = sum(metrics.values()) / len(metrics)
     return EvalResult(method, metrics, aggregate)

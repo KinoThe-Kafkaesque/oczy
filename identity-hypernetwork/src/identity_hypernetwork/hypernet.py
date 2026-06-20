@@ -11,6 +11,8 @@ the weight vector of the target concept so that future adapter scores shift.
 
 from __future__ import annotations
 
+import pickle
+
 import numpy as np
 
 from .latents import IdentityLatents
@@ -34,6 +36,13 @@ CONCEPT_VOCABULARY: list[str] = [
     "mistake",
     "correct",
 ]
+
+# Stopwords that ``_extract_first_concept`` will refuse to auto-register as new
+# concepts.  Kept as a hardcoded inline list (no cross-organ import) so the
+# auto-grow path can stay self-contained.
+_AUTO_GROW_STOPWORDS: frozenset[str] = frozenset(
+    {"the", "is", "no", "here", "means", "and", "or", "a", "an"}
+)
 
 
 class IdentityHypernetwork:
@@ -126,7 +135,38 @@ class IdentityHypernetwork:
             "latent_dim": self.latent_dim,
             "num_concepts": self.output_dim,
             "latents": self.latents.to_dict(),
+            "serialized_bytes": len(pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)),
+            "record_count": len(self.concepts),
         }
+
+    def grow_vocab(self, new_concepts: list[str]) -> None:
+        """Add new concepts to the vocabulary, extending ``W`` with one fresh row each.
+
+        Each candidate is validated (lowercased, alphanumeric-only, non-empty,
+        and not already in ``self.concepts``) before a single row of small
+        random init is appended to ``W``.  The init uses the same
+        ``1.0 / sqrt(input_dim)`` scale convention as ``__init__``.  The
+        ``concepts`` list, ``concept_index`` mapping, and ``output_dim`` are
+        updated in place.
+
+        This method is also invoked on the fly from ``_extract_first_concept``
+        when ``update_identity`` encounters a label token that is not in the
+        initial 14-token vocabulary, so the closed-vocab blocker described in
+        H3 is removed without every caller needing to pre-register concepts.
+        Auto-growth is gated (alnum, length >= 3, not in
+        ``_AUTO_GROW_STOPWORDS``) to keep vocab inflation bounded and to avoid
+        registering junk tokens such as ``the`` or ``a``.
+        """
+        scale = 1.0 / np.sqrt(self.input_dim)
+        for raw in new_concepts:
+            clean = "".join(ch for ch in str(raw) if ch.isalnum()).lower()
+            if not clean or clean in self.concept_index:
+                continue
+            new_row = self.rng.standard_normal((1, self.input_dim)) * scale
+            self.W = np.concatenate([self.W, new_row], axis=0)
+            self.concept_index[clean] = self.output_dim
+            self.concepts.append(clean)
+            self.output_dim += 1
 
     def _resolve_source(self, source: str) -> str | None:
         mapping: dict[str, str] = {
@@ -149,7 +189,18 @@ class IdentityHypernetwork:
         words = text.split()
         for word in words:
             clean = "".join(ch for ch in word if ch.isalnum()).lower()
+            if not clean:
+                continue
             if clean in self.concept_index:
+                return clean
+            # Auto-grow path: register an unknown token as a new concept on
+            # the fly so ``update_identity`` learns from curriculum labels
+            # that were not in the initial 14-token vocab.  The filter
+            # (alnum is implicit from cleaning; length >= 3; not a stopword)
+            # bounds inflation so common words and noise tokens (``the``,
+            # ``a``, ``is``) are not registered.
+            if len(clean) >= 3 and clean not in _AUTO_GROW_STOPWORDS:
+                self.grow_vocab([clean])
                 return clean
         return None
 

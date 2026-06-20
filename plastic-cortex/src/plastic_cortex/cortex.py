@@ -12,6 +12,7 @@ the corrected sense on future queries.
 from __future__ import annotations
 
 import math
+import pickle
 import random
 import re
 
@@ -170,6 +171,7 @@ class PlasticCortex:
     def status(self) -> dict:
         """Return a serializable status snapshot."""
         return {
+            "project": "plastic_cortex",
             "ready": True,
             "labels": list(self.labels),
             "hidden_state": self.rnn.state_snapshot(),
@@ -178,6 +180,13 @@ class PlasticCortex:
             "correction_writes": self.fast.correction_writes,
             "answers": self.answer_count,
             "corrections": self.correction_count,
+            # Cross-organ memory-metrics fields.
+            # serialized_bytes mirrors the other organs' stdlib pickling of
+            # the whole organ instance.
+            "serialized_bytes": len(pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)),
+            # record_count is the natural learning-progress signal: how many
+            # explicit corrections the cortex has internalized.
+            "record_count": self.correction_count,
         }
 
     def reset_state(self) -> None:

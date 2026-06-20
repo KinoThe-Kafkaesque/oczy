@@ -95,3 +95,24 @@ def test_detector_object_matches_and_counts_hits():
     assert detector.matches("Is my sqlx safe query okay?")
     assert not detector.matches("Tell me a joke.")
     assert detector.hit_count == 0
+
+
+def test_status_reports_serialized_bytes_and_record_count():
+    cortex = SkillImmuneCortex()
+    cortex.add_detector(
+        "You forgot about schema drift when reviewing ORM queries.",
+        "query_safety",
+        "Check schema drift assumptions.",
+    )
+    cortex.add_detector(
+        "You ignored sqlx compile-time query validation.",
+        "query_safety",
+        "Check compile-time query validation.",
+    )
+    cortex.check(
+        "Is this sqlx query safe?",
+        "It looks fine to me.",
+    )
+    status = cortex.status()
+    assert status["serialized_bytes"] > 0
+    assert status["record_count"] >= 2

@@ -116,3 +116,13 @@ def test_forward_still_raises_not_implemented():
     hippo = NeuralHippocampus()
     with pytest.raises(NotImplementedError):
         hippo.forward(None)
+
+
+def test_corrected_answer_round_trips_through_replay():
+    """T1: store(query, answer, correction, prediction_error, corrected_answer=X) must return X via reinforce."""
+    h = NeuralHippocampus(config={"surprise_threshold": 0.0})
+    h.store("what is a profile?", "user profile page",
+            correction="I mean business vertical", prediction_error=0.9,
+            corrected_answer="business vertical")
+    r = h.reinforce("what is a profile?", k=1)
+    assert r and r[0].get("corrected_answer") == "business vertical"

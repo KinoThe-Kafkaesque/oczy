@@ -6,11 +6,26 @@ semantic features and simple logistic-regression updates.
 
 This is intentionally minimal (v1).  It exists to make the world-model idea
 concrete and testable before swapping in richer learned components.
+
+Episode contract (cross-organ schema lives in ``oczy_common.episode``; this
+organ does not import that module, but reads and writes dict keys that match
+its ``Episode`` TypedDict):
+
+- ``WorldModelCritic.predict_acceptance(query, proposed_answer)`` reads the
+  ``query`` and ``proposed_answer`` (= ``answer`` field) of an in-flight
+  episode and returns a correction likelihood.
+- ``WorldModelCritic.record_outcome(query, proposed_answer, correction)``
+  appends the episode to ``self.records`` and performs an online weight
+  update.  After prediction + outcome, ``WorldModelCritic.prediction_error()``
+  yields the scalar ``prediction_error`` field (in ``[0, 1]``) that the
+  hippocampus consumes to decide whether to gate the write into long-term
+  storage.
 """
 
 from __future__ import annotations
 
 import math
+import pickle
 import re
 from typing import Optional
 
@@ -186,6 +201,22 @@ class WorldModelCritic:
         actual = 1.0 if actual_was_correction else 0.0
         return abs(self._last_correction_prob - actual)
 
+    def status(self) -> dict:
+        """Return a standardized status snapshot for cross-organ metrics.
+
+        The shape is shared across organs so the agent glue layer's memory
+        metrics can compare them apples-to-apples.  All values are plain
+        Python types so the result is JSON-serializable.
+        """
+        return {
+            "project": "world_model_critic",
+            "ready": True,
+            "record_count": len(self.records),
+            "serialized_bytes": len(pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)),
+            "weights": list(self.weights),
+            "ambiguous_word_count": len(self.ambiguous_words),
+        }
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -203,6 +234,9 @@ class WorldModelCritic:
         x1 = ambiguous_hits / max(len(all_tokens), 1)
 
         # x2: length ratio, capped to limit numeric range.
+        # The 3.0 cap prevents very long answers from saturating the
+        # logistic input; beyond ~3x the query length the additional text
+        # rarely changes the correction signal meaningfully.
         x2 = min(
             len(proposed_answer) / max(len(query), 1),
             3.0,

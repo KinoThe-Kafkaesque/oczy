@@ -16,15 +16,23 @@ from .scorer import EpisodeResult, ProbeResult, Scorer, matches
 
 
 def _evaluate_probes(agent: Any, episode: Episode) -> tuple[ProbeResult, ...]:
-    """Ask every probe in ``episode`` and score the response."""
-    return tuple(
-        ProbeResult(
-            probe=probe,
-            answer=agent.answer(probe.request),
-            correct=matches(agent.answer(probe.request), probe.expected),
+    """Ask every probe in ``episode`` and score the response.
+
+    The agent's ``answer()`` is called *once* per probe.  Calling it twice
+    (once for the recorded answer, once for the scored verdict) silently
+    mutated stateful agents: ``HippocampusOnlyAgent`` incremented
+    ``replay_count`` on stored traces, ``SkillImmuneCortex`` incremented
+    ``hit_count``, and ``WorldModelCritic`` updated ``_last_correction_prob``.
+    That double counting corrupted replay consolidation thresholds, hit
+    counters, and downstream metrics for every stateful agent.
+    """
+    results: list[ProbeResult] = []
+    for probe in episode.probes:
+        answer = agent.answer(probe.request)
+        results.append(
+            ProbeResult(probe=probe, answer=answer, correct=matches(answer, probe.expected))
         )
-        for probe in episode.probes
-    )
+    return tuple(results)
 
 
 def run_benchmark(agent: Any) -> dict[str, float]:

@@ -5,10 +5,25 @@ Exposes the public surface described in the project thesis:
 - reinforce/query replays relevant traces,
 - consolidate replayed traces into slow-update summaries,
 - inspect current memory state.
+
+Episode contract
+----------------
+``store()`` writes an Episode dict to the underlying SurpriseGatedMemory.
+The keys it emits are constrained to the canonical Episode fields listed in
+``oczy_common/episode.py`` (the cross-organ schema source of truth):
+
+    query, answer, correction, corrected_answer, outcome,
+    prediction_error, source, id, replay_count
+
+The organ does NOT import ``oczy_common`` (it stays self-contained), but it
+keeps its dict keys aligned with that contract so the glue layer can round-trip
+episodes without field-name drift. ``corrected_answer`` is the recovered label
+and is optional here because not every correction carries one.
 """
 
 from __future__ import annotations
 
+import pickle
 from typing import Any
 
 from .core import SurpriseGatedMemory
@@ -45,6 +60,7 @@ class NeuralHippocampus:
         answer: str,
         correction: str,
         prediction_error: float,
+        corrected_answer: str | None = None,
     ) -> str | None:
         """Store a high-surprise experience episode.
 
@@ -57,6 +73,8 @@ class NeuralHippocampus:
             "correction": correction,
             "prediction_error": float(prediction_error),
         }
+        if corrected_answer is not None:
+            episode["corrected_answer"] = corrected_answer
         return self.memory.write(episode)
 
     def reinforce(self, query: str, k: int = 3) -> list[dict[str, Any]]:
@@ -87,13 +105,29 @@ class NeuralHippocampus:
         return summaries
 
     def status(self) -> dict[str, Any]:
-        """Return a serializable status snapshot with byte/episode counts."""
+        """Return a serializable status snapshot with byte/episode counts.
+
+        Fields:
+        - ``project``: organ name tag.
+        - ``ready``: always True for this prototype.
+        - ``episode_count``: number of raw traces currently in fast memory.
+        - ``record_count``: total episodes written (same as ``episode_count``
+          for this organ; standardized key for cross-organ status consumers).
+        - ``slow_update_count``: number of consolidated slow-update summaries.
+        - ``trace_bytes``: approximate size of the raw trace buffer (pickle).
+        - ``serialized_bytes``: pickle size of the entire organ object
+          (``pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)`` length).
+        """
         return {
             "project": "neural_hippocampus",
             "ready": True,
             "episode_count": self.memory.episode_count(),
+            "record_count": self.memory.episode_count(),
             "slow_update_count": len(self.slow_updates),
             "trace_bytes": self.memory.byte_count(),
+            "serialized_bytes": len(
+                pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
+            ),
         }
 
     def forward(self, x: Any) -> Any:

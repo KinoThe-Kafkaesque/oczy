@@ -4,13 +4,22 @@ A small, pure-Python mistake-immune layer.  Past corrections become bounded
 failure signatures (``MistakeDetector``s).  Repeated signatures are merged and,
 when the same mistake class keeps appearing, compiled into reusable
 ``Skill`` objects.
+
+Episode contract (keys match ``oczy_common.episode.Episode``):
+- ``add_detector(correction_text, mistake_class, response)`` consumes the raw
+  correction string produced by ``OrganismAgent`` (no preprocessing expected).
+- ``check(query, proposed_answer)`` is called with the user's query and the
+  candidate answer; it returns the active immune responses to surface.
+
+No new fields are introduced; this module only reads/writes dict keys that
+match the cross-organ Episode schema.
 """
 
 from __future__ import annotations
 
 import json
+import pickle
 import re
-import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Set
 
@@ -295,7 +304,13 @@ class SkillImmuneCortex:
         self.detectors = merged + leftover
 
     def status(self) -> dict:
-        """Return a serializable status snapshot."""
+        """Return a serializable status snapshot.
+
+        ``bytes`` measures the JSON-serialized snapshot byte length (kept for
+        backwards compat).  ``serialized_bytes`` is the canonical organ weight
+        via ``pickle.dumps(self)`` and ``record_count`` reports the total
+        immune records (active detectors plus compiled skills).
+        """
         payload = {
             "project": "skill_immune_cortex",
             "ready": True,
@@ -303,8 +318,10 @@ class SkillImmuneCortex:
             "merged_count": len(self.merged),
             "skill_count": len(self.skills),
             "class_counts": dict(self._class_counts),
+            "record_count": len(self.detectors) + len(self.skills),
+            "serialized_bytes": len(pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)),
         }
-        payload["bytes"] = sys.getsizeof(json.dumps(payload, default=str))
+        payload["bytes"] = len(json.dumps(payload, default=str).encode("utf-8"))
         return payload
 
     def to_dict(self) -> dict:

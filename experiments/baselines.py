@@ -13,7 +13,6 @@ They are deliberately minimal and serve as controls against the full-stack
 
 from __future__ import annotations
 
-import re
 import sys
 from typing import Any
 
@@ -22,6 +21,10 @@ from experiments.profiler import AgentProfiler
 from plastic_cortex import PlasticCortex
 from neural_hippocampus import NeuralHippocampus
 from identity_hypernetwork import IdentityHypernetwork
+
+from oczy_common import extract_expected_from_correction, tokenize
+
+
 class ZeroMemoryAgent:
     """Ignores all corrections and always emits the same default wrong answer."""
 
@@ -81,7 +84,7 @@ class ContextOnlyAgent:
             {
                 "request": request,
                 "correction": correction,
-                "expected": self._extract_expected_from_correction(correction),
+                "expected": extract_expected_from_correction(correction),
             }
         )
 
@@ -97,17 +100,6 @@ class ContextOnlyAgent:
 
     def profile_summary(self) -> dict[str, Any]:
         return self.profiler.summary()
-
-    @staticmethod
-    def _extract_expected_from_correction(correction: str) -> str:
-        text = correction.lower()
-        for marker in ("means ", "is ", "refers to ", "should be ", "use "):
-            idx = text.find(marker)
-            if idx != -1:
-                candidate = correction[idx + len(marker) :].strip().strip(".'\"")
-                if candidate:
-                    return candidate
-        return correction
 
 
 class FastOnlyAgent:
@@ -126,7 +118,7 @@ class FastOnlyAgent:
             self.cortex.correct(correction, expected_answer)
 
     def learn(self, request: str, correction: str) -> None:
-        expected = self._extract_expected_from_correction(correction)
+        expected = extract_expected_from_correction(correction)
         # Make sure the request has entered the recurrent context first.
         with self.profiler.profile("plastic_cortex"):
             self.cortex.answer(request)
@@ -141,17 +133,6 @@ class FastOnlyAgent:
 
     def profile_summary(self) -> dict[str, Any]:
         return self.profiler.summary()
-
-    @staticmethod
-    def _extract_expected_from_correction(correction: str) -> str:
-        text = correction.lower()
-        for marker in ("means ", "is ", "refers to ", "should be ", "use "):
-            idx = text.find(marker)
-            if idx != -1:
-                candidate = correction[idx + len(marker) :].strip().strip(".'\"")
-                if candidate:
-                    return candidate
-        return correction
 
 
 class HippocampusOnlyAgent:
@@ -191,21 +172,13 @@ class HippocampusOnlyAgent:
                     answer=answer,
                     correction=correction,
                     prediction_error=prediction_error,
+                    corrected_answer=expected_answer,
                 )
-                # Also remember the corrected answer so answer() can return it later.
-                episode = {
-                    "query": request,
-                    "answer": answer,
-                    "correction": correction,
-                    "prediction_error": prediction_error,
-                    "corrected_answer": expected_answer,
-                }
-                self.memory.memory.write(episode)
 
     def learn(self, request: str, correction: str) -> None:
         self._last_request = request
         self._last_answer = self.answer(request)
-        expected = self._extract_expected_from_correction(correction)
+        expected = extract_expected_from_correction(correction)
         self.correct(correction, expected)
 
     def consolidate(self) -> None:
@@ -217,17 +190,6 @@ class HippocampusOnlyAgent:
 
     def profile_summary(self) -> dict[str, Any]:
         return self.profiler.summary()
-
-    @staticmethod
-    def _extract_expected_from_correction(correction: str) -> str:
-        text = correction.lower()
-        for marker in ("means ", "is ", "refers to ", "should be ", "use "):
-            idx = text.find(marker)
-            if idx != -1:
-                candidate = correction[idx + len(marker) :].strip().strip(".'\"")
-                if candidate:
-                    return candidate
-        return correction
 
 
 class IdentityOnlyAgent:
@@ -247,7 +209,7 @@ class IdentityOnlyAgent:
         with self.profiler.profile("identity_hypernetwork"):
             adapters = self.identity.generate_adapters()
         concept_scores = adapters.get("concept_scores", {})
-        request_tokens = set(_tokenize(request))
+        request_tokens = set(tokenize(request))
 
         best_concept: str | None = None
         best_score = float("-inf")
@@ -271,7 +233,7 @@ class IdentityOnlyAgent:
             )
 
     def learn(self, request: str, correction: str) -> None:
-        expected = self._extract_expected_from_correction(correction)
+        expected = extract_expected_from_correction(correction)
         with self.profiler.profile("identity_hypernetwork"):
             self.identity.update_identity(
                 {
@@ -291,18 +253,3 @@ class IdentityOnlyAgent:
 
     def profile_summary(self) -> dict[str, Any]:
         return self.profiler.summary()
-
-    @staticmethod
-    def _extract_expected_from_correction(correction: str) -> str:
-        text = correction.lower()
-        for marker in ("means ", "is ", "refers to ", "should be ", "use "):
-            idx = text.find(marker)
-            if idx != -1:
-                candidate = correction[idx + len(marker) :].strip().strip(".'\"")
-                if candidate:
-                    return candidate
-        return correction
-
-
-def _tokenize(text: str) -> list[str]:
-    return [t for t in re.findall(r"[a-z0-9]+", text.lower()) if t]

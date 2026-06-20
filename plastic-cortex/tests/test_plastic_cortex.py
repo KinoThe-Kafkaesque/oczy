@@ -76,3 +76,20 @@ def test_fast_weight_state_snapshot_is_serializable():
     snapshot = agent.fast.state_snapshot()
     assert "profile" in snapshot
     assert snapshot["profile"]["business vertical"] > snapshot["profile"]["user profile"]
+
+
+def test_status_reports_serialized_bytes_and_record_count():
+    """status() must expose the cross-organ serialized_bytes / record_count fields."""
+    agent = PlasticCortex()
+
+    # Drive a little learning so record_count is non-zero.
+    agent.answer("What is a profile?")
+    agent.correct("profile means business vertical", "business vertical")
+    agent.answer("What is a profile?")
+
+    status = agent.status()
+
+    assert status["project"] == "plastic_cortex"
+    assert status["serialized_bytes"] > 0
+    assert status["record_count"] == agent.correction_count
+    assert status["record_count"] >= 1

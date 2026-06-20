@@ -94,3 +94,31 @@ def test_prediction_error_with_no_prediction_is_maximal():
     critic = WorldModelCritic()
     assert critic.prediction_error(False) == 1.0
     assert critic.prediction_error(True) == 1.0
+
+
+def test_status_reported_fields():
+    """status() must expose the 6 cross-organ fields with correct types."""
+    critic = WorldModelCritic()
+    critic.predict_acceptance(AMBIGUOUS_QUERY, AMBIGUOUS_ANSWER)
+    critic.record_outcome(AMBIGUOUS_QUERY, AMBIGUOUS_ANSWER, None)
+
+    status = critic.status()
+
+    assert set(status.keys()) == {
+        "project",
+        "ready",
+        "record_count",
+        "serialized_bytes",
+        "weights",
+        "ambiguous_word_count",
+    }
+    assert status["project"] == "world_model_critic"
+    assert status["ready"] is True
+    assert status["record_count"] == 1
+    assert isinstance(status["serialized_bytes"], int)
+    assert status["serialized_bytes"] > 0
+    assert isinstance(status["weights"], list)
+    assert all(isinstance(w, float) for w in status["weights"])
+    assert status["ambiguous_word_count"] == len(critic.ambiguous_words)
+    # status() must be a snapshot, not a live reference into the critic.
+    assert status["weights"] is not critic.weights

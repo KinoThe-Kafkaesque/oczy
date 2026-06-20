@@ -156,3 +156,64 @@ def test_hypernetwork_grow_can_continue_learning():
     )
     formal_after = grown.generate_adapters()["concept_scores"]["formal"]
     assert formal_after > formal_before + 1e-6
+
+
+def test_grow_vocab_extends_W_consistently():
+    agent = IdentityHypernetwork(seed=5)
+    initial_rows = agent.W.shape[0]
+    initial_concepts = list(agent.concepts)
+
+    agent.grow_vocab(["git", "branch"])
+
+    assert agent.W.shape[0] == initial_rows + 2
+    assert agent.W.shape[1] == agent.input_dim
+    assert agent.concepts[: len(initial_concepts)] == initial_concepts
+    assert agent.concepts[-2:] == ["git", "branch"]
+    assert agent.concept_index["git"] == initial_rows
+    assert agent.concept_index["branch"] == initial_rows + 1
+    # Row for "git" is finite, right shape, and points into the appended block.
+    git_row = agent.W[agent.concept_index["git"]]
+    assert git_row.shape == (agent.input_dim,)
+    assert np.all(np.isfinite(git_row))
+    # Idempotent: re-adding one of the new concepts must not expand W.
+    agent.grow_vocab(["git", "docker"])
+    assert agent.W.shape[0] == initial_rows + 3
+    assert agent.concept_index["docker"] == initial_rows + 2
+    assert agent.concept_index["git"] == initial_rows  # unchanged
+
+
+def test_update_identity_learns_unknown_label():
+    agent = IdentityHypernetwork(seed=9)
+    assert "model" not in agent.concepts  # not in the initial 14-token vocab
+    initial_concept_count = len(agent.concepts)
+    initial_W_shape = agent.W.shape
+
+    agent.update_identity(
+        {"source": "user_correction", "correct_label": "ML model"}
+    )
+
+    # "ML model" tokenises to ["ml", "model"]; "ml" (len 2) is rejected by the
+    # auto-grow filter, so "model" is registered and learned.
+    assert "model" in agent.concepts
+    assert agent.concept_index["model"] == initial_concept_count
+    assert len(agent.concepts) == initial_concept_count + 1
+    assert agent.W.shape == (initial_W_shape[0] + 1, initial_W_shape[1])
+    scores = agent.generate_adapters()["concept_scores"]
+    assert "model" in scores
+    assert isinstance(scores["model"], float)
+
+
+def test_status_reports_serialized_bytes_and_record_count():
+    agent = IdentityHypernetwork()
+    status = agent.status()
+    assert status["record_count"] == len(agent.concepts)
+    assert status["record_count"] == status["num_concepts"]
+    assert isinstance(status["serialized_bytes"], int)
+    assert status["serialized_bytes"] > 0
+    # Growing vocab should increase both record_count and serialized_bytes.
+    before_bytes = status["serialized_bytes"]
+    before_count = status["record_count"]
+    agent.grow_vocab(["docker", "container"])
+    after = agent.status()
+    assert after["record_count"] == before_count + 2
+    assert after["serialized_bytes"] > before_bytes

@@ -12,12 +12,16 @@ from __future__ import annotations
 
 import json
 import math
+import pickle
 import re
 import sys
 from collections import Counter
 from typing import Any
 
 import numpy as np
+
+
+HEBBIAN_LR = 0.01
 
 
 LATENT_DIM = 32
@@ -86,6 +90,33 @@ def _tokenize(text: str) -> list[str]:
     return [tok for tok in _TOKEN_RE.findall(text.lower()) if len(tok) >= 2 and tok not in _STOPWORDS]
 
 
+# Back-compat mapping from canonical Episode keys (oczy_common.episode.Episode)
+# to the autoencoder's internal source names. The autoencoder's curriculum/eval
+# scripts emit the legacy field names; canonical Episodes emit query/answer/
+# corrected_answer. We accept either, preferring the legacy field when both
+# are present so existing pipelines stay byte-for-byte unchanged.
+_CANONICAL_ALIASES: dict[str, str] = {
+    "query": "situation",
+    "answer": "model_answer",
+    "corrected_answer": "revised_answer",
+}
+
+
+def _normalize_episode(episode: dict[str, Any]) -> dict[str, str]:
+    """Return a stringified copy of ``episode`` with canonical aliases folded in.
+
+    For each alias pair (canonical -> legacy), if the legacy source field is
+    missing or empty and the canonical field has content, the canonical value
+    is copied across. This lets :class:`ExperienceEncoder` consume both shapes
+    without callers needing to know which schema is canonical.
+    """
+    normalized: dict[str, str] = {k: str(v) for k, v in episode.items()}
+    for canonical, legacy in _CANONICAL_ALIASES.items():
+        if not normalized.get(legacy) and normalized.get(canonical):
+            normalized[legacy] = normalized[canonical]
+    return normalized
+
+
 def _make_sensing_matrix(seed: int) -> np.ndarray:
     rng = np.random.default_rng(seed)
     A = rng.normal(0.0, 1.0, size=(RESIDUAL_DIM, NUM_SOURCES * MAX_VOCAB))
@@ -112,23 +143,38 @@ class ExperienceEncoder:
             return idx
         return None
 
-    def encode(self, episode: dict[str, Any]) -> np.ndarray:
-        episode = {k: str(v) for k, v in episode.items()}
-        f = np.zeros(NUM_SOURCES * MAX_VOCAB, dtype=float)
+    def extract_features(self, episode: dict[str, Any]) -> np.ndarray:
+        """Build the weighted bag-of-words feature vector for one episode.
 
+        This is the encoder's internal input signal. Both :meth:`encode` and
+        :class:`ExperienceAutoencoder.train_step` consume it. The shared
+        vocab is mutated as a side effect (new tokens are assigned indices).
+
+        Both legacy field names (``situation``/``model_answer``/
+        ``revised_answer``) and canonical Episode names (``query``/
+        ``answer``/``corrected_answer``) are accepted via
+        :func:`_normalize_episode`.
+        """
+        normalized = _normalize_episode(episode)
+        f = np.zeros(NUM_SOURCES * MAX_VOCAB, dtype=float)
         for s_i, source in enumerate(_SOURCE_NAMES):
-            text = episode.get(source, "")
+            text = normalized.get(source, "")
             counts = Counter(_tokenize(text))
             for token, count in counts.items():
                 idx = self._ensure_token(token)
                 if idx is not None:
                     f[s_i * MAX_VOCAB + idx] += count * _SOURCE_WEIGHTS[s_i]
+        return f
+
+    def encode(self, episode: dict[str, Any]) -> np.ndarray:
+        normalized = _normalize_episode(episode)
+        f = self.extract_features(normalized)
 
         residual = self._A @ f
         scale = 1.0 + np.linalg.norm(f)
         residual = np.tanh(residual / scale)
 
-        outcome = episode.get("outcome", "unknown")
+        outcome = normalized.get("outcome", "unknown")
         outcome_idx = _OUTCOME_TO_IDX.get(outcome, _OUTCOME_TO_IDX["unknown"])
         outcome_vec = np.full(OUTCOME_DIM, -0.2, dtype=float)
         outcome_vec[outcome_idx] = 0.8
@@ -252,7 +298,7 @@ def _target_label_for(failure_class: str) -> str:
         "fact_correction": "use_correct_fact",
         "execution_error": "avoid_failing_approach",
         "none": "maintain_behavior",
-    }.get(failure_class, " revise_behavior")
+    }.get(failure_class, "revise_behavior")
 
 
 def _omp(A: np.ndarray, b: np.ndarray, sparsity: int, allowed: set[int] | None = None) -> np.ndarray:
@@ -342,19 +388,74 @@ class ExperienceAutoencoder:
         """Encode a batch of episodes into Δz vectors."""
         return [self.encode(ep) for ep in episodes]
 
+    def train_step(self, episode: dict[str, Any], lr: float = HEBBIAN_LR) -> float:
+        """Apply one Hebbian-style passive update to the sensing matrix.
+
+        Implements the rank-1 update::
+
+            self._A += lr * outer(residual_target, feature_signal)
+            self._A = column_l2_normalize(self._A)
+
+        where ``feature_signal`` is the episode's weighted bag-of-words vector
+        (input signal) and ``residual_target`` is the tanh-residual portion of
+        Δz (the same quantity produced by :meth:`ExperienceEncoder.encode`).
+
+        Over many episodes this nudges the columns of the otherwise-random
+        sensing matrix toward the directions the data actually spans, so the
+        subsequent OMP recovery in :meth:`decode` sees tighter weights on
+        tokens the encoder has actually encountered. The update is passive in
+        the sense that no explicit gradient target is supplied — the matrix's
+        own encoding serves as both the source and the reinforcing signal.
+
+        ``lr`` defaults to 0.01. Small enough to keep the matrix well-conditioned
+        across hundreds of episodes after per-step column renormalization; large
+        enough to produce a measurable drop in reconstruction error within ~20
+        steps on a curriculum of repeated episodes. The constant is exposed as
+        :data:`HEBBIAN_LR` so callers (and tests) can locate the canonical rate.
+
+        Returns the reconstruction error of this episode computed BEFORE the
+        Hebbian update is applied, so callers can monitor convergence.
+        """
+        # Encode first so vocab is fully populated; the residual portion of Δz
+        # is the reinforcing signal for this episode's input direction.
+        delta_z = self.encode(episode)
+        residual_target = delta_z[OUTCOME_DIM:]
+
+        # Capture pre-update reconstruction error for caller convergence tracking.
+        error = self.reconstruction_error(episode, self.decode(delta_z))
+
+        # Re-extract the input feature vector via the encoder's internal builder.
+        # encode() above already extended the vocab, so this returns the same f
+        # without further mutation.
+        feature_signal = self._encoder.extract_features(episode)
+
+        # Rank-1 Hebbian update. outer(residual_target, feature_signal) has shape
+        # (RESIDUAL_DIM, NUM_SOURCES * MAX_VOCAB) — same as the sensing matrix.
+        # Columns whose feature_signal is zero are left untouched.
+        self._A += lr * np.outer(residual_target, feature_signal)
+
+        # Renormalize columns to unit L2-norm, mirroring `_make_sensing_matrix`.
+        # Guard against divide-by-zero on never-touched columns.
+        norms = np.linalg.norm(self._A, axis=0, keepdims=True)
+        self._A /= np.where(norms == 0, 1.0, norms)
+        return float(error)
+
     def status(self) -> dict[str, Any]:
         return {
             "project": "experience_autoencoder",
             "ready": True,
             "latent_dim": LATENT_DIM,
             "vocab_size": len(self._vocab),
+            "serialized_bytes": len(pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)),
+            "record_count": len(self._vocab),
         }
 
 
 def _episode_tokens(episode: dict[str, Any]) -> set[str]:
     toks: set[str] = set()
+    normalized = _normalize_episode(episode)
     for key in _SOURCE_NAMES:
-        toks.update(_tokenize(str(episode.get(key, ""))))
+        toks.update(_tokenize(normalized.get(key, "")))
     return toks
 
 
@@ -363,8 +464,7 @@ def _expected_failure_class(episode: dict[str, Any]) -> str:
     base = _FAILURE_MAP.get(outcome, "unknown")
     if outcome == "corrected":
         correction = str(episode.get("correction", "")).lower()
-        ifany = any(k in correction for k in ("wrong", "incorrect", "not right"))
-        if ifany:
+        if any(k in correction for k in ("wrong", "incorrect", "not right")):
             return "fact_correction"
     return base
 
