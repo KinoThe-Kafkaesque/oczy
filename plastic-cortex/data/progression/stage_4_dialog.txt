@@ -1,0 +1,52 @@
+hello.
+hi.
+hi there.
+hello there.
+good morning.
+goodbye.
+how are you?
+i am fine.
+what is your name?
+i am oczy.
+how are you today?
+i am fine today.
+i am oczy today.
+what is your name today?
+how are you, hello?
+i am fine, goodbye.
+hello there, how are you?
+hi, i am oczy.
+good morning, how are you?
+goodbye, what is your name?
+hello, what is your name?
+hi, how are you today?
+good morning, what is your name?
+goodbye, i am fine.
+how are you, oczy?
+i am oczy, hello.
+how are you, hi there?
+i am fine, good morning.
+what is your name, goodbye?
+hello, how are you today?
+hi, what is your name?
+good morning, i am fine.
+goodbye, how are you?
+i am oczy, what is your name?
+hello, i am oczy.
+hi there, how are you today?
+good morning, i am oczy.
+goodbye, i am oczy.
+how are you today, hello?
+i am fine today, goodbye.
+what is your name today, hi?
+i am oczy today, hello.
+hello, i am fine.
+goodbye, i am fine today.
+good morning, how are you today?
+goodbye, what is your name today?
+how are you, i am fine.
+what is your name, i am oczy.
+i am fine, how are you?
+hello, what is your name today?
+hello, hello.
+hi, hi there.

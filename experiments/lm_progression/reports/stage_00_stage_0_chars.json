@@ -1,0 +1,30 @@
+{
+  "stage_idx": 0,
+  "stage_name": "stage_0_chars",
+  "train_lines": 49,
+  "heldout_lines": 12,
+  "initial_loss": 4.647639052135862,
+  "final_loss": 0.5953451041246411,
+  "best_loss": 0.5953451041246411,
+  "epochs_run": 50,
+  "heldout_top1_acc": 0.7774193548387097,
+  "samples": [
+    {
+      "prompt": "the cat",
+      "output": " flew t in the park the fleway"
+    },
+    {
+      "prompt": "the dog",
+      "output": " ran the park the flew in the "
+    },
+    {
+      "prompt": "the sky",
+      "output": " today."
+    }
+  ],
+  "promoted": true,
+  "halt_reason": "",
+  "lr_used": 0.0025,
+  "diverged_count": 0,
+  "elapsed_sec": 6.574762582778931
+}

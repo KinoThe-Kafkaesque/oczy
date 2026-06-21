@@ -1,0 +1,61 @@
+the cat sat on the mat.
+the dog sat on the mat.
+the bird sat on the mat.
+the cat ran in the park.
+the dog ran in the park.
+the bird flew in the park.
+the cat ran in the park today.
+the dog ran in the park today.
+the bird flew in the park today.
+the bird flew in the sky.
+the bird flew in the sky today.
+the cat sat on the mat today.
+the dog sat on the mat today.
+the bird sat on the mat today.
+the cat is on the mat.
+the dog is on the mat.
+the bird is on the mat.
+the cat is in the park.
+the dog is in the park.
+the bird is in the park.
+the cat is on the mat today.
+the dog is on the mat today.
+the bird is on the mat today.
+the sun is hot.
+the sun is hot today.
+the sky is blue.
+the sky is blue today.
+the sun is in the sky.
+the sun is in the sky today.
+the cat ran away.
+the dog ran away.
+the bird flew away.
+the cat ran away today.
+the dog ran away today.
+the bird flew away today.
+the cat is in the park today.
+the dog is in the park today.
+the bird is in the park today.
+the cat sat in the park.
+the dog sat in the park.
+the bird sat in the park.
+the cat ran today.
+the dog ran today.
+the bird flew today.
+the cat sat today.
+the dog sat today.
+the bird sat today.
+the cat is hot today.
+the dog is hot today.
+the bird is hot today.
+the cat ran away in the park.
+the dog ran away in the park.
+the bird flew away in the park.
+the sun is hot in the sky.
+the bird flew away in the sky.
+the sun is hot today in the sky.
+the sky is blue in the park today.
+the cat ran on the mat today.
+the dog ran on the mat today.
+the bird sat on the mat in the park.
+the cat sat on the mat in the park.

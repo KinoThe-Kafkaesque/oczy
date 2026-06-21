@@ -1,0 +1,30 @@
+{
+  "stage_idx": 2,
+  "stage_name": "stage_2_categories",
+  "train_lines": 151,
+  "heldout_lines": 10,
+  "initial_loss": 1.7976060119770993,
+  "final_loss": 0.8716425770002144,
+  "best_loss": 0.853791654901333,
+  "epochs_run": 51,
+  "heldout_top1_acc": 0.6405228758169934,
+  "samples": [
+    {
+      "prompt": "animals ",
+      "output": "bk anim in an an an the a in a"
+    },
+    {
+      "prompt": "flowers ",
+      "output": "is an an in the an an an is a "
+    },
+    {
+      "prompt": "rocks ",
+      "output": "is an an the pal."
+    }
+  ],
+  "promoted": true,
+  "halt_reason": "",
+  "lr_used": 0.0025,
+  "diverged_count": 0,
+  "elapsed_sec": 18.0814847946167
+}

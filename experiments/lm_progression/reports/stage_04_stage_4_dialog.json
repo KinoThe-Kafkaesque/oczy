@@ -1,0 +1,30 @@
+{
+  "stage_idx": 4,
+  "stage_name": "stage_4_dialog",
+  "train_lines": 243,
+  "heldout_lines": 10,
+  "initial_loss": 2.566985012851119,
+  "final_loss": 0.9921274634665714,
+  "best_loss": 0.9721563572581922,
+  "epochs_run": 63,
+  "heldout_top1_acc": 0.5410628019323671,
+  "samples": [
+    {
+      "prompt": "hello",
+      "output": "nim."
+    },
+    {
+      "prompt": "how are you",
+      "output": "m."
+    },
+    {
+      "prompt": "good morning",
+      "output": " today."
+    }
+  ],
+  "promoted": true,
+  "halt_reason": "",
+  "lr_used": 0.0025,
+  "diverged_count": 0,
+  "elapsed_sec": 39.08453941345215
+}

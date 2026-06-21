@@ -1,0 +1,40 @@
+cats are animals. animals breathe. cats breathe.
+cats are animals. animals eat. cats eat.
+cats are animals. animals move. cats move.
+dogs are animals. animals breathe. dogs breathe.
+dogs are animals. animals eat. dogs eat.
+dogs are animals. animals move. dogs move.
+birds are animals. animals breathe. birds breathe.
+birds are animals. animals eat. birds eat.
+birds are animals. animals move. birds move.
+fish are animals. animals breathe. fish breathe.
+fish are animals. animals eat. fish eat.
+fish are animals. animals move. fish move.
+roses are flowers. flowers bloom. roses bloom.
+roses are flowers. flowers grow. roses grow.
+roses are flowers. flowers move. roses move.
+stones are rocks. rocks are hard. stones are hard.
+stones are rocks. rocks move. stones move.
+oaks are trees. trees grow. oaks grow.
+oaks are trees. trees breathe. oaks breathe.
+oaks are trees. trees move. oaks move.
+pines are trees. trees grow. pines grow.
+pines are trees. trees breathe. pines breathe.
+pines are trees. trees move. pines move.
+cats are animals. animals breathe today. cats breathe today.
+dogs are animals. animals eat today. dogs eat today.
+birds are animals. animals move today. birds move today.
+fish are animals. animals breathe today. fish breathe today.
+roses are flowers. flowers bloom today. roses bloom today.
+stones are rocks. rocks are hard today. stones are hard today.
+oaks are trees. trees grow today. oaks grow today.
+pines are trees. trees breathe today. pines breathe today.
+cats are animals. cats breathe. animals breathe.
+dogs are animals. dogs eat. animals eat.
+birds are animals. birds move. animals move.
+fish are animals. fish eat. animals eat.
+roses are flowers. roses bloom. flowers bloom.
+stones are rocks. stones are hard. rocks are hard.
+oaks are trees. oaks grow. trees grow.
+pines are trees. pines breathe. trees breathe.
+pines are trees. pines breathe today. trees breathe today.

@@ -1,0 +1,30 @@
+{
+  "stage_idx": 5,
+  "stage_name": "stage_5_disambig",
+  "train_lines": 285,
+  "heldout_lines": 8,
+  "initial_loss": 1.5911716406014964,
+  "final_loss": 1.0292635646341908,
+  "best_loss": 1.009848877958476,
+  "epochs_run": 51,
+  "heldout_top1_acc": 0.34523809523809523,
+  "samples": [
+    {
+      "prompt": "\"branch\" means",
+      "output": " an an today."
+    },
+    {
+      "prompt": "\"batch\" means",
+      "output": " today."
+    },
+    {
+      "prompt": "\"model\" means",
+      "output": " move an animals you today."
+    }
+  ],
+  "promoted": true,
+  "halt_reason": "",
+  "lr_used": 0.000625,
+  "diverged_count": 0,
+  "elapsed_sec": 38.56338143348694
+}

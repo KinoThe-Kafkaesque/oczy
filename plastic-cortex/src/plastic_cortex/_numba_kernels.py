@@ -82,7 +82,24 @@ def _rnn_forward(
     W_vocab: np.ndarray,
     b_vocab: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Unroll an entire sequence and return hiddens[0:T] and logits[0:T-1]."""
+    """Unroll an entire sequence and return hiddens[0:T] and logits[0:T-1].
+
+    Convention: ``hiddens[t]`` is the recurrent state AFTER consuming
+    ``tokens[t]``.  ``logits[t]`` is the prediction of ``tokens[t + 1]``
+    made from ``hiddens[t]`` --- i.e. the prediction sees the current
+    token, so the model can learn ``P(token[t+1] | token[0..t])``
+    n-gram statistics directly.  This matches the backward pass,
+    which treats ``hiddens[t]`` as the output of ``_rnn_step`` that
+    used ``tokens[t]`` and ``hiddens[t-1]`` as inputs.
+
+    (Before this fix the forward stored ``hiddens[t]`` as the PRE-step
+    state, so logits at position t predicted ``tokens[t+1]`` from a
+    state that had not yet seen ``tokens[t]``, mismatching the
+    backward's off-by-one assumption that ``hiddens[t] = _rnn_step(
+    tokens[t], hiddens[t-1])``.  The mismatch assigned dE/dW_xh
+    gradients to the wrong token id, capping the LM at the same
+    ~3.2-nat plateau we observed in every checkpoint.)
+    """
     T = tokens.shape[0] - 1
     hidden_dim = W_hh.shape[0]
     vocab_size = W_vocab.shape[1]
@@ -90,15 +107,17 @@ def _rnn_forward(
     logits = np.empty((T, vocab_size), dtype=np.float32)
     h = np.zeros(hidden_dim, dtype=np.float32)
     for t in range(T):
+        # Consume the current token FIRST so the prediction at position
+        # t uses a hidden state that includes tokens[0..t].
+        token_id = tokens[t]
+        h = _rnn_step(token_id, E, W_xh, W_hh, b_h, h)
         hiddens[t] = h
-        # logits[t] predicts tokens[t + 1]
+        # logits[t] predicts tokens[t + 1] from the post-step state.
         for v in range(vocab_size):
             s = b_vocab[v]
             for d in range(hidden_dim):
                 s += W_vocab[d, v] * h[d]
             logits[t, v] = s
-        token_id = tokens[t]
-        h = _rnn_step(token_id, E, W_xh, W_hh, b_h, h)
     return hiddens, logits
 
 

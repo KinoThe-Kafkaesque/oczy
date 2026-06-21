@@ -1,0 +1,30 @@
+{
+  "stage_idx": 3,
+  "stage_name": "stage_3_syllogism",
+  "train_lines": 193,
+  "heldout_lines": 8,
+  "initial_loss": 1.2523145078579645,
+  "final_loss": 0.7159841325367216,
+  "best_loss": 0.7012079591422188,
+  "epochs_run": 77,
+  "heldout_top1_acc": 0.651685393258427,
+  "samples": [
+    {
+      "prompt": "cats are animals. animals breathe. cats",
+      "output": "k."
+    },
+    {
+      "prompt": "roses are flowers. flowers bloom. roses",
+      "output": " an today."
+    },
+    {
+      "prompt": "rocks are hard. stones are hard. stones",
+      "output": ". the the away."
+    }
+  ],
+  "promoted": true,
+  "halt_reason": "",
+  "lr_used": 0.0025,
+  "diverged_count": 0,
+  "elapsed_sec": 41.512831926345825
+}

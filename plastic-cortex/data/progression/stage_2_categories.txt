@@ -1,0 +1,50 @@
+animals breathe.
+animals eat.
+animals move.
+flowers bloom.
+flowers grow.
+rocks are hard.
+fish swim.
+fish breathe.
+fish eat.
+trees grow.
+trees breathe.
+trees move.
+the animals breathe.
+the animals eat.
+the animals move.
+the flowers bloom.
+the flowers grow.
+the rocks are hard.
+the fish swim.
+the fish breathe.
+the fish eat.
+the trees grow.
+the trees breathe.
+the trees move.
+animals breathe today.
+animals eat today.
+animals move today.
+flowers bloom today.
+flowers grow today.
+rocks are hard today.
+fish swim today.
+fish breathe today.
+fish eat today.
+trees grow today.
+trees breathe today.
+trees move today.
+animals breathe in the park.
+animals eat in the park.
+animals move in the park.
+flowers bloom in the park.
+flowers grow in the park.
+rocks are hard in the park.
+fish swim in the park.
+fish breathe in the park.
+trees grow in the park.
+trees breathe in the park.
+trees move in the park.
+animals breathe today in the park.
+flowers bloom today in the park.
+fish swim today in the park.

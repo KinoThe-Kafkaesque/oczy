@@ -1,0 +1,50 @@
+a cat is an animal.
+a dog is an animal.
+a bird is an animal.
+a fish is an animal.
+a rose is a flower.
+a stone is a rock.
+an oak is a tree.
+a pine is a tree.
+the cat is an animal.
+the dog is an animal.
+the bird is an animal.
+the fish is an animal.
+the rose is a flower.
+the stone is a rock.
+the oak is a tree.
+the pine is a tree.
+a cat is an animal today.
+a dog is an animal today.
+a bird is an animal today.
+a fish is an animal today.
+a rose is a flower today.
+a stone is a rock today.
+an oak is a tree today.
+a pine is a tree today.
+the cat is an animal today.
+the dog is an animal today.
+the bird is an animal today.
+the fish is an animal today.
+the rose is a flower today.
+the stone is a rock today.
+the oak is a tree today.
+the pine is a tree today.
+a cat is an animal in the park.
+a dog is an animal in the park.
+a bird is an animal in the park.
+a fish is an animal in the park.
+a rose is a flower in the park.
+a stone is a rock in the park.
+an oak is a tree in the park.
+a pine is a tree in the park.
+the cat is an animal in the park.
+the dog is an animal in the park.
+the bird is an animal in the park.
+the rose is a flower in the park.
+the stone is a rock in the park.
+an oak is a tree in the park today.
+a pine is a tree in the park today.
+a cat is an animal on the mat.
+a dog is an animal on the mat.
+a bird is an animal on the mat.
