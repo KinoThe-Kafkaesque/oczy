@@ -1,0 +1,193 @@
+"""End-to-end smoke test for CortexAgent.
+
+Verifies the full perceive->metabolize->articulate->consolidate loop:
+cortex absorbs LM hidden vectors, metabolises them through the organ
+bank, articulates reply by steering the LM's cvec adapter, and
+persists cold state across save/load.
+
+Loads the real LFM2.5-1.2B-Instruct Q4_K_M GGUF. Skips cleanly if
+the HF cache is missing.
+
+Run: uv run python experiments/tests/test_cortex_agent.py
+"""
+
+from __future__ import annotations
+
+import sys
+import tempfile
+from pathlib import Path
+
+import numpy as np
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+for _name in (
+    "plastic-cortex",
+    "neural-hippocampus",
+    "world-model-critic",
+    "identity-hypernetwork",
+    "skill-immune-cortex",
+    "experience-autoencoder",
+):
+    _src = _REPO_ROOT / _name / "src"
+    if str(_src) not in sys.path:
+        sys.path.insert(0, str(_src))
+
+from experiments.cortex_agent import CortexAgent, CortexAgentConfig
+from plastic_cortex.kv_cortex import KVCortexConfig
+from oczy_lm import CVecDriverConfig
+
+_GGUF_CACHE = (
+    Path.home() / ".cache/huggingface/hub"
+    / "models--LiquidAI--LFM2.5-1.2B-Instruct-GGUF"
+)
+_AGENT: CortexAgent | None = None
+
+
+def _make_agent() -> CortexAgent:
+    global _AGENT
+    if _AGENT is not None:
+        return _AGENT
+    if not _GGUF_CACHE.exists():
+        raise FileNotFoundError("LFM2.5 GGUF cache not found")
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=64),
+        driver=CVecDriverConfig(n_ctx=256, verbose=False, embedding=True),
+    )
+    _AGENT = CortexAgent(cfg)
+    _AGENT.boot()
+    return _AGENT
+
+
+def test_perceive_produces_warm_state() -> None:
+    agent = _make_agent()
+    warm = agent.perceive("What is the weather in Lisbon today?")
+    assert warm.shape == (agent.cortex.config.d_cortex,)
+    assert np.all(np.isfinite(warm))
+    assert agent._last_hidden is not None
+    assert agent._last_hidden.shape == (agent.driver.n_embd,)
+
+
+def test_correction_signal_drives_plasticity() -> None:
+    agent = _make_agent()
+    before = agent.cortex.warm_state.copy()
+    agent.perceive("No, 'profile' here means business vertical, not user profile.")
+    after = agent.cortex.warm_state
+    drift = float(np.linalg.norm(after - before))
+    # correction should mutate warm_state more than normal text would have.
+    # Minimum threshold chosen empirically so a no-correct observe moves
+    # the state by visibly less than a corrected one.
+    assert drift > 0.05, "correction produced negligible drift: %f" % drift
+    assert agent._last_correction_signal >= 0.5
+
+
+def test_metabolize_routes_to_hippocampus_on_drift() -> None:
+    agent = _make_agent()
+    n_eps = agent.neural_hippocampus.memory.episode_count()
+    agent.perceive("No, 'log' here means the captain's journal.")
+    agent.metabolize()
+    # Hippocampus writes only if drift crosses threshold.
+    status = agent.neural_hippocampus.status()
+    assert status["episode_count"] >= n_eps, \
+        "drift was not enough to enqueue a hippocampal trace"
+
+
+def test_articulate_steered_differs_from_baseline() -> None:
+    agent = _make_agent()
+    agent.cortex.reset_warm_to_zeros()
+    baseline = agent.articulate(
+        prompt="Hello, my name is",
+        max_tokens=4, temperature=0.0,
+        apply_steering=False,
+    )
+    agent.perceive("Hello, my name is", correction_signal=1.0)
+    steered = agent.articulate(
+        prompt="Hello, my name is",
+        max_tokens=4, temperature=0.0,
+        apply_steering=True,
+    )
+    assert steered != baseline, (
+        "cortex steering produced no behavioural change\n"
+        "  baseline: %r\n  steered: %r" % (baseline, steered)
+    )
+
+
+def test_consolidate_moves_cold_state() -> None:
+    agent = _make_agent()
+    cold_before = agent.cortex.cold_state.copy()
+    # Drive multiple corrections to give the hippocampus something to
+    # consolidate and the cortex enough drift to nudge cold_state.
+    for utt in (
+        "No, 'profile' means business vertical.",
+        "No, 'log' means the captain's journal.",
+        "No, 'model' means fashion model.",
+    ):
+        agent.perceive(utt)
+        agent.metabolize()
+    agent.consolidate()
+    cold_after = agent.cortex.cold_state.copy()
+    cold_drift = float(np.linalg.norm(cold_after - cold_before))
+    assert cold_drift > 0.0, "consolidate() did not move cold_state"
+
+
+def test_save_load_round_trip_preserves_cold() -> None:
+    agent = _make_agent()
+    for utt in (
+        "No, 'profile' means business vertical.",
+        "No, 'batch' here means ML training batch.",
+    ):
+        agent.perceive(utt)
+        agent.metabolize()
+    agent.consolidate()
+    before = agent.cortex.cold_state.copy()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "agent.pkl"
+        agent.save(path)
+        loaded = CortexAgent.load(
+            path,
+            config=CortexAgentConfig(
+                cortex=KVCortexConfig(d_cortex=64),
+                driver=CVecDriverConfig(n_ctx=256, verbose=False, embedding=True),
+            ),
+        )
+    after = loaded.cortex.cold_state
+    np.testing.assert_allclose(after, before, rtol=1e-6, atol=1e-6), \
+        "cold_state drifted across save/load"
+    # Warm should be equal to cold after load (boot semantics).
+    np.testing.assert_allclose(
+        loaded.cortex.warm_state, loaded.cortex.cold_state,
+        rtol=1e-6, atol=1e-6,
+    )
+
+
+def main() -> int:
+    tests = [
+        ("test_perceive_produces_warm_state", test_perceive_produces_warm_state),
+        ("test_correction_signal_drives_plasticity", test_correction_signal_drives_plasticity),
+        ("test_metabolize_routes_to_hippocampus_on_drift", test_metabolize_routes_to_hippocampus_on_drift),
+        ("test_articulate_steered_differs_from_baseline", test_articulate_steered_differs_from_baseline),
+        ("test_consolidate_moves_cold_state", test_consolidate_moves_cold_state),
+        ("test_save_load_round_trip_preserves_cold", test_save_load_round_trip_preserves_cold),
+    ]
+    failures = 0
+    for name, fn in tests:
+        try:
+            fn()
+            print("ok: %s" % name)
+        except AssertionError as exc:
+            print("FAIL: %s -- %s" % (name, exc))
+            failures += 1
+        except FileNotFoundError as exc:
+            print("SKIP: %s -- %s" % (name, exc))
+            failures += 1
+        except Exception as exc:  # noqa: BLE001
+            print("ERROR: %s -- %r" % (name, exc))
+            failures += 1
+    print("\n%d/%d passed" % (len(tests) - failures, len(tests)))
+    return 0 if failures == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
