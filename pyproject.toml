@@ -5,7 +5,12 @@ description = "Plastic World Model Agent monorepo: experience becomes state, sta
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "KinoThe-Kafkaesque" }]
-dependencies = []
+dependencies = [
+    "llama-cpp-python>=0.3",
+    "huggingface-hub>=0.20",
+    "numba>=0.65",
+    "numpy>=2",
+]
 
 [build-system]
 requires = ["hatchling"]
