@@ -1,0 +1,111 @@
+{
+  "name": "Stage 2: Scope control",
+  "description": "Teach an alternative common/technical sense for words corrected in Stage 0, then test that each sense is used only in its own context. Targets SkillImmuneCortex and IdentityHypernetwork.",
+  "consolidate_before": false,
+  "episodes": [
+    {
+      "id": "s2_log",
+      "initial_request": "Log the runtime error.",
+      "default_response": "I'll log it in the captain's journal.",
+      "correction_utterance": "No, 'log' here means system error log.",
+      "corrected_label": "system error log",
+      "corrected_response": "I'll log the runtime error in the system error log.",
+      "domain": "computing",
+      "probes": [
+        {"request": "Log the runtime error.", "expected": "system error log", "category": "retention", "match_mode": "sense"},
+        {"request": "Show the log.", "expected": "captain's journal", "category": "scope", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s2_file",
+      "initial_request": "Save the file.",
+      "default_response": "I'll submit the file officially.",
+      "correction_utterance": "No, 'file' here means computer file.",
+      "corrected_label": "computer file",
+      "corrected_response": "I'll save the computer file.",
+      "domain": "computing",
+      "probes": [
+        {"request": "Save the file.", "expected": "computer file", "category": "retention", "match_mode": "sense"},
+        {"request": "File the report.", "expected": "submit officially", "category": "scope", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s2_key",
+      "initial_request": "Press the key.",
+      "default_response": "I'll press the map legend.",
+      "correction_utterance": "No, 'key' here means keyboard key.",
+      "corrected_label": "keyboard key",
+      "corrected_response": "I'll press the keyboard key.",
+      "domain": "computing",
+      "probes": [
+        {"request": "Press the key.", "expected": "keyboard key", "category": "retention", "match_mode": "sense"},
+        {"request": "Check the key.", "expected": "map legend", "category": "scope", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s2_cell",
+      "initial_request": "Format the cell.",
+      "default_response": "I'll format the biology cell.",
+      "correction_utterance": "No, 'cell' here means spreadsheet cell.",
+      "corrected_label": "spreadsheet cell",
+      "corrected_response": "I'll format the spreadsheet cell.",
+      "domain": "computing",
+      "probes": [
+        {"request": "Format the cell.", "expected": "spreadsheet cell", "category": "retention", "match_mode": "sense"},
+        {"request": "Edit the cell.", "expected": "biology cell", "category": "scope", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s2_record",
+      "initial_request": "Insert the record.",
+      "default_response": "I'll insert the music record.",
+      "correction_utterance": "No, 'record' here means database record.",
+      "corrected_label": "database record",
+      "corrected_response": "I'll insert the database record.",
+      "domain": "computing",
+      "probes": [
+        {"request": "Insert the record.", "expected": "database record", "category": "retention", "match_mode": "sense"},
+        {"request": "Play the record.", "expected": "music record", "category": "scope", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s2_branch",
+      "initial_request": "Merge the branch.",
+      "default_response": "I'll merge the tree branch.",
+      "correction_utterance": "No, 'branch' here means git branch.",
+      "corrected_label": "git branch",
+      "corrected_response": "I'll merge the git branch.",
+      "domain": "computing",
+      "probes": [
+        {"request": "Merge the branch.", "expected": "git branch", "category": "retention", "match_mode": "sense"},
+        {"request": "Create a branch.", "expected": "tree branch", "category": "scope", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s2_model",
+      "initial_request": "Train the model.",
+      "default_response": "I'll train the fashion model.",
+      "correction_utterance": "No, 'model' here means ML model.",
+      "corrected_label": "ML model",
+      "corrected_response": "I'll train the ML model.",
+      "domain": "computing",
+      "probes": [
+        {"request": "Train the model.", "expected": "ML model", "category": "retention", "match_mode": "sense"},
+        {"request": "Deploy the model.", "expected": "fashion model", "category": "scope", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s2_run",
+      "initial_request": "Start the ML run.",
+      "default_response": "I'll start the river run.",
+      "correction_utterance": "No, 'run' here means ML experiment run.",
+      "corrected_label": "ML experiment run",
+      "corrected_response": "I'll start the ML experiment run.",
+      "domain": "computing",
+      "probes": [
+        {"request": "Start the ML run.", "expected": "ML experiment run", "category": "retention", "match_mode": "sense"},
+        {"request": "Start the run.", "expected": "river run", "category": "scope", "match_mode": "sense"}
+      ]
+    }
+  ]
+}

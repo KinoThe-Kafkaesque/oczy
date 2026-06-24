@@ -1,0 +1,103 @@
+{
+  "name": "Stage 1: Transfer within domain",
+  "description": "New requests that use the corrected sense learned in Stage 0. Targets NeuralHippocampus replay when fast weights are weak.",
+  "consolidate_before": false,
+  "episodes": [
+    {
+      "id": "s1_log",
+      "initial_request": "Open the captain's log.",
+      "default_response": "I'll open the system error log.",
+      "correction_utterance": "No, 'log' means the captain's journal.",
+      "corrected_label": "captain's journal",
+      "corrected_response": "I'll open the captain's journal.",
+      "domain": "nautical",
+      "probes": [
+        {"request": "Open the captain's log.", "expected": "captain's journal", "category": "transfer", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s1_file",
+      "initial_request": "File this application.",
+      "default_response": "I'll save this application to disk.",
+      "correction_utterance": "No, 'file' means submit it officially.",
+      "corrected_label": "submit officially",
+      "corrected_response": "I'll submit this application officially.",
+      "domain": "bureaucracy",
+      "probes": [
+        {"request": "File this application.", "expected": "submit officially", "category": "transfer", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s1_key",
+      "initial_request": "Read the map key.",
+      "default_response": "I'll read the keyboard key.",
+      "correction_utterance": "No, 'key' means the map legend.",
+      "corrected_label": "map legend",
+      "corrected_response": "I'll read the map legend.",
+      "domain": "cartography",
+      "probes": [
+        {"request": "Read the map key.", "expected": "map legend", "category": "transfer", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s1_cell",
+      "initial_request": "Study the cell.",
+      "default_response": "I'll study the spreadsheet cell.",
+      "correction_utterance": "No, 'cell' means the biology cell.",
+      "corrected_label": "biology cell",
+      "corrected_response": "I'll study the biology cell.",
+      "domain": "science",
+      "probes": [
+        {"request": "Study the cell.", "expected": "biology cell", "category": "transfer", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s1_record",
+      "initial_request": "Spin the record.",
+      "default_response": "I'll spin the database record.",
+      "correction_utterance": "No, 'record' means the music record.",
+      "corrected_label": "music record",
+      "corrected_response": "I'll spin the music record.",
+      "domain": "music",
+      "probes": [
+        {"request": "Spin the record.", "expected": "music record", "category": "transfer", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s1_branch",
+      "initial_request": "Snap the branch.",
+      "default_response": "I'll snap the git branch.",
+      "correction_utterance": "No, 'branch' means tree branch.",
+      "corrected_label": "tree branch",
+      "corrected_response": "I'll snap the tree branch.",
+      "domain": "nature",
+      "probes": [
+        {"request": "Snap the branch.", "expected": "tree branch", "category": "transfer", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s1_model",
+      "initial_request": "Book the model.",
+      "default_response": "I'll book the ML model.",
+      "correction_utterance": "No, 'model' means fashion model.",
+      "corrected_label": "fashion model",
+      "corrected_response": "I'll book the fashion model.",
+      "domain": "fashion",
+      "probes": [
+        {"request": "Book the model.", "expected": "fashion model", "category": "transfer", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s1_run",
+      "initial_request": "Follow the run.",
+      "default_response": "I'll follow the ML experiment run.",
+      "correction_utterance": "No, 'run' means the river run.",
+      "corrected_label": "river run",
+      "corrected_response": "I'll follow the river run.",
+      "domain": "nature",
+      "probes": [
+        {"request": "Follow the run.", "expected": "river run", "category": "transfer", "match_mode": "sense"}
+      ]
+    }
+  ]
+}

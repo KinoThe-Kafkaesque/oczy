@@ -1,0 +1,128 @@
+{
+  "name": "Stage 4: Consolidation stress",
+  "description": "Many corrections in sequence followed by an explicit consolidate(). Tests hippocampal replay, consolidation, and autoencoder compression. Memory metrics are captured before and after consolidation.",
+  "consolidate_before": false,
+  "consolidate_after": true,
+  "episodes": [
+    {
+      "id": "s4_log_nautical",
+      "initial_request": "Show the log.",
+      "default_response": "I'll show the system error log.",
+      "correction_utterance": "No, 'log' means the captain's journal.",
+      "corrected_label": "captain's journal",
+      "corrected_response": "I'll show the captain's journal.",
+      "domain": "nautical",
+      "probes": [
+        {"request": "Show the log.", "expected": "captain's journal", "category": "retention", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s4_file_official",
+      "initial_request": "File the report.",
+      "default_response": "I'll save the report to disk.",
+      "correction_utterance": "No, 'file' means submit it officially.",
+      "corrected_label": "submit officially",
+      "corrected_response": "I'll submit the report officially.",
+      "domain": "bureaucracy",
+      "probes": [
+        {"request": "File the report.", "expected": "submit officially", "category": "retention", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s4_key_map",
+      "initial_request": "Check the key.",
+      "default_response": "I'll check the keyboard key.",
+      "correction_utterance": "No, 'key' means the map legend.",
+      "corrected_label": "map legend",
+      "corrected_response": "I'll check the map legend.",
+      "domain": "cartography",
+      "probes": [
+        {"request": "Check the key.", "expected": "map legend", "category": "retention", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s4_cell_biology",
+      "initial_request": "Edit the cell.",
+      "default_response": "I'll edit the spreadsheet cell.",
+      "correction_utterance": "No, 'cell' means the biology cell.",
+      "corrected_label": "biology cell",
+      "corrected_response": "I'll edit the biology cell.",
+      "domain": "science",
+      "probes": [
+        {"request": "Edit the cell.", "expected": "biology cell", "category": "retention", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s4_record_music",
+      "initial_request": "Play the record.",
+      "default_response": "I'll play the database record.",
+      "correction_utterance": "No, 'record' means the music record.",
+      "corrected_label": "music record",
+      "corrected_response": "I'll play the music record.",
+      "domain": "music",
+      "probes": [
+        {"request": "Play the record.", "expected": "music record", "category": "retention", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s4_branch_tree",
+      "initial_request": "Create a branch.",
+      "default_response": "I'll create a new git branch.",
+      "correction_utterance": "No, 'branch' means tree branch.",
+      "corrected_label": "tree branch",
+      "corrected_response": "I'll create a tree branch.",
+      "domain": "nature",
+      "probes": [
+        {"request": "Create a branch.", "expected": "tree branch", "category": "retention", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s4_model_fashion",
+      "initial_request": "Deploy the model.",
+      "default_response": "I'll deploy the ML model.",
+      "correction_utterance": "No, 'model' means fashion model.",
+      "corrected_label": "fashion model",
+      "corrected_response": "I'll deploy the fashion model.",
+      "domain": "fashion",
+      "probes": [
+        {"request": "Deploy the model.", "expected": "fashion model", "category": "retention", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s4_run_river",
+      "initial_request": "Start the run.",
+      "default_response": "I'll start the ML experiment run.",
+      "correction_utterance": "No, 'run' means the river run.",
+      "corrected_label": "river run",
+      "corrected_response": "I'll start the river run.",
+      "domain": "nature",
+      "probes": [
+        {"request": "Start the run.", "expected": "river run", "category": "retention", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s4_table_dining",
+      "initial_request": "Reserve a table.",
+      "default_response": "I'll reserve the database table.",
+      "correction_utterance": "No, 'table' means dining table.",
+      "corrected_label": "dining table",
+      "corrected_response": "I'll reserve the dining table.",
+      "domain": "hospitality",
+      "probes": [
+        {"request": "Reserve a table.", "expected": "dining table", "category": "retention", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s4_service_church",
+      "initial_request": "Restart the service.",
+      "default_response": "I'll restart the microservice.",
+      "correction_utterance": "No, 'service' means church service.",
+      "corrected_label": "church service",
+      "corrected_response": "I'll restart the church service.",
+      "domain": "religion",
+      "probes": [
+        {"request": "Restart the service.", "expected": "church service", "category": "retention", "match_mode": "sense"}
+      ]
+    }
+  ]
+}

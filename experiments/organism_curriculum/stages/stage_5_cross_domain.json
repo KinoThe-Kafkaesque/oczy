@@ -1,0 +1,85 @@
+{
+  "name": "Stage 5: Cross-domain disambiguation",
+  "description": "The same ambiguous word must map to different senses depending on domain context. Targets WorldModelCritic, IdentityHypernetwork, and SkillImmuneCortex together.",
+  "consolidate_before": true,
+  "episodes": [
+    {
+      "id": "s5_log_context",
+      "initial_request": "The ship's log is missing from the archive.",
+      "default_response": "I'll search the system error logs.",
+      "correction_utterance": "No, 'log' means the captain's journal.",
+      "corrected_label": "captain's journal",
+      "corrected_response": "I'll find the captain's journal.",
+      "domain": "nautical",
+      "probes": [
+        {"request": "The ship's log is missing from the archive.", "expected": "captain's journal", "category": "retention", "match_mode": "sense"},
+        {"request": "Log the server crash in the system.", "expected": "system error log", "category": "scope", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s5_file_context",
+      "initial_request": "Please file these papers with the clerk.",
+      "default_response": "I'll save these papers to disk.",
+      "correction_utterance": "No, 'file' means submit them officially.",
+      "corrected_label": "submit officially",
+      "corrected_response": "I'll submit these papers officially.",
+      "domain": "bureaucracy",
+      "probes": [
+        {"request": "Please file these papers with the clerk.", "expected": "submit officially", "category": "retention", "match_mode": "sense"},
+        {"request": "Save the source file before building.", "expected": "computer file", "category": "scope", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s5_model_context",
+      "initial_request": "The model walked the runway in Paris.",
+      "default_response": "I'll load the ML model.",
+      "correction_utterance": "No, 'model' means fashion model.",
+      "corrected_label": "fashion model",
+      "corrected_response": "I'll book the fashion model.",
+      "domain": "fashion",
+      "probes": [
+        {"request": "The model walked the runway in Paris.", "expected": "fashion model", "category": "retention", "match_mode": "sense"},
+        {"request": "Train the model on the image dataset.", "expected": "ML model", "category": "scope", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s5_run_context",
+      "initial_request": "The kayakers ran the rapids on the river run.",
+      "default_response": "I'll start the ML experiment run.",
+      "correction_utterance": "No, 'run' means the river run.",
+      "corrected_label": "river run",
+      "corrected_response": "I'll follow the river run.",
+      "domain": "nature",
+      "probes": [
+        {"request": "The kayakers ran the rapids on the river run.", "expected": "river run", "category": "retention", "match_mode": "sense"},
+        {"request": "Start the training run for the new model.", "expected": "ML experiment run", "category": "scope", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s5_key_context",
+      "initial_request": "The key on this map is unreadable.",
+      "default_response": "I'll press the keyboard key.",
+      "correction_utterance": "No, 'key' means the map legend.",
+      "corrected_label": "map legend",
+      "corrected_response": "I'll read the map legend.",
+      "domain": "cartography",
+      "probes": [
+        {"request": "The key on this map is unreadable.", "expected": "map legend", "category": "retention", "match_mode": "sense"},
+        {"request": "Press the escape key to exit.", "expected": "keyboard key", "category": "scope", "match_mode": "sense"}
+      ]
+    },
+    {
+      "id": "s5_cell_context",
+      "initial_request": "The cell divided during the experiment.",
+      "default_response": "I'll edit the spreadsheet cell.",
+      "correction_utterance": "No, 'cell' means the biology cell.",
+      "corrected_label": "biology cell",
+      "corrected_response": "I'll observe the biology cell.",
+      "domain": "science",
+      "probes": [
+        {"request": "The cell divided during the experiment.", "expected": "biology cell", "category": "retention", "match_mode": "sense"},
+        {"request": "Format the cell in column B.", "expected": "spreadsheet cell", "category": "scope", "match_mode": "sense"}
+      ]
+    }
+  ]
+}
