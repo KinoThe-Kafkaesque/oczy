@@ -19,10 +19,17 @@ class _MockCortexConfig:
 class _MockCortexAgent:
     """Minimal CortexAgent stand-in for policy-head scoring tests."""
 
-    def __init__(self, policy_scores: np.ndarray | None = None) -> None:
+    def __init__(
+        self,
+        policy_scores: np.ndarray | None = None,
+        last_hidden: np.ndarray | None = None,
+        value_critic: Any | None = None,
+    ) -> None:
         self._last_utterance: str | None = None
         self.config = _MockCortexConfig()
         self._policy_scores = policy_scores
+        self._last_hidden = last_hidden
+        self.world_model_critic = value_critic
         self.policy_update_calls: list[dict[str, Any]] = []
 
     def policy_update(
@@ -49,6 +56,21 @@ class _MockCortexAgent:
         if self._policy_scores is not None:
             return self._policy_scores
         return np.array([10.0] + [0.0] * (len(candidates) - 1))
+
+
+class _MockValueCritic:
+    """Returns a fixed value estimate for baseline tests."""
+
+    def __init__(self, value: float) -> None:
+        self._value = value
+
+    def predict_value(
+        self,
+        query: str,
+        proposed_answer: str,
+        lm_hidden: Any,
+    ) -> float:
+        return self._value
 
 
 def test_cortex_policy_default_off_uses_legacy_ranking() -> None:
@@ -169,3 +191,51 @@ def test_positive_update_skipped_when_expected_missing() -> None:
 
     assert len(mock_cortex.policy_update_calls) == 1
     assert mock_cortex.policy_update_calls[0]["reward"] == -1.0
+
+
+def test_value_baseline_disabled_by_default() -> None:
+    """Without use_value_baseline, policy updates receive a zero baseline."""
+    mock_cortex = _MockCortexAgent()
+    organism = OrganismAgent(
+        {"use_cortex_policy": True, "cortex_agent": mock_cortex}
+    )
+    organism.plastic_cortex.labels = ["a", "b"]
+    organism.plastic_cortex.answer = lambda request: "a"
+    organism._surprise_threshold = 0.0
+
+    organism.learn("x", "No, it is b.")
+
+    assert len(mock_cortex.policy_update_calls) == 2
+    assert all(c["baseline"] == 0.0 for c in mock_cortex.policy_update_calls)
+
+
+def test_value_baseline_uses_predict_value() -> None:
+    """When enabled, the CortexAgent value estimate feeds the REINFORCE baseline."""
+    mock_cortex = _MockCortexAgent(
+        last_hidden=np.array([1.0, 2.0, 3.0]),
+        value_critic=_MockValueCritic(0.42),
+    )
+    organism = OrganismAgent(
+        {
+            "use_cortex_policy": True,
+            "use_value_baseline": True,
+            "cortex_agent": mock_cortex,
+        }
+    )
+    organism.plastic_cortex.labels = ["a", "b"]
+    organism.plastic_cortex.answer = lambda request: "a"
+    organism._surprise_threshold = 0.0
+
+    organism.learn("x", "No, it is b.")
+
+    assert len(mock_cortex.policy_update_calls) == 2
+    assert all(
+        c["baseline"] == pytest.approx(0.42)
+        for c in mock_cortex.policy_update_calls
+    )
+
+
+def test_value_baseline_warning_without_cortex_agent() -> None:
+    with pytest.warns(UserWarning, match="cortex_agent"):
+        organism = OrganismAgent({"use_value_baseline": True})
+    assert organism.cortex_agent is None

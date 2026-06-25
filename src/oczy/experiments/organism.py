@@ -86,6 +86,7 @@ class OrganismAgent:
         self._unk = "I don't know."
         self.use_cortex_lm_answer = bool(config.get("use_cortex_lm_answer", False))
         self.use_cortex_policy = bool(config.get("use_cortex_policy", False))
+        self.use_value_baseline = bool(config.get("use_value_baseline", False))
         self.cortex_policy_weight = float(config.get("cortex_policy_weight", 1.0))
         self.cortex_agent: CortexAgent | None = config.get("cortex_agent")
         if self.use_cortex_lm_answer and self.cortex_agent is None:
@@ -98,6 +99,12 @@ class OrganismAgent:
             warnings.warn(
                 "use_cortex_policy=True but no cortex_agent provided; "
                 "falling back to the legacy ranking path.",
+                stacklevel=2,
+            )
+        if self.use_value_baseline and self.cortex_agent is None:
+            warnings.warn(
+                "use_value_baseline=True but no cortex_agent provided; "
+                "policy updates will use baseline=0.0.",
                 stacklevel=2,
             )
 
@@ -358,11 +365,25 @@ class OrganismAgent:
                         labels.insert(0, prior_answer)
                     chosen = prior_answer if prior_answer else labels[0]
                     chosen_idx = labels.index(chosen)
+                    baseline = 0.0
+                    if self.use_value_baseline:
+                        value_hidden = (
+                            getattr(self.cortex_agent, "_prev_hidden", None)
+                            or getattr(self.cortex_agent, "_last_hidden", None)
+                        )
+                        if value_hidden is not None and hasattr(
+                            self.cortex_agent.world_model_critic, "predict_value"
+                        ):
+                            baseline = self.cortex_agent.world_model_critic.predict_value(
+                                query=request or "",
+                                proposed_answer=prior_answer or "",
+                                lm_hidden=value_hidden,
+                            )
                     self.cortex_agent.policy_update(
                         labels,
                         chosen_idx=chosen_idx,
                         reward=-1.0,
-                        baseline=0.0,
+                        baseline=baseline,
                     )
                     # Also reinforce the corrected expected action positively.
                     if expected_answer and expected_answer in labels:
@@ -371,7 +392,7 @@ class OrganismAgent:
                             labels,
                             chosen_idx=expected_idx,
                             reward=1.0,
-                            baseline=0.0,
+                            baseline=baseline,
                         )
                 except Exception:
                     # Policy update is advisory; never break the correction path.
