@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from oczy.experiments.codebase_qa.knowledge_store import KnowledgeStore
+from oczy.lm import ReservedPosition
 
 
 def test_adding_facts_increases_record_count() -> None:
@@ -121,3 +122,37 @@ def test_format_context_min_score_filters_low_relevance_facts() -> None:
     assert "Python" in context
     assert "moon" not in context
 
+
+def test_get_reserved_position_returns_token_for_matching_fact() -> None:
+    store = KnowledgeStore()
+    store.add_fact(
+        "business vertical",
+        "The term 'Profile' in this repository refers to a business vertical.",
+        metadata={"reserved_token": "vertical"},
+    )
+
+    pos = store.get_reserved_position("business vertical", k=1, min_score=0.0)
+
+    assert isinstance(pos, ReservedPosition)
+    assert pos.text == "vertical"
+    assert pos.source == "knowledge_store"
+    assert pos.exact_uptake_score is not None and pos.exact_uptake_score > 0
+
+
+
+def test_get_reserved_position_returns_none_without_reserved_token_metadata() -> None:
+    store = KnowledgeStore()
+    store.add_fact("plain fact", "This fact has no reserved token.")
+
+    assert store.get_reserved_position("plain fact", k=1, min_score=0.0) is None
+
+
+def test_get_reserved_position_respects_min_score() -> None:
+    store = KnowledgeStore()
+    store.add_fact(
+        "gamma fact",
+        "Qwerty placeholder detail.",
+        metadata={"reserved_token": "vertical"},
+    )
+
+    assert store.get_reserved_position("alpha beta query", k=1, min_score=0.18) is None

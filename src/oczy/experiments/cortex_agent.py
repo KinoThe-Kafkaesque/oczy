@@ -34,20 +34,16 @@ from typing import Any
 
 import numpy as np
 
-from neural_hippocampus import NeuralHippocampus
-from world_model_critic import WorldModelCritic
 from experience_autoencoder import ExperienceAutoencoder
-from identity_hypernetwork import IdentityHypernetwork
-from skill_immune_cortex import SkillImmuneCortex
 from experience_autoencoder.autoencoder import HEBBIAN_LR
-
-from oczy.experiments.digestive_gate import DigestiveGate, DigestiveGateConfig
-
-
-from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
-from oczy.lm import CVecDriverConfig, LlamaCVecDriver, ReservedPosition
-
+from identity_hypernetwork import IdentityHypernetwork
+from neural_hippocampus import NeuralHippocampus
 from oczy.experiments.codebase_qa.knowledge_store import KnowledgeStore
+from oczy.experiments.digestive_gate import DigestiveGate, DigestiveGateConfig
+from oczy.lm import CVecDriverConfig, LlamaCVecDriver, ReservedPosition
+from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
+from skill_immune_cortex import SkillImmuneCortex
+from world_model_critic import WorldModelCritic
 
 # Heuristic correction-signal detector. The cortex's neuromodulator needs
 # to know when to fire high plasticity; this is a stop-gap that will be
@@ -421,6 +417,7 @@ class CortexAgent:
         temperature: float = 0.0,
         apply_steering: bool = True,
         recall_query: str | None = None,
+        use_reserved_position: bool = True,
         stop: list[str] | str | None = None,
     ) -> str:
         """Generate text with the cortex's intent currently applied.
@@ -440,6 +437,11 @@ class CortexAgent:
                 If provided (or defaulted from ``self._last_utterance`` when
                 the store is present), retrieved facts are prepended to the
                 prompt. No recall is performed when no store is attached.
+            use_reserved_position: if True (default) and a knowledge store is
+                attached, try to map the recall query to a reserved token and
+                set it as a reserved position before generation.  Reserved
+                positions take precedence over cvec steering to avoid
+                interference.
             stop: optional stop sequence(s) forwarded to the driver's generate().
 
         Returns:
@@ -449,6 +451,8 @@ class CortexAgent:
         if prompt is None:
             prompt = self._last_utterance or ""
 
+        reserved_position: ReservedPosition | None = None
+
         # Ground the prompt with retrieved repo facts when a knowledge
         # store is attached. Explicit recall_query takes precedence; otherwise
         # fall back to the last perceived utterance so perceive()->articulate()
@@ -457,11 +461,21 @@ class CortexAgent:
             query = recall_query if recall_query is not None else self._last_utterance
             if query is not None:
                 prompt = self.knowledge_store.format_context(query) + prompt
+                if use_reserved_position:
+                    reserved_position = self.knowledge_store.get_reserved_position(query)
+                    if reserved_position is not None:
+                        self.set_reserved_position(reserved_position)
 
         if not prompt:
+            # Avoid leaking a reserved position if we bail out early.
+            if reserved_position is not None:
+                self.clear_reserved_position()
             raise ValueError("articulate() needs a prompt or a prior perceive()")
 
-        if apply_steering:
+        # Reserved positions handle exact-token recall; applying a cvec at the
+        # same time causes the two steering surfaces to interfere.  Only apply
+        # the cortex's residual steering when no reserved position is active.
+        if apply_steering and reserved_position is None:
             if self.cortex.has_uniform_proj_c():
                 vec = self.cortex.emit_uniform_cvec()
                 self.driver.set_cvec_uniform(vec, scale=self.config.articulate_scale)
@@ -469,18 +483,19 @@ class CortexAgent:
                 self.driver.set_cvecs_per_layer(
                     self.cortex.emit_all_cvecs(), scale=self.config.articulate_scale
                 )
-            try:
-                return self.driver.generate(
-                    prompt,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    stop=stop,
-                )
-            finally:
+
+        try:
+            return self.driver.generate(
+                prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stop=stop,
+            )
+        finally:
+            if apply_steering and reserved_position is None:
                 self.driver.clear_cvec()
-        return self.driver.generate(
-            prompt, max_tokens=max_tokens, temperature=temperature, stop=stop
-        )
+            if reserved_position is not None:
+                self.clear_reserved_position()
 
     # Convenience: perceive -> metabolize -> optionally consolidate -> articulate.
     def turn(
@@ -621,7 +636,7 @@ class CortexAgent:
     @classmethod
     def load(
         cls, path: Path | str, config: CortexAgentConfig | None = None
-    ) -> "CortexAgent":
+    ) -> CortexAgent:
         """Reconstruct a CortexAgent from a saved state file.
 
         The cortex's cold_state, proj_hidden, and proj_c are restored

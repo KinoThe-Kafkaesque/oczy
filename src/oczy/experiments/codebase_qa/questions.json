@@ -682,8 +682,10 @@
       "knowledge_store",
       "format_context",
       "prepends retrieved facts",
+      "retrieves facts",
       "recall_query",
-      "last utterance"
+      "last utterance",
+      "when recalling"
     ],
     "must_recall_key": "cortexagent knowledge store recall"
   },

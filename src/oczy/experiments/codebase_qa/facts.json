@@ -10,7 +10,16 @@
     "key": "north star metric",
     "value": "The north-star metric is behavior_delta_per_byte_of_persistent_memory; a high score means the organism learns a lot while keeping persistent memory small.",
     "metadata": {
-      "source": "experiments.txt"
+      "source": "experiments.txt",
+      "reserved_token": "behavior_delta_per_byte_of_persistent_memory"
+    }
+  },
+  {
+    "key": "profile here means business vertical",
+    "value": "In the consolidation-uptake probe, the word 'profile' here means business vertical, not user profile.",
+    "metadata": {
+      "source": "src/oczy/experiments/codebase_qa/benchmark.py",
+      "reserved_token": "vertical"
     }
   },
   {
@@ -94,7 +103,8 @@
     "key": "cvec driver default model",
     "value": "The default model file loaded by LlamaCVecDriver is LFM2.5-1.2B-Instruct-Q4_K_M.gguf from the LiquidAI/LFM2.5-1.2B-Instruct-GGUF repository.",
     "metadata": {
-      "source": "src/oczy/lm/cvec_driver.py"
+      "source": "src/oczy/lm/cvec_driver.py",
+      "reserved_token": "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
     }
   },
   {
@@ -108,7 +118,8 @@
     "key": "peek_embedding requirement",
     "value": "peek_embedding() requires CVecDriverConfig(embedding=True) at load time, otherwise the llama.cpp embedding path is disabled.",
     "metadata": {
-      "source": "src/oczy/lm/cvec_driver.py"
+      "source": "src/oczy/lm/cvec_driver.py",
+      "reserved_token": "embedding=True"
     }
   },
   {
@@ -234,7 +245,8 @@
     "key": "raw hidden steering scale",
     "value": "With steering_mode='raw_hidden' on LFM2.5-1.2B-Instruct Q4_K_M, articulate_scale=0.001 produced clean on-manifold steering while 0.005+ caused repetition garbage.",
     "metadata": {
-      "source": "experiments_logs/2026-06-24_cortexagent_raw_hidden_steering.md"
+      "source": "experiments_logs/2026-06-24_cortexagent_raw_hidden_steering.md",
+      "reserved_token": "0.001"
     }
   },
   {

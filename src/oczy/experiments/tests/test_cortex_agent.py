@@ -14,6 +14,8 @@ Run: uv run python experiments/tests/test_cortex_agent.py
 from __future__ import annotations
 
 import sys
+from unittest.mock import MagicMock
+
 
 import pytest
 
@@ -26,8 +28,9 @@ import numpy as np
 from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
 from oczy.experiments.digestive_gate import DigestiveGateConfig
 from plastic_cortex.kv_cortex import KVCortexConfig
-from oczy.lm import CVecDriverConfig
+from oczy.lm import CVecDriverConfig, ReservedPosition
 
+from oczy.experiments.codebase_qa.knowledge_store import KnowledgeStore
 pytestmark = [pytest.mark.slow, pytest.mark.requires_model, pytest.mark.llm]
 
 
@@ -339,6 +342,65 @@ def test_auto_consolidation_shifts_repeated_question_output() -> None:
             "output shifted but auto-consolidation never ran; "
             "behavioural change cannot be attributed to consolidation."
         )
+
+
+def test_articulate_reserved_position_from_knowledge_store() -> None:
+    """A reserved_token fact sets/clears a ReservedPosition and suppresses cvec."""
+    store = KnowledgeStore()
+    store.add_fact(
+        key="business vertical",
+        value="'Profile' here means business vertical.",
+        metadata={"reserved_token": "vertical"},
+    )
+
+    mock_driver = MagicMock()
+    mock_driver.n_embd = 64
+    mock_driver.n_layers = 2
+    mock_driver.generate.return_value = "vertical something"
+
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=8),
+        driver=CVecDriverConfig(n_ctx=256, verbose=False, embedding=True),
+    )
+    agent = CortexAgent(cfg, driver=mock_driver, knowledge_store=store)
+    agent.boot()
+
+    reply = agent.articulate(
+        prompt="What does 'profile' mean here?",
+        recall_query="business profile vertical",
+        apply_steering=False,
+        max_tokens=8,
+    )
+    assert reply == "vertical something"
+
+    assert mock_driver.set_reserved_position.call_count == 1
+    pos = mock_driver.set_reserved_position.call_args[0][0]
+    assert isinstance(pos, ReservedPosition)
+    assert pos.text == "vertical"
+    assert pos.source == "knowledge_store"
+    assert pos.exact_uptake_score is not None
+
+    mock_driver.set_cvec_uniform.assert_not_called()
+    mock_driver.set_cvecs_per_layer.assert_not_called()
+    mock_driver.clear_cvec.assert_not_called()
+    assert mock_driver.clear_reserved_position.call_count == 1
+
+    # Reserved position active and apply_steering=True: cvec must remain off.
+    mock_driver.reset_mock()
+    reply2 = agent.articulate(
+        prompt="What does 'profile' mean here?",
+        recall_query="business profile vertical",
+        apply_steering=True,
+        max_tokens=8,
+    )
+    assert reply2 == "vertical something"
+    mock_driver.set_reserved_position.assert_called_once()
+    mock_driver.set_cvec_uniform.assert_not_called()
+    mock_driver.set_cvecs_per_layer.assert_not_called()
+    # Because the reserved position handled exact-token steering, no cvec
+    # methods (apply or clear) should have been invoked.
+    mock_driver.clear_cvec.assert_not_called()
+    mock_driver.clear_reserved_position.assert_called_once()
 
 def main() -> int:
     tests = [

@@ -10,10 +10,11 @@ import math
 import pickle
 import re
 from collections import Counter
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 
+from oczy.lm import ReservedPosition
 
 # Common English stopwords plus conversational/query words.  Removing them
 # prevents value-side filler text (e.g., 'what becomes a memory update') from
@@ -238,6 +239,37 @@ class KnowledgeStore:
             lines.append(f"  Value: {fact['value']}")
         lines.append("")
         return "\n".join(lines)
+
+    def get_reserved_position(
+        self,
+        query: str,
+        k: int = 1,
+        min_score: float = 0.18,
+    ) -> ReservedPosition | None:
+        """Return the top fact's reserved token as a reserved position.
+
+        If the highest-ranked fact for ``query`` carries
+        ``metadata["reserved_token"]`` and its relevance score meets
+        ``min_score``, convert it into a ``ReservedPosition`` the cortex can
+        apply during generation. Otherwise return ``None``.
+        """
+        facts = self.recall(query, k=k)
+        if not facts:
+            return None
+
+        top = facts[0]
+        if top["score"] < min_score:
+            return None
+
+        token = top.get("metadata", {}).get("reserved_token")
+        if not isinstance(token, str) or not token.strip():
+            return None
+
+        return ReservedPosition(
+            text=token,
+            source="knowledge_store",
+            exact_uptake_score=top["score"],
+        )
 
     def status(self, include_size: bool = False) -> dict:
         """Return serializable status metadata."""
