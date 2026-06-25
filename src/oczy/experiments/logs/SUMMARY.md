@@ -104,10 +104,15 @@ Commits since previous summary:
     existing heuristic ranking. Default path unchanged.
     Benchmark unchanged: `code_qa_accuracy=1.0` (run #62).
 
-Test status: `pytest: 250 passed` fast (reserve-position + tensor-critic + replay-SGD +
+19. `bf0cd1f` — Close the Phase 2 loop: `OrganismAgent._learn_from_correction`
+    now calls `cortex_agent.policy_update(..., reward=-1.0, ...)` when
+    `use_cortex_policy=True`, so the policy head is trained on real
+    correction feedback. Benchmark unchanged: `code_qa_accuracy=1.0` (run #63).
+
+Test status: `pytest: 253 passed` fast (reserve-position + tensor-critic + replay-SGD +
 identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
-value-head + value-head-wiring + policy-head + organism-policy unit tests pass;
-full slow/model suite not rerun). `ruff check` clean on changed files.
+value-head + value-head-wiring + policy-head + organism-policy + policy-correction-loop
+unit tests pass; full slow/model suite not rerun). `ruff check` clean on changed files.
 
 Remaining blocks:
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
@@ -123,5 +128,6 @@ Remaining blocks:
   a learned value head that is trained with TD on every `metabolize()`, and feeds the
   digestive gate, but none have been validated in a real correction/uptake loop.
 - CortexAgent now has an `answer()` method, a learned response-policy head, and
-  `OrganismAgent` can optionally use it for ranking via `use_cortex_policy=True`.
-  All gates remain off by default and have not been exercised in a real workload.
+  `OrganismAgent` can use it for both ranking and policy-gradient updates during
+  corrections (via `use_cortex_policy=True`). All gates are off by default and have
+  not yet been measured in a real correction/uptake loop.
