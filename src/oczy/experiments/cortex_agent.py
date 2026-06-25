@@ -595,6 +595,26 @@ class CortexAgent:
             except Exception:
                 continue
 
+        # Replay the hidden vectors through the cortex's perception projector
+        # as gradient-shaped SGD steps *before* moving warm into cold.  This is
+        # the first step toward differentiable hippocampal replay: summaries
+        # that carried corrections reinforce the response direction, neutral
+        # summaries suppress it.  The step size is gated by
+        # KVCortexConfig.replay_sgd_step and defaults to 0.0, so existing
+        # dynamics are unchanged unless explicitly enabled.
+        replay_losses: list[float] = []
+        replay_updated = 0
+        for s in summaries:
+            hidden = s.get("representative_hidden")
+            if not isinstance(hidden, np.ndarray) or hidden.ndim != 1:
+                continue
+            corrections = s.get("summary_corrections") or []
+            sign = 1.0 if corrections else -1.0
+            res = self.cortex.replay_train_step(hidden, target_response_sign=sign)
+            if res.get("updated"):
+                replay_updated += 1
+                replay_losses.append(res.get("loss", 0.0))
+
         cortex_before = self.cortex.cold_state.copy()
         self.cortex.consolidate(
             replays=replays if replays else None,
@@ -607,6 +627,8 @@ class CortexAgent:
             "summary_count": len(summaries),
             "replay_count": len(replays),
             "cold_drift": cold_drift,
+            "replay_sgd_updated": replay_updated,
+            "replay_sgd_losses": replay_losses,
         }
 
     # Persistence

@@ -67,7 +67,7 @@ class KVCortexConfig:
     consolidate_slow_step: float = 0.05  # cold = (1-s)*cold + s*warm
     consolidate_replay_step: float = 0.10
     max_consolidation_strength: float = 10.0  # cap on per-call strength multiplier
-
+    replay_sgd_step: float = 0.0  # 0.0 disables differentiable replay on proj_hidden
     # Steering mode. ``proj_random`` (default): per-layer cvecs come from
     # ``proj_c @ warm_state``. ``raw_hidden``: per-layer cvecs come from a
     # single ``last_correction_hidden`` vector broadcast across all layers,
@@ -505,6 +505,64 @@ class KVCortex:
         norms = np.linalg.norm(self.proj_hidden, axis=1, keepdims=True)
         self.proj_hidden /= np.where(norms == 0, 1.0, norms)
         return float(np.linalg.norm(signal))
+
+    def replay_train_step(
+        self,
+        lm_hidden: np.ndarray,
+        target_response_sign: float,
+        lr: float | None = None,
+    ) -> dict[str, float]:
+        """One signed SGD step on ``proj_hidden`` from a replayed hidden vector.
+
+        This is the differentiable replay path: hippocampal summaries
+        become gradient-shaped updates on the perception projector
+        instead of mere cold-state nudges.  A summary that carried a user
+        correction reinforces the response direction; a neutral/accepted
+        summary suppresses it.
+
+        Args:
+            lm_hidden: replay hidden vector of shape ``(d_embd,)``.
+            target_response_sign: ``+1.0`` to reinforce the current
+                ``tanh(proj_hidden @ h)`` direction, ``-1.0`` to suppress
+                it (drive the response toward zero).
+            lr: optional override for the learning rate. When ``None``
+                (default), uses ``config.replay_sgd_step``.
+
+        Returns:
+            Dict with ``updated`` (bool) and scalar ``loss``.
+        """
+        h = np.asarray(lm_hidden, dtype=np.float32).reshape(-1)
+        if h.shape[0] != self.config.d_embd:
+            raise ValueError(
+                "lm_hidden dim %d != config.d_embd %d" % (h.shape[0], self.config.d_embd)
+            )
+
+        lr_eff = float(lr if lr is not None else self.config.replay_sgd_step)
+        if lr_eff == 0.0:
+            return {"updated": False, "loss": 0.0}
+
+        signal = self.proj_hidden @ h
+        pred = np.tanh(signal)
+        # Target magnitude follows the current prediction magnitude but
+        # keeps a small floor/ceiling so the gradient does not vanish.
+        target_mag = np.clip(np.abs(pred), 0.01, 0.99)
+        target = float(np.clip(target_response_sign, -1.0, 1.0)) * target_mag
+        loss = float(np.mean(0.5 * (pred - target) ** 2))
+
+        # dL/d(signal) = (pred - target) * (1 - tanh^2(signal))
+        grad_signal = (pred - target) * (1.0 - pred * pred)
+        # dL/dW = grad_signal[:, None] * h[None, :]
+        grad_W = grad_signal.reshape(-1, 1) * h.reshape(1, -1)
+        self.proj_hidden -= lr_eff * grad_W.astype(np.float32)
+
+        # Per-row renormalisation keeps the projector stable across
+        # thousands of replay steps without an explicit regulariser.
+        norms = np.linalg.norm(self.proj_hidden, axis=1, keepdims=True)
+        self.proj_hidden /= np.where(norms == 0, 1.0, norms)
+        self._dirty = True
+
+        return {"updated": True, "loss": loss}
+
 
     # ------------------------------------------------------------------
     # Introspection / persistence
