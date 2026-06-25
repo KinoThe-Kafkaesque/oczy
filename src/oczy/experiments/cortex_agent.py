@@ -158,7 +158,11 @@ class CortexAgent:
         self.world_model_critic = WorldModelCritic()
         self.identity_hypernetwork = IdentityHypernetwork()
         self.skill_immune_cortex = SkillImmuneCortex()
-        self.experience_autoencoder = ExperienceAutoencoder()
+        self.experience_autoencoder = ExperienceAutoencoder(
+            config={"use_hidden_delta": True, "hidden_delta_lr": HEBBIAN_LR}
+        )
+        self._prev_hidden: np.ndarray | None = None
+        self._prev_correction_signal: float = 0.0
 
         # Scalar metabolic gate sits downstream of all organs and decides
         # per-organ update weights plus consolidation pressure. When no
@@ -192,7 +196,9 @@ class CortexAgent:
         self.digestive_gate.reset()
         self._last_utterance = None
         self._last_hidden = None
+        self._prev_hidden = None
         self._last_correction_signal = 0.0
+        self._prev_correction_signal = 0.0
         self._last_drift = 0.0
 
     # ------------------------------------------------------------------
@@ -261,6 +267,9 @@ class CortexAgent:
         warm_before = self.cortex.warm_state.copy()
         warm_now = self.cortex.observe(hidden, correction_signal=correction_signal)
         drift = float(np.linalg.norm(warm_now - warm_before))
+        if self._last_hidden is not None:
+            self._prev_hidden = self._last_hidden.copy()
+            self._prev_correction_signal = self._last_correction_signal
 
         self._last_utterance = utterance
         self._last_hidden = hidden
@@ -383,14 +392,17 @@ class CortexAgent:
         # train step on the cortex's perception projector, scaled by the
         # gate's autoencoder weight so low-surprise steps learn less.
         autoencoder_lr = HEBBIAN_LR * float(scores["autoencoder_weight"])
+        episode: dict[str, Any] = {
+            "situation": text,
+            "model_answer": "",
+            "correction": text if correction_signal > 0.5 else "",
+            "revised_answer": "",
+            "outcome": "corrected" if correction_signal > 0.5 else "accepted",
+        }
+        if self._prev_hidden is not None and self._last_hidden is not None:
+            episode["hidden_delta"] = self._last_hidden - self._prev_hidden
         autoencoder_error = self.experience_autoencoder.train_step(
-            {
-                "situation": text,
-                "model_answer": "",
-                "correction": text if correction_signal > 0.5 else "",
-                "revised_answer": "",
-                "outcome": "corrected" if correction_signal > 0.5 else "accepted",
-            },
+            episode,
             lr=autoencoder_lr,
         )
 

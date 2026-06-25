@@ -10,16 +10,13 @@ This implementation is intentionally tiny and dependency-free beyond NumPy.
 
 from __future__ import annotations
 
-import json
 import math
 import pickle
 import re
-import sys
 from collections import Counter
 from typing import Any
 
 import numpy as np
-
 
 HEBBIAN_LR = 0.01
 
@@ -30,6 +27,7 @@ RESIDUAL_DIM = LATENT_DIM - OUTCOME_DIM
 NUM_SOURCES = 4
 MAX_VOCAB = 256
 DECODE_SPARSITY = 10
+HIDDEN_DELTA_SCALE = 1.0
 
 _OUTCOME_LABELS = ["accepted", "corrected", "failed", "unknown"]
 _OUTCOME_TO_IDX = {label: i for i, label in enumerate(_OUTCOME_LABELS)}
@@ -124,6 +122,20 @@ def _make_sensing_matrix(seed: int) -> np.ndarray:
     norms = np.where(norms == 0, 1.0, norms)
     return (A / norms).astype(float)
 
+def _make_hidden_sensing_matrix(seed: int, d_hidden: int) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    A = rng.standard_normal((RESIDUAL_DIM, d_hidden))
+    norms = np.linalg.norm(A, axis=0, keepdims=True)
+    norms = np.where(norms == 0, 1.0, norms)
+    return (A / norms).astype(float)
+
+
+def _outcome_vector(outcome: str) -> np.ndarray:
+    outcome_idx = _OUTCOME_TO_IDX.get(outcome, _OUTCOME_TO_IDX["unknown"])
+    outcome_vec = np.full(OUTCOME_DIM, -0.2, dtype=float)
+    outcome_vec[outcome_idx] = 0.8
+    return outcome_vec
+
 
 class ExperienceEncoder:
     """Encode an episode dict into a small latent delta vector Δz."""
@@ -174,10 +186,7 @@ class ExperienceEncoder:
         scale = 1.0 + np.linalg.norm(f)
         residual = np.tanh(residual / scale)
 
-        outcome = normalized.get("outcome", "unknown")
-        outcome_idx = _OUTCOME_TO_IDX.get(outcome, _OUTCOME_TO_IDX["unknown"])
-        outcome_vec = np.full(OUTCOME_DIM, -0.2, dtype=float)
-        outcome_vec[outcome_idx] = 0.8
+        outcome_vec = _outcome_vector(normalized.get("outcome", "unknown"))
 
         delta_z = np.empty(LATENT_DIM, dtype=float)
         delta_z[:OUTCOME_DIM] = outcome_vec
@@ -333,19 +342,150 @@ class ExperienceAutoencoder:
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         self.config = config or {}
+        self.config.setdefault("use_hidden_delta", False)
+        self.config.setdefault("hidden_delta_lr", HEBBIAN_LR)
+
         seed = int(self.config.get("seed", 42))
         self._vocab: dict[str, int] = {}
         self._A = _make_sensing_matrix(seed)
         self._encoder = ExperienceEncoder(self._vocab, self._A)
         self._decoder = ExperienceDecoder(self._vocab, self._A)
 
+        # Lazy state for the optional hidden-state delta path.
+        self._d_hidden: int | None = None
+        self._A_hidden: np.ndarray | None = None
+        self._hidden_delta_stats: dict[str, float] = {
+            "mean_norm": 0.0,
+            "std_norm": 0.0,
+            "count": 0.0,
+        }
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Backfill attributes added after the initial release."""
+        self.__dict__.update(state)
+        if not isinstance(self.config, dict):
+            self.config = {}
+        self.config.setdefault("use_hidden_delta", False)
+        self.config.setdefault("hidden_delta_lr", HEBBIAN_LR)
+        if not hasattr(self, "_A_hidden"):
+            self._A_hidden = None
+        if not hasattr(self, "_d_hidden"):
+            self._d_hidden = None
+        if not hasattr(self, "_hidden_delta_stats"):
+            self._hidden_delta_stats = {
+                "mean_norm": 0.0,
+                "std_norm": 0.0,
+                "count": 0.0,
+            }
+
     def encode(self, episode: dict[str, Any]) -> np.ndarray:
-        """Encode one episode into Δz."""
+        """Encode one episode into Δz.
+
+        If ``episode`` carries a ``hidden_delta`` array and hidden-delta mode is
+        enabled, route to :meth:`encode_hidden_delta`; otherwise fall back to
+        the legacy text-token path.
+        """
+        if self.config.get("use_hidden_delta") and "hidden_delta" in episode:
+            return self.encode_hidden_delta(
+                episode["hidden_delta"],
+                outcome=str(episode.get("outcome", "unknown")),
+            )
         return self._encoder.encode(episode)
+    def encode_hidden_delta(
+        self,
+        delta_h: np.ndarray,
+        outcome: str = "unknown",
+    ) -> np.ndarray:
+        """Encode a hidden-state delta into Δz."""
+        delta_z, _ = self._encode_hidden_delta(delta_h, outcome)
+        return delta_z
+    def _encode_hidden_delta(
+        self,
+        delta_h: np.ndarray,
+        outcome: str = "unknown",
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Encode a hidden-state delta; returns (Δz, normalized_delta)."""
+        delta_h = np.asarray(delta_h, dtype=float).reshape(-1)
+        d_hidden = delta_h.shape[0]
+
+        if self._A_hidden is None:
+            self._d_hidden = d_hidden
+            seed = int(self.config.get("seed", 42))
+            self._A_hidden = _make_hidden_sensing_matrix(seed + 1, d_hidden)
+
+        if d_hidden != self._d_hidden:
+            raise ValueError(
+                f"hidden delta dimension {d_hidden} does not match "
+                f"initialized dimension {self._d_hidden}"
+            )
+
+        norm = float(np.linalg.norm(delta_h))
+        stats = self._hidden_delta_stats
+        stats["count"] += 1.0
+        n = stats["count"]
+        old_mean = stats["mean_norm"]
+        new_mean = old_mean + (norm - old_mean) / n
+        stats["mean_norm"] = new_mean
+        if n > 1.0:
+            old_var = stats["std_norm"] ** 2
+            new_var = (
+                (n - 1.0) * old_var + (norm - old_mean) * (norm - new_mean)
+            ) / n
+            stats["std_norm"] = math.sqrt(max(0.0, new_var))
+
+        if stats["std_norm"] > 0.0:
+            normalized_delta = delta_h / (stats["std_norm"] + 1e-8)
+        else:
+            normalized_delta = delta_h / (stats["mean_norm"] + 1.0)
+        normalized_delta = normalized_delta * HIDDEN_DELTA_SCALE
+
+        residual = self._A_hidden @ normalized_delta
+        residual = np.tanh(residual / (1.0 + np.linalg.norm(normalized_delta)))
+
+        delta_z = np.empty(LATENT_DIM, dtype=float)
+        delta_z[:OUTCOME_DIM] = _outcome_vector(outcome)
+        delta_z[OUTCOME_DIM:] = residual
+        return delta_z, normalized_delta
 
     def decode(self, delta_z: np.ndarray) -> dict[str, Any]:
         """Decode a Δz vector back into learning fields."""
         return self._decoder.decode(delta_z)
+
+    def decode_hidden_delta(
+        self,
+        delta_z: np.ndarray,
+    ) -> dict[str, Any]:
+        """Decode a hidden-state Δz into outcome and reconstructed delta."""
+        delta_z = np.asarray(delta_z, dtype=float).reshape(-1)
+        outcome_vec = delta_z[:OUTCOME_DIM]
+        outcome_idx = int(np.argmax(outcome_vec))
+        outcome = _OUTCOME_LABELS[min(outcome_idx, len(_OUTCOME_LABELS) - 1)]
+        failure_class = _extract_failure_class(outcome, delta_z)
+        residual = delta_z[OUTCOME_DIM:]
+        latent_drift_score = float(np.linalg.norm(residual))
+        if self._A_hidden is not None:
+            delta_estimated = self._A_hidden.T @ residual
+        else:
+            delta_estimated = np.zeros(self._d_hidden or 0, dtype=float)
+        return {
+            "outcome": outcome,
+            "failure_class": failure_class,
+            "latent_drift_score": latent_drift_score,
+            "delta_estimated": delta_estimated,
+        }
+
+    def _decode_hidden_to_delta(self, delta_z: np.ndarray) -> np.ndarray:
+        """Reconstruct the hidden delta from the residual tail of Δz."""
+        residual = np.asarray(delta_z, dtype=float).reshape(-1)[OUTCOME_DIM:]
+        if self._A_hidden is not None:
+            return self._A_hidden.T @ residual
+        return np.zeros(self._d_hidden or 0, dtype=float)
+
+    def decode_latent(self, delta_z: np.ndarray) -> dict[str, Any]:
+        """Dispatch to the appropriate decoder for this latent vector."""
+        if self.config.get("use_hidden_delta") and self._A_hidden is not None:
+            return self.decode_hidden_delta(delta_z)
+        return self.decode(delta_z)
 
     def update_identity(self, current_z: np.ndarray | None, episode: dict[str, Any]) -> np.ndarray:
         """Accumulate a new episode delta into the running identity latent z."""
@@ -388,34 +528,26 @@ class ExperienceAutoencoder:
         """Encode a batch of episodes into Δz vectors."""
         return [self.encode(ep) for ep in episodes]
 
-    def train_step(self, episode: dict[str, Any], lr: float = HEBBIAN_LR) -> float:
-        """Apply one Hebbian-style passive update to the sensing matrix.
+    def train_step(
+        self,
+        episode: dict[str, Any],
+        lr: float = HEBBIAN_LR,
+    ) -> float:
+        """Apply one Hebbian-style passive update.
 
-        Implements the rank-1 update::
-
-            self._A += lr * outer(residual_target, feature_signal)
-            self._A = column_l2_normalize(self._A)
-
-        where ``feature_signal`` is the episode's weighted bag-of-words vector
-        (input signal) and ``residual_target`` is the tanh-residual portion of
-        Δz (the same quantity produced by :meth:`ExperienceEncoder.encode`).
-
-        Over many episodes this nudges the columns of the otherwise-random
-        sensing matrix toward the directions the data actually spans, so the
-        subsequent OMP recovery in :meth:`decode` sees tighter weights on
-        tokens the encoder has actually encountered. The update is passive in
-        the sense that no explicit gradient target is supplied — the matrix's
-        own encoding serves as both the source and the reinforcing signal.
-
-        ``lr`` defaults to 0.01. Small enough to keep the matrix well-conditioned
-        across hundreds of episodes after per-step column renormalization; large
-        enough to produce a measurable drop in reconstruction error within ~20
-        steps on a curriculum of repeated episodes. The constant is exposed as
-        :data:`HEBBIAN_LR` so callers (and tests) can locate the canonical rate.
-
-        Returns the reconstruction error of this episode computed BEFORE the
-        Hebbian update is applied, so callers can monitor convergence.
+        Routes to the hidden-delta update when ``hidden_delta`` is present and
+        hidden-delta mode is enabled; otherwise applies the legacy text-token
+        update.
         """
+        if self.config.get("use_hidden_delta") and "hidden_delta" in episode:
+            hidden_lr = self.config.get("hidden_delta_lr", lr)
+            return self.train_step_hidden_delta(
+                episode["hidden_delta"],
+                outcome=str(episode.get("outcome", "unknown")),
+                lr=hidden_lr,
+            )
+
+        # Legacy text-token path.
         # Encode first so vocab is fully populated; the residual portion of Δz
         # is the reinforcing signal for this episode's input direction.
         delta_z = self.encode(episode)
@@ -440,13 +572,37 @@ class ExperienceAutoencoder:
         self._A /= np.where(norms == 0, 1.0, norms)
         return float(error)
 
+    def train_step_hidden_delta(
+        self,
+        delta_h: np.ndarray,
+        outcome: str = "unknown",
+        lr: float | None = None,
+    ) -> float:
+        """Apply one Hebbian update to the hidden-delta sensing matrix.
+
+        Returns the pre-update Euclidean reconstruction error.
+        """
+        if lr is None:
+            lr = self.config.get("hidden_delta_lr", HEBBIAN_LR)
+        delta_z, normalized_delta = self._encode_hidden_delta(delta_h, outcome)
+        residual_target = delta_z[OUTCOME_DIM:]
+        delta_h = np.asarray(delta_h, dtype=float).reshape(-1)
+        error = float(np.linalg.norm(delta_h - self._decode_hidden_to_delta(delta_z)))
+        self._A_hidden += lr * np.outer(residual_target, normalized_delta)
+        norms = np.linalg.norm(self._A_hidden, axis=0, keepdims=True)
+        self._A_hidden /= np.where(norms == 0, 1.0, norms)
+        return float(error)
+
     def status(self, include_size: bool = False) -> dict[str, Any]:
-        result = {
+        result: dict[str, Any] = {
             "project": "experience_autoencoder",
             "ready": True,
             "latent_dim": LATENT_DIM,
             "vocab_size": len(self._vocab),
             "record_count": len(self._vocab),
+            "use_hidden_delta": self.config.get("use_hidden_delta", False),
+            "hidden_dim": self._d_hidden,
+            "hidden_matrix_initialized": self._A_hidden is not None,
         }
         if include_size:
             result["serialized_bytes"] = len(
