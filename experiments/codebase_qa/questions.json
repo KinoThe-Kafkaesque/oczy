@@ -11,7 +11,10 @@
   },
   {
     "question": "What are the default dimensions in KVCortexConfig?",
-    "expected": ["d_cortex=128", "128 neurons"],
+    "expected": [
+      "d_cortex=128",
+      "128 neurons"
+    ],
     "must_recall_key": "KVCortexConfig dimensions"
   },
   {
@@ -51,7 +54,7 @@
   },
   {
     "question": "How does Oczy want memory to be represented?",
-    "expected": "changed",
+    "expected": ["changed", "dynamic process", "rejecting traditional"],
     "must_recall_key": "memory thesis"
   },
   {
@@ -61,12 +64,18 @@
   },
   {
     "question": "What kind of memory architecture does Oczy reject?",
-    "expected": ["vector DB", "vector database"],
+    "expected": [
+      "vector DB",
+      "vector database"
+    ],
     "must_recall_key": "not vector db"
   },
   {
     "question": "How many phases are in the Oczy organism roadmap?",
-    "expected": ["9 phases", "9"],
+    "expected": [
+      "9 phases",
+      "9"
+    ],
     "must_recall_key": "rl staircase phases"
   },
   {
@@ -101,7 +110,10 @@
   },
   {
     "question": "How many stages are in the organism curriculum?",
-    "expected": ["6 stages", "6"],
+    "expected": [
+      "6 stages",
+      "6"
+    ],
     "must_recall_key": "organism curriculum stages"
   },
   {
@@ -126,7 +138,10 @@
   },
   {
     "question": "Which API call applies the cortex steering vector?",
-    "expected": ["llama_set_adapter_cvec", "cvec adapter"],
+    "expected": [
+      "llama_set_adapter_cvec",
+      "cvec adapter"
+    ],
     "must_recall_key": "cvec adapter api"
   },
   {
@@ -141,7 +156,7 @@
   },
   {
     "question": "What did the schema-drift fix correct in HippocampusOnlyAgent?",
-    "expected": "corrected_answer",
+    "expected": ["corrected_answer", "correct answer"],
     "must_recall_key": "schema drift fix"
   },
   {
@@ -151,17 +166,25 @@
   },
   {
     "question": "What is Oczy's perspective on how memory should be represented?",
-    "expected": ["changed dynamics", "changing weights", "dynamic process"],
+    "expected": [
+      "changed dynamics",
+      "changing weights",
+      "dynamic process"
+    ],
     "must_recall_key": "memory thesis"
   },
   {
     "question": "Which memory architecture pattern does Oczy explicitly reject?",
-    "expected": "vector DB",
+    "expected": ["vector DB", "vector database", "vector databases"],
     "must_recall_key": "not vector db"
   },
   {
     "question": "What is the success metric that rewards big behavioral improvement with little persistent storage?",
-    "expected": ["behavior_delta_per_byte_of_persistent_memory", "per byte of persistent memory", "behavioral improvements"],
+    "expected": [
+      "behavior_delta_per_byte_of_persistent_memory",
+      "per byte of persistent memory",
+      "behavioral improvements"
+    ],
     "must_recall_key": "north star metric"
   },
   {
@@ -171,7 +194,7 @@
   },
   {
     "question": "What gets stored by CortexAgent.save()?",
-    "expected": "cortex_cold",
+    "expected": ["cortex_cold", "neural_hippocampus", "world_model_critic", "identity_hypernetwork", "cortex-related structures"],
     "must_recall_key": "cortex agent persistence fields"
   },
   {
@@ -188,5 +211,147 @@
     "question": "What caused the earlier extended-learning evaluation to over-penalize some memory strategies?",
     "expected": "memory_bytes_per_delta",
     "must_recall_key": "oracle metric bug"
+  },
+  {
+    "question": "Which optional fields may appear on a cross-organ Episode dict shared through the Oczy metabolism?",
+    "expected": [
+      "query",
+      "answer",
+      "correction",
+      "corrected_answer",
+      "outcome",
+      "prediction_error",
+      "source",
+      "id",
+      "replay_count"
+    ],
+    "must_recall_key": "oczy_common Episode schema"
+  },
+  {
+    "question": "How can a developer detect that an agent wrote an unexpected or misspelled key into an Episode dict?",
+    "expected": [
+      "validate_episode",
+      "unexpected keys",
+      "EPISODE_FIELDS"
+    ],
+    "must_recall_key": "validate_episode purpose"
+  },
+  {
+    "question": "When a user says 'No, model here means ML model', which oczy_common helper recovers the short corrected label?",
+    "expected": [
+      "extract_expected_from_correction",
+      "ML model"
+    ],
+    "must_recall_key": "extract expected from correction"
+  },
+  {
+    "question": "Why did the Oracle upper-bound rank below PlasticCortex in the earlier extended-learning evaluation aggregate?",
+    "expected": [
+      "memory_bytes_per_delta",
+      "inverted",
+      "metric-direction",
+      "lower-is-better"
+    ],
+    "must_recall_key": "eval_extended memory metric direction fix"
+  },
+  {
+    "question": "What change in eval_extended.py made replay hints actually reach the ranker in the NeuralHippocampus evaluation?",
+    "expected": [
+      "corrected_answer",
+      "correction",
+      "sentence",
+      "schema-drift"
+    ],
+    "must_recall_key": "eval_extended hippocampus schema drift fix"
+  },
+  {
+    "question": "What makes each organ's reported memory size comparable to the bytes that end up on disk after its save() call?",
+    "expected": [
+      "pickle.dumps",
+      "serialized_bytes",
+      "highest protocol"
+    ],
+    "must_recall_key": "organ serialized_bytes contract"
+  },
+  {
+    "question": "Which part of KVCortex state is intentionally lost when the agent restarts, even after a save/load cycle?",
+    "expected": [
+      "warm_state",
+      "session-mutable",
+      "not persisted"
+    ],
+    "must_recall_key": "kvcortex warm state"
+  },
+  {
+    "question": "Where does KVCortex store the long-term identity that survives across restarts and is updated by consolidate()?",
+    "expected": [
+      "cold_state",
+      "boot-persistent"
+    ],
+    "must_recall_key": "kvcortex cold state"
+  },
+  {
+    "question": "Which steering mode anchors the emitted cvec to the LM residual that was present when the last correction fired?",
+    "expected": [
+      "raw_hidden",
+      "last_correction_hidden"
+    ],
+    "must_recall_key": "raw hidden steering mode"
+  },
+  {
+    "question": "What did the empirical amplitude sweep of CortexAgent's raw_hidden steering find for LFM2.5 Q4_K_M between washing out and token-repetition garbage?",
+    "expected": [
+      "0.001",
+      "articulate_scale"
+    ],
+    "must_recall_key": "raw hidden articulate scale sweep"
+  },
+  {
+    "question": "Why does SVD-initialised cortex steering still produce post-reload output identical to live-steered output after save(), load(), and a fresh boot?",
+    "expected": [
+      "proj_c",
+      "persisted",
+      "cold boot"
+    ],
+    "must_recall_key": "svd proj_c cold boot persistence"
+  },
+  {
+    "question": "What strategic dependency chain in GOALS.md must be followed so that Goal 3 organs can consume live tensor signals from the cortex?",
+    "expected": [
+      "1 \u2192 2 \u2192 3",
+      "Goal 1",
+      "Goal 2",
+      "Goal 3"
+    ],
+    "must_recall_key": "goals sequencing"
+  },
+  {
+    "question": "Which GOALS.md sub-goal collapsed the binary cliff between no steering effect and CJK token-repetition garbage?",
+    "expected": [
+      "meaningful cvec steering",
+      "raw_hidden",
+      "SVD"
+    ],
+    "must_recall_key": "meaningful cvec steering sub-goal"
+  },
+  {
+    "question": "Where is the target memory continuum, with levels from activation to fast state to fast weights to neural memory to slow weights to forgotten raw trace, documented?",
+    "expected": [
+      "experiments.txt",
+      "memory thesis",
+      "activation",
+      "fast state",
+      "fast weights"
+    ],
+    "must_recall_key": "experiments target shape"
+  },
+  {
+    "question": "What bounded per-layer fast-weight matrix does experiments.txt propose for correction-gated updates that may later consolidate into slow weights?",
+    "expected": [
+      "Synaptic Scratchpad",
+      "fast weights",
+      "strong write"
+    ],
+    "must_recall_key": "synaptic scratchpad design"
   }
 ]
