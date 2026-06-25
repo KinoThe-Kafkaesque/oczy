@@ -339,6 +339,76 @@ class KVCortex:
         self._dirty = True
 
     # ------------------------------------------------------------------
+    # SVD-initialised articulation projector
+    # ------------------------------------------------------------------
+    def init_proj_c_from_svd(self, hiddens: np.ndarray) -> None:
+        """Re-initialise ``proj_c`` so its columns are the top-``d_cortex``
+        right singular vectors of a batch of correction hiddens.
+
+        WHY: ``proj_random`` init draws cvecs from a random subspace, so
+        the cortex's steering direction lives in noise rather than in
+        correction-aligned structure. Initialising the projector from a
+        real SVD basis makes ``proj_c @ warm_state`` land in the
+        correction subspace by construction. Because ``proj_c`` is part
+        of the persisted cortex state (see ``KVCortex.save`` and
+        ``CortexAgent.save`` at ``cortex_agent.py``), the steering
+        direction then survives cold boot -- unlike ``raw_hidden`` mode,
+        whose direction lives in the transient ``last_correction_hidden``
+        field that reload discards. See GOALS.md "meaningful cvec
+        steering" sub-goal.
+
+        Same SVD basis is broadcast across all layers: per-layer Gaussian
+        perturbation would reintroduce the off-manifold noise that
+        motivated ``raw_hidden`` in the first place. Per-layer
+        expressivity can be recovered later via a ``train_step``-on-
+        ``proj_c`` path (not implemented today).
+
+        NOTE: ``hiddens`` should come from the same LM and the same
+        pooling path (``peek_embedding(last_token_only=False)``) that
+        ``perceive()`` feeds to ``observe()``. Layer-L (mid-network)
+        hidden extraction (Goal 2) is not a prerequisite for this
+        method's contract; final-layer hiddens work because they match
+        the cortex's runtime input distribution.
+
+        Args:
+            hiddens: ndarray shape ``(N, d_embd)`` or ``(N, ...)`` with
+                last dim ``d_embd``. ``N`` should be >= ``d_cortex`` so
+                the SVD yields ``d_cortex`` non-degenerate right
+                singular vectors.
+        """
+        h = np.asarray(hiddens, dtype=np.float32).reshape(
+            np.asarray(hiddens).shape[0], -1
+        )
+        if h.shape[0] < self.config.d_cortex:
+            raise ValueError(
+                "need N >= d_cortex for non-degenerate SVD; got N=%d, "
+                "d_cortex=%d" % (h.shape[0], self.config.d_cortex)
+            )
+        if h.shape[1] != self.config.d_embd:
+            raise ValueError(
+                "hiddens last dim %d != config.d_embd %d"
+                % (h.shape[1], self.config.d_embd)
+            )
+        centered = h - h.mean(axis=0, keepdims=True)
+        # full_matrices=False gives Vt of shape (min(N,d_embd), d_embd).
+        # We take the top d_cortex rows -- the leading right singular
+        # vectors -- as the projector's basis.
+        _, _, Vt = np.linalg.svd(centered, full_matrices=False)
+        basis = Vt[: self.config.d_cortex]                       # (d_cortex, d_embd)
+        # Slab shape (d_embd, d_cortex): each column is one singular
+        # vector, scaled by 1/sqrt(d_cortex) to match proj_random's
+        # bound convention so emit_cvec magnitudes are comparable.
+        slab = (basis.T / np.sqrt(self.config.d_cortex)).astype(np.float32)
+        self.proj_c = np.stack(
+            [slab.copy() for _ in range(self.config.n_layers)],
+            axis=0,
+        )
+        # No warm_state change: this rewrites the projector only. The
+        # next emit_cvec() will regenerate payloads from the current
+        # warm_state.
+        self._dirty = True
+
+    # ------------------------------------------------------------------
     # Passive Hebbian training of the perception projector
     # ------------------------------------------------------------------
     def train_step(self, lm_hidden: np.ndarray, lr: float = 0.001) -> float:

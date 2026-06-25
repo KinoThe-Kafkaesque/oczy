@@ -170,6 +170,84 @@ def test_pickle_round_trip() -> None:
     assert np.array_equal(loaded.proj_c, cortex.proj_c)
 
 
+def test_svd_init_proj_c_structure() -> None:
+    """init_proj_c_from_svd lands proj_c on the leading singular directions
+    of the supplied hiddens, broadcast identically across all layers, and
+    round-trips byte-for-byte through pickle (so SVD-init'd direction
+    survives cold boot -- the persistence fix this method exists for)."""
+    cfg = _cfg()
+    cortex = KVCortex(cfg)
+    rng = np.random.default_rng(11)
+
+    # Build hiddens with a strong rank-1 structure along a known direction
+    # so the leading right singular vector is well-defined and checkable.
+    leading = rng.standard_normal(cfg.d_embd).astype(np.float32)
+    leading /= np.linalg.norm(leading)
+    n = max(cfg.d_cortex * 2, 64)
+    hiddens = (
+        np.outer(rng.standard_normal(n), leading) * 10.0
+        + rng.standard_normal((n, cfg.d_embd)) * 0.1
+    ).astype(np.float32)
+
+    proj_before = cortex.proj_c.copy()
+    cortex.init_proj_c_from_svd(hiddens)
+
+    # 1. projector actually changed.
+    assert not np.allclose(cortex.proj_c, proj_before), \
+        "init_proj_c_from_svd left proj_c unchanged"
+
+    # 2. all layers share the same slab (broadcast condition).
+    for i in range(1, cfg.n_layers):
+        assert np.array_equal(cortex.proj_c[0], cortex.proj_c[i]), \
+            "proj_c slab at layer %d differs from layer 0" % i
+
+    # 3. columns are the top-d_cortex right singular vectors of the
+    # centered hiddens, scaled by 1/sqrt(d_cortex). Recompute locally
+    # and compare. proj_c[0] has shape (d_embd, d_cortex); Vt[:d] has
+    # shape (d, d_embd), so proj_c[0].T should match Vt/sqrt(d).
+    centered = hiddens - hiddens.mean(axis=0, keepdims=True)
+    _, _, Vt = np.linalg.svd(centered, full_matrices=False)
+    expected = (Vt[: cfg.d_cortex] / np.sqrt(cfg.d_cortex)).astype(np.float32)
+    assert np.allclose(cortex.proj_c[0].T, expected, atol=1e-5), \
+        "proj_c slab does not match the top-d_cortex right singular vectors"
+
+    # 4. column norms are 1/sqrt(d_cortex) (matches proj_random bound
+    # convention so emit_cvec magnitudes are comparable across modes).
+    col_norms = np.linalg.norm(cortex.proj_c[0], axis=0)
+    expected_norm = 1.0 / np.sqrt(cfg.d_cortex)
+    assert np.allclose(col_norms, expected_norm, atol=1e-5), \
+        "column norms deviated from 1/sqrt(d_cortex)"
+
+    # 5. byte-for-byte round-trip: SVD-init'd projector survives
+    # save/load exactly (this is the persistence fix, exercised at the
+    # contract level -- CortexAgent.load restores proj_c unmodified).
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "cortex_svd.pkl"
+        cortex.save(path)
+        loaded = KVCortex.load(path)
+    assert np.array_equal(loaded.proj_c, cortex.proj_c), \
+        "SVD-init'd proj_c did not round-trip through pickle"
+
+    # 6. emit_cvec still produces the expected shape after SVD-init.
+    cortex.observe(_rand_hidden(cfg.d_embd, rng), correction_signal=1.0)
+    for layer_idx in range(cfg.n_layers):
+        assert cortex.emit_cvec(layer_idx).shape == (cfg.d_embd,), \
+            "emit_cvec shape broke at layer %d after SVD-init" % layer_idx
+
+
+def test_svd_init_rejects_undersized_hiddens() -> None:
+    """SVD needs N >= d_cortex; fewer should raise, not silently degrade."""
+    cfg = _cfg()
+    cortex = KVCortex(cfg)
+    rng = np.random.default_rng(12)
+    too_few = rng.standard_normal((cfg.d_cortex - 1, cfg.d_embd)).astype(np.float32)
+    try:
+        cortex.init_proj_c_from_svd(too_few)
+    except ValueError:
+        return
+    raise AssertionError("init_proj_c_from_svd accepted N < d_cortex without error")
+
+
 def test_status_contract() -> None:
     cortex = KVCortex(_cfg())
     rng = np.random.default_rng(9)
@@ -218,6 +296,8 @@ def main() -> int:
         ("reset_warm_from_cold", test_reset_warm_from_cold),
         ("hebbian_training_changes_projector", test_hebbian_training_changes_projector),
         ("pickle_round_trip", test_pickle_round_trip),
+        ("svd_init_proj_c_structure", test_svd_init_proj_c_structure),
+        ("svd_init_rejects_undersized_hiddens", test_svd_init_rejects_undersized_hiddens),
         ("status_contract", test_status_contract),
         ("emit_cvec_cached_until_observe", test_emit_cvec_cached_until_observe),
     ]

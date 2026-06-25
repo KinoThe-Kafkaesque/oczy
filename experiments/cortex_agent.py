@@ -25,6 +25,7 @@ Lifecycle per turn:
 
 from __future__ import annotations
 
+import dataclasses
 import pickle
 import re
 import sys
@@ -124,16 +125,13 @@ class CortexAgent:
         # actual LM, the first articulate() will raise a shape mismatch.
         # To keep that contract honest we patch the cortex config here.
         self.driver = LlamaCVecDriver.load(dcfg)
-        patched = KVCortexConfig(
-            d_cortex=ccfg.d_cortex,
+        # Mirror driver shape while preserving every caller-set field
+        # (steering_mode especially -- dropping it silently reverts the
+        # cortex to proj_random and the raw_hidden regime never engages).
+        patched = dataclasses.replace(
+            ccfg,
             d_embd=self.driver.n_embd,
             n_layers=self.driver.n_layers,
-            seed=ccfg.seed,
-            alpha_warm=ccfg.alpha_warm,
-            alpha_correction=ccfg.alpha_correction,
-            consolidate_replay_threshold=ccfg.consolidate_replay_threshold,
-            consolidate_slow_step=ccfg.consolidate_slow_step,
-            consolidate_replay_step=ccfg.consolidate_replay_step,
         )
         self.cortex = KVCortex(patched)
 

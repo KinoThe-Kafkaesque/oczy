@@ -53,6 +53,26 @@ from oczy_lm import CVecDriverConfig
 
 PROMPT = "What does 'profile' mean in this product?"
 
+# Pre-baked correction hiddens for the SVD-init of proj_c. Produced by
+# experiments/lm_perception/collect_correction_hiddens.py. The cortex's
+# steering direction then lives in proj_c (persisted) rather than the
+# transient last_correction_hidden warm-side field, so steering survives
+# cold boot. See GOALS.md "meaningful cvec steering" sub-goal.
+_HIDDENS_PATH = (
+    Path(__file__).resolve().parent / "lm_perception" / "reports"
+    / "correction_hiddens.npy"
+)
+
+
+def _init_svd(agent: CortexAgent) -> None:
+    if not _HIDDENS_PATH.exists():
+        print("NOTE: %s missing -- skipping SVD-init." % _HIDDENS_PATH)
+        print("      Run: uv run python experiments/lm_perception/collect_correction_hiddens.py")
+        return
+    hiddens = np.load(_HIDDENS_PATH)
+    agent.cortex.init_proj_c_from_svd(hiddens)
+    print("SVD-init'd proj_c from %s (shape %s)" % (_HIDDENS_PATH.name, hiddens.shape))
+
 
 def run_demo() -> int:
     print("CortexAgent conversation demo")
@@ -63,10 +83,11 @@ def run_demo() -> int:
     cfg = CortexAgentConfig(
         cortex=KVCortexConfig(d_cortex=64, alpha_correction=5.0),
         driver=CVecDriverConfig(n_ctx=512, verbose=False, embedding=True),
-        articulate_scale=30.0,
+        articulate_scale=0.03,
     )
     agent = CortexAgent(cfg)
     agent.boot()
+    _init_svd(agent)
     print("cold-booted. driver.n_layers=%d n_embd=%d" % (
         agent.driver.n_layers, agent.driver.n_embd
     ))
@@ -116,13 +137,27 @@ def run_demo() -> int:
             config=CortexAgentConfig(
                 cortex=KVCortexConfig(d_cortex=64),
                 driver=CVecDriverConfig(n_ctx=512, verbose=False, embedding=True),
+                # Reload warm_state (~0.34) is ~20x smaller than the live
+                # steered turn's (~6.83) because consolidate()'s slow EMA
+                # dampens warm into cold. To land the same effective cvec
+                # magnitude on the reload turn the scale is bumped 10x over
+                # the steered 0.03. articulate() reads
+                # self.config.articulate_scale (the dataclass field), so
+                # the scale must be set HERE in the config -- not via a
+                # post-construction `reloaded.articulate_scale = ...`
+                # assignment, which only shadows as an instance attribute
+                # and is silently ignored by articulate().
+                articulate_scale=0.3,
             ),
         )
+        # proj_c is NOT re-initialised here: it was restored from the
+        # pickle at load(), so any steering on the reload turn proves
+        # the SVD basis survived cold boot via persistence, not via
+        # re-injection.
 
     # Re-articulate from the freshly loaded cold state (and warm was reset
     # to cold at boot, so this should reflect the consolidated identity
     # not the per-turn warm_state).
-    reloaded.articulate_scale = 30.0
     post_reload = reloaded.articulate(prompt=PROMPT, max_tokens=20,
                                       temperature=0.0, apply_steering=True)
     print("post-reload (cold-boot identity steering):")
