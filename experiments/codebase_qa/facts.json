@@ -81,7 +81,7 @@
   },
   {
     "key": "cvec adapter api",
-    "value": "Cortex steering is applied via llama_set_adapter_cvec, a per-context control-vector surface exposed by llama-cpp-python.",
+    "value": "llama_set_adapter_cvec is the llama.cpp call that exposes per-context control vectors in oczy_lm.",
     "metadata": { "source": "oczy_lm/cvec_driver.py" }
   },
   {

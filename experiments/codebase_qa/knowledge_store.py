@@ -223,10 +223,15 @@ class KnowledgeStore:
         self,
         query: str,
         k: int = 3,
+        min_score: float = 0.0,
         header: str = "Retrieved repository facts:",
     ) -> str:
-        """Format top-``k`` recalled facts as a text block."""
-        facts = self.recall(query, k=k)
+        """Format top-``k`` recalled facts as a text block.
+
+        Facts with a score below ``min_score`` are dropped so low-relevance
+        context does not dilute high-confidence retrievals.
+        """
+        facts = [f for f in self.recall(query, k=k) if f["score"] >= min_score]
         lines = [header]
         for fact in facts:
             lines.append(f"- Key: {fact['key']}")

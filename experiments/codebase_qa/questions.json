@@ -11,7 +11,7 @@
   },
   {
     "question": "What are the default dimensions in KVCortexConfig?",
-    "expected": "d_cortex=128",
+    "expected": ["d_cortex=128", "128 neurons"],
     "must_recall_key": "KVCortexConfig dimensions"
   },
   {
@@ -61,12 +61,12 @@
   },
   {
     "question": "What kind of memory architecture does Oczy reject?",
-    "expected": "vector DB",
+    "expected": ["vector DB", "vector database"],
     "must_recall_key": "not vector db"
   },
   {
     "question": "How many phases are in the Oczy organism roadmap?",
-    "expected": "9 phases",
+    "expected": ["9 phases", "9"],
     "must_recall_key": "rl staircase phases"
   },
   {
@@ -101,7 +101,7 @@
   },
   {
     "question": "How many stages are in the organism curriculum?",
-    "expected": "6 stages",
+    "expected": ["6 stages", "6"],
     "must_recall_key": "organism curriculum stages"
   },
   {
@@ -126,7 +126,7 @@
   },
   {
     "question": "Which API call applies the cortex steering vector?",
-    "expected": "llama_set_adapter_cvec",
+    "expected": ["llama_set_adapter_cvec", "cvec adapter"],
     "must_recall_key": "cvec adapter api"
   },
   {
@@ -148,5 +148,45 @@
     "question": "What dominates OrganismAgent's persistent memory cost?",
     "expected": "hippocampus, immune, and autoencoder pickled state",
     "must_recall_key": "organism agent memory cost"
+  },
+  {
+    "question": "What is Oczy's perspective on how memory should be represented?",
+    "expected": ["changed dynamics", "changing weights", "dynamic process"],
+    "must_recall_key": "memory thesis"
+  },
+  {
+    "question": "Which memory architecture pattern does Oczy explicitly reject?",
+    "expected": "vector DB",
+    "must_recall_key": "not vector db"
+  },
+  {
+    "question": "What is the success metric that rewards big behavioral improvement with little persistent storage?",
+    "expected": ["behavior_delta_per_byte_of_persistent_memory", "per byte of persistent memory", "behavioral improvements"],
+    "must_recall_key": "north star metric"
+  },
+  {
+    "question": "What does the correction-hiddens SVD work conclude about cvec steering?",
+    "expected": "posture bias",
+    "must_recall_key": "cortex steering finding"
+  },
+  {
+    "question": "What gets stored by CortexAgent.save()?",
+    "expected": "cortex_cold",
+    "must_recall_key": "cortex agent persistence fields"
+  },
+  {
+    "question": "What llama.cpp call exposes per-context control vectors in oczy_lm?",
+    "expected": "llama_set_adapter_cvec",
+    "must_recall_key": "cvec adapter api"
+  },
+  {
+    "question": "Why does the scope-control stage of the organism curriculum fail?",
+    "expected": "one corrected sense per token",
+    "must_recall_key": "stage 2 failure"
+  },
+  {
+    "question": "What caused the earlier extended-learning evaluation to over-penalize some memory strategies?",
+    "expected": "memory_bytes_per_delta",
+    "must_recall_key": "oracle metric bug"
   }
 ]

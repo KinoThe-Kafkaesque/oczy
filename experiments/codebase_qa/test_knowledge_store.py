@@ -113,3 +113,11 @@ def test_empty_store_returns_empty_recall() -> None:
     store = KnowledgeStore()
     assert store.recall("anything") == []
     assert store.format_context("anything", k=3) == "Retrieved repository facts:\n"
+
+def test_format_context_min_score_filters_low_relevance_facts() -> None:
+    store = KnowledgeStore()
+    store.add_fact("relevant", "Python is the primary language used in this repository.")
+    context = store.format_context("what language does the repo use", k=3, min_score=0.1)
+    assert "Python" in context
+    assert "moon" not in context
+

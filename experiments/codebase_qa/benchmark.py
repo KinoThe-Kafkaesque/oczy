@@ -41,12 +41,21 @@ def _build_prompt(question: str, context: str = "") -> str:
 
 
 
-def _score(expected: str, answer: str) -> int:
-    return 1 if expected.lower() in answer.lower() else 0
+def _score(expected: str | list[str], answer: str) -> int:
+    answer = answer.lower()
+    if isinstance(expected, str):
+        expected = [expected]
+    return 1 if any(exp.lower() in answer for exp in expected) else 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Oczy codebase-QA benchmark.")
+    parser.add_argument(
+        "--k",
+        type=int,
+        default=3,
+        help="Number of repository facts to retrieve per question (default: 3).",
+    )
     parser.add_argument(
         "--no-recall",
         action="store_true",
@@ -71,6 +80,7 @@ def main() -> int:
 
     print(f"Knowledge store status: {store.status()}")
     print(f"Benchmarking {len(questions)} questions...")
+    print(f"Retrieving up to {args.k} facts per question.")
 
     baseline_scores: list[int] = []
     recall_scores: list[int] = []
@@ -97,7 +107,7 @@ def main() -> int:
             )
             continue
 
-        context = store.format_context(question, k=1)
+        context = store.format_context(question, k=args.k, min_score=0.18)
         recall_prompt = _build_prompt(question, context)
         recall_answer = driver.generate(
             recall_prompt,
