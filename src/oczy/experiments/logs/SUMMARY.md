@@ -43,8 +43,13 @@ Commits since previous summary:
    tagged five facts with `reserved_token` metadata. `CortexAgent.articulate()` now
    applies the reserved prefix when recalling facts and skips cvec steering to avoid
    cvec+prefix interference. Benchmark: `code_qa_accuracy=1.0` (run #49).
+8. `040ed56` — Add optional tensor-input MLP to `WorldModelCritic` and wire
+   `CortexAgent.metabolize()` to pass `self._last_hidden` to predict/record calls.
+   The string-only logistic path is preserved; the MLP path is gated by
+   `use_hidden=True` and lazy-initializes on first hidden vector. Benchmark
+   unchanged: `code_qa_accuracy=1.0` (run #50).
 
-Test status: `pytest: 177 passed` fast (targeted smoke + reserved-position unit tests pass;
+Test status: `pytest: 177 passed` fast (targeted smoke + reserved-position + tensor-critic unit tests pass;
 full slow/model suite not rerun). `ruff check` clean on changed files.
 
 Remaining blocks:
@@ -52,3 +57,6 @@ Remaining blocks:
 - Exact-token uptake via cvec alone remains blocked; `ReservedPosition` prefix is the
   practical exact-recall surface, and it can now be selected automatically by the
   knowledge store.
+- WorldModelCritic now has a tensor-input MLP path but it is not yet the default;
+  the organ still relies primarily on string features until hidden-input
+  experimentation proves a clear advantage.
