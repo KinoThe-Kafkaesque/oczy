@@ -87,6 +87,36 @@ def test_consolidate_moves_warm_into_cold() -> None:
     assert cortex.consolidate_count == 1
 
 
+def test_consolidate_strength_scales_cold_movement() -> None:
+    """Higher strength moves cold_state farther in the same warm direction."""
+    low_cfg = _cfg()
+    high_cfg = _cfg()
+    low_cortex = KVCortex(low_cfg)
+    high_cortex = KVCortex(high_cfg)
+
+    rng = np.random.default_rng(42)
+    hidden = _rand_hidden(low_cfg.d_embd, rng)
+
+    low_cortex.observe(hidden, correction_signal=1.0)
+    high_cortex.observe(hidden, correction_signal=1.0)
+
+    low_cold_before = low_cortex.cold_state.copy()
+    high_cold_before = high_cortex.cold_state.copy()
+
+    low_cortex.consolidate(strength=1.0)
+    high_cortex.consolidate(strength=high_cfg.max_consolidation_strength)
+
+    low_move = np.linalg.norm(low_cortex.cold_state - low_cold_before)
+    high_move = np.linalg.norm(high_cortex.cold_state - high_cold_before)
+
+    assert high_move > low_move, (
+        f"max strength move {high_move:.6f} should exceed baseline {low_move:.6f}"
+    )
+
+    # Warm state itself should be unchanged; only cold moved.
+    assert np.allclose(low_cortex.warm_state, high_cortex.warm_state)
+
+
 def test_consolidate_replay_absorption() -> None:
     cortex = KVCortex(_cfg())
     rng = np.random.default_rng(4)
@@ -291,6 +321,7 @@ def main() -> int:
         ("shapes", test_shapes),
         ("warm_mutates_cold_does_not", test_warm_mutates_cold_does_not),
         ("consolidate_moves_warm_into_cold", test_consolidate_moves_warm_into_cold),
+        ("consolidate_strength_scales_cold_movement", test_consolidate_strength_scales_cold_movement),
         ("consolidate_replay_absorption", test_consolidate_replay_absorption),
         ("correction_signal_raises_plasticity", test_correction_signal_raises_plasticity),
         ("reset_warm_from_cold", test_reset_warm_from_cold),
