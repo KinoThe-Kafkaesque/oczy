@@ -134,6 +134,14 @@ Commits since previous summary:
     unchanged; instrumentation only writes scores when `--policy-log` is used.
     Benchmark unchanged: `code_qa_accuracy=1.0` (run #67).
 
+24. `ed63fe8` — Add a deterministic `CortexAgent` shim inside the organism
+    curriculum runner. With `--use-cortex-shim`, `run_curriculum.py` now
+    attaches a lightweight policy-head stand-in (no LM required), records
+    non-null `policy_score_before`/`policy_score_after` per episode, and
+    prints `Average corrected-answer policy score delta`. Stage 0 probe run
+    produced a finite average delta of `-0.5576`. Benchmark unchanged:
+    `code_qa_accuracy=1.0` (run #68).
+
 Test status: `pytest: 263 passed` fast (reserve-position + tensor-critic + replay-SGD +
 identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
 value-head + value-head-wiring + policy-head + organism-policy + policy-correction-loop +
@@ -156,6 +164,6 @@ Remaining blocks:
 - CortexAgent now has an `answer()` method, a learned response-policy head, and
   `OrganismAgent` can use it for ranking and symmetric (+/-) policy-gradient updates
   with an optional value-head baseline and an optional acceptance reward on
-  predicted-accepted answers (via `use_cortex_policy=True`, `use_value_baseline=True`,
-  and `use_acceptance_policy_reward=True`). A curriculum instrumentation hook is
-  available via `--policy-log` but has not yet run with a real CortexAgent policy head.
+  predicted-accepted answers. A curriculum instrumentation hook (`--policy-log`) and a
+  deterministic shim (`--use-cortex-shim`) are available, but neither has exercised a
+  real CortexAgent policy head.
