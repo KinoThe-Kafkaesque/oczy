@@ -84,9 +84,10 @@ Commits since previous summary:
     `PlasticCortex.answer()`. Codebase-QA recall path remains unchanged.
     Benchmark unchanged: `code_qa_accuracy=1.0` (run #58).
 
-Test status: `pytest: 232 passed` fast (reserve-position + tensor-critic + replay-SGD +
-identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop unit
-tests pass; full slow/model suite not rerun). `ruff check` clean on changed files.
+Test status: `pytest: 238 passed` fast (reserve-position + tensor-critic + replay-SGD +
+identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
+value-head unit tests pass; full slow/model suite not rerun). `ruff check` clean on
+changed files.
 
 Remaining blocks:
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
@@ -98,9 +99,9 @@ Remaining blocks:
 - IdentityHypernetwork now emits real `d_cortex`-dimensional adapter deltas that are
   applied at articulation time, but the concept→latent mapping is still partially
   hand-seeded and the effect on downstream behavior has not yet been measured.
-- WorldModelCritic is now tensor-input-by-default inside CortexAgent and its output
-  feeds the digestive gate, but these pieces have not yet been measured in a real
-  correction/uptake loop.
+- WorldModelCritic now has tensor-input correction prediction (default in CortexAgent),
+  a learned value head (gated off), and feeds the digestive gate, but none of these
+  have been validated in a real correction/uptake loop.
 - CortexAgent now has an `answer()` method and OrganismAgent can delegate via
   `use_cortex_lm_answer=True`, but the flag is off by default and has not been
   exercised in a real workload.
