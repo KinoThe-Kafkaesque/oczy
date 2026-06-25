@@ -155,7 +155,14 @@ class CortexAgent:
         # drive the cortex (no string-fed fast-weight replacement of the
         # cortex's intent).
         self.neural_hippocampus = NeuralHippocampus()
-        self.world_model_critic = WorldModelCritic({"use_hidden": True, "mlp_hidden_units": 16})
+        self.world_model_critic = WorldModelCritic(
+            {
+                "use_hidden": True,
+                "use_value_head": True,
+                "mlp_hidden_units": 16,
+                "value_learning_rate": 0.05,
+            }
+        )
         self.identity_hypernetwork = IdentityHypernetwork()
         self.skill_immune_cortex = SkillImmuneCortex()
         self.experience_autoencoder = ExperienceAutoencoder(
@@ -322,18 +329,26 @@ class CortexAgent:
         # prediction (before the online update), which is the surprise signal
         # we feed into the digestive gate below.
         hidden_for_critic = self._last_hidden
+        value_hidden = (
+            self._prev_hidden if self._prev_hidden is not None else self._last_hidden
+        )
+        next_value_hidden = self._last_hidden
         self.world_model_critic.predict_acceptance(
             query=text,
             proposed_answer="",
             lm_hidden=hidden_for_critic,
         )
 
-        self.world_model_critic.record_outcome(
-            query=text,
-            proposed_answer="",
-            correction=text if correction_signal > 0.5 else None,
-            lm_hidden=hidden_for_critic,
-        )
+        record_kwargs: dict[str, Any] = {
+            "query": text,
+            "proposed_answer": "",
+            "correction": text if correction_signal > 0.5 else None,
+            "lm_hidden": hidden_for_critic,
+        }
+        if getattr(self.world_model_critic, "use_value_head", False):
+            record_kwargs["value_lm_hidden"] = value_hidden
+            record_kwargs["next_value_lm_hidden"] = next_value_hidden
+        self.world_model_critic.record_outcome(**record_kwargs)
         last_prob = getattr(
             self.world_model_critic, "_last_correction_prob", None
         )

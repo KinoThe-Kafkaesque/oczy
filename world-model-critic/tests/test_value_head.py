@@ -118,3 +118,44 @@ def test_next_lm_hidden_used_in_td_target() -> None:
     assert critic._last_td_error != 0.0
     assert critic._last_value is not None
     assert not np.allclose(critic.Wv, 0.0) or critic.bv != 0.0
+
+
+def test_record_outcome_value_hidden_independence() -> None:
+    """Value-head TD update uses value_lm_hidden, correction MLP uses lm_hidden."""
+    rng = np.random.RandomState(42)
+    d = 8
+    h1 = rng.randn(d).astype(np.float32)
+    h2 = rng.randn(d).astype(np.float32)
+    h3 = rng.randn(d).astype(np.float32)
+
+    critic = WorldModelCritic(
+        {
+            "use_hidden": True,
+            "use_value_head": True,
+            "mlp_hidden_units": 16,
+            "value_learning_rate": 0.5,
+            "learning_rate": 0.1,
+            "gamma": 0.95,
+            "seed": 42,
+        }
+    )
+
+    value_before = critic.predict_value(_Q, _A, h2)
+    corr_before, _ = critic._mlp_forward(critic._features(_Q, _A), h1)
+
+    critic.record_outcome(
+        _Q,
+        _A,
+        "correction",
+        lm_hidden=h1,
+        value_lm_hidden=h2,
+        next_value_lm_hidden=h3,
+    )
+
+    value_after = critic.predict_value(_Q, _A, h2)
+    corr_after, _ = critic._mlp_forward(critic._features(_Q, _A), h1)
+
+    assert value_after != value_before
+    assert corr_after != corr_before
+    assert critic._last_td_error is not None
+    assert np.isfinite(critic._last_td_error)

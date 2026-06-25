@@ -228,6 +228,8 @@ class WorldModelCritic:
         correction: str | None,
         lm_hidden: np.ndarray | None = None,
         next_lm_hidden: np.ndarray | None = None,
+        value_lm_hidden: np.ndarray | None = None,
+        next_value_lm_hidden: np.ndarray | None = None,
     ) -> None:
         """Record what actually happened and perform one online update.
 
@@ -301,17 +303,23 @@ class WorldModelCritic:
         self.weights[3] = max(-4.0, min(4.0, self.weights[3]))
 
         # Optional value-head TD update.
-        if self.use_value_head and lm_hidden is not None:
-            self._ensure_mlp(lm_hidden.shape[0])
+        v_hidden = value_lm_hidden if value_lm_hidden is not None else lm_hidden
+        v_next_hidden = (
+            next_value_lm_hidden
+            if next_value_lm_hidden is not None
+            else next_lm_hidden
+        )
+        if self.use_value_head and v_hidden is not None:
+            self._ensure_mlp(v_hidden.shape[0])
             self._ensure_value_head()
             x_value = self._features(query, proposed_answer)
-            _, cache = self._mlp_forward(x_value, lm_hidden)
+            _, cache = self._mlp_forward(x_value, v_hidden)
             h = cache[2]
             v_s = float(self.Wv @ h + self.bv)
             reward = -1.0 if actual_correction else 1.0
             v_next = (
-                self.predict_value(query, proposed_answer, next_lm_hidden)
-                if next_lm_hidden is not None
+                self.predict_value(query, proposed_answer, v_next_hidden)
+                if v_next_hidden is not None
                 else 0.0
             )
             td_error = reward + self.gamma * v_next - v_s
