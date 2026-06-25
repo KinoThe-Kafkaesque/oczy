@@ -84,10 +84,17 @@ Commits since previous summary:
     `PlasticCortex.answer()`. Codebase-QA recall path remains unchanged.
     Benchmark unchanged: `code_qa_accuracy=1.0` (run #58).
 
-Test status: `pytest: 238 passed` fast (reserve-position + tensor-critic + replay-SGD +
+16. `8189823` — Wire the `WorldModelCritic` value head into
+    `CortexAgent` metabolism. The critic is now constructed with
+    `use_value_head=True`, and `metabolize()` passes the previous LM hidden
+    as the TD state and the current hidden as the next state. The
+    correction-prob MLP still trains on the current hidden. Benchmark
+    unchanged: `code_qa_accuracy=1.0` (run #60).
+
+Test status: `pytest: 242 passed` fast (reserve-position + tensor-critic + replay-SGD +
 identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
-value-head unit tests pass; full slow/model suite not rerun). `ruff check` clean on
-changed files.
+value-head + value-head-wiring unit tests pass; full slow/model suite not rerun).
+`ruff check` clean on changed files.
 
 Remaining blocks:
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
@@ -100,8 +107,8 @@ Remaining blocks:
   applied at articulation time, but the concept→latent mapping is still partially
   hand-seeded and the effect on downstream behavior has not yet been measured.
 - WorldModelCritic now has tensor-input correction prediction (default in CortexAgent),
-  a learned value head (gated off), and feeds the digestive gate, but none of these
-  have been validated in a real correction/uptake loop.
+  a learned value head that is trained with TD on every `metabolize()`, and feeds the
+  digestive gate, but none have been validated in a real correction/uptake loop.
 - CortexAgent now has an `answer()` method and OrganismAgent can delegate via
   `use_cortex_lm_answer=True`, but the flag is off by default and has not been
   exercised in a real workload.
