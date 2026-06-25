@@ -22,7 +22,9 @@ if str(_REPO_ROOT) not in sys.path:
 
 from experiments.codebase_qa.knowledge_store import KnowledgeStore
 from experiments.codebase_qa.cortex_agent_recall import evaluate
+from experiments.cortex_agent import CortexAgent, CortexAgentConfig
 from oczy_lm import CVecDriverConfig, LlamaCVecDriver
+from plastic_cortex.kv_cortex import KVCortexConfig
 
 _FACTS_PATH = Path(__file__).with_name("facts.json")
 _QUESTIONS_PATH = Path(__file__).with_name("questions.json")
@@ -47,6 +49,97 @@ def _score(expected: str | list[str], answer: str) -> int:
     if isinstance(expected, str):
         expected = [expected]
     return 1 if any(exp.lower() in answer for exp in expected) else 0
+
+def _run_consolidation_uptake(driver: LlamaCVecDriver) -> dict[str, Any]:
+    """Probe whether repeated corrections consolidate into the agent's state.
+
+    A fresh CortexAgent is corrected several times toward a target answer,
+    then consolidation (auto or explicit) moves the warm update into cold.
+    We record the answer immediately after consolidation (warm-state effect)
+    and again after a fresh boot (boot-persistent effect). Uptake is split
+    into a semantic score (target substring present) and an output-shift
+    score (post differs from pre).
+    """
+    probe = "In this codebase, the word 'profile' refers to a _______. Answer with one phrase:"
+    expected = ["business vertical", "industry vertical", "customer segment", "vertical"]
+    correction = "No, in this codebase 'profile' means a business vertical, not a user profile."
+    prompt = _build_prompt(probe)
+    n_turns = 4
+
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=8, steering_mode="raw_hidden"),
+        articulate_scale=0.001,
+        auto_consolidate=True,
+    )
+    agent = CortexAgent(config=cfg, knowledge_store=None, driver=driver)
+    agent.boot()
+
+    pre_answer = agent.articulate(
+        prompt=prompt,
+        max_tokens=16,
+        temperature=0.0,
+        apply_steering=True,
+    ).strip()
+    pre_score = _score(expected, pre_answer)
+    pre_normalised = pre_answer.lower()
+
+    auto_fired = False
+    for _ in range(n_turns):
+        result = agent.turn(
+            correction,
+            correction_signal=1.0,
+            max_tokens=4,
+            temperature=0.0,
+            metabolize=True,
+        )
+        if result.get("consolidated"):
+            auto_fired = True
+
+    if not auto_fired and agent.should_consolidate():
+        auto_fired = True
+
+    if not auto_fired:
+        agent.consolidate()
+
+    # Immediate post-consolidation answer (tests new cold/warm state).
+    post_warm_answer = agent.articulate(
+        prompt=prompt,
+        max_tokens=16,
+        temperature=0.0,
+        apply_steering=True,
+    ).strip()
+    post_warm_score = _score(expected, post_warm_answer)
+    output_shift = 1 if post_warm_answer.lower() != pre_normalised else 0
+
+    # Reboot from cold so the post answer comes from boot-persistent state.
+    agent.boot()
+    post_cold_answer = agent.articulate(
+        prompt=prompt,
+        max_tokens=16,
+        temperature=0.0,
+        apply_steering=True,
+    ).strip()
+    post_cold_score = _score(expected, post_cold_answer)
+
+    print(
+        f"Consolidation uptake probe: {probe}\n"
+        f"  pre:       {pre_answer!r} | semantic: {pre_score}\n"
+        f"  post_warm: {post_warm_answer!r} | semantic: {post_warm_score} | shift: {output_shift}\n"
+        f"  post_cold: {post_cold_answer!r} | semantic: {post_cold_score}\n"
+        f"  auto_consolidated: {auto_fired}"
+    )
+
+    return {
+        "pre_score": float(pre_score),
+        "post_warm_score": float(post_warm_score),
+        "post_cold_score": float(post_cold_score),
+        "output_shift": float(output_shift),
+        "delta": float(post_cold_score - pre_score),
+        "auto_fired": 1.0 if auto_fired else 0.0,
+        "pre_answer": pre_answer,
+        "post_warm_answer": post_warm_answer,
+        "post_cold_answer": post_cold_answer,
+    }
 
 
 def main() -> int:
@@ -141,6 +234,14 @@ def main() -> int:
     print(f"METRIC cortex_agent_recall_accuracy={cortex_res['recall_accuracy']:.4f}")
     print(f"METRIC cortex_agent_recall_lift={cortex_res['recall_lift']:.4f}")
 
+    print("Running consolidation uptake evaluation...")
+    cons_res = _run_consolidation_uptake(driver)
+    print(f"METRIC consolidation_uptake_pre={cons_res['pre_score']:.4f}")
+    print(f"METRIC consolidation_uptake_post_warm={cons_res['post_warm_score']:.4f}")
+    print(f"METRIC consolidation_uptake_output_shift={cons_res['output_shift']:.4f}")
+    print(f"METRIC consolidation_uptake_post_cold={cons_res['post_cold_score']:.4f}")
+    print(f"METRIC consolidation_uptake_delta={cons_res['delta']:.4f}")
+    print(f"METRIC consolidation_uptake_auto_fired={cons_res['auto_fired']:.4f}")
     return 0
 
 
