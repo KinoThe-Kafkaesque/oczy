@@ -142,6 +142,13 @@ Commits since previous summary:
     produced a finite average delta of `-0.5576`. Benchmark unchanged:
     `code_qa_accuracy=1.0` (run #68).
 
+25. `56abff2` — Improve the shim probe reporter to print both the absolute
+    corrected-answer policy score delta and a corrected-vs-wrong *margin*
+    delta. Stage 0 probe now produces absolute delta `-0.5075` and margin
+    delta `+0.0926`, showing that relative preference shifts toward the
+    corrected answer even when absolute score drift is negative. Benchmark
+    unchanged: `code_qa_accuracy=1.0` (run #69).
+
 Test status: `pytest: 263 passed` fast (reserve-position + tensor-critic + replay-SGD +
 identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
 value-head + value-head-wiring + policy-head + organism-policy + policy-correction-loop +
@@ -165,5 +172,6 @@ Remaining blocks:
   `OrganismAgent` can use it for ranking and symmetric (+/-) policy-gradient updates
   with an optional value-head baseline and an optional acceptance reward on
   predicted-accepted answers. A curriculum instrumentation hook (`--policy-log`) and a
-  deterministic shim (`--use-cortex-shim`) are available, but neither has exercised a
-  real CortexAgent policy head.
+  deterministic shim (`--use-cortex-shim`) are available; the shim now reports absolute
+  and margin policy deltas on synthetic episodes, but a real CortexAgent policy head
+  has not yet been exercised end-to-end.
