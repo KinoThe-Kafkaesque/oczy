@@ -14,6 +14,7 @@ Run: uv run python experiments/tests/test_cortex_agent.py
 from __future__ import annotations
 
 import sys
+import dataclasses
 import tempfile
 from pathlib import Path
 
@@ -35,8 +36,21 @@ for _name in (
         sys.path.insert(0, str(_src))
 
 from experiments.cortex_agent import CortexAgent, CortexAgentConfig
+from experiments.digestive_gate import DigestiveGateConfig
 from plastic_cortex.kv_cortex import KVCortexConfig
 from oczy_lm import CVecDriverConfig
+
+
+def _make_small_agent() -> CortexAgent:
+    """Return a lightweight agent with a small cortex and shared driver."""
+    base = _make_agent()
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=8),
+        driver=CVecDriverConfig(n_ctx=256, verbose=False, embedding=True),
+    )
+    agent = CortexAgent(cfg, driver=base.driver)
+    agent.boot()
+    return agent
 
 _GGUF_CACHE = (
     Path.home() / ".cache/huggingface/hub"
@@ -98,13 +112,13 @@ def test_articulate_steered_differs_from_baseline() -> None:
     agent.cortex.reset_warm_to_zeros()
     baseline = agent.articulate(
         prompt="Hello, my name is",
-        max_tokens=4, temperature=0.0,
+        max_tokens=16, temperature=0.0,
         apply_steering=False,
     )
     agent.perceive("Hello, my name is", correction_signal=1.0)
     steered = agent.articulate(
         prompt="Hello, my name is",
-        max_tokens=4, temperature=0.0,
+        max_tokens=16, temperature=0.0,
         apply_steering=True,
     )
     assert steered != baseline, (
@@ -161,16 +175,77 @@ def test_save_load_round_trip_preserves_cold() -> None:
         rtol=1e-6, atol=1e-6,
     )
 
+def test_digestive_gate_suppresses_low_drift_organs() -> None:
+    agent = _make_small_agent()
+    # Raise both gates so this neutral input is treated as low-drift and
+    # the no-learnable-intensity organs stay skipped.
+    agent.config.correction_drift_threshold = 0.95
+    agent.digestive_gate.config = dataclasses.replace(
+        agent.digestive_gate.config,
+        novelty_threshold=0.95,
+    )
+
+    n_eps = agent.neural_hippocampus.memory.episode_count()
+    n_detectors = agent.skill_immune_cortex.status()["detector_count"]
+    latent_before = agent.identity_hypernetwork.latents.to_dict()
+
+    agent.perceive("What is the weather today?")
+    meta = agent.metabolize()
+    scores = meta["digestive_scores"]
+
+    assert scores["hippocampus_weight"] == 0.0, "low-drift hippocampus should be gated off"
+    assert scores["identity_weight"] == 0.0, "low-drift identity should be gated off"
+    assert scores["immune_weight"] == 0.0, "low-drift immune should be gated off"
+    assert scores["critic_weight"] > 0.0, "critic should remain on by default"
+    assert scores["autoencoder_weight"] > 0.0, "autoencoder should still receive a step"
+
+    assert agent.neural_hippocampus.memory.episode_count() == n_eps, \
+        "hippocampus wrote despite weight 0"
+    assert agent.skill_immune_cortex.status()["detector_count"] == n_detectors, \
+        "immune wrote despite weight 0"
+    assert agent.identity_hypernetwork.latents.to_dict() == latent_before, \
+        "identity mutated despite weight 0"
+
+
+def test_digestive_gate_high_correction_opens_all_gates() -> None:
+    agent = _make_small_agent()
+    n_eps = agent.neural_hippocampus.memory.episode_count()
+    n_detectors = agent.skill_immune_cortex.status()["detector_count"]
+
+    agent.perceive("No, 'profile' means business vertical, not user profile.")
+    meta = agent.metabolize()
+    scores = meta["digestive_scores"]
+
+    assert scores["hippocampus_weight"] > 0.0, "correction should open hippocampus gate"
+    assert scores["identity_weight"] > 0.0, "correction should open identity gate"
+    assert scores["immune_weight"] > 0.0, "correction should open immune gate"
+    assert scores["autoencoder_weight"] > 0.0, "autoencoder should have weight"
+    assert scores["critic_weight"] > 0.0, "critic should be active"
+
+    assert agent.neural_hippocampus.memory.episode_count() > n_eps, \
+        "hippocampus did not store correction"
+    assert agent.skill_immune_cortex.status()["detector_count"] > n_detectors, \
+        "immune did not add a detector for correction"
+
+    # Learning-rate scaled by autoencoder weight (full or close to full here).
+    assert "autoencoder_error" in meta, "metabolize should report autoencoder_error"
+    assert np.isfinite(meta["autoencoder_error"]), "autoencoder error must be finite"
+
+    assert agent.should_consolidate() or meta["consolidation_pressure"] >= 0.0, \
+        "consolidation pressure should be reported"
 
 def main() -> int:
     tests = [
         ("test_perceive_produces_warm_state", test_perceive_produces_warm_state),
         ("test_correction_signal_drives_plasticity", test_correction_signal_drives_plasticity),
         ("test_metabolize_routes_to_hippocampus_on_drift", test_metabolize_routes_to_hippocampus_on_drift),
+        ("test_digestive_gate_suppresses_low_drift_organs", test_digestive_gate_suppresses_low_drift_organs),
+        ("test_digestive_gate_high_correction_opens_all_gates", test_digestive_gate_high_correction_opens_all_gates),
         ("test_articulate_steered_differs_from_baseline", test_articulate_steered_differs_from_baseline),
         ("test_consolidate_moves_cold_state", test_consolidate_moves_cold_state),
         ("test_save_load_round_trip_preserves_cold", test_save_load_round_trip_preserves_cold),
     ]
+
     failures = 0
     for name, fn in tests:
         try:

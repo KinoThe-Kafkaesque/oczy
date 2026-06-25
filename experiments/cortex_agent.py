@@ -52,9 +52,13 @@ import numpy as np
 
 from neural_hippocampus import NeuralHippocampus
 from world_model_critic import WorldModelCritic
+from experience_autoencoder import ExperienceAutoencoder
 from identity_hypernetwork import IdentityHypernetwork
 from skill_immune_cortex import SkillImmuneCortex
-from experience_autoencoder import ExperienceAutoencoder
+from experience_autoencoder.autoencoder import HEBBIAN_LR
+
+from experiments.digestive_gate import DigestiveGate, DigestiveGateConfig
+
 
 from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
 from oczy_lm import CVecDriverConfig, LlamaCVecDriver
@@ -97,12 +101,18 @@ class CortexAgentConfig:
     #   scale >= 0.005  -> off-manifold, falls into token-repetition garbage
     # The amplifier is per-LM-residual-norm dependent: if the host LM or
     # quant changes, re-sweep the scale before trusting this default.
-    articulate_scale: float = 0.001
 
     # Drift threshold above which metabolize() considers the correction
     # strong enough to force the WorldModelCritic's correction path even
     # without a textual correction marker.
     correction_drift_threshold: float = 0.05
+
+    # Optional scalar metabolic gate. When None, a backward-compatible
+    # default is derived from correction_drift_threshold so existing
+    # behavior is preserved.
+    digestive_gate: DigestiveGateConfig | None = None
+
+    articulate_scale: float = 0.001
 
 
 class CortexAgent:
@@ -157,6 +167,16 @@ class CortexAgent:
         self.identity_hypernetwork = IdentityHypernetwork()
         self.skill_immune_cortex = SkillImmuneCortex()
         self.experience_autoencoder = ExperienceAutoencoder()
+
+        # Scalar metabolic gate sits downstream of all organs and decides
+        # per-organ update weights plus consolidation pressure. When no
+        # config is supplied, derive a backward-compatible default from
+        # the agent's correction_drift_threshold.
+        dg_cfg = self.config.digestive_gate or DigestiveGateConfig(
+            novelty_threshold=self.config.correction_drift_threshold,
+        )
+        self.digestive_gate = DigestiveGate(config=dg_cfg)
+
         # Optional codebase knowledge store; recalled facts can be injected
         # into prompts during articulate() to ground the agent in repo facts.
         self.knowledge_store = knowledge_store
@@ -177,10 +197,17 @@ class CortexAgent:
         than the empty default that __init__ left it in.
         """
         self.cortex.reset_warm_from_cold()
+        self.digestive_gate.reset()
         self._last_utterance = None
         self._last_hidden = None
         self._last_correction_signal = 0.0
         self._last_drift = 0.0
+
+    def should_consolidate(self) -> bool:
+        """Return True when the digestive gate says consolidation pressure
+        has crossed the configured threshold.
+        """
+        return self.digestive_gate.should_consolidate()
 
     # ------------------------------------------------------------------
     # Warm path
@@ -251,24 +278,38 @@ class CortexAgent:
 
         correction_signal = self._last_correction_signal
 
-        # Drive the critic with the cortex's drift scalar. We use the
-        # critic's record_outcome path so its logistic online-update fires
-        # against the new state. The drift stands in for the prediction
-        # error: high drift = high surprise = correction_likelihood up.
-        self.world_model_critic._last_correction_prob = float(
-            np.clip(self._last_drift, 0.0, 1.0)
+        # The digestive gate expects bounded scalars. For backward
+        # compatibility, treat any episode whose drift crossed the legacy
+        # threshold as a correction-like event when gating identity/immune.
+        gate_correction = float(
+            max(correction_signal, self._last_drift > self.config.correction_drift_threshold)
         )
-        self.world_model_critic.record_outcome(
-            query=text,
-            proposed_answer="",  # CortexAgent has no string answer to score.
-            correction=text if correction_signal > 0.5 else None,
+        scores = self.digestive_gate.ingest(
+            drift=float(np.clip(self._last_drift, 0.0, 1.0)),
+            correction_signal=gate_correction,
+            novelty=1.0,
+            identity_relevance=0.5,
+            immune_conflict=0.0,
         )
+
+        # Drive the critic with the cortex's drift scalar when the gate
+        # allows it (default critic weight is 1.0, so this keeps the
+        # previous always-on behavior unless a custom config lowers it).
+        if scores["critic_weight"] > 0:
+            self.world_model_critic._last_correction_prob = float(
+                np.clip(self._last_drift, 0.0, 1.0)
+            )
+            self.world_model_critic.record_outcome(
+                query=text,
+                proposed_answer="",  # CortexAgent has no string answer to score.
+                correction=text if correction_signal > 0.5 else None,
+            )
 
         # High-drift episodes go to hippocampal storage as a replay bank
         # item keyed by the LM's hidden representation. The text field is
         # kept only for human debugging -- the cortex itself never reads
         # it back.
-        if self._last_drift > self.config.correction_drift_threshold:
+        if scores["hippocampus_weight"] > 0:
             self.neural_hippocampus.store(
                 query=text,
                 answer="",
@@ -277,8 +318,9 @@ class CortexAgent:
                 corrected_answer="",
             )
 
-            # Identity accepts a token / correct_label; use the utterance's
-            # first long alphanumeric token as the concept to update.
+        # Identity accepts a token / correct_label; use the utterance's
+        # first long alphanumeric token as the concept to update.
+        if scores["identity_weight"] > 0:
             tokens = re.findall(r"[A-Za-z][A-Za-z0-9_]+", text)
             label = tokens[0] if tokens else "unknown"
             self.identity_hypernetwork.update_identity({
@@ -287,6 +329,7 @@ class CortexAgent:
                 "token": label,
             })
 
+        if scores["immune_weight"] > 0:
             self.skill_immune_cortex.add_detector(
                 correction_text=text,
                 mistake_class="cortex_drift",
@@ -294,21 +337,29 @@ class CortexAgent:
             )
 
         # Autoencoder gets every observation as a (passive) Hebbian-style
-        # train step on the cortex's perception projector. The episode
-        # shape is the legacy keyset the autoencoder already understands.
-        self.experience_autoencoder.train_step({
-            "situation": text,
-            "model_answer": "",
-            "correction": text if correction_signal > 0.5 else "",
-            "revised_answer": "",
-            "outcome": "corrected" if correction_signal > 0.5 else "accepted",
-        })
+        # train step on the cortex's perception projector, scaled by the
+        # gate's autoencoder weight so low-surprise steps learn less.
+        autoencoder_lr = HEBBIAN_LR * float(scores["autoencoder_weight"])
+        autoencoder_error = self.experience_autoencoder.train_step(
+            {
+                "situation": text,
+                "model_answer": "",
+                "correction": text if correction_signal > 0.5 else "",
+                "revised_answer": "",
+                "outcome": "corrected" if correction_signal > 0.5 else "accepted",
+            },
+            lr=autoencoder_lr,
+        )
 
         return {
             "metabolized": True,
             "drift": self._last_drift,
             "correction_signal": correction_signal,
-            "hippocampus_wrote": self._last_drift > self.config.correction_drift_threshold,
+            "digestive_scores": scores,
+            "consolidation_pressure": scores["consolidation_pressure"],
+            "should_consolidate": self.digestive_gate.should_consolidate(),
+            "hippocampus_wrote": scores["hippocampus_weight"] > 0,
+            "autoencoder_error": autoencoder_error,
         }
 
     # ------------------------------------------------------------------
