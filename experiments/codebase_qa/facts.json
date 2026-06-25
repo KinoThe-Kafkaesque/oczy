@@ -15,6 +15,11 @@
     "metadata": { "source": "pyproject.toml" }
   },
   {
+    "key": "KVCortexConfig dimensions",
+    "value": "The default dimensions in KVCortexConfig are d_cortex=128, d_embd=2048, n_layers=28.",
+    "metadata": { "source": "plastic-cortex/src/plastic_cortex/kv_cortex.py" }
+  },
+  {
     "key": "kvcortex config defaults",
     "value": "KVCortexConfig defaults are d_cortex=128, d_embd=2048, n_layers=28, alpha_warm=0.02, alpha_correction=5.0, and steering_mode='proj_random'.",
     "metadata": { "source": "plastic-cortex/src/plastic_cortex/kv_cortex.py" }
@@ -36,7 +41,12 @@
   },
   {
     "key": "cvec driver default model",
-    "value": "CVecDriverConfig loads LiquidAI/LFM2.5-1.2B-Instruct-GGUF/LFM2.5-1.2B-Instruct-Q4_K_M.gguf by default, with n_ctx=512 and n_threads=4.",
+    "value": "The default model file loaded by LlamaCVecDriver is LFM2.5-1.2B-Instruct-Q4_K_M.gguf from the LiquidAI/LFM2.5-1.2B-Instruct-GGUF repository.",
+    "metadata": { "source": "oczy_lm/cvec_driver.py" }
+  },
+  {
+    "key": "default GGUF filename",
+    "value": "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
     "metadata": { "source": "oczy_lm/cvec_driver.py" }
   },
   {
@@ -51,7 +61,7 @@
   },
   {
     "key": "correction hiddens shape",
-    "value": "experiments/lm_perception/reports/correction_hiddens.npy has shape (72, 2048): 12 canonical correction episodes times 6 paraphrase templates, each a 2048-dim final-layer hidden.",
+    "value": "The shape of experiments/lm_perception/reports/correction_hiddens.npy is (72, 2048).",
     "metadata": { "source": "experiments/lm_perception/collect_correction_hiddens.py" }
   },
   {

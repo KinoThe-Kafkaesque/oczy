@@ -71,6 +71,9 @@ class KnowledgeStore:
         if self.embed_fn is not None:
             fact["key_emb"] = self.embed_fn(key)
             fact["value_emb"] = self.embed_fn(value)
+            # Combined key/value embedding is usually the best retrieval signal
+            # because it includes both the fact name and its full content.
+            fact["kv_emb"] = self.embed_fn(f"{key} | {value}")
 
         self._facts.append(fact)
 
@@ -83,32 +86,50 @@ class KnowledgeStore:
         )
 
     def _embedding_score(self, query: str, fact: dict) -> float:
+        assert self.embed_fn is not None
         query_emb = self.embed_fn(query)
-        key_score = _cosine(query_emb, fact["key_emb"])
-        value_score = _cosine(query_emb, fact["value_emb"])
-        return max(key_score, value_score)
+        scores = [_cosine(query_emb, fact["kv_emb"])]
+        if "key_emb" in fact:
+            scores.append(_cosine(query_emb, fact["key_emb"]))
+        if "value_emb" in fact:
+            scores.append(_cosine(query_emb, fact["value_emb"]))
+        return max(scores)
 
     def recall(self, query: str, k: int = 3) -> list[dict]:
         """Return top-``k`` facts for ``query``, sorted by relevance score."""
         if not self._facts:
             return []
 
-        scorer = self._embedding_score if self.embed_fn is not None else self._keyword_score
-
-        scored = []
+        # Keyword-strong hybrid.  Repository questions usually name their target
+        # explicitly (a file, config key, or concept), so keyword overlap is a
+        # more reliable signal than the final-layer LM embeddings in this regime.
+        # Embeddings remain the fallback when keyword overlap is sparse.
+        use_embed = self.embed_fn is not None
+        ranked = []
         for fact in self._facts:
-            score = scorer(query, fact)
-            scored.append(
+            keyword = self._keyword_score(query, fact)
+            semantic = self._embedding_score(query, fact) if use_embed else keyword
+            if keyword >= 0.20:
+                # Strong keyword match: let keyword dominate, embeddings break ties.
+                rank_score = keyword + 0.1 * semantic
+            else:
+                # Weak keyword overlap: prefer semantic similarity.
+                rank_score = semantic + 0.5 * keyword
+            ranked.append(
                 {
                     "key": fact["key"],
                     "value": fact["value"],
-                    "score": score,
+                    "score": semantic,
+                    "_rank_score": rank_score,
                     "metadata": fact["metadata"],
                 }
             )
 
-        scored.sort(key=lambda item: item["score"], reverse=True)
-        return scored[:k]
+        ranked.sort(key=lambda item: item["_rank_score"], reverse=True)
+        # Remove the private rank key before returning.
+        for item in ranked:
+            item.pop("_rank_score", None)
+        return ranked[:k]
 
     def format_context(
         self,

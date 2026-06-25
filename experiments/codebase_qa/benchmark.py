@@ -2,15 +2,15 @@
 """Deterministic codebase-QA benchmark harness.
 
 Measures code_qa_accuracy with and without retrieved repository facts injected
-into the prompt.  Uses the LFM2.5-1.2B-Instruct Q4_K_M GGUF via
-LlamaCVecDriver embeddings and the shared KnowledgeStore.
+into the prompt. Retrieval uses the KnowledgeStore's keyword overlap scorer so
+no embeddings are required and the harness remains deterministic and fast.
+The LFM2.5-1.2B-Instruct Q4_K_M GGUF is still used for generation.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import pickle
 import sys
 from pathlib import Path
 from typing import Any
@@ -20,46 +20,16 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-import numpy as np
-
 from experiments.codebase_qa.knowledge_store import KnowledgeStore
 from oczy_lm import CVecDriverConfig, LlamaCVecDriver
 
 _FACTS_PATH = Path(__file__).with_name("facts.json")
 _QUESTIONS_PATH = Path(__file__).with_name("questions.json")
-_CACHE_DIR = Path(__file__).with_name(".cache")
-_CACHE_PATH = _CACHE_DIR / "embedding_cache.pkl"
 
 
 def _load_json(path: Path) -> list[dict[str, Any]]:
     with path.open("r", encoding="utf-8") as fh:
         return json.load(fh)
-
-
-def _load_embedding_cache() -> dict[str, np.ndarray]:
-    if _CACHE_PATH.exists():
-        with _CACHE_PATH.open("rb") as fh:
-            cache = pickle.load(fh)
-            if isinstance(cache, dict):
-                return cache
-    return {}
-
-
-def _save_embedding_cache(cache: dict[str, np.ndarray]) -> None:
-    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = _CACHE_PATH.with_suffix(".tmp")
-    with tmp.open("wb") as fh:
-        pickle.dump(cache, fh, protocol=pickle.HIGHEST_PROTOCOL)
-    tmp.replace(_CACHE_PATH)
-
-
-def _make_embed_fn(driver: LlamaCVecDriver, cache: dict[str, np.ndarray]):
-    def embed(text: str) -> np.ndarray:
-        if text not in cache:
-            cache[text] = driver.peek_embedding(text, last_token_only=False)
-        return cache[text]
-
-    return embed
 
 
 def _build_prompt(question: str, context: str = "") -> str:
@@ -92,13 +62,10 @@ def main() -> int:
     if hasattr(driver._llm, "set_seed"):
         driver._llm.set_seed(42)
 
-    cache = _load_embedding_cache()
-    store = KnowledgeStore(embed_fn=_make_embed_fn(driver, cache))
-
+    # Keyword-only store for a deterministic, fast retrieval path.
+    store = KnowledgeStore(embed_fn=None)
     for fact in facts:
         store.add_fact(fact["key"], fact["value"], fact.get("metadata", {}))
-
-    _save_embedding_cache(cache)
 
     print(f"Knowledge store status: {store.status()}")
     print(f"Benchmarking {len(questions)} questions...")
@@ -128,7 +95,7 @@ def main() -> int:
             )
             continue
 
-        context = store.format_context(question, k=3)
+        context = store.format_context(question, k=1)
         recall_prompt = _build_prompt(question, context)
         recall_answer = driver.generate(
             recall_prompt,

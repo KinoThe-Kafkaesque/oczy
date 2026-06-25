@@ -12,7 +12,7 @@
   {
     "question": "What are the default dimensions in KVCortexConfig?",
     "expected": "d_cortex=128",
-    "must_recall_key": "kvcortex config defaults"
+    "must_recall_key": "KVCortexConfig dimensions"
   },
   {
     "question": "Which steering modes does KVCortex support?",
