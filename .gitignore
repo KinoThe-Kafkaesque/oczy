@@ -8,7 +8,7 @@ __pycache__/
 dist/
 build/
 
-experiments/logs/*.json
+src/oczy/experiments/logs/*.json
 plastic-cortex/checkpoints/
 plastic-cortex/data/adaptive_curriculum*.txt
 plastic-cortex/data/codex_*.txt
@@ -17,5 +17,5 @@ sessions/
 
 # Regenerable experiment run outputs (the result tables live in experiments_logs/*.md).
 # .gitkeep placeholders keep the dirs tracked.
-experiments/organism_curriculum/reports/*.json
-experiments/lm_perception/reports/*.json
+src/oczy/experiments/organism_curriculum/reports/*.json
+src/oczy/experiments/lm_perception/reports/*.json

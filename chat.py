@@ -22,7 +22,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from experiments.organism import OrganismAgent
+from oczy.experiments.organism import OrganismAgent
 
 
 _CORRECTION_MARKERS = ("no,", "no:", "wrong,", "wrong:", "correct:", "expected:", "correction:")

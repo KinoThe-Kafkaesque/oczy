@@ -7,10 +7,6 @@ printed by bench_cross_backend.py.
 from __future__ import annotations
 
 import argparse
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from bench_cross_backend import (
     HFBackend, GGUFBackend, PROMPTS,
