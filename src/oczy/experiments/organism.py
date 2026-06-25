@@ -344,6 +344,30 @@ class OrganismAgent:
                     response=expected_answer,
                 )
 
+            # d. (Optional) Train the CortexAgent policy head from the correction.
+            if (
+                self.use_cortex_policy
+                and self.cortex_agent is not None
+                and hasattr(self.cortex_agent, "policy_update")
+            ):
+                try:
+                    labels = list(self.plastic_cortex.labels)
+                    if expected_answer and expected_answer not in labels:
+                        labels.append(expected_answer)
+                    if prior_answer and prior_answer not in labels:
+                        labels.insert(0, prior_answer)
+                    chosen = prior_answer if prior_answer else labels[0]
+                    chosen_idx = labels.index(chosen)
+                    self.cortex_agent.policy_update(
+                        labels,
+                        chosen_idx=chosen_idx,
+                        reward=-1.0,
+                        baseline=0.0,
+                    )
+                except Exception:
+                    # Policy update is advisory; never break the correction path.
+                    pass
+
     @staticmethod
     def _extract_expected_from_correction(correction: str) -> str:
         """Pull the corrected label out of a free-text correction.
