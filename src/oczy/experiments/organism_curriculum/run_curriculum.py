@@ -435,22 +435,52 @@ def _print_policy_delta(results: list[StageResult]) -> None:
                 best_key = key
         return best_key
 
-    if any(er.policy_score_before and er.policy_score_after for sr in results for er in sr.episode_results):
-        deltas = []
-        for sr in results:
-            for er in sr.episode_results:
-                if er.policy_score_before and er.policy_score_after:
-                    target = er.corrected_response
-                    before_key = _match_key(target, er.policy_score_before)
-                    after_key = _match_key(target, er.policy_score_after)
-                    if before_key is not None and after_key is not None:
-                        deltas.append(er.policy_score_after[after_key] - er.policy_score_before[before_key])
-        if deltas:
-            avg_delta = sum(deltas) / len(deltas)
-            print("\nAverage corrected-answer policy score delta: %.4f" % avg_delta)
-        else:
-            print("\nPolicy scores present but corrected-answer delta could not be computed.")
+    has_scores = any(
+        er.policy_score_before and er.policy_score_after
+        for sr in results
+        for er in sr.episode_results
+    )
+    if not has_scores:
+        return
 
+    absolute_deltas = []
+    margin_deltas = []
+    for sr in results:
+        for er in sr.episode_results:
+            if not (er.policy_score_before and er.policy_score_after):
+                continue
+            before = er.policy_score_before
+            after = er.policy_score_after
+            corrected = er.corrected_response
+            wrong = er.first_answer
+            corrected_key = _match_key(corrected, before) or _match_key(corrected, after)
+            if corrected_key is None and wrong in before and wrong in after:
+                other_keys = [k for k in set(before) | set(after) if k != wrong]
+                if len(other_keys) == 1:
+                    corrected_key = other_keys[0]
+
+            b_corrected = before.get(corrected_key) if corrected_key else None
+            a_corrected = after.get(corrected_key) if corrected_key else None
+            if b_corrected is not None and a_corrected is not None:
+                absolute_deltas.append(a_corrected - b_corrected)
+
+            b_wrong = before.get(wrong, 0.0)
+            a_wrong = after.get(wrong, 0.0)
+            b_margin = (before.get(corrected_key, b_wrong) - b_wrong) if corrected_key else 0.0
+            a_margin = (after.get(corrected_key, a_wrong) - a_wrong) if corrected_key else 0.0
+            margin_deltas.append(a_margin - b_margin)
+
+    print()
+    if absolute_deltas:
+        avg_absolute = sum(absolute_deltas) / len(absolute_deltas)
+        print("Average corrected-answer policy score delta: %.4f" % avg_absolute)
+    else:
+        print("Policy scores present but corrected-answer keys not found.")
+    if margin_deltas:
+        avg_margin = sum(margin_deltas) / len(margin_deltas)
+        print("Average corrected-answer policy margin delta: %.4f" % avg_margin)
+    if not absolute_deltas and not margin_deltas:
+        print("Policy scores present but deltas could not be computed.")
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
