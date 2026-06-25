@@ -114,11 +114,17 @@ Commits since previous summary:
     now reinforces the corrected expected answer with reward=+1.0. Gated by
     `use_cortex_policy`. Benchmark unchanged: `code_qa_accuracy=1.0` (run #64).
 
-Test status: `pytest: 255 passed` fast (reserve-position + tensor-critic + replay-SGD +
+21. `46fcdfb` — Connect the Phase 1 value head to the Phase 2 policy head:
+    `OrganismAgent` now supports `use_value_baseline=True`, which passes
+    the `WorldModelCritic` predicted return as the REINFORCE baseline for
+    `policy_update`. Default baseline remains 0.0; benchmark unchanged:
+    `code_qa_accuracy=1.0` (run #65).
+
+Test status: `pytest: 258 passed` fast (reserve-position + tensor-critic + replay-SGD +
 identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
 value-head + value-head-wiring + policy-head + organism-policy + policy-correction-loop +
-policy-positive-reward unit tests pass; full slow/model suite not rerun). `ruff check`
-clean on changed files.
+policy-positive-reward + actor-critic-baseline unit tests pass; full slow/model suite not
+rerun). `ruff check` clean on changed files.
 
 Remaining blocks:
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
@@ -134,6 +140,7 @@ Remaining blocks:
   a learned value head that is trained with TD on every `metabolize()`, and feeds the
   digestive gate, but none have been validated in a real correction/uptake loop.
 - CortexAgent now has an `answer()` method, a learned response-policy head, and
-  `OrganismAgent` can use it for both ranking and symmetric (+/-) policy-gradient
-  updates during corrections (via `use_cortex_policy=True`). All gates remain off by
-  default and have not been measured in a real correction/uptake loop.
+  `OrganismAgent` can use it for ranking and symmetric (+/-) policy-gradient updates
+  with an optional value-head baseline (via `use_cortex_policy=True` /
+  `use_value_baseline=True`). All gates remain off by default and have not been
+  measured in a real correction/uptake loop.
