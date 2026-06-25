@@ -53,9 +53,17 @@ Commits since previous summary:
    Correction summaries reinforce the response direction, neutral summaries
    suppress it.  Gated off by default via `KVCortexConfig.replay_sgd_step`.
    Fast tests pass; benchmark unchanged: `code_qa_accuracy=1.0` (run #51).
+10. `2f7d116` — Wire IdentityHypernetwork state adapters into `KVCortex`
+    articulation bias. `IdentityHypernetwork` now learns per-concept
+    `state_adapters` via EMA during `update_identity` and emits a real
+    `d_cortex`-dimensional adapter delta. `CortexAgent.metabolize()` applies
+    this delta through `KVCortex.set_state_bias`, which is added to
+    `warm_state` during cvec emission. Benchmark unchanged:
+    `code_qa_accuracy=1.0` (run #54).
 
-Test status: `pytest: 193 passed` fast (targeted smoke + reserved-position + tensor-critic +
-replay-SGD unit tests pass; full slow/model suite not rerun). `ruff check` clean on changed files.
+Test status: `pytest: 205 passed` fast (reserve-position + tensor-critic + replay-SGD +
+identity-adapter unit tests pass; full slow/model suite not rerun). `ruff check` clean
+on changed files.
 
 Remaining blocks:
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
@@ -65,3 +73,6 @@ Remaining blocks:
 - WorldModelCritic now has a tensor-input MLP path but it is not yet the default.
 - Hippocampal replay now has a differentiable SGD path on `proj_hidden`, gated by
   `replay_sgd_step` and defaulting to off.
+- IdentityHypernetwork now emits real `d_cortex`-dimensional adapter deltas that are
+  applied at articulation time, but the concept→latent mapping is still partially
+  hand-seeded and the effect on downstream behavior has not yet been measured.
