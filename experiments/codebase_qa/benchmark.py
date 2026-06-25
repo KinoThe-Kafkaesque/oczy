@@ -21,6 +21,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from experiments.codebase_qa.knowledge_store import KnowledgeStore
+from experiments.codebase_qa.cortex_agent_recall import evaluate
 from oczy_lm import CVecDriverConfig, LlamaCVecDriver
 
 _FACTS_PATH = Path(__file__).with_name("facts.json")
@@ -133,6 +134,12 @@ def main() -> int:
     if not args.no_recall:
         print(f"METRIC code_qa_accuracy={recall_acc:.4f}")
         print(f"METRIC recall_lift={recall_lift:.4f}")
+    cortex_subset_size = 12
+    print(f"Running CortexAgent recall evaluation on {cortex_subset_size} questions...")
+    cortex_res = evaluate(driver, facts, questions, subset_size=cortex_subset_size)
+    print(f"METRIC cortex_agent_baseline_accuracy={cortex_res['baseline_accuracy']:.4f}")
+    print(f"METRIC cortex_agent_recall_accuracy={cortex_res['recall_accuracy']:.4f}")
+    print(f"METRIC cortex_agent_recall_lift={cortex_res['recall_lift']:.4f}")
 
     return 0
 

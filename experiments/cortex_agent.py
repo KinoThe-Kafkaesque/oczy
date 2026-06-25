@@ -117,6 +117,7 @@ class CortexAgent:
         self,
         config: CortexAgentConfig | None = None,
         knowledge_store: KnowledgeStore | None = None,
+        driver: LlamaCVecDriver | None = None,
     ) -> None:
         self.config = config or CortexAgentConfig()
         ccfg = self.config.cortex or KVCortexConfig()
@@ -129,7 +130,15 @@ class CortexAgent:
         # caller passed -- but if d_embd or n_layers disagree with the
         # actual LM, the first articulate() will raise a shape mismatch.
         # To keep that contract honest we patch the cortex config here.
-        self.driver = LlamaCVecDriver.load(dcfg)
+        # When a driver is supplied we reuse it to avoid duplicate LM loads.
+        self.driver = driver if driver is not None else LlamaCVecDriver.load(dcfg)
+        # Cortex must mirror driver shape: d_embd and n_layers come from
+        # the LM, not from config-only defaults. We instantiate the
+        # driver first to know its actual n_layers, then size the cortex.
+        # CortexAgent is constructed with whatever KVCortexConfig the
+        # caller passed -- but if d_embd or n_layers disagree with the
+        # actual LM, the first articulate() will raise a shape mismatch.
+        # To keep that contract honest we patch the cortex config here.
         # Mirror driver shape while preserving every caller-set field
         # (steering_mode especially -- dropping it silently reverts the
         # cortex to proj_random and the raw_hidden regime never engages).
