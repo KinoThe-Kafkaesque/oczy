@@ -33,7 +33,7 @@ def evaluate(
     driver: LlamaCVecDriver,
     facts: list[dict[str, Any]],
     questions: list[dict[str, Any]],
-    subset_size: int = 12,
+    subset_size: int = 24,
 ) -> dict[str, Any]:
     """Evaluate CortexAgent recall against a deterministic question subset.
 

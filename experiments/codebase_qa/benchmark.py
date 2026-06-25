@@ -134,7 +134,7 @@ def main() -> int:
     if not args.no_recall:
         print(f"METRIC code_qa_accuracy={recall_acc:.4f}")
         print(f"METRIC recall_lift={recall_lift:.4f}")
-    cortex_subset_size = 12
+    cortex_subset_size = 24
     print(f"Running CortexAgent recall evaluation on {cortex_subset_size} questions...")
     cortex_res = evaluate(driver, facts, questions, subset_size=cortex_subset_size)
     print(f"METRIC cortex_agent_baseline_accuracy={cortex_res['baseline_accuracy']:.4f}")
