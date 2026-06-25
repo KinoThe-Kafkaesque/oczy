@@ -112,6 +112,14 @@ class WorldModelCritic:
         self.b1: np.ndarray | None = None
         self.W2: np.ndarray | None = None
         self.b2: float = 0.0
+        # Optional learned value head on the MLP hidden representation.
+        self.use_value_head = bool(cfg.get("use_value_head", False))
+        self.value_learning_rate = float(cfg.get("value_learning_rate", 0.1))
+        self.gamma = float(cfg.get("gamma", 0.95))
+        self.Wv: np.ndarray | None = None
+        self.bv: float = 0.0
+        self._last_value: float | None = None
+        self._last_td_error: float | None = None
 
         self.ambiguous_words = frozenset(cfg.get("ambiguous_words", AMBIGUOUS_WORDS))
 
@@ -149,6 +157,13 @@ class WorldModelCritic:
         self.b1 = getattr(self, "b1", None)
         self.W2 = getattr(self, "W2", None)
         self.b2 = float(getattr(self, "b2", 0.0))
+        self.use_value_head = bool(getattr(self, "use_value_head", False))
+        self.value_learning_rate = float(getattr(self, "value_learning_rate", 0.1))
+        self.gamma = float(getattr(self, "gamma", 0.95))
+        self.Wv = getattr(self, "Wv", None)
+        self.bv = float(getattr(self, "bv", 0.0))
+        self._last_value = getattr(self, "_last_value", None)
+        self._last_td_error = getattr(self, "_last_td_error", None)
 
     # ------------------------------------------------------------------
     # Public API
@@ -183,17 +198,45 @@ class WorldModelCritic:
             "key_uncertainty": uncertainty,
         }
 
+    def predict_value(
+        self,
+        query: str,
+        proposed_answer: str,
+        lm_hidden: np.ndarray | None = None,
+    ) -> float:
+        """Return the estimated future return (value) for this state.
+
+        If the value head is disabled or no hidden vector is supplied, the
+        estimate is 0.0 to keep the default API unchanged.
+        """
+        if not self.use_value_head or lm_hidden is None:
+            return 0.0
+
+        self._ensure_mlp(lm_hidden.shape[0])
+        self._ensure_value_head()
+
+        x = self._features(query, proposed_answer)
+        # Hidden activation shared with the correction-prediction MLP.
+        _, cache = self._mlp_forward(x, lm_hidden)
+        h = cache[2]
+        return float(self.Wv @ h + self.bv)
+
     def record_outcome(
         self,
         query: str,
         proposed_answer: str,
         correction: str | None,
         lm_hidden: np.ndarray | None = None,
+        next_lm_hidden: np.ndarray | None = None,
     ) -> None:
         """Record what actually happened and perform one online update.
 
         `correction` is a non-empty string if the user corrected the answer,
         otherwise None/empty to indicate acceptance.
+
+        When `use_value_head` is enabled the hidden vector is treated as a
+        state representation and, optionally, `next_lm_hidden` as the next
+        state, for a one-step TD update of the value estimate.
         """
         actual_correction = correction is not None and bool(str(correction).strip())
         target = 1.0 if actual_correction else 0.0
@@ -257,6 +300,26 @@ class WorldModelCritic:
         # priors for entirely novel queries.
         self.weights[3] = max(-4.0, min(4.0, self.weights[3]))
 
+        # Optional value-head TD update.
+        if self.use_value_head and lm_hidden is not None:
+            self._ensure_mlp(lm_hidden.shape[0])
+            self._ensure_value_head()
+            x_value = self._features(query, proposed_answer)
+            _, cache = self._mlp_forward(x_value, lm_hidden)
+            h = cache[2]
+            v_s = float(self.Wv @ h + self.bv)
+            reward = -1.0 if actual_correction else 1.0
+            v_next = (
+                self.predict_value(query, proposed_answer, next_lm_hidden)
+                if next_lm_hidden is not None
+                else 0.0
+            )
+            td_error = reward + self.gamma * v_next - v_s
+            self.Wv += self.value_learning_rate * td_error * h
+            self.bv += self.value_learning_rate * td_error
+            self._last_value = v_s
+            self._last_td_error = td_error
+
     def prediction_error(self, actual_was_correction: bool) -> float:
         """Return |predicted_correction_probability - actual_outcome|.
 
@@ -282,11 +345,12 @@ class WorldModelCritic:
             "records_pruned": self.records_pruned,
             "weights": list(self.weights),
             "ambiguous_word_count": len(self.ambiguous_words),
+            "use_value_head": self.use_value_head,
+            "last_value": self._last_value,
+            "last_td_error": self._last_td_error,
         }
         if include_size:
-            result["serialized_bytes"] = len(
-                pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
-            )
+            result["serialized_bytes"] = len(pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL))
         return result
 
     # ------------------------------------------------------------------
@@ -342,6 +406,14 @@ class WorldModelCritic:
         self.W2 = rng.randn(self.mlp_hidden_units) * 0.01
         self.b2 = 0.0
 
+    def _ensure_value_head(self) -> None:
+        """Lazy-initialize the linear value head on the MLP hidden state."""
+        if self.Wv is not None and self.Wv.shape == (self.mlp_hidden_units,):
+            return
+        rng = np.random.RandomState((id(self) & 0xFFFFFFFF) ^ self.mlp_hidden_units)
+        self.Wv = rng.randn(self.mlp_hidden_units) * 0.01
+        self.bv = 0.0
+
     def _mlp_forward(
         self,
         x_str: list[float],
@@ -358,7 +430,6 @@ class WorldModelCritic:
         z2 = float(self.W2 @ h + self.b2)
         p = _sigmoid(z2)
         return p, (x_input, z1, h, p)
-
 
     def _similar_correction_rate(self, query: str) -> float:
         """Return the empirical correction rate for queries similar to `query`."""
