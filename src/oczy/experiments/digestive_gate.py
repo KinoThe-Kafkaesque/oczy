@@ -12,7 +12,7 @@ contract or import any of the heavier organ modules.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any
 
 
@@ -26,6 +26,19 @@ class DigestiveGateConfig:
     correction_boost: float = 1.0
     immune_suppress_identity: bool = True
     autoencoder_min_weight: float = 0.1
+
+    # World-model critic integration.
+    use_critic_correction_prob: bool = True
+    critic_correction_weight: float = 0.5
+    critic_drift_weight: float = 0.5
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore missing fields for pickled configs from older versions."""
+        for key, value in state.items():
+            object.__setattr__(self, key, value)
+        for field in fields(self):
+            if field.name not in state:
+                object.__setattr__(self, field.name, field.default)
 
 
 class DigestiveGate:
@@ -47,6 +60,7 @@ class DigestiveGate:
         novelty: float = 1.0,
         identity_relevance: float = 0.5,
         immune_conflict: float = 0.0,
+        critic_correction_prob: float | None = None,
     ) -> dict[str, Any]:
         """Compute organ weights for a single metabolic step.
 
@@ -56,6 +70,8 @@ class DigestiveGate:
             novelty: raw novelty signal, in [0, 1].
             identity_relevance: how relevant this experience is to identity.
             immune_conflict: immune-system override/conflict signal, in [0, 1].
+            critic_correction_prob: optional world-model critic correction
+                probability used as a surprise signal when enabled.
 
         Returns:
             dict with per-organ float weights and ``consolidation_pressure``.
@@ -71,7 +87,25 @@ class DigestiveGate:
         # correction_boost scales the raw correction signal before any
         # threshold-based gating decisions or consolidation accumulation.
         effective_correction = self._clip(correction_signal * cfg.correction_boost)
-        consolidation_input = self._clip(max(drift, effective_correction))
+
+        critic_signal = (
+            self._clip(critic_correction_prob)
+            if (cfg.use_critic_correction_prob and critic_correction_prob is not None)
+            else 0.0
+        )
+
+        # Old pickles/None calls must keep using the raw drift as the novelty
+        # signal so existing behaviour is preserved.
+        if critic_correction_prob is None and cfg.use_critic_correction_prob:
+            effective_novelty = drift
+        else:
+            effective_novelty = self._clip(
+                cfg.critic_drift_weight * drift + cfg.critic_correction_weight * critic_signal
+            )
+
+        consolidation_input = self._clip(
+            max(effective_novelty, effective_correction)
+        )
 
         self._ema = self._clip(
             cfg.ema_decay * self._ema + (1.0 - cfg.ema_decay) * consolidation_input
@@ -82,7 +116,7 @@ class DigestiveGate:
 
         # Per-organ heuristics.
         hippocampus_weight = 1.0 if (
-            drift > cfg.novelty_threshold and novelty > 0.5
+            effective_novelty > cfg.novelty_threshold and novelty > 0.5
         ) else 0.0
 
         identity_eligible = effective_correction > 0.5
@@ -94,7 +128,7 @@ class DigestiveGate:
         ) else 0.0
 
         autoencoder_weight = min(
-            1.0, cfg.autoencoder_min_weight + max(drift, correction_signal)
+            1.0, cfg.autoencoder_min_weight + max(effective_novelty, correction_signal)
         )
 
         return {
@@ -104,6 +138,7 @@ class DigestiveGate:
             "immune_weight": immune_weight,
             "autoencoder_weight": autoencoder_weight,
             "consolidation_pressure": self._pressure,
+            "critic_correction_prob": critic_correction_prob,
         }
 
     def should_consolidate(self, pressure: float | None = None) -> bool:
@@ -115,3 +150,17 @@ class DigestiveGate:
         """Zero the consolidation-pressure accumulator."""
         self._ema = 0.0
         self._pressure = 0.0
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore a pickled gate, filling in any missing config fields."""
+        self.__dict__.update(state)
+
+        cfg = getattr(self, "config", None)
+        if cfg is None:
+            self.config = DigestiveGateConfig()
+        elif isinstance(cfg, dict):
+            self.config = DigestiveGateConfig(**cfg)
+        elif isinstance(cfg, DigestiveGateConfig):
+            for field in fields(DigestiveGateConfig):
+                if not hasattr(cfg, field.name):
+                    object.__setattr__(cfg, field.name, field.default)

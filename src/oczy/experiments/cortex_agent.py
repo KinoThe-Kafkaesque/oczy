@@ -314,36 +314,38 @@ class CortexAgent:
                 self._last_drift > self.config.correction_drift_threshold,
             )
         )
+
+        # Drive the critic with the cortex's hidden vector. The critic
+        # trains on the same latent signal the cortex saw, moving it from
+        # string heuristics toward tensor-input world modeling (GOALS.md
+        # Goal 3). record_outcome sets _last_correction_prob to the prior
+        # prediction (before the online update), which is the surprise signal
+        # we feed into the digestive gate below.
+        hidden_for_critic = self._last_hidden
+        self.world_model_critic.predict_acceptance(
+            query=text,
+            proposed_answer="",
+            lm_hidden=hidden_for_critic,
+        )
+
+        self.world_model_critic.record_outcome(
+            query=text,
+            proposed_answer="",
+            correction=text if correction_signal > 0.5 else None,
+            lm_hidden=hidden_for_critic,
+        )
+        last_prob = getattr(
+            self.world_model_critic, "_last_correction_prob", None
+        )
+
         scores = self.digestive_gate.ingest(
             drift=float(np.clip(self._last_drift, 0.0, 1.0)),
             correction_signal=gate_correction,
             novelty=1.0,
             identity_relevance=0.5,
             immune_conflict=0.0,
+            critic_correction_prob=last_prob,
         )
-
-        # Drive the critic with the cortex's hidden vector when the gate
-        # allows it. The critic trains on the same latent signal the cortex
-        # saw, moving it from string heuristics toward tensor-input world
-        # modeling (GOALS.md Goal 3). Fall back to the drift scalar only if
-        # no hidden is available (e.g., driver embedding disabled).
-        if scores["critic_weight"] > 0:
-            hidden_for_critic = self._last_hidden
-            pred = self.world_model_critic.predict_acceptance(
-                query=text,
-                proposed_answer="",
-                lm_hidden=hidden_for_critic,
-            )
-            self.world_model_critic._last_correction_prob = pred[
-                "correction_likelihood"
-            ]
-            self.world_model_critic.record_outcome(
-                query=text,
-                proposed_answer="",
-                correction=text if correction_signal > 0.5 else None,
-                lm_hidden=hidden_for_critic,
-            )
-
         # High-drift episodes go to hippocampal storage as a replay bank
         # item keyed by the LM's hidden representation. The text field is
         # kept only for human debugging -- the cortex itself never reads
@@ -415,6 +417,7 @@ class CortexAgent:
             "should_consolidate": self.digestive_gate.should_consolidate(),
             "hippocampus_wrote": scores["hippocampus_weight"] > 0,
             "autoencoder_error": autoencoder_error,
+            "critic_correction_prob": last_prob,
         }
 
     # ------------------------------------------------------------------
