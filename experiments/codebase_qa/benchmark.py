@@ -73,8 +73,11 @@ def _run_consolidation_uptake(driver: LlamaCVecDriver) -> dict[str, Any]:
         auto_consolidate=True,
     )
     agent = CortexAgent(config=cfg, knowledge_store=None, driver=driver)
+    # Temporarily amplify consolidation steps for this probe so the
+    # cold-state update has enough amplitude to influence post-reboot output.
+    agent.cortex.config.consolidate_slow_step = 0.5
+    agent.cortex.config.consolidate_replay_step = 0.5
     agent.boot()
-
     pre_answer = agent.articulate(
         prompt=prompt,
         max_tokens=16,
