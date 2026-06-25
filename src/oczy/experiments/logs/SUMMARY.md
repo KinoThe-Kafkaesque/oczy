@@ -127,6 +127,13 @@ Commits since previous summary:
     the acceptance path through a shared `_policy_update_with_baseline`
     helper. Benchmark unchanged: `code_qa_accuracy=1.0` (run #66).
 
+23. `d7ee473` — Add optional `--policy-log` instrumentation to the organism
+    curriculum runner so the gated actor-critic loop (`use_cortex_policy`,
+    `use_value_baseline`, `use_acceptance_policy_reward`) can be observed in a
+    real word-association correction/uptake scenario. Default curriculum run
+    unchanged; instrumentation only writes scores when `--policy-log` is used.
+    Benchmark unchanged: `code_qa_accuracy=1.0` (run #67).
+
 Test status: `pytest: 263 passed` fast (reserve-position + tensor-critic + replay-SGD +
 identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
 value-head + value-head-wiring + policy-head + organism-policy + policy-correction-loop +
@@ -150,5 +157,5 @@ Remaining blocks:
   `OrganismAgent` can use it for ranking and symmetric (+/-) policy-gradient updates
   with an optional value-head baseline and an optional acceptance reward on
   predicted-accepted answers (via `use_cortex_policy=True`, `use_value_baseline=True`,
-  and `use_acceptance_policy_reward=True`). All gates remain off by default and have
-  not been measured in a real correction/uptake loop.
+  and `use_acceptance_policy_reward=True`). A curriculum instrumentation hook is
+  available via `--policy-log` but has not yet run with a real CortexAgent policy head.
