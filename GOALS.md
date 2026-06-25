@@ -61,6 +61,39 @@ The current codebase therefore uses **cvec for posture** and **prefix for
 exact fact recall**, while Goal 1 remains a future architecture upgrade for
 direct KV-slot writes.
 
+### First-class reserved-position API (planned)
+
+`LlamaCVecDriver` should expose a `ReservedPosition` abstraction separate
+from cvec steering:
+
+```python
+class ReservedPosition:
+    """A fixed prefix-style slot that occupies known KV positions."""
+    text: str                # concept-defining text injected before the prompt
+    source: str              # "hand_coded" | "knowledge_store" | "cortex_generated"
+    exact_uptake_score: float  # fraction of probes where target token appears
+    domain_uptake_score: float
+
+class LlamaCVecDriver:
+    # Steering surfaces
+    set_cvecs_per_layer(cvecs)        # residual posture/framing
+    set_reserved_position(pos: ReservedPosition | None)  # exact fact recall
+    clear_all_steering()
+
+    # Metrics hook
+    evaluate_position(pos, probes) -> dict[str, float]
+```
+
+When a reserved position is set, the driver prepends `text` to every generate
+call. The cortex/KnowledgeStore is responsible for generating or selecting
+`text`; the driver only manages the slot. If a cvec is also set, its scale
+must be attenuated (`articulate_scale` < 0.01) under a prefix to prevent
+interference.
+
+Long-term, this abstraction should also accept a **prefilled KV cache chunk**
+once the binding supports it, so the reserved position is not burned as text
+tokens on every forward pass.
+
 ## Goal 2 — Hidden-state extraction at layer L
 
 The cortex's warm path needs the LM's residual at a chosen depth L as
@@ -129,6 +162,13 @@ agent rather than just shift its own internal vector.
 
 Strategic order: 1 → 2 → 3, but Goal 2's investigation can begin in
 parallel once Goal 1's binding surface is understood.
+
+## Working roadmap
+
+- **Cortex/cvec:** changes dynamics, not facts.
+- **Prefix/KV slot:** provides retrievable content.
+- **Hippocampus/replay:** decides what content/state deserves consolidation.
+- **Organs:** should become tensor consumers once the CortexAgent curriculum proves the loop.
 
 ## Non-goals (deferred until the loop closes)
 
