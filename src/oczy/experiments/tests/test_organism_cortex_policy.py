@@ -90,11 +90,15 @@ def test_policy_update_called_on_correction() -> None:
 
     organism.learn("x", "No, it is b.")
 
-    assert len(mock_cortex.policy_update_calls) == 1
-    call = mock_cortex.policy_update_calls[0]
-    assert call["candidates"] == ["a", "b"]
-    assert call["chosen_idx"] == 0
-    assert call["reward"] == -1.0
+    assert len(mock_cortex.policy_update_calls) == 2
+    negative = [c for c in mock_cortex.policy_update_calls if c["reward"] == -1.0]
+    positive = [c for c in mock_cortex.policy_update_calls if c["reward"] == 1.0]
+    assert len(negative) == 1
+    assert negative[0]["candidates"] == ["a", "b"]
+    assert negative[0]["chosen_idx"] == 0
+    assert len(positive) == 1
+    assert positive[0]["candidates"] == ["a", "b"]
+    assert positive[0]["chosen_idx"] == 1
 
 
 def test_policy_update_skipped_when_disabled() -> None:
@@ -123,7 +127,45 @@ def test_policy_update_adds_expected_answer_to_candidates() -> None:
 
     organism.learn("x", "No, it is c.")
 
-    assert len(mock_cortex.policy_update_calls) == 1
-    call = mock_cortex.policy_update_calls[0]
-    assert "c" in call["candidates"]
+    assert len(mock_cortex.policy_update_calls) == 2
+    positive = [c for c in mock_cortex.policy_update_calls if c["reward"] == 1.0]
+    assert len(positive) == 1
+    assert "c" in positive[0]["candidates"]
+    assert positive[0]["candidates"].index("c") == positive[0]["chosen_idx"]
 
+
+
+def test_policy_update_rewards_correct_action() -> None:
+    """Both the mistaken and corrected actions receive symmetric rewards."""
+    mock_cortex = _MockCortexAgent()
+    organism = OrganismAgent(
+        {"use_cortex_policy": True, "cortex_agent": mock_cortex}
+    )
+    organism.plastic_cortex.labels = ["a", "b"]
+    organism.plastic_cortex.answer = lambda request: "a"
+    organism._surprise_threshold = 0.0
+
+    organism.learn("x", "No, it is b.")
+
+    assert len(mock_cortex.policy_update_calls) == 2
+    negative = [c for c in mock_cortex.policy_update_calls if c["reward"] == -1.0]
+    positive = [c for c in mock_cortex.policy_update_calls if c["reward"] == 1.0]
+    assert len(negative) == 1
+    assert negative[0]["chosen_idx"] == negative[0]["candidates"].index("a")
+    assert len(positive) == 1
+    assert positive[0]["chosen_idx"] == positive[0]["candidates"].index("b")
+
+
+def test_positive_update_skipped_when_expected_missing() -> None:
+    """No positive reinforcement when the correction text has no target label."""
+    mock_cortex = _MockCortexAgent()
+    organism = OrganismAgent(
+        {"use_cortex_policy": True, "cortex_agent": mock_cortex}
+    )
+    organism.plastic_cortex.labels = ["a", "b"]
+    organism.plastic_cortex.answer = lambda request: "a"
+    organism._extract_expected_from_correction = lambda correction: ""
+    organism.learn("x", "No, that is wrong.")
+
+    assert len(mock_cortex.policy_update_calls) == 1
+    assert mock_cortex.policy_update_calls[0]["reward"] == -1.0

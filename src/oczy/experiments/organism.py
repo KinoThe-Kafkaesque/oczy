@@ -364,6 +364,15 @@ class OrganismAgent:
                         reward=-1.0,
                         baseline=0.0,
                     )
+                    # Also reinforce the corrected expected action positively.
+                    if expected_answer and expected_answer in labels:
+                        expected_idx = labels.index(expected_answer)
+                        self.cortex_agent.policy_update(
+                            labels,
+                            chosen_idx=expected_idx,
+                            reward=1.0,
+                            baseline=0.0,
+                        )
                 except Exception:
                     # Policy update is advisory; never break the correction path.
                     pass
