@@ -14,6 +14,9 @@ Run: uv run python experiments/tests/test_cortex_agent.py
 from __future__ import annotations
 
 import sys
+
+import pytest
+
 import dataclasses
 import tempfile
 from pathlib import Path
@@ -24,6 +27,9 @@ from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
 from oczy.experiments.digestive_gate import DigestiveGateConfig
 from plastic_cortex.kv_cortex import KVCortexConfig
 from oczy.lm import CVecDriverConfig
+
+pytestmark = [pytest.mark.slow, pytest.mark.requires_model, pytest.mark.llm]
+
 
 
 def _make_small_agent() -> CortexAgent:

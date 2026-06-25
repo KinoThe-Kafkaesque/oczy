@@ -106,10 +106,107 @@ def test_malformed_json_falls_back_to_minimal_episode() -> None:
     assert ep["query"] == "Do something."
 
 
+
+def test_short_correction_model() -> None:
+    reply = json.dumps(
+        {
+            "query": "",
+            "answer": "",
+            "correction": "No, 'model' means ML model.",
+            "corrected_answer": "ML model",
+            "outcome": "corrected",
+            "source": "user_utterance",
+        }
+    )
+    adapter = _make_adapter(reply)
+    ep = adapter.nl_to_episode("No, 'model' means ML model.")
+    assert ep["outcome"] == "corrected"
+    assert ep["corrected_answer"] == "ML model"
+
+
+def test_short_correction_run() -> None:
+    reply = json.dumps(
+        {
+            "query": "",
+            "answer": "",
+            "correction": "'run' means pipeline run.",
+            "corrected_answer": "pipeline run",
+            "outcome": "corrected",
+            "source": "user_utterance",
+        }
+    )
+    adapter = _make_adapter(reply)
+    ep = adapter.nl_to_episode("'run' means pipeline run.")
+    assert ep["outcome"] == "corrected"
+    assert ep["corrected_answer"] == "pipeline run"
+
+
+def test_clean_corrected_answer_strips_redefined_word() -> None:
+    """If the LM returns the redefined word inside corrected_answer, strip it."""
+    reply = json.dumps(
+        {
+            "query": "Update the profile.",
+            "answer": "",
+            "correction": "No, 'profile' means business vertical.",
+            "corrected_answer": "profile means business vertical",
+            "outcome": "corrected",
+            "source": "user_utterance",
+        }
+    )
+    adapter = _make_adapter(reply)
+    ep = adapter.nl_to_episode(
+        "Update the profile. No, 'profile' means business vertical."
+    )
+    assert ep["outcome"] == "corrected"
+    assert ep["corrected_answer"] == "business vertical"
+
+
+def test_upgrade_accepted_when_correction_wording_present() -> None:
+    """An accepted parse that still carries a Y value should be upgraded."""
+    reply = json.dumps(
+        {
+            "query": "Update the profile.",
+            "answer": "",
+            "correction": "",
+            "corrected_answer": "business vertical",
+            "outcome": "accepted",
+            "source": "user_utterance",
+        }
+    )
+    adapter = _make_adapter(reply)
+    ep = adapter.nl_to_episode(
+        "Update the profile. No, 'profile' means business vertical."
+    )
+    assert ep["outcome"] == "corrected"
+    assert ep["corrected_answer"] == "business vertical"
+
+
+def test_extract_meaning_fallback_for_empty_corrected_answer() -> None:
+    """Standalone corrections missing corrected_answer are recovered from correction."""
+    reply = json.dumps(
+        {
+            "query": "",
+            "answer": "",
+            "correction": "No, 'key' means API key.",
+            "corrected_answer": "",
+            "outcome": "corrected",
+            "source": "user_utterance",
+        }
+    )
+    adapter = _make_adapter(reply)
+    ep = adapter.nl_to_episode("No, 'key' means API key.")
+    assert ep["outcome"] == "corrected"
+    assert ep["corrected_answer"] == "API key"
+
 if __name__ == "__main__":
     test_plain_query_returns_accepted_empty_correction()
     test_correction_extracts_y_part()
     test_sanity_check_clears_spurious_corrected_answer()
     test_sanity_check_downgrades_missing_corrected_answer()
     test_malformed_json_falls_back_to_minimal_episode()
+    test_short_correction_model()
+    test_short_correction_run()
+    test_clean_corrected_answer_strips_redefined_word()
+    test_upgrade_accepted_when_correction_wording_present()
+    test_extract_meaning_fallback_for_empty_corrected_answer()
     print("adapter parse tests passed")

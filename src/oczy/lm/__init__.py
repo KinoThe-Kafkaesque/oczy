@@ -25,11 +25,12 @@ RSS, 697 MB on disc** -- the best of every config we benched.
 from __future__ import annotations
 
 from .adapter import LanguageAdapter, LanguageAdapterConfig
-from .cvec_driver import CVecDriverConfig, LlamaCVecDriver
+from .cvec_driver import CVecDriverConfig, LlamaCVecDriver, ReservedPosition
 
 __all__ = [
     "LanguageAdapter",
     "LanguageAdapterConfig",
     "CVecDriverConfig",
     "LlamaCVecDriver",
+    "ReservedPosition",
 ]

@@ -53,6 +53,22 @@ class CVecDriverConfig:
     embedding: bool = True
 
 
+
+@dataclass
+class ReservedPosition:
+    """A reserved KV-position steering surface injected as a literal prefix.
+
+    This is a first-class handle for the soft-prompt / reserved-position
+    mechanism: instead of passing around raw strings, callers carry a small
+    dataclass that records provenance and (optionally) measured uptake so
+    the organism can later learn which positions work.
+    """
+
+    text: str
+    source: str = "hand_coded"
+    exact_uptake_score: float | None = None
+    domain_uptake_score: float | None = None
+
 class LlamaCVecDriver:
     """Persistent control-vector binding for a single ``Llama`` instance.
 
@@ -80,7 +96,7 @@ class LlamaCVecDriver:
         self._cvec_active: bool = False
         # Track per-layer set ranges so clear_cvec() rewinds exactly what was set.
         self._applied_layer_ranges: list[tuple[int, int]] = []
-        self._articulation_prefix: str | None = None
+        self._reserved_position: ReservedPosition | None = None
         # LRU cache for embeddings: keyed by (prompt, last_token_only).
         # Per-instance so different LMs never collide.
         self._embedding_cache: OrderedDict[tuple[str, bool], np.ndarray] = OrderedDict()
@@ -289,23 +305,41 @@ class LlamaCVecDriver:
     def cvec_active(self) -> bool:
         return self._cvec_active
 
-    def set_articulation_prefix(self, text: str) -> None:
-        """Set a fixed text prefix prepended to every generate() prompt.
+    def set_reserved_position(self, position: ReservedPosition | None) -> None:
+        """Set (or replace) the reserved KV position used during generation.
 
-        This is a proof-of-concept soft-prompt analog: by occupying fixed
-        KV positions, the prefix steers the LM toward a target semantic
-        domain.  Setting a new prefix replaces the old one.  Pass an empty
-        string to disable prefixing without calling clear.
+        ``position.text`` is prepended to every ``generate()`` prompt unless
+        the prompt already starts with it.  Setting ``None`` disables
+        reserved-position steering; the caller may also use
+        ``clear_reserved_position`` for that.
         """
-        self._articulation_prefix = text
+        self._reserved_position = position
+
+    def clear_reserved_position(self) -> None:
+        """Remove the reserved position so prompts pass through unchanged."""
+        self._reserved_position = None
+
+    @property
+    def reserved_position(self) -> ReservedPosition | None:
+        return self._reserved_position
+
+    @property
+    def reserved_position_active(self) -> bool:
+        return self._reserved_position is not None and bool(self._reserved_position.text)
+
+    # Deprecated thin wrappers for the previous literal-text API.
+    def set_articulation_prefix(self, text: str) -> None:
+        """Deprecated: use ``set_reserved_position(ReservedPosition(text))``."""
+        self._reserved_position = ReservedPosition(text=text)
 
     def clear_articulation_prefix(self) -> None:
-        """Remove the articulation prefix so prompts pass through unchanged."""
-        self._articulation_prefix = None
+        """Deprecated: use ``clear_reserved_position``."""
+        self.clear_reserved_position()
 
     @property
     def articulation_prefix(self) -> str | None:
-        return self._articulation_prefix
+        """Deprecated: use ``reserved_position.text``."""
+        return self._reserved_position.text if self._reserved_position else None
 
     # ------------------------------------------------------------------
     # LM forward (generation + perception)
@@ -324,9 +358,10 @@ class LlamaCVecDriver:
         keeps driving the cortex via separate API.
         """
         effective_prompt = prompt
-        if self._articulation_prefix and isinstance(prompt, str):
-            if not effective_prompt.startswith(self._articulation_prefix):
-                effective_prompt = self._articulation_prefix + effective_prompt
+        if self.reserved_position_active and isinstance(prompt, str):
+            prefix = self._reserved_position.text
+            if not effective_prompt.startswith(prefix):
+                effective_prompt = prefix + effective_prompt
         result = self._llm.create_completion(
             effective_prompt,
             max_tokens=max_tokens,
@@ -404,7 +439,13 @@ class LlamaCVecDriver:
             "n_layers": self.n_layers,
             "n_vocab": self.n_vocab,
             "cvec_active": self._cvec_active,
-            "articulation_prefix": self._articulation_prefix,
+            "reserved_position_active": self.reserved_position_active,
+            "reserved_position_source": self._reserved_position.source if self._reserved_position else None,
+            "reserved_position_text_preview": (
+                self._reserved_position.text[:60] + "..."
+                if self._reserved_position is not None and len(self._reserved_position.text) > 60
+                else (self._reserved_position.text if self._reserved_position is not None else None)
+            ),
             "applied_layer_ranges": [(s, e) for s, e in self._applied_layer_ranges],
             "lm_loaded": self._llm is not None,
         }

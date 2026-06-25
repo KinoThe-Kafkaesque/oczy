@@ -45,7 +45,7 @@ from oczy.experiments.digestive_gate import DigestiveGate, DigestiveGateConfig
 
 
 from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
-from oczy.lm import CVecDriverConfig, LlamaCVecDriver
+from oczy.lm import CVecDriverConfig, LlamaCVecDriver, ReservedPosition
 
 from oczy.experiments.codebase_qa.knowledge_store import KnowledgeStore
 
@@ -200,15 +200,30 @@ class CortexAgent:
         self._last_drift = 0.0
 
     # ------------------------------------------------------------------
-    # Articulation prefix (soft-prompt analog)
+    # Reserved position (soft-prompt / literal-prefix steering surface)
     # ------------------------------------------------------------------
+    def set_reserved_position(self, position: ReservedPosition | None) -> None:
+        """Delegate to the driver: set a reserved KV-position handle."""
+        self.driver.set_reserved_position(position)
+
+    def clear_reserved_position(self) -> None:
+        """Delegate to the driver: remove any reserved position."""
+        self.driver.clear_reserved_position()
+
+    @property
+    def reserved_position(self) -> ReservedPosition | None:
+        """Return the driver's current reserved position, if any."""
+        return self.driver.reserved_position
+
+    # Deprecated thin wrappers for the previous literal-text API.
     def set_articulation_prefix(self, text: str) -> None:
-        """Delegate to the driver: prepend ``text`` to every articulate() prompt."""
+        """Deprecated: use ``set_reserved_position(ReservedPosition(text))``."""
         self.driver.set_articulation_prefix(text)
 
     def clear_articulation_prefix(self) -> None:
-        """Delegate to the driver: stop prepending an articulation prefix."""
+        """Deprecated: use ``clear_reserved_position``."""
         self.driver.clear_articulation_prefix()
+
 
     def should_consolidate(self) -> bool:
         """Return True when the digestive gate says consolidation pressure

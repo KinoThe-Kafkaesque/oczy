@@ -15,6 +15,8 @@ Run: uv run python src/oczy/lm/tests/test_cvec_driver.py
 from __future__ import annotations
 import sys
 
+import pytest
+
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,9 @@ import numpy as np
 
 from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
 from oczy.lm.cvec_driver import CVecDriverConfig, LlamaCVecDriver
+
+
+pytestmark = [pytest.mark.slow, pytest.mark.requires_model, pytest.mark.llm]
 
 _GGUF_CACHE = (
     Path.home() / ".cache/huggingface/hub"

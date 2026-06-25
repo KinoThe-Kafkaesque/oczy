@@ -73,6 +73,46 @@ User: "Schedule the batch. No, 'batch' here means ML training batch."
   "source": "user_utterance"
 }
 
+User: "Load the model. No, 'model' means ML model."
+{
+  "query": "Load the model.",
+  "answer": "",
+  "correction": "No, 'model' means ML model.",
+  "corrected_answer": "ML model",
+  "outcome": "corrected",
+  "source": "user_utterance"
+}
+
+User: "Start the run. 'run' means pipeline run."
+{
+  "query": "Start the run.",
+  "answer": "",
+  "correction": "'run' means pipeline run.",
+  "corrected_answer": "pipeline run",
+  "outcome": "corrected",
+  "source": "user_utterance"
+}
+
+User: "Pick the cell. No, 'cell' here means spreadsheet cell."
+{
+  "query": "Pick the cell.",
+  "answer": "",
+  "correction": "No, 'cell' here means spreadsheet cell.",
+  "corrected_answer": "spreadsheet cell",
+  "outcome": "corrected",
+  "source": "user_utterance"
+}
+
+User: "Enter the key. No, 'key' means API key."
+{
+  "query": "Enter the key.",
+  "answer": "",
+  "correction": "No, 'key' means API key.",
+  "corrected_answer": "API key",
+  "outcome": "corrected",
+  "source": "user_utterance"
+}
+
 JSON keys:
 {
   "query": "<the request part, or empty string if the utterance is only a correction>",
@@ -202,35 +242,61 @@ class LanguageAdapter:
                         "raw-NL-as-query", text[:60], e)
             return _minimal_episode(text)
 
-        # Reject any unknown keys -- they indicate schema drift.
-        unknown = validate_episode(data)
-        if unknown:
-            log.warning("LM produced unknown Episode keys %s; stripping", unknown)
-            data = {k: v for k, v in data.items() if k in EPISODE_FIELDS}
+        try:
+            # Reject any unknown keys -- they indicate schema drift.
+            unknown = validate_episode(data)
+            if unknown:
+                log.warning("LM produced unknown Episode keys %s; stripping", unknown)
+                data = {k: v for k, v in data.items() if k in EPISODE_FIELDS}
 
-        # Fill in missing canonical fields with safe defaults so callers
-        # never have to defensive-check after this point.
-        for key, default in _DEFAULTS_FOR(text).items():
-            data.setdefault(key, default)
+            # Fill in missing canonical fields with safe defaults so callers
+            # never have to defensive-check after this point.
+            for key, default in _DEFAULTS_FOR(text).items():
+                data.setdefault(key, default)
 
-        # Sanity check: if outcome says "corrected" but corrected_answer is
-        # empty, downgrade outcome so the caller doesn't misroute.
-        if data.get("outcome") == "corrected" and not data.get("corrected_answer"):
-            log.warning("LM marked outcome=corrected but gave no "
-                        "corrected_answer; downgrading to accepted")
-            data["outcome"] = "accepted"
+            correction = data.get("correction") or ""
+            corrected_answer = data.get("corrected_answer") or ""
+            cleaned_answer = _clean_corrected_answer(correction, corrected_answer)
 
-        # Sanity check: discard hallucinated corrected_answer from accepted
-        # utterances, e.g., "Paris" leaking out of "What is the capital of
-        # France?" (LM answered the factual question rather than classifying
-        # the utterance).
-        if data.get("outcome") == "accepted" and data.get("corrected_answer"):
-            log.warning("LM marked outcome=accepted but gave a "
-                        "spurious corrected_answer=%r; clearing",
-                        data.get("corrected_answer"))
-            data["corrected_answer"] = ""
+            # Hardening: the LM sometimes marks accepted short corrections
+            # (e.g. "'run' means pipeline run.") but still emits the Y part in
+            # corrected_answer.  If the original text has correction wording,
+            # upgrade the outcome so the correction is not swallowed.
+            if data.get("outcome") == "accepted" and cleaned_answer and _has_correction_wording(text):
+                log.warning("LM marked outcome=accepted but original text "
+                            "contains correction wording; upgrading to corrected")
+                data["outcome"] = "corrected"
 
-        return data
+            # Hardening: if the LM says corrected but forgets the corrected_answer,
+            # try to recover the Y part from the raw correction sentence.  We only
+            # do this for standalone corrections (query explicitly empty) so we keep
+            # the existing fail-soft behavior for query+correction sentences where
+            # the model's omission is ambiguous.
+            if data.get("outcome") == "corrected" and not cleaned_answer:
+                if "query" in data and not (data.get("query") or "").strip():
+                    extracted = _extract_meaning_from_correction(correction)
+                    if extracted:
+                        cleaned_answer = _clean_corrected_answer(correction, extracted)
+                if not cleaned_answer:
+                    log.warning("LM marked outcome=corrected but gave no "
+                                "corrected_answer; downgrading to accepted")
+                    data["outcome"] = "accepted"
+
+            # Sanity check: discard hallucinated corrected_answer from accepted
+            # utterances, e.g., "Paris" leaking out of "What is the capital of
+            # France?" (LM answered the factual question rather than classifying
+            # the utterance).
+            if data.get("outcome") == "accepted":
+                cleaned_answer = ""
+
+            data["corrected_answer"] = cleaned_answer
+
+            return data
+        except Exception as e:
+            self.n_parse_failures += 1
+            log.warning("LM parse post-processing failure on %r: %s; falling back to "
+                        "raw-NL-as-query", text[:60], e)
+            return _minimal_episode(text)
 
     # ------------------------------------------------------------------
     # Episode -> NL
@@ -296,6 +362,60 @@ def _strip_code_fence(text: str) -> str:
     if m:
         return m.group(1).strip()
     return text.strip()
+
+_REDEFINED_TOKEN_RE = re.compile(
+    r"(?:^|\s)(?:No,?\s*)?(?:[\"']?(\w+)[\"']?)(?:\s+here)?\s+(?:means|is|should be)\b",
+    re.IGNORECASE,
+)
+_CORRECTION_MEANING_RE = re.compile(
+    r"(?:^|\s)(?:No,?\s*)?(?:[\"']?\w+[\"']?)(?:\s+here)?\s+(?:means|is|should be)\s+(.+?)\.?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_CORRECTION_CUE_RE = re.compile(
+    r"\bNo[,.]\b|'\w+'(?:\s+here)?\s+(?:means|is|should be)\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_redefined_token(correction: str) -> str | None:
+    """Return the word being redefined in a correction sentence, if any."""
+    m = _REDEFINED_TOKEN_RE.search(correction)
+    return m.group(1) if m else None
+
+
+def _extract_meaning_from_correction(correction: str) -> str:
+    """Extract the Y part from patterns like: No, 'X' here means Y."""
+    m = _CORRECTION_MEANING_RE.search(correction)
+    if not m:
+        return ""
+    return m.group(1).strip().strip("\"'").strip()
+
+
+def _has_correction_wording(text: str) -> bool:
+    """True when the raw user text contains explicit correction wording."""
+    return bool(_CORRECTION_CUE_RE.search(text))
+
+
+def _clean_corrected_answer(correction: str, corrected_answer: str) -> str:
+    """Strip whitespace/quotes and any leading ``<token> means`` boilerplate.
+
+    The LM sometimes returns the whole correction fragment, e.g.
+    ``"profile means business vertical"`` instead of just ``"business vertical"``.
+    We parse the redefined token out of ``correction`` and remove it (plus the
+    connector word) only when it leads the corrected answer, so legitimate uses
+    of the token inside the new meaning (e.g. ``"ML model"``) are preserved.
+    """
+    s = corrected_answer.strip().strip("\"'").strip()
+    token = _extract_redefined_token(correction)
+    if token:
+        connector_re = re.compile(
+            rf"^(?:No,?\s*)?(?:[\"']?{re.escape(token)}[\"']?(?:\s+here)?\s+)?"
+            rf"(?:means|is|should be)\s+",
+            re.IGNORECASE,
+        )
+        if connector_re.match(s):
+            s = connector_re.sub("", s).strip().strip("\"'").strip(".,")
+    return s
 
 
 def _minimal_episode(text: str) -> dict[str, Any]:
