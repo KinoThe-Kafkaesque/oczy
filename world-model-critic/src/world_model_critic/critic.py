@@ -27,7 +27,6 @@ from __future__ import annotations
 import math
 import pickle
 import re
-from typing import Optional
 
 # Hard-coded lexical markers of uncertainty.  These are the "fast priors" the
 # critic starts with; the rest of the learning is data-driven.
@@ -288,5 +287,5 @@ class WorldModelCritic:
         return similar_corrected / similar_total
 
     def _predict_correction_prob(self, x: list[float]) -> float:
-        z = sum(w * xi for w, xi in zip(self.weights, x))
+        z = sum(w * xi for w, xi in zip(self.weights, x, strict=False))
         return _sigmoid(z)

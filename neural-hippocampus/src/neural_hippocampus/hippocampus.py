@@ -26,6 +26,8 @@ from __future__ import annotations
 import pickle
 from typing import Any
 
+import numpy as np
+
 from .core import SurpriseGatedMemory
 
 

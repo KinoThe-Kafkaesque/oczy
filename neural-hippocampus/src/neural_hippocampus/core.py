@@ -254,7 +254,7 @@ class SurpriseGatedMemory:
         try:
             return len(pickle.dumps(self.traces))
         except Exception as exc:  # pragma: no cover - defensive fallback
-            warnings.warn(f"Could not pickle traces for sizing: {exc}")
+            warnings.warn(f"Could not pickle traces for sizing: {exc}", stacklevel=2)
             return sum(sys.getsizeof(t) for t in self.traces.values())
 
     # --------------------------------------------------------------------- #

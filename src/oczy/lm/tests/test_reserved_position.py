@@ -10,10 +10,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
-from oczy.lm.cvec_driver import CVecDriverConfig
-from oczy.lm.cvec_driver import LlamaCVecDriver
-from oczy.lm.cvec_driver import ReservedPosition
-from oczy.lm.cvec_driver import llama_cpp
+from oczy.lm.cvec_driver import CVecDriverConfig, LlamaCVecDriver, ReservedPosition, llama_cpp
 
 
 def _make_driver() -> LlamaCVecDriver:

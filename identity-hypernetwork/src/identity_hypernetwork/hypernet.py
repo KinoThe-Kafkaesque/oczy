@@ -17,7 +17,6 @@ import numpy as np
 
 from .latents import IdentityLatents
 
-
 # Fixed concept vocabulary for the first prototype.  Each string maps to one
 # output score in the generated adapter.
 CONCEPT_VOCABULARY: list[str] = [
@@ -247,7 +246,7 @@ class IdentityHypernetwork:
                 return clean
         return None
 
-    def grow(self, new_latent_dim: int) -> "IdentityHypernetwork":
+    def grow(self, new_latent_dim: int) -> IdentityHypernetwork:
         """Return a larger-capacity hypernetwork preserving learned latents.
 
         Each latent vector is zero-padded and the projection matrix ``W`` is

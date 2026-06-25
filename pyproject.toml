@@ -85,8 +85,10 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP", "B"]
-ignore = ["E501"]
+ignore = ["E501", "UP031"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["oczy", "plastic_cortex", "neural_hippocampus", "world_model_critic", "identity_hypernetwork", "skill_immune_cortex", "experience_autoencoder", "correction_benchmark"]

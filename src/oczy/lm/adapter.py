@@ -160,7 +160,7 @@ class LanguageAdapterConfig:
     max_tokens_render: int = 80   # One sentence max in render path.
 
     @classmethod
-    def from_env(cls, **overrides: Any) -> "LanguageAdapterConfig":
+    def from_env(cls, **overrides: Any) -> LanguageAdapterConfig:
         """Build a config from environment variables with current defaults as fallback.
 
         Override precedence: explicit keyword arguments > env vars > hard-coded defaults.
@@ -213,17 +213,17 @@ class LanguageAdapterConfig:
         return cls(**kwargs)
 
     @classmethod
-    def perception(cls) -> "LanguageAdapterConfig":
+    def perception(cls) -> LanguageAdapterConfig:
         """Greedy (temperature=0) config with generous parse token budget for ``nl_to_episode``."""
         return cls(temperature=0.0, top_p=1.0, max_tokens_parse=600, max_tokens_render=80)
 
     @classmethod
-    def render(cls) -> "LanguageAdapterConfig":
+    def render(cls) -> LanguageAdapterConfig:
         """Balanced generation settings for ``episode_to_nl``."""
         return cls(temperature=0.7, top_p=0.9, max_tokens_parse=300, max_tokens_render=120)
 
     @classmethod
-    def benchmark(cls) -> "LanguageAdapterConfig":
+    def benchmark(cls) -> LanguageAdapterConfig:
         """Deterministic, small-output baseline for benchmarking."""
         return cls(temperature=0.0, top_p=1.0, max_tokens_parse=200, max_tokens_render=40)
 

@@ -6,8 +6,8 @@ Does not require llama_cpp; injects a mock LLM into ``LanguageAdapter._llm``.
 from __future__ import annotations
 
 import json
-from oczy.lm.adapter import LanguageAdapter
 
+from oczy.lm.adapter import LanguageAdapter
 
 
 class _MockLLM:

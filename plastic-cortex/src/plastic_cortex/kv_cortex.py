@@ -564,7 +564,7 @@ class KVCortex:
         tmp.replace(path)
 
     @classmethod
-    def load(cls, path: Path | str) -> "KVCortex":
+    def load(cls, path: Path | str) -> KVCortex:
         with Path(path).open("rb") as fh:
             return pickle.load(fh)
 

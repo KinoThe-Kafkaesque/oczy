@@ -20,15 +20,13 @@ current llama-cpp-python binding — that work is tracked under Goal 2.
 import ctypes
 import os
 from collections import OrderedDict
+from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
-
-import numpy as np
-
-from llama_cpp import Llama
 import llama_cpp
+import numpy as np
+from llama_cpp import Llama
 
 
 @dataclass
