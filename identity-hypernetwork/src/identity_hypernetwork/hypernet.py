@@ -60,6 +60,7 @@ class IdentityHypernetwork:
         latent_dim: int = 8,
         seed: int = 0,
         learning_rate: float = 0.1,
+        config: dict | None = None,
     ) -> None:
         """Create the hypernetwork.
 
@@ -67,7 +68,11 @@ class IdentityHypernetwork:
             latent_dim: dimensionality of each of the four identity vectors.
             seed: random seed for the tiny projection matrix.
             learning_rate: step size used when a lesson updates an identity slice.
+            config: optional runtime configuration. Supported keys:
+                ``max_concepts`` (default 1000) and ``concept_decay_fraction``
+                (default 0.25) bound unbounded vocabulary growth.
         """
+        cfg = config or {}
         self.latents = IdentityLatents(dim=latent_dim)
         self.rng = np.random.default_rng(seed)
         self.latent_dim = latent_dim
@@ -79,6 +84,14 @@ class IdentityHypernetwork:
         scale = 1.0 / np.sqrt(self.input_dim)
         self.W = self.rng.standard_normal((self.output_dim, self.input_dim)) * scale
         self.lr = learning_rate
+
+        # Bound linear vocabulary growth.
+        self.max_concepts = int(cfg.get("max_concepts", 1000))
+        self.concept_decay_fraction = float(cfg.get("concept_decay_fraction", 0.25))
+        self.pruned_concepts = 0
+        # Monotonic age counter; ages align 1:1 with self.concepts and self.W rows.
+        self._concept_age_counter = 0
+        self._concept_ages = [0] * self.output_dim
 
     def generate_adapters(self) -> dict[str, dict[str, float]]:
         """Return adapter score deltas derived from the current identity latent.
@@ -134,6 +147,8 @@ class IdentityHypernetwork:
             "ready": True,
             "latent_dim": self.latent_dim,
             "num_concepts": self.output_dim,
+            "max_concepts": self.max_concepts,
+            "pruned_concepts": self.pruned_concepts,
             "latents": self.latents.to_dict(),
             "record_count": len(self.concepts),
         }
@@ -159,6 +174,10 @@ class IdentityHypernetwork:
         Auto-growth is gated (alnum, length >= 3, not in
         ``_AUTO_GROW_STOPWORDS``) to keep vocab inflation bounded and to avoid
         registering junk tokens such as ``the`` or ``a``.
+
+        Once the vocabulary exceeds ``max_concepts``, the oldest concepts (by
+        insertion age) and their ``W`` rows are removed, bringing the size back
+        under the cap.
         """
         scale = 1.0 / np.sqrt(self.input_dim)
         for raw in new_concepts:
@@ -169,7 +188,28 @@ class IdentityHypernetwork:
             self.W = np.concatenate([self.W, new_row], axis=0)
             self.concept_index[clean] = self.output_dim
             self.concepts.append(clean)
+            self._concept_ages.append(self._concept_age_counter)
+            self._concept_age_counter += 1
             self.output_dim += 1
+
+        # Bound linear vocabulary growth by dropping oldest concepts.
+        if len(self.concepts) > self.max_concepts:
+            n = len(self.concepts)
+            remove = max(int(n * self.concept_decay_fraction), n - self.max_concepts)
+            remove = min(remove, n)
+            # Indices of the ``remove`` oldest concepts.
+            sorted_indices = sorted(range(n), key=lambda i: self._concept_ages[i])
+            remove_indices = set(sorted_indices[:remove])
+            keep_indices = [i for i in range(n) if i not in remove_indices]
+
+            self.W = self.W[keep_indices, :]
+            self.concepts = [self.concepts[i] for i in keep_indices]
+            self._concept_ages = [self._concept_ages[i] for i in keep_indices]
+            self.concept_index = {
+                concept: i for i, concept in enumerate(self.concepts)
+            }
+            self.output_dim = len(self.concepts)
+            self.pruned_concepts += remove
 
     def _resolve_source(self, source: str) -> str | None:
         mapping: dict[str, str] = {
@@ -220,7 +260,13 @@ class IdentityHypernetwork:
             )
 
         child = IdentityHypernetwork(
-            latent_dim=new_latent_dim, seed=self.rng.integers(2**31), learning_rate=self.lr
+            latent_dim=new_latent_dim,
+            seed=self.rng.integers(2**31),
+            learning_rate=self.lr,
+            config={
+                "max_concepts": self.max_concepts,
+                "concept_decay_fraction": self.concept_decay_fraction,
+            },
         )
         # Restore deterministic RNG state so new columns use same distribution.
         child.rng = self.rng
@@ -228,6 +274,9 @@ class IdentityHypernetwork:
         child.concepts = list(self.concepts)
         child.concept_index = dict(self.concept_index)
         child.output_dim = self.output_dim
+        child._concept_age_counter = self._concept_age_counter
+        child._concept_ages = list(self._concept_ages)
+        child.pruned_concepts = self.pruned_concepts
 
         new_input_dim = 4 * new_latent_dim
         new_cols = new_input_dim - self.input_dim

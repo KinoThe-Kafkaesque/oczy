@@ -17,9 +17,8 @@ Layer-L extraction (intermediate residual) is not supported by the
 current llama-cpp-python binding — that work is tracked under Goal 2.
 """
 
-from __future__ import annotations
-
 import ctypes
+import os
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,6 +50,60 @@ class CVecDriverConfig:
     # Required for peek_embedding() to return activations; small fixed cost
     # to enable in llama.cpp at context init.
     embedding: bool = True
+
+    @classmethod
+    def from_env(cls, **overrides: Any) -> "CVecDriverConfig":
+        """Build a config from environment variables with current defaults as fallback.
+
+        Override precedence: explicit keyword arguments > env vars > hard-coded defaults.
+        Boolean env vars accept ``1``, ``true``/``yes`` (case-insensitive) as truthy.
+        """
+
+        def _bool(value: str | None) -> bool | None:
+            if value is None:
+                return None
+            return value.lower() in {"1", "true", "yes"}
+
+        def _int(value: str | None) -> int | None:
+            if value is None:
+                return None
+            return int(value)
+
+        kwargs: dict[str, Any] = {}
+        if (v := os.environ.get("OCZY_MODEL_REPO_ID")) is not None:
+            kwargs["repo_id"] = v
+        if (v := os.environ.get("OCZY_MODEL_FILE_NAME")) is not None:
+            kwargs["file_name"] = v
+        if (v := _int(os.environ.get("OCZY_N_CTX"))) is not None:
+            kwargs["n_ctx"] = v
+        if (v := _int(os.environ.get("OCZY_N_THREADS"))) is not None:
+            kwargs["n_threads"] = v
+        if (v := _int(os.environ.get("OCZY_N_GPU_LAYERS"))) is not None:
+            kwargs["n_gpu_layers"] = v
+        if (v := _bool(os.environ.get("OCZY_USE_MMAP"))) is not None:
+            kwargs["use_mmap"] = v
+        if (v := _bool(os.environ.get("OCZY_USE_MLOCK"))) is not None:
+            kwargs["use_mlock"] = v
+        if (v := _bool(os.environ.get("OCZY_VERBOSE"))) is not None:
+            kwargs["verbose"] = v
+
+        kwargs.update(overrides)
+        return cls(**kwargs)
+
+    @classmethod
+    def perception(cls) -> "CVecDriverConfig":
+        """High context for perception / embedding work; keeps embedding enabled."""
+        return cls(n_ctx=1024, embedding=True)
+
+    @classmethod
+    def articulation(cls) -> "CVecDriverConfig":
+        """Compact context for generation / articulation; disables embedding overhead."""
+        return cls(n_ctx=512, embedding=False)
+
+    @classmethod
+    def benchmark(cls) -> "CVecDriverConfig":
+        """Deterministic baseline for benchmarking; embedding enabled for recall probes."""
+        return cls(n_ctx=512, n_threads=4, embedding=True)
 
 
 
@@ -358,7 +411,7 @@ class LlamaCVecDriver:
         keeps driving the cortex via separate API.
         """
         effective_prompt = prompt
-        if self.reserved_position_active and isinstance(prompt, str):
+        if self._reserved_position is not None and isinstance(prompt, str):
             prefix = self._reserved_position.text
             if not effective_prompt.startswith(prefix):
                 effective_prompt = prefix + effective_prompt

@@ -31,12 +31,16 @@ sharing one projector across all layers if memory becomes a constraint.
 
 from __future__ import annotations
 
+import json
 import pickle
-from dataclasses import dataclass
+import warnings
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+STATE_VERSION = 1
 
 
 @dataclass
@@ -106,9 +110,9 @@ class KVCortex:
         # Perception projector: hidden (d_embd) -> cortex (d_cortex).
         # Fixed-random init at 1/sqrt(d_embd) scale (matches fast-weight
         # programmer convention). Hebbian-trained later via train_step().
-        proj_hidden = self.rng.standard_normal((c.d_cortex, c.d_embd)).astype(
-            np.float32
-        ) / np.sqrt(c.d_embd)
+        proj_hidden = self.rng.standard_normal((c.d_cortex, c.d_embd)).astype(np.float32) / np.sqrt(
+            c.d_embd
+        )
         self.proj_hidden: np.ndarray = proj_hidden
 
         # Per-layer articulation projectors: warm (d_cortex) -> cvec (d_embd).
@@ -172,16 +176,14 @@ class KVCortex:
         h = np.asarray(lm_hidden, dtype=np.float32).reshape(-1)
         if h.shape[0] != self.config.d_embd:
             raise ValueError(
-                "lm_hidden dim %d != config.d_embd %d"
-                % (h.shape[0], self.config.d_embd)
+                "lm_hidden dim %d != config.d_embd %d" % (h.shape[0], self.config.d_embd)
             )
 
         # Linear blend between the two plasticity regimes. When
         # differentiable plasticity lands, this scalar becomes a learned
         # alpha_ij matrix and correction_signal is its gate.
         plasticity = (
-            self.alpha_warm * (1.0 - correction_signal)
-            + self.alpha_correction * correction_signal
+            self.alpha_warm * (1.0 - correction_signal) + self.alpha_correction * correction_signal
         )
         plasticity = float(np.clip(plasticity, 0.0, 1.0))
 
@@ -190,9 +192,9 @@ class KVCortex:
         delta = np.tanh(self.proj_hidden @ h).astype(np.float32)
 
         # Exponential moving update: warm is a faded trace of recent deltas.
-        self.warm_state = (
-            (1.0 - plasticity) * self.warm_state + plasticity * delta
-        ).astype(np.float32)
+        self.warm_state = ((1.0 - plasticity) * self.warm_state + plasticity * delta).astype(
+            np.float32
+        )
         self.update_count += 1
         if correction_signal > 0.5:
             self.correction_count += 1
@@ -318,9 +320,7 @@ class KVCortex:
 
         # ``proj_random`` (default): one distinct projector per layer.
         w = self.warm_state  # (d_cortex,)
-        projected = np.einsum("lec,c->le", self.proj_c, w).astype(
-            np.float32
-        )  # (n_layers, d_embd)
+        projected = np.einsum("lec,c->le", self.proj_c, w).astype(np.float32)  # (n_layers, d_embd)
         self._cvec_payloads = [
             np.ascontiguousarray(projected[i]) for i in range(self.config.n_layers)
         ]
@@ -328,9 +328,7 @@ class KVCortex:
         self._dirty = False
 
     # Forward passthrough for callers that want flat forward(hidden) -> intent
-    def forward(
-        self, lm_hidden: np.ndarray, correction_signal: float = 0.0
-    ) -> np.ndarray:
+    def forward(self, lm_hidden: np.ndarray, correction_signal: float = 0.0) -> np.ndarray:
         """observe() + return warm_state. Convenience for the cortex-as-fn view."""
         return self.observe(lm_hidden, correction_signal=correction_signal)
 
@@ -443,9 +441,7 @@ class KVCortex:
                 by every layer; when False, broadcast it into the legacy
                 per-layer ``proj_c`` stack.
         """
-        h = np.asarray(hiddens, dtype=np.float32).reshape(
-            np.asarray(hiddens).shape[0], -1
-        )
+        h = np.asarray(hiddens, dtype=np.float32).reshape(np.asarray(hiddens).shape[0], -1)
         if h.shape[0] < self.config.d_cortex:
             raise ValueError(
                 "need N >= d_cortex for non-degenerate SVD; got N=%d, "
@@ -453,8 +449,7 @@ class KVCortex:
             )
         if h.shape[1] != self.config.d_embd:
             raise ValueError(
-                "hiddens last dim %d != config.d_embd %d"
-                % (h.shape[1], self.config.d_embd)
+                "hiddens last dim %d != config.d_embd %d" % (h.shape[1], self.config.d_embd)
             )
         centered = h - h.mean(axis=0, keepdims=True)
         # full_matrices=False gives Vt of shape (min(N,d_embd), d_embd).
@@ -499,8 +494,7 @@ class KVCortex:
         h = np.asarray(lm_hidden, dtype=np.float32).reshape(-1)
         if h.shape[0] != self.config.d_embd:
             raise ValueError(
-                "lm_hidden dim %d != config.d_embd %d"
-                % (h.shape[0], self.config.d_embd)
+                "lm_hidden dim %d != config.d_embd %d" % (h.shape[0], self.config.d_embd)
             )
         signal = self.proj_hidden @ h
         bounded = np.tanh(signal)
@@ -536,9 +530,7 @@ class KVCortex:
             "record_count": self.correction_count,
         }
         if include_size:
-            result["serialized_bytes"] = len(
-                pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
-            )
+            result["serialized_bytes"] = len(pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL))
         return result
 
     # Pickle: the projectors (proj_hidden, proj_k, proj_v) ARE the learned
@@ -559,6 +551,10 @@ class KVCortex:
         # Force a payload rebuild on first read; loaded state is cold anyway.
         self.__dict__["_dirty"] = True
 
+    # Legacy pickle save/load are kept for backward compatibility.
+    # Prefer ``save_state_dict`` / ``load_state_dict`` for a stable,
+    # versioned, non-pickle format.
+
     def save(self, path: Path | str) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -571,3 +567,131 @@ class KVCortex:
     def load(cls, path: Path | str) -> "KVCortex":
         with Path(path).open("rb") as fh:
             return pickle.load(fh)
+
+    # ------------------------------------------------------------------
+    # Versioned, non-pickle state persistence (preferred over pickle).
+    # ------------------------------------------------------------------
+    def save_state_dict(self, path: Path | str) -> None:
+        """Persist state to ``path/`` as ``manifest.json`` + ``arrays.npz``.
+
+        ``manifest.json`` carries format version, class name, config,
+        scalar state, and array metadata.  ``arrays.npz`` contains every
+        numpy array in ``self.__dict__`` (including optional shared
+        projector buffers and per-layer cvec caches).  This format is
+        stable across Python versions and avoids pickle.
+        """
+        path = Path(path)
+        path.mkdir(parents=True, exist_ok=True)
+
+        arrays: dict[str, np.ndarray] = {}
+        list_counts: dict[str, int] = {}
+        for key, value in self.__dict__.items():
+            if isinstance(value, np.ndarray):
+                arrays[key] = value
+            elif isinstance(value, list) and value and isinstance(value[0], np.ndarray):
+                list_counts[key] = len(value)
+                for idx, arr in enumerate(value):
+                    arrays[f"{key}_{idx}"] = arr
+
+        scalars: dict[str, Any] = {}
+        array_names = set(arrays.keys())
+        for key, value in self.__dict__.items():
+            if key in {"config", "rng"}:
+                continue
+            if key in array_names:
+                continue
+            if isinstance(value, list) and value and isinstance(value[0], np.ndarray):
+                continue
+            try:
+                json.dumps(value)
+                scalars[key] = value
+            except (TypeError, ValueError):
+                warnings.warn(
+                    f"Skipping non-JSON-serializable KVCortex field {key!r} "
+                    "in save_state_dict; it will be reconstructed from defaults.",
+                    stacklevel=2,
+                )
+
+        manifest: dict[str, Any] = {
+            "version": STATE_VERSION,
+            "class": self.__class__.__name__,
+            "config": asdict(self.config),
+            "arrays": {
+                name: {"shape": list(arr.shape), "dtype": str(arr.dtype)}
+                for name, arr in arrays.items()
+            },
+            "list_counts": list_counts,
+            "scalars": scalars,
+        }
+
+        np.savez(path / "arrays.npz", **arrays)
+        tmp_manifest = path / "manifest.json.tmp"
+        tmp_manifest.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        tmp_manifest.replace(path / "manifest.json")
+
+    @classmethod
+    def load_state_dict(cls, path: Path | str) -> KVCortex:
+        """Reconstruct a ``KVCortex`` from its versioned directory.
+
+        Validates version and class, rebuilds from config, restores arrays,
+        and applies migration logic for any older format version.
+        """
+        path = Path(path)
+        with (path / "manifest.json").open("r", encoding="utf-8") as fh:
+            manifest = json.load(fh)
+
+        if manifest.get("class") != "KVCortex":
+            raise ValueError(
+                f"Expected class 'KVCortex' in state dict, got {manifest.get('class')!r}"
+            )
+
+        version = manifest.get("version")
+        if not isinstance(version, int) or version < 1:
+            raise ValueError(
+                f"KVCortex state dict version must be >= 1, got {version!r}"
+            )
+
+
+        config = KVCortexConfig(**manifest["config"])
+        instance = cls(config)
+
+        arrays = np.load(path / "arrays.npz", allow_pickle=False)
+        list_buffers: dict[str, list[tuple[int, np.ndarray]]] = {}
+        for name, arr in arrays.items():
+            arr = np.array(arr)  # copy to a writable ndarray
+            if "_" in name:
+                base, tail = name.rsplit("_", 1)
+                if tail.isdigit():
+                    list_buffers.setdefault(base, []).append((int(tail), arr))
+                    continue
+            setattr(instance, name, arr)
+
+        for base, items in list_buffers.items():
+            items.sort(key=lambda x: x[0])
+            setattr(instance, base, [arr for _, arr in items])
+
+        for key, value in manifest.get("scalars", {}).items():
+            if hasattr(instance, key):
+                setattr(instance, key, value)
+
+        instance._migrate_state_after_load(version)
+        return instance
+
+    def _migrate_state_after_load(self, loaded_version: int) -> None:
+        """__setstate__-style migration for non-pickle state loads.
+
+        Apply transformations needed to bring a state dict saved at
+        ``loaded_version`` up to the current ``STATE_VERSION``.
+        """
+        if loaded_version < STATE_VERSION:
+            # No structural migrations needed yet; placeholder branch keeps
+            # the migration door open for future versions.
+            pass
+
+        # Fields introduced after the pickle-only era.
+        if "proj_c_shared" not in self.__dict__:
+            self.proj_c_shared = None
+        if "_cvec_payloads_flat" not in self.__dict__:
+            self._cvec_payloads_flat = None
+        # Force payload rebuild; loaded state is conceptually cold.
+        self._dirty = True

@@ -108,6 +108,8 @@ def test_status_reported_fields():
         "project",
         "ready",
         "record_count",
+        "record_capacity",
+        "records_pruned",
         "serialized_bytes",
         "weights",
         "ambiguous_word_count",
@@ -122,3 +124,28 @@ def test_status_reported_fields():
     assert status["ambiguous_word_count"] == len(critic.ambiguous_words)
     # status() must be a snapshot, not a live reference into the critic.
     assert status["weights"] is not critic.weights
+
+def test_record_capacity_prunes_oldest_records_and_updates_status():
+    """Once records exceed max_records, the oldest fraction is dropped."""
+    critic = WorldModelCritic(
+        config={"max_records": 5, "record_decay_fraction": 0.5}
+    )
+    for i in range(6):
+        critic.record_outcome(f"query {i}", f"answer {i}", None)
+
+    assert len(critic.records) <= critic.max_records
+    assert critic.records_pruned == 3
+
+    status = critic.status()
+    assert status["record_count"] == len(critic.records)
+    assert status["record_capacity"] == 5
+    assert status["records_pruned"] == 3
+
+    # Oldest retained record should no longer be query 0 (pruned).
+    assert not any(r["query"] == "query 0" for r in critic.records)
+
+    # Continued writes stay bounded and accumulate the prune counter.
+    for i in range(6, 12):
+        critic.record_outcome(f"query {i}", f"answer {i}", None)
+    assert len(critic.records) <= critic.max_records
+    assert critic.status()["records_pruned"] > 3

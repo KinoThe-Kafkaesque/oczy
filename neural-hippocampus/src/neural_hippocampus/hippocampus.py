@@ -48,6 +48,8 @@ class NeuralHippocampus:
             replay_threshold=self.config.get("replay_threshold", 1),
             cluster_similarity=self.config.get("cluster_similarity", 0.65),
             seed=self.config.get("seed"),
+            max_episodes=self.config.get("max_episodes", 5000),
+            episode_decay_fraction=self.config.get("episode_decay_fraction", 0.25),
         )
         self.slow_updates: list[dict[str, Any]] = []
         self.decay_after_consolidation = self.config.get(
@@ -120,6 +122,8 @@ class NeuralHippocampus:
         - ``episode_count``: number of raw traces currently in fast memory.
         - ``record_count``: total episodes written (same as ``episode_count``
           for this organ; standardized key for cross-organ status consumers).
+        - ``max_episodes``: configured capacity of the raw trace buffer.
+        - ``episodes_pruned``: lifetime number of episodes pruned due to the cap.
         - ``slow_update_count``: number of consolidated slow-update summaries.
         - ``trace_bytes``: approximate size of the raw trace buffer (pickle).
         - ``serialized_bytes``: only present when ``include_size=True``;
@@ -130,6 +134,8 @@ class NeuralHippocampus:
             "ready": True,
             "episode_count": self.memory.episode_count(),
             "record_count": self.memory.episode_count(),
+            "max_episodes": self.memory.max_episodes,
+            "episodes_pruned": self.memory.episodes_pruned,
             "slow_update_count": len(self.slow_updates),
             "trace_bytes": self.memory.byte_count(),
         }

@@ -181,3 +181,45 @@ def test_storing_without_hidden_keeps_backward_compatibility():
     summaries = hippo.consolidate()
     assert len(summaries) == 1
     assert summaries[0].get("representative_hidden") is None
+
+def test_episode_capacity_prunes_oldest_traces_and_updates_status():
+    """Once stored episodes exceed max_episodes, oldest by insertion order drop."""
+    hippo = NeuralHippocampus(
+        config={
+            "surprise_threshold": 0.0,
+            "max_episodes": 3,
+            "episode_decay_fraction": 0.5,
+        }
+    )
+
+    ids = []
+    for i in range(4):
+        eid = hippo.store(
+            query=f"trace query {i}",
+            answer="placeholder",
+            correction="fix",
+            prediction_error=0.9,
+        )
+        ids.append(eid)
+
+    assert hippo.status()["episode_count"] <= 3
+    status = hippo.status()
+    assert status["max_episodes"] == 3
+    # 4th write triggers prune: int(4*0.5)=2 episodes removed.
+    assert status["episodes_pruned"] == 2
+
+    # The oldest traces should have been removed.
+    remaining_ids = {t["id"] for t in hippo.memory.traces.values()}
+    assert ids[0] not in remaining_ids
+    assert ids[1] not in remaining_ids
+
+    # Continued writes stay bounded.
+    for i in range(4, 10):
+        hippo.store(
+            query=f"trace query {i}",
+            answer="placeholder",
+            correction="fix",
+            prediction_error=0.9,
+        )
+    assert hippo.status()["episode_count"] <= 3
+    assert hippo.status()["episodes_pruned"] > 2

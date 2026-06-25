@@ -103,6 +103,11 @@ class WorldModelCritic:
         self.similarity_threshold = float(cfg.get("similarity_threshold", 0.25))
         self.ambiguous_words = frozenset(cfg.get("ambiguous_words", AMBIGUOUS_WORDS))
 
+        # Cap linear record growth.
+        self.max_records = int(cfg.get("max_records", 10_000))
+        self.record_decay_fraction = float(cfg.get("record_decay_fraction", 0.25))
+        self.records_pruned = 0
+
         # Model weights for [bias, ambiguity, length_ratio, prior_correction_rate].
         # In v1 only the prior-correction weight is updated online; the fixed
         # weights act as cheap priors that keep novel queries near a conservative
@@ -116,7 +121,6 @@ class WorldModelCritic:
         self._learnable = tuple(cfg.get("learnable_weights", [3]))
 
         # Online memory: every outcome is stored as a small bag-of-words record.
-        # Growth is linear; v1 does not consolidate or decay old records.
         self.records: list[dict] = []
 
         # Last probability of correction emitted by the model; used by
@@ -178,8 +182,18 @@ class WorldModelCritic:
             }
         )
 
+        # Bound linear organ growth: if the record list exceeds its configured
+        # capacity, drop the oldest fraction of records (or however many are
+        # needed to get back under the cap).
+        if len(self.records) > self.max_records:
+            n = len(self.records)
+            remove = max(int(n * self.record_decay_fraction), n - self.max_records)
+            self.records = self.records[remove:]
+            self.records_pruned += remove
+
         # Recompute features with the new record visible (important for the
         # prior-correction-rate term) and take one gradient step.
+
         x_post = self._features(query, proposed_answer)
         prob_post = self._predict_correction_prob(x_post)
         error = target - prob_post
@@ -212,6 +226,8 @@ class WorldModelCritic:
             "project": "world_model_critic",
             "ready": True,
             "record_count": len(self.records),
+            "record_capacity": self.max_records,
+            "records_pruned": self.records_pruned,
             "weights": list(self.weights),
             "ambiguous_word_count": len(self.ambiguous_words),
         }

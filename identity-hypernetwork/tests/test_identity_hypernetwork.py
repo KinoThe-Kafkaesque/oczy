@@ -217,3 +217,48 @@ def test_status_reports_serialized_bytes_and_record_count():
     after = agent.status(include_size=True)
     assert after["record_count"] == before_count + 2
     assert after["serialized_bytes"] > before_bytes
+
+def test_concept_capacity_prunes_oldest_concepts_and_keeps_W_aligned():
+    """Once concepts exceed max_concepts, oldest by insertion age are pruned."""
+    agent = IdentityHypernetwork(
+        seed=1,
+        config={"max_concepts": 18, "concept_decay_fraction": 0.5},
+    )
+    initial_concepts = list(agent.concepts)
+
+    # Add five brand-new concepts; total becomes 19 > 18.
+    agent.grow_vocab(["alpha", "bravo", "charlie", "delta", "echo"])
+
+    assert len(agent.concepts) <= agent.max_concepts
+    status = agent.status()
+    assert status["max_concepts"] == 18
+    assert status["pruned_concepts"] > 0
+    assert status["num_concepts"] == len(agent.concepts)
+    assert agent.W.shape[0] == len(agent.concepts)
+
+    # The newest concepts should survive; at least one of the oldest originals
+    # must have been dropped because the cap is below the post-growth count.
+    for c in ["alpha", "bravo", "charlie", "delta", "echo"]:
+        assert c in agent.concepts
+
+    # Adapter scores remain aligned with the trimmed vocabulary.
+    scores = agent.generate_adapters()["concept_scores"]
+    assert set(scores.keys()) == set(agent.concepts)
+    assert len(scores) == agent.W.shape[0]
+
+
+def test_update_identity_auto_growth_honours_concept_capacity():
+    """Auto-grown concepts from unknown labels are also subject to pruning."""
+    agent = IdentityHypernetwork(
+        seed=2,
+        config={"max_concepts": 16, "concept_decay_fraction": 0.25},
+    )
+    # Each lesson auto-registers a new concept, potentially triggering pruning.
+    for label in ["kubernetes", "terraform", "prometheus", "grafana"]:
+        agent.update_identity(
+            {"source": "user_correction", "correct_label": label}
+        )
+
+    assert len(agent.concepts) <= agent.max_concepts
+    assert agent.status()["pruned_concepts"] >= 0
+    assert agent.W.shape[0] == len(agent.concepts)

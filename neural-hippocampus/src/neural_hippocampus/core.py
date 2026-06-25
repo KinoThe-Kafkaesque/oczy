@@ -37,6 +37,8 @@ class SurpriseGatedMemory:
         replay_threshold: int = 1,
         cluster_similarity: float = 0.65,
         seed: int | None = None,
+        max_episodes: int = 5000,
+        episode_decay_fraction: float = 0.25,
     ) -> None:
         """Create a surprise-gated memory.
 
@@ -51,6 +53,9 @@ class SurpriseGatedMemory:
                 merged into an existing consolidation cluster.
             seed: Optional seed used only for tie-breaking, not for embedding
                 content.
+            max_episodes: Upper bound on the raw trace buffer.
+            episode_decay_fraction: Fraction of episodes to remove when the
+                buffer exceeds ``max_episodes``.
         """
         if dim < 2:
             raise ValueError("dim must be at least 2")
@@ -61,7 +66,11 @@ class SurpriseGatedMemory:
         self.cluster_similarity = cluster_similarity
         self._rng = np.random.default_rng(seed)
 
-        # Fast episodic store: uuid -> episode
+        self.max_episodes = max_episodes
+        self.episode_decay_fraction = episode_decay_fraction
+        self.episodes_pruned = 0
+
+        # Fast episodic store: uuid -> episode (insertion order = age order).
         self.traces: dict[str, dict[str, Any]] = {}
 
     # --------------------------------------------------------------------- #
@@ -112,6 +121,17 @@ class SurpriseGatedMemory:
             stored["hidden_vec"] = np.asarray(hidden, dtype=np.float32).copy()
             stored.pop("hidden", None)
         self.traces[episode_id] = stored
+
+        # Bound the raw trace buffer by dropping oldest episodes (insertion
+        # order) when it exceeds the configured capacity.
+        if len(self.traces) > self.max_episodes:
+            n = len(self.traces)
+            remove = max(int(n * self.episode_decay_fraction), n - self.max_episodes)
+            remove = min(remove, n)
+            for old_id in list(self.traces.keys())[:remove]:
+                self.traces.pop(old_id, None)
+            self.episodes_pruned += remove
+
         return episode_id
 
     def read_relevant(self, query: str, k: int = 3) -> list[dict[str, Any]]:

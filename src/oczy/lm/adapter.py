@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -157,6 +158,74 @@ class LanguageAdapterConfig:
     max_tokens_parse: int = 300   # Episodes are tiny JSON but the LM
                               # occasionally pads with whitespace.
     max_tokens_render: int = 80   # One sentence max in render path.
+
+    @classmethod
+    def from_env(cls, **overrides: Any) -> "LanguageAdapterConfig":
+        """Build a config from environment variables with current defaults as fallback.
+
+        Override precedence: explicit keyword arguments > env vars > hard-coded defaults.
+        Boolean env vars accept ``1``, ``true``/``yes`` (case-insensitive) as truthy.
+        Numeric generation knobs are parsed with ``float`` / ``int``.
+        """
+
+        def _bool(value: str | None) -> bool | None:
+            if value is None:
+                return None
+            return value.lower() in {"1", "true", "yes"}
+
+        def _int(value: str | None) -> int | None:
+            if value is None:
+                return None
+            return int(value)
+
+        def _float(value: str | None) -> float | None:
+            if value is None:
+                return None
+            return float(value)
+
+        kwargs: dict[str, Any] = {}
+        if (v := os.environ.get("OCZY_MODEL_REPO_ID")) is not None:
+            kwargs["repo_id"] = v
+        if (v := os.environ.get("OCZY_MODEL_FILE_NAME")) is not None:
+            kwargs["file_name"] = v
+        if (v := _int(os.environ.get("OCZY_N_CTX"))) is not None:
+            kwargs["n_ctx"] = v
+        if (v := _int(os.environ.get("OCZY_N_THREADS"))) is not None:
+            kwargs["n_threads"] = v
+        if (v := _int(os.environ.get("OCZY_N_GPU_LAYERS"))) is not None:
+            kwargs["n_gpu_layers"] = v
+        if (v := _bool(os.environ.get("OCZY_USE_MMAP"))) is not None:
+            kwargs["use_mmap"] = v
+        if (v := _bool(os.environ.get("OCZY_USE_MLOCK"))) is not None:
+            kwargs["use_mlock"] = v
+        if (v := _bool(os.environ.get("OCZY_VERBOSE"))) is not None:
+            kwargs["verbose"] = v
+        if (v := _float(os.environ.get("OCZY_TEMPERATURE"))) is not None:
+            kwargs["temperature"] = v
+        if (v := _float(os.environ.get("OCZY_TOP_P"))) is not None:
+            kwargs["top_p"] = v
+        if (v := _int(os.environ.get("OCZY_MAX_TOKENS_PARSE"))) is not None:
+            kwargs["max_tokens_parse"] = v
+        if (v := _int(os.environ.get("OCZY_MAX_TOKENS_RENDER"))) is not None:
+            kwargs["max_tokens_render"] = v
+
+        kwargs.update(overrides)
+        return cls(**kwargs)
+
+    @classmethod
+    def perception(cls) -> "LanguageAdapterConfig":
+        """Greedy (temperature=0) config with generous parse token budget for ``nl_to_episode``."""
+        return cls(temperature=0.0, top_p=1.0, max_tokens_parse=600, max_tokens_render=80)
+
+    @classmethod
+    def render(cls) -> "LanguageAdapterConfig":
+        """Balanced generation settings for ``episode_to_nl``."""
+        return cls(temperature=0.7, top_p=0.9, max_tokens_parse=300, max_tokens_render=120)
+
+    @classmethod
+    def benchmark(cls) -> "LanguageAdapterConfig":
+        """Deterministic, small-output baseline for benchmarking."""
+        return cls(temperature=0.0, top_p=1.0, max_tokens_parse=200, max_tokens_render=40)
 
 
 class LanguageAdapter:
