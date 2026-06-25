@@ -8,20 +8,21 @@ use.
 from __future__ import annotations
 
 import pickle
+import warnings
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from oczy.experiments.profiler import AgentProfiler
+if TYPE_CHECKING:
+    from oczy.experiments.cortex_agent import CortexAgent
 
-from plastic_cortex import PlasticCortex
-from neural_hippocampus import NeuralHippocampus
-from world_model_critic import WorldModelCritic
-from identity_hypernetwork import IdentityHypernetwork
-from skill_immune_cortex import SkillImmuneCortex
 from experience_autoencoder import ExperienceAutoencoder
-
+from identity_hypernetwork import IdentityHypernetwork
+from neural_hippocampus import NeuralHippocampus
 from oczy.common import extract_expected_from_correction, tokenize
-
+from oczy.experiments.profiler import AgentProfiler
+from plastic_cortex import PlasticCortex
+from skill_immune_cortex import SkillImmuneCortex
+from world_model_critic import WorldModelCritic
 
 # ``plastic_cortex.lm_cortex`` pulls in numba and a heavier compiled stack.
 # Let ImportError pass through (the LM backend simply isn't available on
@@ -83,9 +84,20 @@ class OrganismAgent:
         self._high_correction_threshold = float(config.get("high_correction_threshold", 0.4))
         self._surprise_threshold = float(config.get("surprise_threshold", 0.5))
         self._unk = "I don't know."
+        self.use_cortex_lm_answer = bool(config.get("use_cortex_lm_answer", False))
+        self.cortex_agent: CortexAgent | None = config.get("cortex_agent")
+        if self.use_cortex_lm_answer and self.cortex_agent is None:
+            warnings.warn(
+                "use_cortex_lm_answer=True but no cortex_agent provided; "
+                "falling back to the legacy PlasticCortex answer path.",
+                stacklevel=2,
+            )
 
     def answer(self, request: str) -> str:
         """Produce an answer using the full organ stack."""
+        if self.use_cortex_lm_answer and self.cortex_agent is not None:
+            return self.cortex_agent.answer(request)["answer"]
+
         # 1. Immune check: see if any previous mistake detector fires for the raw
         # request.  We do not have a proposed answer yet, so pass an empty one.
         with self.profiler.profile("skill_immune_cortex"):

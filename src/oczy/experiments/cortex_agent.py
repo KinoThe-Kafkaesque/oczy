@@ -574,6 +574,41 @@ class CortexAgent:
             "reply": reply,
         }
 
+    def answer(
+        self,
+        request: str,
+        max_tokens: int = 64,
+        temperature: float = 0.0,
+        metabolize: bool = False,
+    ) -> dict[str, Any]:
+        """One-shot answer generation through the LM with cortex steering.
+
+        This is the inverse of the old PlasticCortex.answer() path: the cortex
+        does not store labels; it perceives the request, optionally metabolises,
+        and lets the frozen LM render the response.
+        """
+        warm = self.perceive(request)
+        meta: dict[str, Any] = {"metabolized": False}
+        if metabolize:
+            meta = self.metabolize(request)
+
+        reply = self.articulate(
+            prompt=request,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        return {
+            "answer": reply,
+            "warm_norm": float(np.linalg.norm(warm)),
+            "drift": self._last_drift,
+            "correction_signal": self._last_correction_signal,
+            "metabolized": meta.get("metabolized", False),
+            "hippocampus_wrote": meta.get("hippocampus_wrote", False),
+            "autoencoder_error": meta.get("autoencoder_error", None),
+            "consolidation_pressure": meta.get("consolidation_pressure", 0.0),
+        }
+
+
     # ------------------------------------------------------------------
     # Cold path (consolidation + persistence)
     # ------------------------------------------------------------------
