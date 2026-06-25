@@ -207,6 +207,18 @@ class CortexAgent:
         self._last_correction_signal = 0.0
         self._last_drift = 0.0
 
+    # ------------------------------------------------------------------
+    # Articulation prefix (soft-prompt analog)
+    # ------------------------------------------------------------------
+    def set_articulation_prefix(self, text: str) -> None:
+        """Delegate to the driver: prepend ``text`` to every articulate() prompt."""
+        self.driver.set_articulation_prefix(text)
+
+    def clear_articulation_prefix(self) -> None:
+        """Delegate to the driver: stop prepending an articulation prefix."""
+        self.driver.clear_articulation_prefix()
+
+
     def should_consolidate(self) -> bool:
         """Return True when the digestive gate says consolidation pressure
         has crossed the configured threshold.
@@ -398,6 +410,7 @@ class CortexAgent:
         temperature: float = 0.0,
         apply_steering: bool = True,
         recall_query: str | None = None,
+        stop: list[str] | str | None = None,
     ) -> str:
         """Generate text with the cortex's intent currently applied.
 
@@ -416,6 +429,7 @@ class CortexAgent:
                 If provided (or defaulted from ``self._last_utterance`` when
                 the store is present), retrieved facts are prepended to the
                 prompt. No recall is performed when no store is attached.
+            stop: optional stop sequence(s) forwarded to the driver's generate().
 
         Returns:
             The LM's generated text. The cortex state is unchanged by this
@@ -441,12 +455,15 @@ class CortexAgent:
             self.driver.set_cvecs_per_layer(cvecs, scale=self.config.articulate_scale)
             try:
                 return self.driver.generate(
-                    prompt, max_tokens=max_tokens, temperature=temperature
+                    prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    stop=stop,
                 )
             finally:
                 self.driver.clear_cvec()
         return self.driver.generate(
-            prompt, max_tokens=max_tokens, temperature=temperature
+            prompt, max_tokens=max_tokens, temperature=temperature, stop=stop
         )
 
     # Convenience: perceive -> metabolize -> optionally consolidate -> articulate.

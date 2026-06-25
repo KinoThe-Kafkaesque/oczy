@@ -83,6 +83,7 @@ class LlamaCVecDriver:
         self._cvec_active: bool = False
         # Track per-layer set ranges so clear_cvec() rewinds exactly what was set.
         self._applied_layer_ranges: list[tuple[int, int]] = []
+        self._articulation_prefix: str | None = None
 
     @classmethod
     def load(cls, config: CVecDriverConfig | None = None) -> "LlamaCVecDriver":
@@ -250,6 +251,25 @@ class LlamaCVecDriver:
     def cvec_active(self) -> bool:
         return self._cvec_active
 
+    def set_articulation_prefix(self, text: str) -> None:
+        """Set a fixed text prefix prepended to every generate() prompt.
+
+        This is a proof-of-concept soft-prompt analog: by occupying fixed
+        KV positions, the prefix steers the LM toward a target semantic
+        domain.  Setting a new prefix replaces the old one.  Pass an empty
+        string to disable prefixing without calling clear.
+        """
+        self._articulation_prefix = text
+
+    def clear_articulation_prefix(self) -> None:
+        """Remove the articulation prefix so prompts pass through unchanged."""
+        self._articulation_prefix = None
+
+    @property
+    def articulation_prefix(self) -> str | None:
+        return self._articulation_prefix
+
+
     # ------------------------------------------------------------------
     # LM forward (generation + perception)
     # ------------------------------------------------------------------
@@ -266,8 +286,12 @@ class LlamaCVecDriver:
         changes between calls. Returns generated text only; the caller
         keeps driving the cortex via separate API.
         """
+        effective_prompt = prompt
+        if self._articulation_prefix and isinstance(prompt, str):
+            if not effective_prompt.startswith(self._articulation_prefix):
+                effective_prompt = self._articulation_prefix + effective_prompt
         result = self._llm.create_completion(
-            prompt,
+            effective_prompt,
             max_tokens=max_tokens,
             temperature=temperature,
             stop=list(stop) if stop else None,
@@ -329,6 +353,7 @@ class LlamaCVecDriver:
             "n_layers": self.n_layers,
             "n_vocab": self.n_vocab,
             "cvec_active": self._cvec_active,
+            "articulation_prefix": self._articulation_prefix,
             "applied_layer_ranges": [(s, e) for s, e in self._applied_layer_ranges],
             "lm_loaded": self._llm is not None,
         }
