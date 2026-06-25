@@ -61,9 +61,9 @@ def _run_consolidation_uptake(driver: LlamaCVecDriver) -> dict[str, Any]:
     """
     import numpy as np
 
-    probe = "In this codebase, the word 'profile' refers to a _______. Answer with one phrase:"
-    expected = ["business vertical", "industry vertical", "customer segment", "vertical"]
-    correction = "No, in this codebase 'profile' means a business vertical, not a user profile."
+    probe = "'Profile' here means business _______."
+    expected = ["vertical"]
+    correction = "No, 'profile' here means business vertical, not user profile."
     prompt = _build_prompt(probe)
     n_turns = 8
 
