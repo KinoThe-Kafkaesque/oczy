@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -33,6 +32,8 @@ class EpisodeResult:
     corrected_response: str
     fixed: bool
     lm_parse_ok: bool | None = None
+    policy_score_before: dict[str, float] | None = None
+    policy_score_after: dict[str, float] | None = None
 
 
 @dataclass
@@ -58,11 +59,32 @@ def load_agent(agent_name: str, config: dict[str, Any]) -> OrganismAgent | LMBac
         return LMBackendAgent(config)
     return OrganismAgent(config)
 
-
 def _agent_memory_bytes(agent: Any) -> int:
     if hasattr(agent, "memory_bytes"):
         return int(agent.memory_bytes())
     return 0
+
+
+def _can_instrument_policy(agent: Any) -> bool:
+    cortex = getattr(agent, "cortex_agent", None)
+    if cortex is None:
+        return False
+    return callable(getattr(cortex, "policy_score", None))
+
+
+def _record_policy_scores(agent: Any, candidates: list[str]) -> dict[str, float] | None:
+    cortex = getattr(agent, "cortex_agent", None)
+    if cortex is None:
+        return None
+    try:
+        scores = cortex.policy_score(candidates)
+        return {
+            cand: float(scores[i])
+            for i, cand in enumerate(candidates)
+            if i < len(scores)
+        }
+    except Exception:
+        return None
 
 
 def run_battery(
@@ -96,6 +118,7 @@ def run_stage(
     agent: Any,
     stage: Stage,
     adapter: Any | None,
+    instrument_policy: bool = False,
 ) -> StageResult:
     """Present every episode in ``stage`` to ``agent`` and return metrics."""
     result = StageResult(name=stage.name, description=stage.description)
@@ -106,6 +129,12 @@ def run_stage(
 
     for ep in stage.episodes:
         first_answer = agent.answer(ep.initial_request)
+
+        policy_before: dict[str, float] | None = None
+        policy_after: dict[str, float] | None = None
+        if instrument_policy and _can_instrument_policy(agent):
+            candidates = list(getattr(agent.plastic_cortex, "labels", []))
+            policy_before = _record_policy_scores(agent, candidates)
 
         lm_parse_ok: bool | None = None
         if adapter is not None:
@@ -123,7 +152,12 @@ def run_stage(
             agent.learn(ep.initial_request, ep.correction_utterance)
 
         second_answer = agent.answer(ep.initial_request)
-        retention_probe = Probe(ep.initial_request, ep.corrected_response, "retention", "sense")
+        if instrument_policy and _can_instrument_policy(agent):
+            policy_after = _record_policy_scores(agent, candidates)
+
+        retention_probe = Probe(
+            ep.initial_request, ep.corrected_response, "retention", "sense"
+        )
         fixed = probe_matches(second_answer, retention_probe, ep)
 
         result.episode_results.append(
@@ -135,6 +169,8 @@ def run_stage(
                 corrected_response=ep.corrected_response,
                 fixed=fixed,
                 lm_parse_ok=lm_parse_ok,
+                policy_score_before=policy_before,
+                policy_score_after=policy_after,
             )
         )
 
@@ -154,6 +190,14 @@ def _shorten(text: str, width: int = 40) -> str:
 def _accuracy(items: list[bool]) -> float:
     return sum(items) / len(items) if items else 0.0
 
+
+def _episode_asdict(er: EpisodeResult) -> dict[str, Any]:
+    d = asdict(er)
+    if d.get("policy_score_before") is None:
+        d.pop("policy_score_before", None)
+    if d.get("policy_score_after") is None:
+        d.pop("policy_score_after", None)
+    return d
 
 def print_summary(results: list[StageResult]) -> None:
     header = "%-28s %8s %7s %6s %6s %10s" % (
@@ -200,6 +244,18 @@ def print_per_stage(results: list[StageResult]) -> None:
                     lm_info,
                 )
             )
+            if er.policy_score_before and er.policy_score_after:
+                best_before = max(er.policy_score_before, key=er.policy_score_before.get)
+                best_after = max(er.policy_score_after, key=er.policy_score_after.get)
+                print(
+                    "    policy best: before=%s(%.2f) after=%s(%.2f)"
+                    % (
+                        best_before,
+                        er.policy_score_before[best_before],
+                        best_after,
+                        er.policy_score_after[best_after],
+                    )
+                )
         post_acc = categorize_results(sr.post_probe_results)
         if post_acc:
             parts = ", ".join(
@@ -225,8 +281,7 @@ def write_report(
                 "memory_bytes_after": sr.memory_bytes_after,
                 "uptake_latency": sr.uptake_latency(),
                 "pre_accuracy": {k: v[2] for k, v in categorize_results(sr.pre_probe_results).items()},
-                "post_accuracy": {k: v[2] for k, v in categorize_results(sr.post_probe_results).items()},
-                "episodes": [asdict(er) for er in sr.episode_results],
+                "episodes": [_episode_asdict(er) for er in sr.episode_results],
             }
         )
     payload = {
@@ -278,6 +333,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="run.json",
         help="Report filename.",
     )
+    p.add_argument(
+        "--policy-log",
+        type=Path,
+        default=None,
+        help="Path to write additional machine-readable policy instrumentation.",
+    )
     return p.parse_args(argv)
 
 
@@ -320,7 +381,14 @@ def main(argv: list[str] | None = None) -> int:
             print("Consolidating before %s..." % stage.name)
             agent.consolidate()
         print("Running %s..." % stage.name)
-        results.append(run_stage(agent, stage, adapter))
+        results.append(
+            run_stage(
+                agent,
+                stage,
+                adapter,
+                instrument_policy=(args.policy_log is not None),
+            )
+        )
         if stage.consolidate_after:
             print("Consolidating after %s..." % stage.name)
             agent.consolidate()
@@ -332,6 +400,25 @@ def main(argv: list[str] | None = None) -> int:
     report_path = args.report_dir / args.report_name
     write_report(results, args.agent, args.lm, report_path)
     print("\nReport written to: %s" % report_path)
+
+    if args.policy_log is not None:
+        policy_payload = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "episodes": [
+                {
+                    "stage": sr.name,
+                    "id": er.id,
+                    "policy_score_before": er.policy_score_before,
+                    "policy_score_after": er.policy_score_after,
+                }
+                for sr in results
+                for er in sr.episode_results
+            ],
+        }
+        args.policy_log.parent.mkdir(parents=True, exist_ok=True)
+        with args.policy_log.open("w", encoding="utf-8") as fh:
+            json.dump(policy_payload, fh, indent=2, default=str)
+        print("Policy detail written to: %s" % args.policy_log)
     return 0
 
 
