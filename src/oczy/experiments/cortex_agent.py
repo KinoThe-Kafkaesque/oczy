@@ -70,6 +70,14 @@ def _looks_like_correction(text: str) -> bool:
     return any(marker in lowered for marker in _CORRECTION_MARKERS)
 
 
+
+def _softmax(x: np.ndarray) -> np.ndarray:
+    """Numerically stable softmax over a 1-D array."""
+    shifted = x - np.max(x)
+    e = np.exp(shifted)
+    return e / np.sum(e)
+
+
 @dataclass
 class CortexAgentConfig:
     """Sizes + LM loading settings for CortexAgent.
@@ -105,6 +113,10 @@ class CortexAgentConfig:
     auto_consolidate: bool = True
 
     articulate_scale: float = 0.001
+
+    # Optional learned response-policy head (Phase 2 REINFORCE policy).
+    use_policy_head: bool = False
+    policy_learning_rate: float = 0.05
 
 
 class CortexAgent:
@@ -188,6 +200,10 @@ class CortexAgent:
         self._last_hidden: np.ndarray | None = None
         self._last_correction_signal: float = 0.0
         self._last_drift: float = 0.0
+
+        # Lazy-initialized response-policy head weights.
+        self._policy_W: np.ndarray | None = None
+        self._policy_b: float = 0.0
 
     # ------------------------------------------------------------------
     # Boot / cold path
@@ -622,6 +638,93 @@ class CortexAgent:
             "autoencoder_error": meta.get("autoencoder_error", None),
             "consolidation_pressure": meta.get("consolidation_pressure", 0.0),
         }
+
+    # ------------------------------------------------------------------
+    # Response policy head (Phase 2 REINFORCE policy)
+    # ------------------------------------------------------------------
+    def _ensure_policy_head(self, candidate_hidden_dim: int) -> None:
+        """Lazy-initialize the linear policy head weights."""
+        if self._policy_W is not None:
+            return
+        dim = self.cortex.config.d_cortex + candidate_hidden_dim
+        rng = np.random.default_rng(id(self))
+        self._policy_W = rng.normal(0.0, 0.01, size=(dim,)).astype(
+            np.float64
+        )
+
+    def _policy_features(self, candidates: list[str]) -> np.ndarray:
+        """Build feature matrix [warm_state ; candidate_hidden] for each candidate."""
+        hiddens: list[np.ndarray] = []
+        hidden_dim = 0
+        for text in candidates:
+            hidden = self.driver.peek_embedding(
+                text, last_token_only=False
+            )
+            hiddens.append(hidden)
+            hidden_dim = max(hidden_dim, hidden.shape[0])
+
+        self._ensure_policy_head(hidden_dim)
+
+        warm = self.cortex.warm_state.reshape(1, -1)
+        hidden_matrix = np.asarray(hiddens, dtype=np.float64)
+        warm_matrix = np.repeat(warm, hidden_matrix.shape[0], axis=0)
+        return np.hstack([warm_matrix, hidden_matrix])
+
+    def policy_score(self, candidates: list[str]) -> np.ndarray:
+        """Score a list of candidate responses with the policy head.
+
+        Returns a 1-D float64 array of scores, one per candidate.
+        """
+        if not self.config.use_policy_head:
+            raise RuntimeError("policy head is not enabled")
+        if not candidates:
+            raise RuntimeError("policy head is not enabled")
+
+        X = self._policy_features(candidates)
+        assert self._policy_W is not None
+        return X @ self._policy_W + self._policy_b
+
+    def policy_select(
+        self, candidates: list[str], temperature: float = 0.0
+    ) -> dict[str, Any]:
+        """Choose the highest-scoring candidate, optionally with Gumbel noise."""
+        scores = self.policy_score(candidates)
+        logits = scores.copy()
+        if temperature > 0.0:
+            rng = np.random.default_rng(id(self))
+            logits = logits + rng.gumbel(0.0, 1.0, size=scores.shape) * temperature
+        chosen = int(np.argmax(logits))
+        return {
+            "candidate": candidates[chosen],
+            "index": chosen,
+            "scores": scores,
+            "logits": logits,
+            "temperature": temperature,
+        }
+
+    def policy_update(
+        self,
+        candidates: list[str],
+        chosen_idx: int,
+        reward: float,
+        baseline: float = 0.0,
+    ) -> None:
+        """REINFORCE update of the policy head toward the chosen candidate."""
+        scores = self.policy_score(candidates)
+        X = self._policy_features(candidates)
+        probs = _softmax(scores)
+        advantage = reward - baseline
+
+        grad_W = advantage * (X[chosen_idx] - probs @ X)
+        self._policy_W += self.config.policy_learning_rate * grad_W
+        self._policy_b += (
+            self.config.policy_learning_rate * advantage * (1.0 - probs[chosen_idx])
+        )
+
+        norm = float(np.linalg.norm(self._policy_W))
+        if norm > 10.0:
+            self._policy_W *= 10.0 / norm
+
 
 
     # ------------------------------------------------------------------
