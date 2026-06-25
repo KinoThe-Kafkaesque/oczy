@@ -468,7 +468,20 @@ class CortexAgent:
             and self.config.auto_consolidate
             and self.should_consolidate()
         ):
-            consolidation = {"auto_consolidated": True, **self.consolidate()}
+            pressure = self.digestive_gate._pressure
+            cfg = self.digestive_gate.config
+            threshold = cfg.consolidation_pressure_threshold
+            strength = (
+                1.0 + (pressure / threshold) * 9.0
+                if threshold > 0
+                else 1.0
+            )
+            strength = float(np.clip(strength, 1.0, self.cortex.config.max_consolidation_strength))
+            consolidation = {
+                "auto_consolidated": True,
+                "consolidation_strength": strength,
+                **self.consolidate(strength=strength),
+            }
             self.digestive_gate.reset()
 
         reply = self.articulate(
@@ -488,14 +501,20 @@ class CortexAgent:
     # ------------------------------------------------------------------
     # Cold path (consolidation + persistence)
     # ------------------------------------------------------------------
-    def consolidate(self) -> dict[str, Any]:
+    def consolidate(self, strength: float = 1.0) -> dict[str, Any]:
         """Move cortex warm into cold, plus organ consolidation fans.
 
         Replays are pulled from the hippocampus and passed as a list of
         d_embd vectors to cortex.consolidate(). Today the hippocampus
         returns episode dicts (string-keyed), so we synthesise replay
-        tensors by re-embedding their `query` fields through the LM -- a
+        tensors by re-embedding their query fields through the LM -- a
         placeholder until the hippocampus natively stores tensors.
+
+        ``strength`` is passed through to ``KVCortex.consolidate`` and
+        scales how aggressively warm state is written into cold state.
+        When called from ``turn()`` after the digestive gate crosses its
+        threshold, strength is derived from the current consolidation
+        pressure so high-pressure episodes leave a larger persistent trace.
 
         Returns a summary of what consolidation did.
         """
@@ -519,7 +538,10 @@ class CortexAgent:
                 continue
 
         cortex_before = self.cortex.cold_state.copy()
-        self.cortex.consolidate(replays=replays if replays else None)
+        self.cortex.consolidate(
+            replays=replays if replays else None,
+            strength=strength,
+        )
         cortex_after = self.cortex.cold_state.copy()
         cold_drift = float(np.linalg.norm(cortex_after - cortex_before))
 
@@ -528,8 +550,6 @@ class CortexAgent:
             "replay_count": len(replays),
             "cold_drift": cold_drift,
         }
-
-    # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
     def save(self, path: Path | str) -> None:

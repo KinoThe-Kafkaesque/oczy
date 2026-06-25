@@ -62,6 +62,7 @@ class KVCortexConfig:
     consolidate_replay_threshold: int = 3
     consolidate_slow_step: float = 0.05  # cold = (1-s)*cold + s*warm
     consolidate_replay_step: float = 0.10
+    max_consolidation_strength: float = 10.0  # cap on per-call strength multiplier
 
     # Steering mode. ``proj_random`` (default): per-layer cvecs come from
     # ``proj_c @ warm_state``. ``raw_hidden``: per-layer cvecs come from a
@@ -282,8 +283,11 @@ class KVCortex:
 
     # ------------------------------------------------------------------
     # Cold path
-    # ------------------------------------------------------------------
-    def consolidate(self, replays: list[np.ndarray] | None = None) -> None:
+    def consolidate(
+        self,
+        replays: list[np.ndarray] | None = None,
+        strength: float = 1.0,
+    ) -> None:
         """Move warm state into cold state.
 
         Two effects, both gated:
@@ -296,10 +300,16 @@ class KVCortex:
              accumulate, those replays are projected through `proj_hidden`,
              averaged, and absorbed into cold_state with a separate rate.
 
+        The `strength` multiplier scales both update steps for this call,
+        capped at ``config.max_consolidation_strength``. Use it to make a
+        high-pressure consolidation episode write more aggressively into
+        cold state without changing the baseline slow rates.
+
         This is the only method that writes to cold_state. After it runs,
         the next cold boot starts from the updated value.
         """
         c = self.config
+        strength = float(np.clip(strength, 0.0, c.max_consolidation_strength))
 
         # Replay absorption (only if enough replays crossed the threshold).
         if replays is not None and len(replays) >= c.consolidate_replay_threshold:
@@ -307,13 +317,15 @@ class KVCortex:
             deltas = self.proj_hidden @ stacked.T          # (d_cortex, R)
             avg_delta = np.mean(np.tanh(deltas), axis=1).astype(np.float32)
             self.cold_state = (
-                self.cold_state + c.consolidate_replay_step * avg_delta
+                self.cold_state
+                + np.clip(c.consolidate_replay_step * strength, 0.0, 1.0) * avg_delta
             ).astype(np.float32)
 
         # Slow EMA nudge.
+        effective_slow = np.clip(c.consolidate_slow_step * strength, 0.0, 1.0)
         self.cold_state = (
-            (1.0 - c.consolidate_slow_step) * self.cold_state
-            + c.consolidate_slow_step * self.warm_state
+            (1.0 - effective_slow) * self.cold_state
+            + effective_slow * self.warm_state
         ).astype(np.float32)
 
         self.consolidate_count += 1
