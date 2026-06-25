@@ -78,10 +78,15 @@ Commits since previous summary:
     `world_model_critic._last_correction_prob` to the gate. Default weights
     keep behavior near the old drift-only regime when the critic is
     unavailable. Benchmark unchanged: `code_qa_accuracy=1.0` (run #57).
+14. `05cb3d2` — Add `CortexAgent.answer()` as a one-shot LM-driven answer
+    surface. `OrganismAgent` gets `use_cortex_lm_answer` config flag (default
+    False) that lets it delegate to the cortex agent instead of
+    `PlasticCortex.answer()`. Codebase-QA recall path remains unchanged.
+    Benchmark unchanged: `code_qa_accuracy=1.0` (run #58).
 
-Test status: `pytest: 226 passed` fast (reserve-position + tensor-critic + replay-SGD +
-identity-adapter + hidden-delta + default-critic + critic-gate unit tests pass;
-full slow/model suite not rerun). `ruff check` clean on changed files.
+Test status: `pytest: 232 passed` fast (reserve-position + tensor-critic + replay-SGD +
+identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop unit
+tests pass; full slow/model suite not rerun). `ruff check` clean on changed files.
 
 Remaining blocks:
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
@@ -93,10 +98,9 @@ Remaining blocks:
 - IdentityHypernetwork now emits real `d_cortex`-dimensional adapter deltas that are
   applied at articulation time, but the concept→latent mapping is still partially
   hand-seeded and the effect on downstream behavior has not yet been measured.
-- ExperienceAutoencoder now has a hidden-state-delta path, but it is trained passively
-  and has not yet been shown to compress behavior-changing episodes better than the
-  legacy text-token path.
 - WorldModelCritic is now tensor-input-by-default inside CortexAgent and its output
   feeds the digestive gate, but these pieces have not yet been measured in a real
   correction/uptake loop.
-- ExperienceAutoencoder now has a hidden-state-delta path, but it is trained passively
+- CortexAgent now has an `answer()` method and OrganismAgent can delegate via
+  `use_cortex_lm_answer=True`, but the flag is off by default and has not been
+  exercised in a real workload.
