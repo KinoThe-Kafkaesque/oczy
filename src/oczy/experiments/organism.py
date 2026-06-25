@@ -107,6 +107,15 @@ class OrganismAgent:
                 "policy updates will use baseline=0.0.",
                 stacklevel=2,
             )
+        self.use_acceptance_policy_reward = bool(
+            config.get("use_acceptance_policy_reward", False)
+        )
+        if self.use_acceptance_policy_reward and self.cortex_agent is None:
+            warnings.warn(
+                "use_acceptance_policy_reward=True but no cortex_agent provided; "
+                "acceptance policy updates will be skipped.",
+                stacklevel=2,
+            )
 
     def answer(self, request: str) -> str:
         """Produce an answer using the full organ stack."""
@@ -184,6 +193,21 @@ class OrganismAgent:
 
         self._last_request = request
         self._last_answer = final_answer
+        if (
+            self.use_acceptance_policy_reward
+            and self.cortex_agent is not None
+            and not low_confidence
+            and final_answer in candidate_answers
+        ):
+            try:
+                self._policy_update_with_baseline(
+                    request,
+                    candidate_answers,
+                    chosen_idx=candidate_answers.index(final_answer),
+                    reward=1.0,
+                )
+            except Exception:
+                pass
         return final_answer
 
     def _rank_answer(
@@ -277,6 +301,40 @@ class OrganismAgent:
         self._last_answer = prior_answer
         self._learn_from_correction(request, correction, expected_answer)
 
+    def _policy_update_with_baseline(
+        self,
+        request: str | None,
+        candidates: list[str],
+        chosen_idx: int,
+        reward: float,
+    ) -> None:
+        """Policy update with optional value-head baseline."""
+        if self.cortex_agent is None:
+            return
+        baseline = 0.0
+        if self.use_value_baseline:
+            value_hidden = (
+                getattr(self.cortex_agent, "_prev_hidden", None)
+                or getattr(self.cortex_agent, "_last_hidden", None)
+            )
+            if value_hidden is not None and hasattr(
+                self.cortex_agent.world_model_critic, "predict_value"
+            ):
+                try:
+                    baseline = self.cortex_agent.world_model_critic.predict_value(
+                        query=request or "",
+                        proposed_answer=candidates[chosen_idx],
+                        lm_hidden=value_hidden,
+                    )
+                except Exception:
+                    baseline = 0.0
+        self.cortex_agent.policy_update(
+            candidates,
+            chosen_idx=chosen_idx,
+            reward=reward,
+            baseline=baseline,
+        )
+
     def _learn_from_correction(
         self,
         request: str | None,
@@ -351,7 +409,6 @@ class OrganismAgent:
                     response=expected_answer,
                 )
 
-            # d. (Optional) Train the CortexAgent policy head from the correction.
             if (
                 self.use_cortex_policy
                 and self.cortex_agent is not None
@@ -363,36 +420,15 @@ class OrganismAgent:
                         labels.append(expected_answer)
                     if prior_answer and prior_answer not in labels:
                         labels.insert(0, prior_answer)
-                    chosen = prior_answer if prior_answer else labels[0]
-                    chosen_idx = labels.index(chosen)
-                    baseline = 0.0
-                    if self.use_value_baseline:
-                        value_hidden = (
-                            getattr(self.cortex_agent, "_prev_hidden", None)
-                            or getattr(self.cortex_agent, "_last_hidden", None)
-                        )
-                        if value_hidden is not None and hasattr(
-                            self.cortex_agent.world_model_critic, "predict_value"
-                        ):
-                            baseline = self.cortex_agent.world_model_critic.predict_value(
-                                query=request or "",
-                                proposed_answer=prior_answer or "",
-                                lm_hidden=value_hidden,
-                            )
-                    self.cortex_agent.policy_update(
-                        labels,
-                        chosen_idx=chosen_idx,
-                        reward=-1.0,
-                        baseline=baseline,
+                    chosen_idx = labels.index(prior_answer)
+                    self._policy_update_with_baseline(
+                        request, labels, chosen_idx=chosen_idx, reward=-1.0
                     )
                     # Also reinforce the corrected expected action positively.
                     if expected_answer and expected_answer in labels:
                         expected_idx = labels.index(expected_answer)
-                        self.cortex_agent.policy_update(
-                            labels,
-                            chosen_idx=expected_idx,
-                            reward=1.0,
-                            baseline=baseline,
+                        self._policy_update_with_baseline(
+                            request, labels, chosen_idx=expected_idx, reward=1.0
                         )
                 except Exception:
                     # Policy update is advisory; never break the correction path.

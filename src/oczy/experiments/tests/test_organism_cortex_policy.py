@@ -239,3 +239,89 @@ def test_value_baseline_warning_without_cortex_agent() -> None:
     with pytest.warns(UserWarning, match="cortex_agent"):
         organism = OrganismAgent({"use_value_baseline": True})
     assert organism.cortex_agent is None
+
+
+def test_acceptance_policy_reward_disabled_by_default() -> None:
+    """Default config does not emit an acceptance policy update."""
+    mock = _MockCortexAgent()
+    organism = OrganismAgent(
+        {"use_cortex_policy": True, "cortex_agent": mock}
+    )
+    organism.plastic_cortex.labels = ["a", "b", "c"]
+    organism.plastic_cortex.answer = lambda request: "a"
+
+    assert organism.answer("x") == "a"
+    assert len(mock.policy_update_calls) == 0
+
+
+def test_acceptance_policy_reward_trains_accepted_answer() -> None:
+    """A high-confidence accepted answer triggers a +1 policy update."""
+    mock = _MockCortexAgent()
+    organism = OrganismAgent(
+        {
+            "use_acceptance_policy_reward": True,
+            "use_cortex_policy": True,
+            "cortex_agent": mock,
+            "low_confidence_threshold": 0.0,
+            "high_correction_threshold": 2.0,
+        }
+    )
+    organism.plastic_cortex.labels = ["a", "b", "c"]
+    organism.plastic_cortex.answer = lambda request: "a"
+
+    answer = organism.answer("x")
+    assert len(mock.policy_update_calls) == 1
+    call = mock.policy_update_calls[0]
+    assert call["reward"] == 1.0
+    assert call["candidates"] == ["a", "b", "c"]
+    assert call["chosen_idx"] == call["candidates"].index(answer)
+    assert call["baseline"] == 0.0
+
+
+def test_acceptance_policy_reward_uses_value_baseline() -> None:
+    """When value baseline is enabled, acceptance update uses the critic estimate."""
+    mock = _MockCortexAgent(
+        last_hidden=np.array([1.0, 2.0, 3.0]),
+        value_critic=_MockValueCritic(0.42),
+    )
+    organism = OrganismAgent(
+        {
+            "use_acceptance_policy_reward": True,
+            "use_cortex_policy": True,
+            "use_value_baseline": True,
+            "cortex_agent": mock,
+            "low_confidence_threshold": 0.0,
+            "high_correction_threshold": 2.0,
+        }
+    )
+    organism.plastic_cortex.labels = ["a", "b", "c"]
+    organism.plastic_cortex.answer = lambda request: "a"
+
+    organism.answer("x")
+    assert len(mock.policy_update_calls) == 1
+    assert mock.policy_update_calls[0]["baseline"] == pytest.approx(0.42)
+
+
+def test_acceptance_policy_reward_skips_low_confidence_answer() -> None:
+    """Low-confidence answers must not receive acceptance reinforcement."""
+    mock = _MockCortexAgent()
+    organism = OrganismAgent(
+        {
+            "use_acceptance_policy_reward": True,
+            "use_cortex_policy": True,
+            "cortex_agent": mock,
+            "low_confidence_threshold": 1.0,
+            "high_correction_threshold": 2.0,
+        }
+    )
+    organism.plastic_cortex.labels = ["a", "b", "c"]
+    organism.plastic_cortex.answer = lambda request: "a"
+
+    organism.answer("x")
+    assert len(mock.policy_update_calls) == 0
+
+
+def test_acceptance_policy_reward_warning_without_cortex_agent() -> None:
+    with pytest.warns(UserWarning, match="cortex_agent"):
+        organism = OrganismAgent({"use_acceptance_policy_reward": True})
+    assert organism.cortex_agent is None
