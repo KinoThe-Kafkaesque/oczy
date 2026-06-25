@@ -62,7 +62,8 @@ def _run_consolidation_uptake(driver: LlamaCVecDriver) -> dict[str, Any]:
     import numpy as np
 
     probe = "'Profile' here means business _______."
-    expected = ["vertical"]
+    semantic_expected = ["vertical"]  # exact target token
+    domain_expected = ["commercial", "economic", "business", "strategy", "market"]  # related domain
     correction = "No, 'profile' here means business vertical, not user profile."
     prompt = _build_prompt(probe)
     n_turns = 8
@@ -80,7 +81,8 @@ def _run_consolidation_uptake(driver: LlamaCVecDriver) -> dict[str, Any]:
         temperature=0.0,
         apply_steering=True,
     ).strip()
-    pre_score = _score(expected, pre_answer)
+    pre_score = _score(semantic_expected, pre_answer)
+    pre_domain_score = _score(domain_expected, pre_answer)
     pre_normalised = pre_answer.lower()
 
     correction_hiddens: list[np.ndarray] = []
@@ -117,7 +119,8 @@ def _run_consolidation_uptake(driver: LlamaCVecDriver) -> dict[str, Any]:
         temperature=0.0,
         apply_steering=True,
     ).strip()
-    post_warm_score = _score(expected, post_warm_answer)
+    post_warm_score = _score(semantic_expected, post_warm_answer)
+    post_warm_domain_score = _score(domain_expected, post_warm_answer)
     output_shift = 1 if post_warm_answer.lower() != pre_normalised else 0
 
     # Reboot from cold so the post answer comes from boot-persistent state.
@@ -128,14 +131,15 @@ def _run_consolidation_uptake(driver: LlamaCVecDriver) -> dict[str, Any]:
         temperature=0.0,
         apply_steering=True,
     ).strip()
-    post_cold_score = _score(expected, post_cold_answer)
+    post_cold_score = _score(semantic_expected, post_cold_answer)
+    post_cold_domain_score = _score(domain_expected, post_cold_answer)
     cold_output_shift = 1 if post_cold_answer.lower() != pre_normalised else 0
 
     print(
         f"Consolidation uptake probe: {probe}\n"
-        f"  pre:       {pre_answer!r} | semantic: {pre_score}\n"
-        f"  post_warm: {post_warm_answer!r} | semantic: {post_warm_score} | shift: {output_shift}\n"
-        f"  post_cold: {post_cold_answer!r} | semantic: {post_cold_score} | cold_shift: {cold_output_shift}\n"
+        f"  pre:       {pre_answer!r} | semantic: {pre_score} | domain: {pre_domain_score}\n"
+        f"  post_warm: {post_warm_answer!r} | semantic: {post_warm_score} | domain: {post_warm_domain_score} | shift: {output_shift}\n"
+        f"  post_cold: {post_cold_answer!r} | semantic: {post_cold_score} | domain: {post_cold_domain_score} | cold_shift: {cold_output_shift}\n"
         f"  auto_consolidated: {auto_fired}"
     )
 
@@ -143,6 +147,9 @@ def _run_consolidation_uptake(driver: LlamaCVecDriver) -> dict[str, Any]:
         "pre_score": float(pre_score),
         "post_warm_score": float(post_warm_score),
         "post_cold_score": float(post_cold_score),
+        "pre_domain_score": float(pre_domain_score),
+        "post_warm_domain_score": float(post_warm_domain_score),
+        "post_cold_domain_score": float(post_cold_domain_score),
         "output_shift": float(output_shift),
         "cold_output_shift": float(cold_output_shift),
         "delta": float(post_cold_score - pre_score),
@@ -249,13 +256,14 @@ def main() -> int:
     cons_res = _run_consolidation_uptake(driver)
     print(f"METRIC consolidation_uptake_pre={cons_res['pre_score']:.4f}")
     print(f"METRIC consolidation_uptake_post_warm={cons_res['post_warm_score']:.4f}")
+    print(f"METRIC consolidation_uptake_post_warm_domain={cons_res['post_warm_domain_score']:.4f}")
     print(f"METRIC consolidation_uptake_output_shift={cons_res['output_shift']:.4f}")
     print(f"METRIC consolidation_uptake_post_cold={cons_res['post_cold_score']:.4f}")
+    print(f"METRIC consolidation_uptake_post_cold_domain={cons_res['post_cold_domain_score']:.4f}")
     print(f"METRIC consolidation_uptake_cold_output_shift={cons_res['cold_output_shift']:.4f}")
     print(f"METRIC consolidation_uptake_delta={cons_res['delta']:.4f}")
     print(f"METRIC consolidation_uptake_auto_fired={cons_res['auto_fired']:.4f}")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
