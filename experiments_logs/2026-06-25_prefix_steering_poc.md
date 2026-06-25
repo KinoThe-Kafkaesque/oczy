@@ -59,14 +59,40 @@ Separate the two steering surfaces:
 Do not expect residual cvecs to store and recall new arbitrary facts. That is
 a reserved-position / KV-slot task.
 
+## Interference sweep: cvec scale under a fixed prefix
+
+A fixed prefix was combined with increasing `articulate_scale` (the cvec
+amplitude multiplier). Results:
+
+| articulate_scale | exact token uptake | example |
+|---|---|---|
+| 0.000 (prefix-only) | **1** | `"In this case, we are going to profile the 'web' vertical"` |
+| 0.001 | **1** | `"In this case, we are going to profile the 'web' vertical"` |
+| 0.003 | **1** | `"In this case, we are going to profile the 'web' vertical"` |
+| 0.010 | **1** | `"What is the business vertical you are targeting?\nPlease answer in words"` |
+| 0.030 | **0** | `"Choose a word that best describes the concept of 'profile' in the context of"` |
+| 0.060 | **0** | `"? an investment???\n initiate\n?\n* an amount of water*\nInvest"` |
+| 0.100 | **0** | `"calculate''''\\''s radius''''''''"` |
+| 0.300 | **0** | `"Emil Emil Emil Emil Emil ..."` |
+
+The residual cvec is useful for posture up to about 0.01, but above 0.03 it
+overwhelms the prefix and the exact fact recall is lost.
+
+## Interim design rule
+
+When a reserved-position prefix is active, keep cvec `articulate_scale`
+below 0.01 or disable cvec steering entirely. Use the two surfaces
+orthogonally: **prefix for facts, cvec for tone/framing**.
+
 ## Open questions
 
-1. Why exactly does cvec + prefix degrade relative to prefix-only? Does cvec
-   scale need to be much smaller under a prefix?
-2. Can the prefix be generated from the cortex/hippocampus instead of
+1. Can the prefix be generated from the cortex/hippocampus instead of
    hand-coded with the answer?
-3. What is the cold-persistence story? A literal-text prefix is not learned
+2. What is the cold-persistence story? A literal-text prefix is not learned
    in weights; it must be carried across sessions as part of the agent state.
+3. Does the cvec+prefix degradation reflect residual bias corrupting
+   activations, or attention-mask interaction between fixed prefix tokens and
+   the prompt?
 
 ## Artifacts
 
