@@ -16,39 +16,50 @@ passing as of 2026-06-23).
 
 The cortex emits per-layer steering vectors via `KVCortex.emit_cvec(layer_idx)`.
 `LlamaCVecDriver` binds these into the LM's forward pass via
-`llama_set_adapter_cvec`, which applies the vectors as a per-layer residual
-bias. This is sufficient to shift logits, but the available binding is a
-**residual control vector**, not a reserved KV slot.
+`llama_set_adapter_cvec`, which applies them as a per-layer residual bias.
+This is sufficient to shift logits, but the available binding is a **residual
+control vector**, not a reserved KV slot.
 
-**Why it matters:** a control vector steers generation, but its effect is
-small and diffuse with the current tiny cortex dimensions. A reserved KV
-slot would let the cortex inject intent directly into attention at a known
-sequence position, giving stronger and more token-specific steering.
+**Why it matters:** a control vector steers generation at the level of
+*semantic posture*: framing, style, broad domain. It cannot reliably
+override the LM's prior for a specific arbitrary token. Empirically, a small
+projected cvec moves "profile" answers from "strategy" toward
+"commercial"/"economic" but does not emit "vertical". A reserved KV slot lets
+the cortex inject factual content into attention at a fixed sequence position
+and force specific tokens.
 
-**Status:** reserved KV-slot injection is **blocked** on the installed
+**Status:** direct reserved KV-slot injection is **blocked** on the installed
 `llama-cpp-python` binding. The package exposes `Llama.kv_self` opaquely and
 does not provide a public API to write an arbitrary `(k, v)` tensor directly
-into a chosen layer and position. There is no path today to instantiate a
-reserved slot without a binding fork or an upstream API addition.
+into a chosen layer and position. C++ internal methods are exposed in the SO
+but are mangled and tied to internal structures; calling them through ctypes
+would require a binding fork or an upstream API addition.
 
-**Done when:**
+**Proxy available today:** a fixed text prefix prepended to the prompt acts
+as a reserved-position KV signal. The prefix tokens flow through the normal
+forward pass and populate fixed KV positions, biasing generation toward the
+encoded concept. In a 2026-06-25 probe this proxy achieved exact-token uptake
+("vertical" appeared) where the residual cvec only achieved domain shift. The
+prefix is therefore the practical fact-recall surface today; the cvec remains
+the practical posture/framing surface.
+
+**Done when (direct path):**
 - A reserved KV slot per layer can be written and overwritten.
-- The LM's next-token logits visibly shift when the slot is populated
-  versus empty (a measurable behavioural test).
-- Latency: <5 ms per cortex injection, so the loop can keep up with
-  token streaming.
+- The LM's next-token logits visibly shift when the slot is populated versus
+  empty (a measurable behavioural test).
+- Latency: <5 ms per cortex injection, so the loop can keep up with token
+  streaming.
 
 ### What works today
 
-`LlamaCVecDriver` using `llama_set_adapter_cvec` provides:
-- per-layer cvec application (`set_cvec_layer`, `set_cvecs_per_layer`)
-- clean baseline restoration (`clear_cvec`)
-- demonstrable output shift; boot-persistent output shift via SVD-initialised
-  `proj_c` and amplified consolidation.
+`LlamaCVecDriver` provides two complementary surfaces:
+1. Residual control vectors via `llama_set_adapter_cvec` for posture/framing.
+2. An optional articulation prefix (`set_articulation_prefix`) prepended to
+   every generate() prompt for exact fact recall.
 
-The current codebase therefore uses the control-vector surface as the
-practical steering mechanism while Goal 1 remains a future architecture
-upgrade.
+The current codebase therefore uses **cvec for posture** and **prefix for
+exact fact recall**, while Goal 1 remains a future architecture upgrade for
+direct KV-slot writes.
 
 ## Goal 2 — Hidden-state extraction at layer L
 

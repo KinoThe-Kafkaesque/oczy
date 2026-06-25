@@ -23,6 +23,8 @@ Seed: 0 | Sense matching: enabled | Consolidation: enabled
   identity hypernetwork store large serialized objects rather than compact
   adapters.
 - Recent autoresearch work on the codebase-QA benchmark reached
-  `code_qa_accuracy=1.0` and `cortex_agent_recall_accuracy=1.0`, while
-  consolidation-uptake probes show boot-persistent domain shift but not yet
-  exact-token semantic uptake.
+  `code_qa_accuracy=1.0` and `cortex_agent_recall_accuracy=1.0`.
+- Consolidation-uptake probes showed boot-persistent *domain* shift via cvec
+  steering, but exact-token uptake failed until a soft-prompt prefix was used.
+  See `experiments_logs/2026-06-25_prefix_steering_poc.md` for the prefix
+  steering proof of concept.
