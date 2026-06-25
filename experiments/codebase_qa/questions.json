@@ -120,13 +120,22 @@
   },
   {
     "question": "What is correction-benchmark used for?",
-    "expected": "curriculum and scoring harness",
+    "expected": [
+      "curriculum and scoring harness",
+      "evaluates agents",
+      "ability to correct",
+      "transfer knowledge",
+      "maintain identity",
+      "lifelong learning"
+    ],
     "must_recall_key": "correction benchmark role"
   },
   {
     "question": "How many stages are in the organism curriculum?",
     "expected": [
       "6 stages",
+      "six stages",
+      "six",
       "6"
     ],
     "must_recall_key": "organism curriculum stages"
@@ -177,8 +186,11 @@
   {
     "question": "What did the schema-drift fix correct in HippocampusOnlyAgent?",
     "expected": [
-      "corrected_answer",
-      "correct answer"
+      "raw correction text",
+      "corrected answer",
+      "store",
+      "replay hints",
+      "ranker"
     ],
     "must_recall_key": "schema drift fix"
   },
@@ -209,8 +221,10 @@
     "question": "What is the success metric that rewards big behavioral improvement with little persistent storage?",
     "expected": [
       "behavior_delta_per_byte_of_persistent_memory",
-      "per byte of persistent memory",
-      "behavioral improvements"
+      "north-star metric",
+      "big behavioral improvement",
+      "little persistent storage",
+      "per byte"
     ],
     "must_recall_key": "north star metric"
   },
@@ -366,7 +380,7 @@
   {
     "question": "What strategic dependency chain in GOALS.md must be followed so that Goal 3 organs can consume live tensor signals from the cortex?",
     "expected": [
-      "1 → 2 → 3",
+      "1 \u2192 2 \u2192 3",
       "Goal 1",
       "Goal 2",
       "Goal 3"
@@ -463,10 +477,11 @@
   {
     "question": "What is the approximate inference cost of running one KVCortex update turn against a 1.2B-parameter LM?",
     "expected": [
-      "sub-2 ms",
-      "sub-2 milliseconds",
+      "sub-2",
       "less than 2",
-      "d_cortex=128"
+      "milliseconds",
+      "1.2B",
+      "128-d"
     ],
     "must_recall_key": "kvcortex per turn cost"
   },
@@ -525,9 +540,10 @@
     "expected": [
       "layer 3",
       "replaced",
-      "other layers",
-      "keep",
-      "last set"
+      "last set",
+      "second vector",
+      "override",
+      "only layer 3"
     ],
     "must_recall_key": "set_cvec_layer twice replaces same layer"
   },
@@ -739,5 +755,183 @@
       "slow EMA nudge"
     ],
     "must_recall_key": "kvcortex consolidate replay threshold"
+  },
+  {
+    "question": "What two methods must an agent implement to be evaluated by correction-benchmark?",
+    "expected": [
+      "answer(user_request)",
+      "correct(correction, expected)",
+      "answer and correct",
+      "two methods"
+    ],
+    "must_recall_key": "correction benchmark agent contract"
+  },
+  {
+    "question": "Why does _evaluate_probes avoid calling agent.answer() more than once for each probe?",
+    "expected": [
+      "silent state mutations",
+      "state mutations",
+      "hit/correction probabilities",
+      "accurate tracking",
+      "mutates stateful",
+      "double counting",
+      "side effect",
+      "stateful"
+    ],
+    "must_recall_key": "benchmark probe single call rule"
+  },
+  {
+    "question": "What does run_benchmark do after delivering a correction to an episode?",
+    "expected": [
+      "post-correction answer",
+      "later probes",
+      "probe_results",
+      "asks probes"
+    ],
+    "must_recall_key": "benchmark run workflow"
+  },
+  {
+    "question": "Which seven metrics does the Correction-to-Competence Benchmark report?",
+    "expected": [
+      "uptake",
+      "transfer",
+      "scope control",
+      "forgetting",
+      "compression",
+      "consolidation",
+      "identity drift"
+    ],
+    "must_recall_key": "correction benchmark metrics"
+  },
+  {
+    "question": "What are the five curriculum validation rules in experiments/organism_curriculum/validation.py?",
+    "expected": [
+      "correction_utterance",
+      "corrected_label",
+      "BASELINE",
+      "transfer probe",
+      "verbatim",
+      "ambiguous token",
+      "unique ids"
+    ],
+    "must_recall_key": "organism curriculum validation rules"
+  },
+  {
+    "question": "Why is a curriculum episode invalid if its ambiguous token appears in PlasticCortex.BASELINE?",
+    "expected": [
+      "overlap",
+      "baseline tokens",
+      "default priors",
+      "cannot test new learning"
+    ],
+    "must_recall_key": "curriculum ambiguous token baseline overlap"
+  },
+  {
+    "question": "What transfer-probe pattern does validation warn against because it would fake learning?",
+    "expected": [
+      "substring matches",
+      "corrected_response verbatim",
+      "contains corrected_response",
+      "verbatim",
+      "fake learning"
+    ],
+    "must_recall_key": "curriculum transfer probe substring guard"
+  },
+  {
+    "question": "Which trainable cortex class is designed as a drop-in replacement for the word-association PlasticCortex?",
+    "expected": [
+      "LMPlasticCortex",
+      "character-level RNN",
+      "drop-in replacement",
+      "trainable",
+      "same public surface"
+    ],
+    "must_recall_key": "lmplasticcortex public surface"
+  },
+  {
+    "question": "How does LMPlasticCortex remember a correction without overwriting its recurrent base weights?",
+    "expected": [
+      "FastWeightLM",
+      "token-to-logit boosts",
+      "fast weight adapter",
+      "boosts"
+    ],
+    "must_recall_key": "lmplasticcortex fast weight adapter"
+  },
+  {
+    "question": "What state survives when LMPlasticCortex grows to a larger hidden dimension?",
+    "expected": [
+      "fast weights",
+      "observation statistics",
+      "tokenizer",
+      "correction_count",
+      "preserved"
+    ],
+    "must_recall_key": "lmplasticcortex grow preserves state"
+  },
+  {
+    "question": "How does LMPlasticCortex keep its recurrent W_hh matrix stable?",
+    "expected": [
+      "spectral normalize",
+      "spectral radius",
+      "at most 1"
+    ],
+    "must_recall_key": "lmplasticcortex spectral normalize W_hh"
+  },
+  {
+    "question": "What stability technique does LMPlasticCortex.train_step use while back-propagating through time?",
+    "expected": [
+      "gradient clipping",
+      "clip total gradient norm",
+      "RMSprop",
+      "BPTT"
+    ],
+    "must_recall_key": "lmplasticcortex train_step stability"
+  },
+  {
+    "question": "According to experiments.txt, what are the timescales of the five nested learning levels?",
+    "expected": [
+      "milliseconds",
+      "minutes",
+      "days",
+      "months",
+      "rare consolidation"
+    ],
+    "must_recall_key": "nested learning stack timescales"
+  },
+  {
+    "question": "How many runtime steps are in the Plastic World Model Agent loop described in experiments.txt?",
+    "expected": [
+      "10 steps",
+      "ten steps",
+      "10 runtime steps",
+      "answer",
+      "predict",
+      "correct",
+      "error",
+      "fast",
+      "hippocampus"
+    ],
+    "must_recall_key": "plastic world model agent runtime steps"
+  },
+  {
+    "question": "What does the Cognitive Immune Layer store instead of full correction episodes?",
+    "expected": [
+      "detectors",
+      "mistake detectors",
+      "failure signature",
+      "not full memory"
+    ],
+    "must_recall_key": "cognitive immune layer detectors"
+  },
+  {
+    "question": "What is the canonical driver sequence for applying and then removing a steering vector?",
+    "expected": [
+      "clear_cvec",
+      "set_cvec_layer",
+      "generate",
+      "baseline"
+    ],
+    "must_recall_key": "cvec driver lifecycle"
   }
 ]

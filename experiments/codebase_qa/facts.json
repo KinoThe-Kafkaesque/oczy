@@ -337,7 +337,7 @@
   },
   {
     "key": "goals sequencing",
-    "value": "GOALS.md prescribes the strategic dependency chain 1 → 2 → 3: Goal 1 LM-side KV-write binding comes first, then Goal 2 hidden-state extraction at layer L, then Goal 3 upgrading metabolism organs to consume tensor signals from the cortex.",
+    "value": "GOALS.md prescribes the strategic dependency chain 1 \u2192 2 \u2192 3: Goal 1 LM-side KV-write binding comes first, then Goal 2 hidden-state extraction at layer L, then Goal 3 upgrading metabolism organs to consume tensor signals from the cortex.",
     "metadata": {
       "source": "GOALS.md"
     }
@@ -351,7 +351,7 @@
   },
   {
     "key": "experiments target shape",
-    "value": "experiments.txt describes the target memory continuum as activation becoming fast state, fast weights, neural memory, slow weights, and finally forgotten raw trace, explicitly rejecting chat-log → vector-DB → prompt-stuffing memory.",
+    "value": "experiments.txt describes the target memory continuum as activation becoming fast state, fast weights, neural memory, slow weights, and finally forgotten raw trace, explicitly rejecting chat-log \u2192 vector-DB \u2192 prompt-stuffing memory.",
     "metadata": {
       "source": "experiments.txt"
     }
@@ -571,6 +571,118 @@
     "value": "KVCortex.consolidate() only absorbs replay hiddens into cold_state when at least consolidate_replay_threshold (3) replays are supplied, but it always applies the slow EMA nudge.",
     "metadata": {
       "source": "plastic-cortex/src/plastic_cortex/kv_cortex.py"
+    }
+  },
+  {
+    "key": "correction benchmark agent contract",
+    "value": "The correction-benchmark protocol only requires agents to expose answer(user_request) -> str and correct(correction, expected) -> None.",
+    "metadata": {
+      "source": "correction-benchmark/src/correction_benchmark/benchmark.py"
+    }
+  },
+  {
+    "key": "benchmark probe single call rule",
+    "value": "_evaluate_probes calls agent.answer() exactly once per probe because calling it twice silently mutates stateful agents and corrupts replay, hit, and correction-prob counters.",
+    "metadata": {
+      "source": "correction-benchmark/src/correction_benchmark/benchmark.py"
+    }
+  },
+  {
+    "key": "benchmark run workflow",
+    "value": "run_benchmark walks each episode by recording the initial answer, delivering the correction, recording the post-correction answer, and then asking all later probes.",
+    "metadata": {
+      "source": "correction-benchmark/src/correction_benchmark/benchmark.py"
+    }
+  },
+  {
+    "key": "correction benchmark metrics",
+    "value": "The Correction-to-Competence Benchmark measures correction uptake, one-shot transfer, scope control, forgetting, compression, consolidation, and identity drift.",
+    "metadata": {
+      "source": "correction-benchmark/README.md"
+    }
+  },
+  {
+    "key": "organism curriculum validation rules",
+    "value": "experiments/organism_curriculum/validation.py enforces five rules: every episode has correction_utterance and corrected_label, the ambiguous token avoids PlasticCortex.BASELINE, transfer probes omit the corrected_response verbatim, forgetting and retention probes retain the ambiguous token, and episode ids are unique across stages.",
+    "metadata": {
+      "source": "experiments/organism_curriculum/validation.py"
+    }
+  },
+  {
+    "key": "curriculum ambiguous token baseline overlap",
+    "value": "A curriculum episode is invalid if its quoted ambiguous token overlaps with any key, label, or score key in PlasticCortex.BASELINE.",
+    "metadata": {
+      "source": "experiments/organism_curriculum/validation.py"
+    }
+  },
+  {
+    "key": "curriculum transfer probe substring guard",
+    "value": "Transfer probes generate a warning if they contain the episode's corrected_response verbatim, because substring matching would fake transfer.",
+    "metadata": {
+      "source": "experiments/organism_curriculum/validation.py"
+    }
+  },
+  {
+    "key": "lmplasticcortex public surface",
+    "value": "LMPlasticCortex is a trainable character-level RNN cortex designed as a drop-in replacement for the word-association PlasticCortex; it implements the same public surface: answer(query), correct(correction_text, expected_answer), reset_state(), and status().",
+    "metadata": {
+      "source": "plastic-cortex/src/plastic_cortex/lm_cortex.py"
+    }
+  },
+  {
+    "key": "lmplasticcortex fast weight adapter",
+    "value": "LMPlasticCortex uses a FastWeightLM adapter that stores token-to-logit boosts, allowing corrections to nudge output probabilities without overwriting the slow recurrent weights.",
+    "metadata": {
+      "source": "plastic-cortex/src/plastic_cortex/lm_cortex.py"
+    }
+  },
+  {
+    "key": "lmplasticcortex grow preserves state",
+    "value": "LMPlasticCortex.grow(new_hidden_dim) returns a larger model whose slow weight matrices are padded with small random values while fast weights, observation statistics, tokenizer, and correction_count are preserved.",
+    "metadata": {
+      "source": "plastic-cortex/src/plastic_cortex/lm_cortex.py"
+    }
+  },
+  {
+    "key": "lmplasticcortex spectral normalize W_hh",
+    "value": "LMPlasticCortex spectral-normalizes W_hh after initialization and after grow() so the recurrent matrix has spectral radius at most 1, which reduces BPTT explosion.",
+    "metadata": {
+      "source": "plastic-cortex/src/plastic_cortex/lm_cortex.py"
+    }
+  },
+  {
+    "key": "lmplasticcortex train_step stability",
+    "value": "LMPlasticCortex.train_step() performs full-sequence BPTT and clips the total gradient norm to 5.0 by default, with optional RMSprop updates.",
+    "metadata": {
+      "source": "plastic-cortex/src/plastic_cortex/lm_cortex.py"
+    }
+  },
+  {
+    "key": "nested learning stack timescales",
+    "value": "experiments.txt proposes a nested learning stack with Level 0 token dynamics on milliseconds, Level 1 conversation fast weights on minutes, Level 2 project neural memory on days, Level 3 identity on months, and Level 4 cortex on rare consolidation.",
+    "metadata": {
+      "source": "experiments.txt"
+    }
+  },
+  {
+    "key": "plastic world model agent runtime steps",
+    "value": "The Plastic World Model Agent runtime loops through answer, critic prediction, correction or failure, prediction error, fast-weight update, hippocampal surprise storage, adapter update, replay check, and decay of raw memory after consolidation.",
+    "metadata": {
+      "source": "experiments.txt"
+    }
+  },
+  {
+    "key": "cognitive immune layer detectors",
+    "value": "experiments.txt proposes a Cognitive Immune Layer that creates small mistake detectors instead of storing full corrections, and merges related detectors over time to avoid memory bloat.",
+    "metadata": {
+      "source": "experiments.txt"
+    }
+  },
+  {
+    "key": "cvec driver lifecycle",
+    "value": "The canonical LlamaCVecDriver lifecycle is load(), clear_cvec() for baseline, set_cvec_layer() or set_cvecs_per_layer() for steering, generate(), and clear_cvec() again to return to baseline.",
+    "metadata": {
+      "source": "oczy_lm/cvec_driver.py"
     }
   }
 ]
