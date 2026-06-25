@@ -67,17 +67,21 @@ Commits since previous summary:
     now stores `_prev_hidden`, computes the delta, and trains the autoencoder
     on it. Legacy text-token path unchanged. Benchmark unchanged:
     `code_qa_accuracy=1.0` (run #55).
+12. `24062b0` — Default `CortexAgent`'s `WorldModelCritic` to
+    `use_hidden=True` so corrections are predicted from the LM hidden vector
+    via a lazy-initialized MLP, rather than from string heuristics alone.
+    Standalone `WorldModelCritic` keeps `use_hidden=False` for backward
+    compatibility. Benchmark unchanged: `code_qa_accuracy=1.0` (run #56).
 
-Test status: `pytest: 214 passed` fast (reserve-position + tensor-critic + replay-SGD +
-identity-adapter + hidden-delta unit tests pass; full slow/model suite not rerun).
-`ruff check` clean on changed files.
+Test status: `pytest: 219 passed` fast (reserve-position + tensor-critic + replay-SGD +
+identity-adapter + hidden-delta + default-critic unit tests pass; full slow/model
+suite not rerun). `ruff check` clean on changed files.
 
 Remaining blocks:
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
 - Exact-token uptake via cvec alone remains blocked; `ReservedPosition` prefix is the
   practical exact-recall surface, and it can now be selected automatically by the
   knowledge store.
-- WorldModelCritic now has a tensor-input MLP path but it is not yet the default.
 - Hippocampal replay now has a differentiable SGD path on `proj_hidden`, gated by
   `replay_sgd_step` and defaulting to off.
 - IdentityHypernetwork now emits real `d_cortex`-dimensional adapter deltas that are
@@ -86,3 +90,5 @@ Remaining blocks:
 - ExperienceAutoencoder now has a hidden-state-delta path, but it is trained passively
   and has not yet been shown to compress behavior-changing episodes better than the
   legacy text-token path.
+- WorldModelCritic is now tensor-input-by-default inside CortexAgent, but the MLP
+  effect on downstream behavior has not yet been measured in a real correction loop.
