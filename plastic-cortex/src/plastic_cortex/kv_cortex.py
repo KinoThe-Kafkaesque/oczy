@@ -149,6 +149,23 @@ class KVCortex:
         # Single flat contiguous buffer for the uniform cvec path.
         self._cvec_payloads_flat: np.ndarray | None = None
         self._dirty: bool = True
+        self.state_bias = np.zeros((c.d_cortex,), dtype=np.float32)
+
+    def set_state_bias(self, bias: np.ndarray) -> None:
+        """Replace the additive articulation bias.
+
+        The bias is added to ``warm_state`` at articulation time only; it
+        does not mutate ``warm_state`` or ``cold_state``.  Setting it marks
+        the cvec cache dirty so the next ``emit_*`` call recomputes.
+        """
+        bias = np.asarray(bias, dtype=np.float32)
+        if bias.shape != (self.config.d_cortex,):
+            raise ValueError(
+                "state_bias shape %s != expected (%d,)"
+                % (bias.shape, self.config.d_cortex)
+            )
+        self.state_bias = bias.copy()
+        self._dirty = True
 
     # ------------------------------------------------------------------
     # Warm path (called per token / per turn from the LM driver)
@@ -292,8 +309,9 @@ class KVCortex:
         In ``proj_random`` mode (legacy per-layer): einsum
         ``proj_c @ warm_state`` to ``(n_layers, d_embd)``.
         """
+        intent = (self.warm_state + self.state_bias).astype(np.float32)
         if self.proj_c_shared is not None:
-            vec = (self.proj_c_shared @ self.warm_state).astype(np.float32)
+            vec = (self.proj_c_shared @ intent).astype(np.float32)
             shared_payload = np.ascontiguousarray(vec)
             self._cvec_payloads = [shared_payload for _ in range(self.config.n_layers)]
             self._cvec_payloads_flat = shared_payload
@@ -319,8 +337,7 @@ class KVCortex:
             return
 
         # ``proj_random`` (default): one distinct projector per layer.
-        w = self.warm_state  # (d_cortex,)
-        projected = np.einsum("lec,c->le", self.proj_c, w).astype(np.float32)  # (n_layers, d_embd)
+        projected = np.einsum("lec,c->le", self.proj_c, intent).astype(np.float32)  # (n_layers, d_embd)
         self._cvec_payloads = [
             np.ascontiguousarray(projected[i]) for i in range(self.config.n_layers)
         ]
@@ -586,6 +603,8 @@ class KVCortex:
             "correction_count": self.correction_count,
             "consolidate_count": self.consolidate_count,
             "record_count": self.correction_count,
+            "state_bias_norm": float(np.linalg.norm(self.state_bias)),
+            "has_state_bias": bool(np.any(self.state_bias != 0)),
         }
         if include_size:
             result["serialized_bytes"] = len(pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL))
@@ -606,6 +625,8 @@ class KVCortex:
             self.__dict__["proj_c_shared"] = None
         if "_cvec_payloads_flat" not in self.__dict__:
             self.__dict__["_cvec_payloads_flat"] = None
+        if "state_bias" not in self.__dict__:
+            self.__dict__["state_bias"] = np.zeros(self.config.d_cortex, dtype=np.float32)
         # Force a payload rebuild on first read; loaded state is cold anyway.
         self.__dict__["_dirty"] = True
 
@@ -751,5 +772,7 @@ class KVCortex:
             self.proj_c_shared = None
         if "_cvec_payloads_flat" not in self.__dict__:
             self._cvec_payloads_flat = None
+        if "state_bias" not in self.__dict__:
+            self.state_bias = np.zeros(self.config.d_cortex, dtype=np.float32)
         # Force payload rebuild; loaded state is conceptually cold.
         self._dirty = True

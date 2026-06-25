@@ -361,6 +361,16 @@ class CortexAgent:
                     "token": label,
                 }
             )
+            try:
+                bias = self.identity_hypernetwork.generate_state_adapter(
+                    self.cortex.config.d_cortex
+                )
+                if bias is not None:
+                    self.cortex.set_state_bias(bias)
+            except AttributeError:
+                # Older IdentityHypernetwork implementations do not expose a
+                # state adapter; leave the cortex bias at its default zero.
+                pass
 
         if scores["immune_weight"] > 0:
             self.skill_immune_cortex.add_detector(

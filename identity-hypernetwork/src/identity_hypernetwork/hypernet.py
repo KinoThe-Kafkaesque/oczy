@@ -59,6 +59,8 @@ class IdentityHypernetwork:
         latent_dim: int = 8,
         seed: int = 0,
         learning_rate: float = 0.1,
+        state_dim: int | None = None,
+        state_learning_rate: float = 0.1,
         config: dict | None = None,
     ) -> None:
         """Create the hypernetwork.
@@ -67,6 +69,10 @@ class IdentityHypernetwork:
             latent_dim: dimensionality of each of the four identity vectors.
             seed: random seed for the tiny projection matrix.
             learning_rate: step size used when a lesson updates an identity slice.
+            state_dim: optional dimension of a state-space adapter. When None,
+                state adapter generation is disabled and behaviour is identical
+                to earlier versions.
+            state_learning_rate: EMA step size for per-concept state adapters.
             config: optional runtime configuration. Supported keys:
                 ``max_concepts`` (default 1000) and ``concept_decay_fraction``
                 (default 0.25) bound unbounded vocabulary growth.
@@ -83,6 +89,12 @@ class IdentityHypernetwork:
         scale = 1.0 / np.sqrt(self.input_dim)
         self.W = self.rng.standard_normal((self.output_dim, self.input_dim)) * scale
         self.lr = learning_rate
+
+        # Optional state-space adapter parameters.
+        self.state_dim = state_dim
+        self.state_learning_rate = state_learning_rate
+        self.W_state: np.ndarray | None = None
+        self.state_adapters: dict[str, np.ndarray] = {}
 
         # Bound linear vocabulary growth.
         self.max_concepts = int(cfg.get("max_concepts", 1000))
@@ -101,6 +113,54 @@ class IdentityHypernetwork:
         z = self.latents.to_array()
         scores = self.W @ z
         return {"concept_scores": {concept: float(scores[i]) for i, concept in enumerate(self.concepts)}}
+
+    def _ensure_state_initialized(self, state_dim: int) -> None:
+        """Lazy-initialize state adapter weights once the state dim is known."""
+        if self.W_state is not None:
+            if self.state_dim != state_dim:
+                raise ValueError(
+                    f"state_dim mismatch: already initialised with "
+                    f"{self.state_dim}, got {state_dim}"
+                )
+            return
+        self.state_dim = state_dim
+        scale = 1.0 / np.sqrt(self.input_dim)
+        self.W_state = self.rng.standard_normal((state_dim, self.input_dim)) * scale
+        if not self.state_adapters:
+            self.state_adapters = {
+                concept: np.zeros(state_dim, dtype=np.float64)
+                for concept in self.concepts
+            }
+
+    def generate_state_adapter(self, state_dim: int) -> np.ndarray | None:
+        """Return a state-space adapter vector derived from the current identity.
+
+        The adapter is a weighted blend of per-concept state adapters, where
+        the weights come from the concept score projection.  The result is
+        passed through ``tanh`` and clipped to a maximum L2 norm of 1.0.
+
+        Args:
+            state_dim: dimensionality of the returned adapter vector.  Must
+                match the dimension used during any prior initialisation.
+
+        Returns:
+            A 1-D array of length ``state_dim`` when state adapters have been
+            initialised; otherwise ``None`` if the optional state-space path is
+            not enabled.
+        """
+        if self.state_dim is None and state_dim is None:
+            return None
+        self._ensure_state_initialized(state_dim)
+        z = self.latents.to_array()
+        scores = self.W @ z
+        blended = np.zeros(self.state_dim, dtype=np.float64)
+        for i, concept in enumerate(self.concepts):
+            blended += scores[i] * self.state_adapters[concept]
+        adapter = np.tanh(blended)
+        norm = float(np.linalg.norm(adapter))
+        if norm > 1.0:
+            adapter = adapter / norm
+        return adapter
 
     def update_identity(self, lesson: dict) -> None:
         """Apply a learning signal to the relevant identity component.
@@ -139,6 +199,15 @@ class IdentityHypernetwork:
         updated += step
         setattr(self.latents, z_field, updated)
 
+        # Optional state-space adapter update.
+        if self.state_dim is not None:
+            self._ensure_state_initialized(self.state_dim)
+            full_delta = np.zeros(self.input_dim, dtype=np.float64)
+            full_delta[start:end] = step
+            state_delta = self.W_state @ full_delta
+            current = self.state_adapters[target_concept]
+            current += self.state_learning_rate * (state_delta - current)
+
     def status(self, include_size: bool = False) -> dict:
         """Return a serialisable status snapshot."""
         result = {
@@ -148,6 +217,8 @@ class IdentityHypernetwork:
             "num_concepts": self.output_dim,
             "max_concepts": self.max_concepts,
             "pruned_concepts": self.pruned_concepts,
+            "state_dim": self.state_dim,
+            "state_adapters_initialised": self.W_state is not None,
             "latents": self.latents.to_dict(),
             "record_count": len(self.concepts),
         }
@@ -156,6 +227,7 @@ class IdentityHypernetwork:
                 pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
             )
         return result
+
     def grow_vocab(self, new_concepts: list[str]) -> None:
         """Add new concepts to the vocabulary, extending ``W`` with one fresh row each.
 
@@ -179,6 +251,7 @@ class IdentityHypernetwork:
         under the cap.
         """
         scale = 1.0 / np.sqrt(self.input_dim)
+        state_initialised = self.W_state is not None
         for raw in new_concepts:
             clean = "".join(ch for ch in str(raw) if ch.isalnum()).lower()
             if not clean or clean in self.concept_index:
@@ -190,6 +263,8 @@ class IdentityHypernetwork:
             self._concept_ages.append(self._concept_age_counter)
             self._concept_age_counter += 1
             self.output_dim += 1
+            if state_initialised:
+                self.state_adapters[clean] = np.zeros(self.state_dim, dtype=np.float64)
 
         # Bound linear vocabulary growth by dropping oldest concepts.
         if len(self.concepts) > self.max_concepts:
@@ -202,13 +277,18 @@ class IdentityHypernetwork:
             keep_indices = [i for i in range(n) if i not in remove_indices]
 
             self.W = self.W[keep_indices, :]
-            self.concepts = [self.concepts[i] for i in keep_indices]
+            keep_concepts = [self.concepts[i] for i in keep_indices]
+            removed = {self.concepts[i] for i in remove_indices}
+            self.concepts = keep_concepts
             self._concept_ages = [self._concept_ages[i] for i in keep_indices]
             self.concept_index = {
                 concept: i for i, concept in enumerate(self.concepts)
             }
             self.output_dim = len(self.concepts)
             self.pruned_concepts += remove
+            if self.W_state is not None:
+                for concept in removed:
+                    self.state_adapters.pop(concept, None)
 
     def _resolve_source(self, source: str) -> str | None:
         mapping: dict[str, str] = {
@@ -257,11 +337,12 @@ class IdentityHypernetwork:
                 f"new_latent_dim ({new_latent_dim}) must exceed "
                 f"current latent_dim ({self.latent_dim})"
             )
-
         child = IdentityHypernetwork(
             latent_dim=new_latent_dim,
             seed=self.rng.integers(2**31),
             learning_rate=self.lr,
+            state_dim=self.state_dim,
+            state_learning_rate=self.state_learning_rate,
             config={
                 "max_concepts": self.max_concepts,
                 "concept_decay_fraction": self.concept_decay_fraction,
@@ -276,6 +357,12 @@ class IdentityHypernetwork:
         child._concept_age_counter = self._concept_age_counter
         child._concept_ages = list(self._concept_ages)
         child.pruned_concepts = self.pruned_concepts
+        if self.W_state is not None:
+            child.state_adapters = {
+                concept: arr.copy()
+                for concept, arr in self.state_adapters.items()
+                if concept in child.concept_index
+            }
 
         new_input_dim = 4 * new_latent_dim
         new_cols = new_input_dim - self.input_dim
@@ -283,6 +370,21 @@ class IdentityHypernetwork:
         pad = self.rng.standard_normal((self.output_dim, new_cols)) * scale
         child.W = np.concatenate([self.W, pad], axis=1)
         return child
+    def __getstate__(self) -> dict:
+        """Return the instance dictionary for pickling.
+
+        Explicit method exists so the companion ``__setstate__`` can provide
+        backward-compatible defaults for older pickled snapshots.
+        """
+        return self.__dict__.copy()
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore instance state with defaults for backward compatibility."""
+        state.setdefault("state_dim", None)
+        state.setdefault("state_learning_rate", 0.1)
+        state.setdefault("W_state", None)
+        state.setdefault("state_adapters", {})
+        self.__dict__.update(state)
 
 
     def _field_slice(self, field: str) -> tuple[int, int]:

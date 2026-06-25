@@ -1,5 +1,7 @@
 """Smoke tests for Identity Hypernetwork."""
 
+import pickle
+
 import numpy as np
 import pytest
 
@@ -224,7 +226,6 @@ def test_concept_capacity_prunes_oldest_concepts_and_keeps_W_aligned():
         seed=1,
         config={"max_concepts": 18, "concept_decay_fraction": 0.5},
     )
-    initial_concepts = list(agent.concepts)
 
     # Add five brand-new concepts; total becomes 19 > 18.
     agent.grow_vocab(["alpha", "bravo", "charlie", "delta", "echo"])
@@ -262,3 +263,59 @@ def test_update_identity_auto_growth_honours_concept_capacity():
     assert len(agent.concepts) <= agent.max_concepts
     assert agent.status()["pruned_concepts"] >= 0
     assert agent.W.shape[0] == len(agent.concepts)
+
+
+def test_state_adapter_disabled_by_default():
+    agent = IdentityHypernetwork(seed=1)
+    assert agent.state_dim is None
+    assert agent.W_state is None
+    assert agent.state_adapters == {}
+    status = agent.status()
+    assert status["state_dim"] is None
+    assert status["state_adapters_initialised"] is False
+    with pytest.raises(TypeError):
+        agent.generate_state_adapter()
+
+
+def test_generate_state_adapter_lazy_initializes():
+    agent = IdentityHypernetwork(seed=2)
+    adapter = agent.generate_state_adapter(8)
+    assert adapter.shape == (8,)
+    assert agent.W_state is not None
+    assert agent.W_state.shape == (8, agent.input_dim)
+    assert agent.state_dim == 8
+    for concept in agent.concepts:
+        arr = agent.state_adapters[concept]
+        assert arr.shape == (8,)
+        assert np.allclose(arr, 0)
+
+
+def test_update_identity_moves_state_adapter():
+    agent = IdentityHypernetwork(seed=3, state_dim=8)
+    target = "business"
+    agent.update_identity({"source": "user_correction", "correct_label": target})
+    assert agent.W_state is not None
+    assert target in agent.state_adapters
+    assert np.linalg.norm(agent.state_adapters[target]) > 1e-9
+
+
+def test_state_adapter_affects_output():
+    agent = IdentityHypernetwork(seed=4, state_dim=8)
+    before = agent.generate_state_adapter(8).copy()
+    agent.update_identity({"source": "user_correction", "correct_label": "business"})
+    after = agent.generate_state_adapter(8)
+    assert not np.allclose(before, after)
+
+
+def test_pickle_roundtrip_state_adapters():
+    agent = IdentityHypernetwork(seed=5, state_dim=8)
+    agent.update_identity({"source": "user_correction", "correct_label": "business"})
+    before = agent.generate_state_adapter(8).copy()
+    data = pickle.dumps(agent, protocol=pickle.HIGHEST_PROTOCOL)
+    restored = pickle.loads(data)
+    assert restored.state_dim == agent.state_dim
+    assert np.allclose(restored.W_state, agent.W_state)
+    for concept in agent.concepts:
+        assert np.allclose(restored.state_adapters[concept], agent.state_adapters[concept])
+    after = restored.generate_state_adapter(8)
+    assert np.allclose(after, before)

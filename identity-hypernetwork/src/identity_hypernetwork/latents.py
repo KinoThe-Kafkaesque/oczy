@@ -44,7 +44,7 @@ class IdentityLatents:
         return {field: getattr(self, field).tolist() for field in self._FIELDS}
 
     @classmethod
-    def from_dict(cls, data: dict[str, list[float]]) -> "IdentityLatents":
+    def from_dict(cls, data: dict[str, list[float]]) -> IdentityLatents:
         """Restore latents from a plain dictionary."""
         dim = len(data["z_user"])
         inst = cls(dim=dim)
@@ -52,7 +52,7 @@ class IdentityLatents:
             setattr(inst, field, np.asarray(data[field], dtype=np.float64))
         return inst
 
-    def grow(self, new_dim: int) -> "IdentityLatents":
+    def grow(self, new_dim: int) -> IdentityLatents:
         """Return a larger IdentityLatents with old values in the leading slice."""
         if new_dim <= self.dim:
             raise ValueError(
