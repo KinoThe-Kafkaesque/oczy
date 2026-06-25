@@ -85,11 +85,19 @@ class OrganismAgent:
         self._surprise_threshold = float(config.get("surprise_threshold", 0.5))
         self._unk = "I don't know."
         self.use_cortex_lm_answer = bool(config.get("use_cortex_lm_answer", False))
+        self.use_cortex_policy = bool(config.get("use_cortex_policy", False))
+        self.cortex_policy_weight = float(config.get("cortex_policy_weight", 1.0))
         self.cortex_agent: CortexAgent | None = config.get("cortex_agent")
         if self.use_cortex_lm_answer and self.cortex_agent is None:
             warnings.warn(
                 "use_cortex_lm_answer=True but no cortex_agent provided; "
                 "falling back to the legacy PlasticCortex answer path.",
+                stacklevel=2,
+            )
+        if self.use_cortex_policy and self.cortex_agent is None:
+            warnings.warn(
+                "use_cortex_policy=True but no cortex_agent provided; "
+                "falling back to the legacy ranking path.",
                 stacklevel=2,
             )
 
@@ -138,7 +146,22 @@ class OrganismAgent:
                         candidate_answers.append(corrected)
                         break
 
-        # 4. Apply identity-hypernetwork concept-score deltas to rank the
+        # 4. Optional CortexAgent policy-head scoring of candidates.
+        policy_scores: dict[str, float] | None = None
+        if self.use_cortex_policy and self.cortex_agent is not None:
+            try:
+                if self.cortex_agent._last_utterance != request:
+                    self.cortex_agent.perceive(request)
+                raw_scores = self.cortex_agent.policy_score(candidate_answers)
+                policy_scores = {
+                    cand: float(raw_scores[i])
+                    for i, cand in enumerate(candidate_answers)
+                    if i < len(raw_scores)
+                }
+            except Exception:
+                policy_scores = None
+
+        # 5. Apply identity-hypernetwork concept-score deltas to rank the
         # candidate labels.
         with self.profiler.profile("identity_hypernetwork"):
             adapters = self.identity_hypernetwork.generate_adapters()
@@ -149,6 +172,7 @@ class OrganismAgent:
             fast_answer=fast_answer,
             replay_hint=replay_hint,
             concept_scores=concept_scores,
+            policy_scores=policy_scores,
         )
 
         self._last_request = request
@@ -162,9 +186,10 @@ class OrganismAgent:
         fast_answer: str,
         replay_hint: str | None,
         concept_scores: dict[str, float],
+        policy_scores: dict[str, float] | None = None,
     ) -> str:
         """Pick the best candidate by combining request overlap, immune hints,
-        and identity-adapter concept deltas."""
+        identity-adapter concept deltas, and an optional cortex policy head."""
         request_tokens = set(self._tokenize(request))
 
         def _tokens(text: str) -> set[str]:
@@ -172,8 +197,16 @@ class OrganismAgent:
 
         def _score(label: str) -> float:
             label_tokens = _tokens(label)
+            policy_delta = (
+                self.cortex_policy_weight * float(policy_scores.get(label, 0.0))
+                if policy_scores is not None
+                else 0.0
+            )
+
+            # A policy head can still express a preference for a label that
+            # happens to have no usable tokens here.
             if not label_tokens:
-                return 0.0
+                return policy_delta
 
             # Start from strong preference for what the fast organ returned.
             score = 1.0 if label == fast_answer else 0.0
@@ -187,6 +220,9 @@ class OrganismAgent:
             # its delta to this label.
             for token in label_tokens:
                 score += float(concept_scores.get(token, 0.0))
+
+            # Optional CortexAgent policy-head score.
+            score += policy_delta
 
             return score
 
