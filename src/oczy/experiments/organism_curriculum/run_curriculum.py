@@ -12,15 +12,75 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from oczy.experiments.organism import LMBackendAgent, OrganismAgent
 from oczy.experiments.organism_curriculum.dataset import Episode, Probe, Stage, build_curriculum
 from oczy.experiments.organism_curriculum.scoring import categorize_results, probe_matches
 from oczy.experiments.organism_curriculum.validation import validate_curriculum
+
+
+class _DeterministicCortexShim:
+    """Lightweight deterministic policy-head stand-in for probe harness.
+
+    Implements the small subset of CortexAgent that OrganismAgent's gated
+    policy loop touches: policy_score, policy_update, and predict_value for
+    an optional value baseline. No LM is loaded.
+    """
+
+    def __init__(self, n_embd: int = 8, d_cortex: int = 4, seed: int = 0) -> None:
+        self.n_embd = n_embd
+        self.d_cortex = d_cortex
+        self.rng = np.random.default_rng(seed)
+        self._policy_W = self.rng.standard_normal(n_embd + d_cortex, dtype=np.float64)
+        self._policy_b = 0.0
+        self._warm = self.rng.standard_normal(d_cortex, dtype=np.float64)
+        self._last_hidden = self.rng.standard_normal(n_embd, dtype=np.float64)
+        self._prev_hidden = None
+        self.world_model_critic = self._ValueShim()
+
+    class _ValueShim:
+        def predict_value(self, **kwargs: Any) -> float:
+            return 0.5
+
+    def _hidden(self, text: str) -> np.ndarray:
+        h = np.zeros(self.n_embd, dtype=np.float64)
+        for i, ch in enumerate(text):
+            h[i % self.n_embd] += ord(ch) * 0.01
+        return h
+
+    def _policy_features(self, candidates: list[str]) -> np.ndarray:
+        hidden_matrix = np.asarray(
+            [self._hidden(c) for c in candidates], dtype=np.float64
+        )
+        warm_matrix = np.repeat(self._warm.reshape(1, -1), len(candidates), axis=0)
+        return np.hstack([warm_matrix, hidden_matrix])
+
+    def policy_score(self, candidates: list[str]) -> np.ndarray:
+        X = self._policy_features(candidates)
+        return X @ self._policy_W + self._policy_b
+
+    def policy_update(
+        self,
+        candidates: list[str],
+        chosen_idx: int,
+        reward: float,
+        baseline: float = 0.0,
+    ) -> None:
+        scores = self.policy_score(candidates)
+        X = self._policy_features(candidates)
+        max_score = np.max(scores)
+        exps = np.exp(scores - max_score)
+        probs = exps / np.sum(exps)
+        advantage = reward - baseline
+        self._policy_W += 0.05 * advantage * (X[chosen_idx] - probs @ X)
+        self._policy_b += 0.05 * advantage * (1.0 - probs[chosen_idx])
 
 
 @dataclass
@@ -334,6 +394,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Report filename.",
     )
     p.add_argument(
+        "--use-cortex-shim",
+        action="store_true",
+        help="Attach a deterministic CortexAgent shim to OrganismAgent for policy-loop probing.",
+    )
+    p.add_argument(
         "--policy-log",
         type=Path,
         default=None,
@@ -342,10 +407,60 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _print_policy_delta(results: list[StageResult]) -> None:
+    def _match_key(text: str, scores: dict[str, float]) -> str | None:
+        """Find the candidate key that corresponds to ``text``.
+
+        First tries an exact lookup, then a case-insensitive containment match,
+        then falls back to the key with the greatest token overlap.
+        """
+        if text in scores:
+            return text
+        lowered = text.lower()
+        for key in scores:
+            if key.lower() == lowered:
+                return key
+            if key.lower() in lowered or lowered in key.lower():
+                return key
+        text_tokens = set(re.findall(r"[a-z0-9']+", lowered))
+        best_key = None
+        best_overlap = 0.0
+        for key in scores:
+            key_tokens = set(re.findall(r"[a-z0-9']+", key.lower()))
+            if not key_tokens:
+                continue
+            overlap = len(text_tokens & key_tokens) / max(len(text_tokens), len(key_tokens))
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_key = key
+        return best_key
+
+    if any(er.policy_score_before and er.policy_score_after for sr in results for er in sr.episode_results):
+        deltas = []
+        for sr in results:
+            for er in sr.episode_results:
+                if er.policy_score_before and er.policy_score_after:
+                    target = er.corrected_response
+                    before_key = _match_key(target, er.policy_score_before)
+                    after_key = _match_key(target, er.policy_score_after)
+                    if before_key is not None and after_key is not None:
+                        deltas.append(er.policy_score_after[after_key] - er.policy_score_before[before_key])
+        if deltas:
+            avg_delta = sum(deltas) / len(deltas)
+            print("\nAverage corrected-answer policy score delta: %.4f" % avg_delta)
+        else:
+            print("\nPolicy scores present but corrected-answer delta could not be computed.")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     agent_config: dict[str, Any] = json.loads(args.config)
+    if args.use_cortex_shim:
+        agent_config.setdefault("use_cortex_policy", True)
+        agent_config.setdefault("use_value_baseline", True)
+        agent_config.setdefault("use_acceptance_policy_reward", True)
+        print("Enabled policy-loop gates for cortex shim.")
 
     stage_names = tuple(args.stages) if args.stages else None
     stages = build_curriculum(stage_names=stage_names)
@@ -363,6 +478,14 @@ def main(argv: list[str] | None = None) -> int:
                 print("  - %s" % w)
 
     agent = load_agent(args.agent, agent_config)
+
+    if args.use_cortex_shim and isinstance(agent, OrganismAgent):
+        shim = _DeterministicCortexShim()
+        if agent.cortex_agent is None:
+            agent.cortex_agent = shim
+            print("Deterministic CortexAgent shim attached.")
+        else:
+            print("CortexAgent already present; shim not attached.")
 
     adapter = None
     if args.lm:
@@ -396,6 +519,7 @@ def main(argv: list[str] | None = None) -> int:
     print("\n=== Organism curriculum summary ===")
     print_summary(results)
     print_per_stage(results)
+    _print_policy_delta(results)
 
     report_path = args.report_dir / args.report_name
     write_report(results, args.agent, args.lm, report_path)
