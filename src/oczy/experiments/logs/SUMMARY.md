@@ -120,11 +120,18 @@ Commits since previous summary:
     `policy_update`. Default baseline remains 0.0; benchmark unchanged:
     `code_qa_accuracy=1.0` (run #65).
 
-Test status: `pytest: 258 passed` fast (reserve-position + tensor-critic + replay-SGD +
+22. `cc5cc2f` — Add an optional acceptance-reward policy update: when
+    `use_acceptance_policy_reward=True`, `OrganismAgent` reinforces the
+    chosen candidate with `reward=+1.0` whenever the critic predicts the
+    emitted answer is acceptable. Refactors `_learn_from_correction` and
+    the acceptance path through a shared `_policy_update_with_baseline`
+    helper. Benchmark unchanged: `code_qa_accuracy=1.0` (run #66).
+
+Test status: `pytest: 263 passed` fast (reserve-position + tensor-critic + replay-SGD +
 identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
 value-head + value-head-wiring + policy-head + organism-policy + policy-correction-loop +
-policy-positive-reward + actor-critic-baseline unit tests pass; full slow/model suite not
-rerun). `ruff check` clean on changed files.
+policy-positive-reward + actor-critic-baseline + acceptance-reward unit tests pass; full
+slow/model suite not rerun). `ruff check` clean on changed files.
 
 Remaining blocks:
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
@@ -141,6 +148,7 @@ Remaining blocks:
   digestive gate, but none have been validated in a real correction/uptake loop.
 - CortexAgent now has an `answer()` method, a learned response-policy head, and
   `OrganismAgent` can use it for ranking and symmetric (+/-) policy-gradient updates
-  with an optional value-head baseline (via `use_cortex_policy=True` /
-  `use_value_baseline=True`). All gates remain off by default and have not been
-  measured in a real correction/uptake loop.
+  with an optional value-head baseline and an optional acceptance reward on
+  predicted-accepted answers (via `use_cortex_policy=True`, `use_value_baseline=True`,
+  and `use_acceptance_policy_reward=True`). All gates remain off by default and have
+  not been measured in a real correction/uptake loop.
