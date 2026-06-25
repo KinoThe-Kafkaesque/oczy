@@ -5,6 +5,7 @@ compress-and-decay consolidation loop.
 """
 
 import pytest
+import numpy as np
 
 from neural_hippocampus import NeuralHippocampus
 
@@ -126,3 +127,57 @@ def test_corrected_answer_round_trips_through_replay():
             corrected_answer="business vertical")
     r = h.reinforce("what is a profile?", k=1)
     assert r and r[0].get("corrected_answer") == "business vertical"
+def test_hidden_vec_stored_and_returned_in_replay():
+    """An optional hidden vector should be preserved on the trace and replayed."""
+    hippo = NeuralHippocampus(config={"surprise_threshold": 0.0})
+    hidden = np.random.randn(32).astype(np.float32)
+
+    hippo.store(
+        query="what is a profile?",
+        answer="user profile page",
+        correction="I mean business vertical",
+        prediction_error=0.9,
+        corrected_answer="business vertical",
+        hidden=hidden,
+    )
+
+    replays = hippo.reinforce("what is a profile?", k=1)
+    assert len(replays) == 1
+    returned = replays[0].get("hidden_vec")
+    assert returned is not None
+    assert isinstance(returned, np.ndarray)
+    assert np.array_equal(returned, hidden)
+
+
+def test_representative_hidden_is_mean_of_cluster_hiddens():
+    """Consolidation summaries should expose the mean hidden of each cluster."""
+    hippo = NeuralHippocampus(
+        config={"surprise_threshold": 0.0, "cluster_similarity": 1.0}
+    )
+    v1 = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    v2 = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+
+    # Identical queries produce identical synthetic embeddings and are always
+    # merged into one cluster, letting us test averaging of hidden vectors.
+    for hidden in (v1, v2):
+        hippo.store("profile means business vertical", "x", "vertical", 0.8, hidden=hidden)
+
+    hippo.reinforce("profile means business vertical")
+
+    summaries = hippo.consolidate()
+    assert len(summaries) == 1
+    rep = summaries[0]["representative_hidden"]
+    assert rep is not None
+    assert isinstance(rep, np.ndarray)
+    expected = np.mean([v1, v2], axis=0).astype(np.float32)
+    assert np.allclose(rep, expected)
+
+
+def test_storing_without_hidden_keeps_backward_compatibility():
+    """Episodes written without a hidden vector should still consolidate."""
+    hippo = NeuralHippocampus(config={"surprise_threshold": 0.0})
+    hippo.store("timeout retry logic", "x", "fix network", 0.8)
+    hippo.reinforce("timeout retry logic")
+    summaries = hippo.consolidate()
+    assert len(summaries) == 1
+    assert summaries[0].get("representative_hidden") is None

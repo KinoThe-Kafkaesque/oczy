@@ -316,6 +316,7 @@ class CortexAgent:
                 correction=text,
                 prediction_error=self._last_drift,
                 corrected_answer="",
+                hidden=self._last_hidden.copy(),
             )
 
         # Identity accepts a token / correct_label; use the utterance's
@@ -506,10 +507,10 @@ class CortexAgent:
         """Move cortex warm into cold, plus organ consolidation fans.
 
         Replays are pulled from the hippocampus and passed as a list of
-        d_embd vectors to cortex.consolidate(). Today the hippocampus
-        returns episode dicts (string-keyed), so we synthesise replay
-        tensors by re-embedding their query fields through the LM -- a
-        placeholder until the hippocampus natively stores tensors.
+        d_embd vectors to cortex.consolidate().  When the hippocampus
+        summary carries a ``representative_hidden`` vector, we replay that
+        hidden directly; otherwise we fall back to re-embedding the summary
+        query string for backward compatibility.
 
         ``strength`` is passed through to ``KVCortex.consolidate`` and
         scales how aggressively warm state is written into cold state.
@@ -519,17 +520,20 @@ class CortexAgent:
 
         Returns a summary of what consolidation did.
         """
-        # Hipppocampal consolidate produces slow-update summaries and
+        # Hippocampal consolidate produces slow-update summaries and
         # decays the raw traces it owns.
         summaries = self.neural_hippocampus.consolidate()
 
-        # Build replay tensors from the consolidated queries. We pass these
-        # to cortex.consolidate as the Second-speed update signal: the
-        # cortex gets to absorb a tensor projection of what just got
-        # persisted, even though the hippocampus itself still holds
-        # strings today.
+        # Build replay tensors from the consolidated summaries.  Prefer the
+        # native LM hidden vector stored with the trace; only fall back to
+        # re-embedding the summary text when no hidden is available (e.g.
+        # traces written before this refactor).
         replays: list[np.ndarray] = []
         for s in summaries:
+            hidden = s.get("representative_hidden")
+            if isinstance(hidden, np.ndarray) and hidden.ndim == 1 and hidden.shape[0] > 0:
+                replays.append(hidden.copy())
+                continue
             q = s.get("representative_query") or ""
             if not q:
                 continue

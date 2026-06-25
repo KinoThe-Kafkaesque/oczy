@@ -61,11 +61,16 @@ class NeuralHippocampus:
         correction: str,
         prediction_error: float,
         corrected_answer: str | None = None,
+        hidden: np.ndarray | None = None,
     ) -> str | None:
         """Store a high-surprise experience episode.
 
         Returns the episode id if the trace was written, or ``None`` if its
         surprise fell below the configured gate.
+
+        ``hidden`` is an optional LM hidden vector for the episode.  When
+        provided, it is passed through to ``SurpriseGatedMemory`` and later
+        surfaced as ``representative_hidden`` in consolidation summaries.
         """
         episode = {
             "query": query,
@@ -75,6 +80,8 @@ class NeuralHippocampus:
         }
         if corrected_answer is not None:
             episode["corrected_answer"] = corrected_answer
+        if hidden is not None:
+            episode["hidden"] = hidden
         return self.memory.write(episode)
 
     def reinforce(self, query: str, k: int = 3) -> list[dict[str, Any]]:
