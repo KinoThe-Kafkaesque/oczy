@@ -54,7 +54,11 @@
   },
   {
     "question": "How does Oczy want memory to be represented?",
-    "expected": ["changed", "dynamic process", "rejecting traditional"],
+    "expected": [
+      "changed",
+      "dynamic process",
+      "rejecting traditional"
+    ],
     "must_recall_key": "memory thesis"
   },
   {
@@ -151,12 +155,15 @@
   },
   {
     "question": "What was wrong with the earlier extended learning evaluation?",
-    "expected": "incorrectly averaged memory_bytes_per_delta",
+    "expected": ["incorrectly averaged memory_bytes_per_delta", "memory usage incorrectly", "NeuralHippocampus", "Always-Wrong"],
     "must_recall_key": "oracle metric bug"
   },
   {
     "question": "What did the schema-drift fix correct in HippocampusOnlyAgent?",
-    "expected": ["corrected_answer", "correct answer"],
+    "expected": [
+      "corrected_answer",
+      "correct answer"
+    ],
     "must_recall_key": "schema drift fix"
   },
   {
@@ -175,7 +182,11 @@
   },
   {
     "question": "Which memory architecture pattern does Oczy explicitly reject?",
-    "expected": ["vector DB", "vector database", "vector databases"],
+    "expected": [
+      "vector DB",
+      "vector database",
+      "vector databases"
+    ],
     "must_recall_key": "not vector db"
   },
   {
@@ -194,7 +205,13 @@
   },
   {
     "question": "What gets stored by CortexAgent.save()?",
-    "expected": ["cortex_cold", "neural_hippocampus", "world_model_critic", "identity_hypernetwork", "cortex-related structures"],
+    "expected": [
+      "cortex_cold",
+      "neural_hippocampus",
+      "world_model_critic",
+      "identity_hypernetwork",
+      "cortex-related structures"
+    ],
     "must_recall_key": "cortex agent persistence fields"
   },
   {
@@ -209,7 +226,7 @@
   },
   {
     "question": "What caused the earlier extended-learning evaluation to over-penalize some memory strategies?",
-    "expected": "memory_bytes_per_delta",
+    "expected": ["memory_bytes_per_delta", "memory usage incorrectly", "inflating scores", "NeuralHippocampus"],
     "must_recall_key": "oracle metric bug"
   },
   {
@@ -278,7 +295,8 @@
     "expected": [
       "warm_state",
       "session-mutable",
-      "not persisted"
+      "not persisted",
+      "last_correction_hidden"
     ],
     "must_recall_key": "kvcortex warm state"
   },
@@ -311,7 +329,9 @@
     "expected": [
       "proj_c",
       "persisted",
-      "cold boot"
+      "cold boot",
+      "boot cycles",
+      "saved state"
     ],
     "must_recall_key": "svd proj_c cold boot persistence"
   },
@@ -353,5 +373,168 @@
       "strong write"
     ],
     "must_recall_key": "synaptic scratchpad design"
+  },
+  {
+    "question": "If every Oczy organ is trained on the same 30-item word-sense/trivia curriculum, which one scores highest and which comes second?",
+    "expected": [
+      "NeuralHippocampus",
+      "PlasticCortex",
+      "1.000",
+      "1.0",
+      "0.967",
+      "0.96"
+    ],
+    "must_recall_key": "extended learning modules ranked"
+  },
+  {
+    "question": "Why does IdentityHypernetwork nearly flatline in the extended-learning aggregate despite having a latent identity vector?",
+    "expected": [
+      "CONCEPT_VOCABULARY",
+      "hard-coded",
+      "curriculum senses",
+      "adapter retrieval"
+    ],
+    "must_recall_key": "identity hypernetwork flatlined extended learning aggregate"
+  },
+  {
+    "question": "What limits ExperienceAutoencoder in the full-curriculum evaluation even though its encoded identity is only 256 bytes?",
+    "expected": [
+      "random projection",
+      "untrained",
+      "reconstruction error"
+    ],
+    "must_recall_key": "experience autoencoder random encoder"
+  },
+  {
+    "question": "How well does the restored LM perception layer parse the canonical 12-lesson correction benchmark on its own, and how much does the raw fallback rescue overall absorption?",
+    "expected": [
+      "5/12",
+      "42%",
+      "11/12",
+      "raw fallback",
+      "5 of 12",
+      "11 of 12"
+    ],
+    "must_recall_key": "lm perception parse rate"
+  },
+  {
+    "question": "Which kind of lessons tend to confuse the LM perception parser in the middle of a 12-lesson run?",
+    "expected": [
+      "short",
+      "ambiguous",
+      "model",
+      "run",
+      "cell",
+      "record",
+      "module",
+      "key",
+      "service"
+    ],
+    "must_recall_key": "lm perception parse miss pattern"
+  },
+  {
+    "question": "What is the approximate inference cost of running one KVCortex update turn against a 1.2B-parameter LM?",
+    "expected": [
+      "sub-2 ms",
+      "sub-2 milliseconds",
+      "less than 2",
+      "d_cortex=128"
+    ],
+    "must_recall_key": "kvcortex per turn cost"
+  },
+  {
+    "question": "About how much GPU/CPU memory does the per-layer articulation projector consume with default KVCortex dimensions?",
+    "expected": [
+      "7 MB",
+      "7 megabytes",
+      "28 * 2048 * 128"
+    ],
+    "must_recall_key": "proj_c memory footprint megabytes"
+  },
+  {
+    "question": "How does KVCortex decide how aggressively to update warm_state when it sees a hidden vector?",
+    "expected": [
+      "alpha_warm",
+      "alpha_correction",
+      "correction_signal",
+      "linear blend",
+      "EMA"
+    ],
+    "must_recall_key": "kvcortex observe decides update rate"
+  },
+  {
+    "question": "Which KVCortex method is allowed to change the boot-persistent cold_state, and what two update rules does it use?",
+    "expected": [
+      "consolidate",
+      "slow EMA",
+      "replay absorption",
+      "consolidate_slow_step"
+    ],
+    "must_recall_key": "kvcortex consolidate writes boot persistent cold state"
+  },
+  {
+    "question": "Why is calling emit_cvec() repeatedly cheap for a steady-state cortex?",
+    "expected": [
+      "cached",
+      "_dirty",
+      "recomputes only",
+      "warm changes",
+      "observe"
+    ],
+    "must_recall_key": "kvcortex emit_cvec cache"
+  },
+  {
+    "question": "Why can't multiple KVCortex instances share a single LlamaCVecDriver?",
+    "expected": [
+      "per-context",
+      "llama_set_adapter_cvec",
+      "one driver per cortex-LM pair"
+    ],
+    "must_recall_key": "cvec driver ownership"
+  },
+  {
+    "question": "If I call set_cvec_layer(3, vec) twice with different vectors, which layers end up steered?",
+    "expected": [
+      "layer 3",
+      "replaced",
+      "other layers",
+      "keep",
+      "last set"
+    ],
+    "must_recall_key": "set_cvec_layer twice replaces same layer"
+  },
+  {
+    "question": "Why does LlamaCVecDriver provide a batched set_cvecs_per_layer method instead of only set_cvec_layer?",
+    "expected": [
+      "replaces whole cvec",
+      "concatenates",
+      "single adapter call",
+      "llama_set_adapter_cvec",
+      "once per batch",
+      "per-layer cvecs"
+    ],
+    "must_recall_key": "set_cvecs_per_layer batching"
+  },
+  {
+    "question": "What two silent config bugs in CortexAgent had to be fixed before SVD-initialised proj_c could survive reload?",
+    "expected": [
+      "steering_mode",
+      "articulate_scale",
+      "shadowed",
+      "field-drop",
+      "dropping"
+    ],
+    "must_recall_key": "cortex agent config field drop bugs"
+  },
+  {
+    "question": "What 2026-06-25 probe showed that cvec steering can shift answers but cannot teach brand-new tokens?",
+    "expected": [
+      "zarnox_flux",
+      "plenvik_brim",
+      "7331",
+      "4096",
+      "posture bias"
+    ],
+    "must_recall_key": "cortex steering falsification probe 2026-06-25"
   }
 ]

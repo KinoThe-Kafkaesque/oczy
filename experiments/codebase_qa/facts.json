@@ -120,7 +120,7 @@
   },
   {
     "key": "goal 1 kv slot",
-    "value": "GOALS.md Goal 1 requires writing real (k, v) pairs into a reserved KV slot.",
+    "value": "GOALS.md Goal 1 is about writing real (k, v) pairs into a reserved KV slot.",
     "metadata": {
       "source": "GOALS.md"
     }
@@ -361,6 +361,111 @@
     "value": "experiments.txt proposes the Synaptic Scratchpad, a bounded per-layer fast-weight matrix that performs correction-gated updates, where ordinary conversation causes weak writes, explicit corrections cause strong writes, repeated corrections become candidates for slow consolidation, and contradictions are isolated rather than merged.",
     "metadata": {
       "source": "experiments.txt"
+    }
+  },
+  {
+    "key": "extended learning modules ranked",
+    "value": "The 2026-06-19 extended learning evaluation trained all seven Oczy organs on a shared 30-item word-sense/trivia curriculum and ranked them NeuralHippocampus 1.000, PlasticCortex 0.967, SkillImmuneCortex 0.590, WorldModelCritic 0.399, ExperienceAutoencoder 0.203, IdentityHypernetwork 0.001.",
+    "metadata": {
+      "source": "experiments_logs/2026-06-19_extended_learning_evaluation.md"
+    }
+  },
+  {
+    "key": "identity hypernetwork flatlined extended learning aggregate",
+    "value": "IdentityHypernetwork scored 0.001 and flatlined in the 2026-06-19 extended learning aggregate because its hard-coded CONCEPT_VOCABULARY lacks the curriculum senses, so adapter retrieval fails completely even though it has a latent identity vector.",
+    "metadata": {
+      "source": "experiments_logs/2026-06-19_extended_learning_evaluation.md"
+    }
+  },
+  {
+    "key": "experience autoencoder random encoder",
+    "value": "ExperienceAutoencoder compressed identity to only 256 bytes in the extended learning evaluation, but its encoder was an untrained random projection, so reconstruction error remained high.",
+    "metadata": {
+      "source": "experiments_logs/2026-06-19_extended_learning_evaluation.md"
+    }
+  },
+  {
+    "key": "lm perception parse rate",
+    "value": "The 2026-06-22 LM perception demo parsed only 5 of 12 lessons correctly with the LFM2.5 model, while the raw fallback kept absorption at 11 of 12.",
+    "metadata": {
+      "source": "experiments_logs/2026-06-22_organism_curriculum_and_lm_perception.md"
+    }
+  },
+  {
+    "key": "lm perception parse miss pattern",
+    "value": "LM perception parse misses clustered in the middle of the 12-lesson demo, affecting short ambiguous tokens like model, run, cell, record, module, key, and service.",
+    "metadata": {
+      "source": "experiments_logs/2026-06-22_organism_curriculum_and_lm_perception.md"
+    }
+  },
+  {
+    "key": "kvcortex per turn cost",
+    "value": "KVCortex's per-turn runtime cost is sub-2 milliseconds for d_cortex=128 on LFM2.5-1.2B, consisting of one d_embd by d_cortex matmul plus n_layers per-layer projections.",
+    "metadata": {
+      "source": "plastic-cortex/src/plastic_cortex/kv_cortex.py"
+    }
+  },
+  {
+    "key": "proj_c memory footprint megabytes",
+    "value": "KVCortex's proj_c articulation projector has shape (n_layers, d_embd, d_cortex) and consumes about 7 megabytes of CPU or GPU memory at the defaults of 28 layers, 2048 embedding dims, and 128 cortical dims.",
+    "metadata": {
+      "source": "plastic-cortex/src/plastic_cortex/kv_cortex.py"
+    }
+  },
+  {
+    "key": "kvcortex observe decides update rate",
+    "value": "KVCortex.observe() decides how aggressively to update warm_state by linearly blending alpha_warm and alpha_correction according to correction_signal, then applying an EMA against tanh(proj_hidden @ lm_hidden).",
+    "metadata": {
+      "source": "plastic-cortex/src/plastic_cortex/kv_cortex.py"
+    }
+  },
+  {
+    "key": "kvcortex consolidate writes boot persistent cold state",
+    "value": "KVCortex.consolidate() is the only method allowed to change the boot-persistent cold_state, using a slow EMA nudge with consolidate_slow_step plus optional replay absorption when enough replays are provided.",
+    "metadata": {
+      "source": "plastic-cortex/src/plastic_cortex/kv_cortex.py"
+    }
+  },
+  {
+    "key": "kvcortex emit_cvec cache",
+    "value": "KVCortex.emit_cvec() returns a cached per-layer steering vector and only recomputes payloads when the _dirty flag is set, typically after observe() or reset.",
+    "metadata": {
+      "source": "plastic-cortex/src/plastic_cortex/kv_cortex.py"
+    }
+  },
+  {
+    "key": "cvec driver ownership",
+    "value": "LlamaCVecDriver owns one Llama instance because llama_set_adapter_cvec is per-context, so reusing one LM across multiple cortexes requires one driver per cortex-LM pair.",
+    "metadata": {
+      "source": "oczy_lm/cvec_driver.py"
+    }
+  },
+  {
+    "key": "set_cvec_layer twice replaces same layer",
+    "value": "In LlamaCVecDriver, calling set_cvec_layer() twice with different vectors replaces the previous vector in that same layer, while other layers keep whatever was last set there until clear_cvec() is called.",
+    "metadata": {
+      "source": "oczy_lm/cvec_driver.py"
+    }
+  },
+  {
+    "key": "set_cvecs_per_layer batching",
+    "value": "LlamaCVecDriver.set_cvecs_per_layer() concatenates all per-layer cvecs into one flat array and calls llama_set_adapter_cvec once, because the API replaces the whole cvec on each call.",
+    "metadata": {
+      "source": "oczy_lm/cvec_driver.py"
+    }
+  },
+  {
+    "key": "cortex agent config field drop bugs",
+    "value": "The 2026-06-25 SVD work fixed two CortexAgent silent failures: KVCortexConfig was rebuilt by hand dropping steering_mode, and articulate_scale was shadowed by a post-construction instance attribute.",
+    "metadata": {
+      "source": "experiments_logs/2026-06-25_svd_init_proj_c_persistence.md"
+    }
+  },
+  {
+    "key": "cortex steering falsification probe 2026-06-25",
+    "value": "A 2026-06-25 falsification probe showed cvec steering cannot teach brand-new tokens: fabricated facts zarnox_flux returns 7331 and plenvik_brim returns 4096 never appeared in output, confirming posture bias rather than retrievable knowledge.",
+    "metadata": {
+      "source": "experiments_logs/2026-06-25_svd_init_proj_c_persistence.md"
     }
   }
 ]
