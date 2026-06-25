@@ -48,15 +48,15 @@ class KVCortexConfig:
     vectors, not (k, v) KV-slot tensors).
     """
 
-    d_cortex: int = 128          # warm/cold state dimensionality
-    d_embd: int = 2048           # input dim from LM hidden state AND output dim per layer
-    n_layers: int = 28           # how many per-layer steering cvecs the cortex emits
+    d_cortex: int = 128  # warm/cold state dimensionality
+    d_embd: int = 2048  # input dim from LM hidden state AND output dim per layer
+    n_layers: int = 28  # how many per-layer steering cvecs the cortex emits
     seed: int = 0
 
     # Plasticity. Two scalars today; will become a learned alpha_ij matrix
     # the day the cortex gets differentiable plasticity (experiments.txt #4).
-    alpha_warm: float = 0.02          # normal-token update rate
-    alpha_correction: float = 5.0     # neuromodulator-gated update rate
+    alpha_warm: float = 0.02  # normal-token update rate
+    alpha_correction: float = 5.0  # neuromodulator-gated update rate
 
     # Consolidation.
     consolidate_replay_threshold: int = 3
@@ -106,20 +106,18 @@ class KVCortex:
         # Perception projector: hidden (d_embd) -> cortex (d_cortex).
         # Fixed-random init at 1/sqrt(d_embd) scale (matches fast-weight
         # programmer convention). Hebbian-trained later via train_step().
-        proj_hidden = self.rng.standard_normal(
-            (c.d_cortex, c.d_embd)
-        ).astype(np.float32) / np.sqrt(c.d_embd)
+        proj_hidden = self.rng.standard_normal((c.d_cortex, c.d_embd)).astype(
+            np.float32
+        ) / np.sqrt(c.d_embd)
         self.proj_hidden: np.ndarray = proj_hidden
 
         # Per-layer articulation projectors: warm (d_cortex) -> cvec (d_embd).
         # Each layer gets its own projector over the SAME intent vector.
         # Shape: (n_layers, d_embd, d_cortex). /sqrt(d_cortex) keeps the
         # projected vector bounded around unit scale.
-        self.proj_c: np.ndarray = (
-            self.rng.standard_normal((c.n_layers, c.d_embd, c.d_cortex))
-            .astype(np.float32)
-            / np.sqrt(c.d_cortex)
-        )
+        self.proj_c: np.ndarray = self.rng.standard_normal(
+            (c.n_layers, c.d_embd, c.d_cortex)
+        ).astype(np.float32) / np.sqrt(c.d_cortex)
 
         self.alpha_warm: float = c.alpha_warm
         self.alpha_correction: float = c.alpha_correction
@@ -138,9 +136,14 @@ class KVCortex:
         # Cached per-layer cvecs. Recomputed only when warm_state changes,
         # so emit_cvec() for a steady-state cortex is a tuple lookup.
         self._cvec_payloads: list[np.ndarray] = [
-            np.zeros(c.d_embd, dtype=np.float32)
-            for _ in range(c.n_layers)
+            np.zeros(c.d_embd, dtype=np.float32) for _ in range(c.n_layers)
         ]
+        # Optional articulation projector shared by every layer.
+        # Set by ``init_proj_c_from_svd(shared=True)`` so the driver can
+        # push one uniform cvec instead of stacking per-layer arrays.
+        self.proj_c_shared: np.ndarray | None = None
+        # Single flat contiguous buffer for the uniform cvec path.
+        self._cvec_payloads_flat: np.ndarray | None = None
         self._dirty: bool = True
 
     # ------------------------------------------------------------------
@@ -216,8 +219,7 @@ class KVCortex:
         """
         if not 0 <= layer_idx < self.config.n_layers:
             raise IndexError(
-                "layer_idx %d out of range [0, %d)"
-                % (layer_idx, self.config.n_layers)
+                "layer_idx %d out of range [0, %d)" % (layer_idx, self.config.n_layers)
             )
         if self._dirty:
             self._recompute_payloads()
@@ -233,20 +235,69 @@ class KVCortex:
             self._recompute_payloads()
         return list(self._cvec_payloads)
 
-    def _recompute_payloads(self) -> None:
-        """Project warm_state through every per-layer projector.
+    def has_uniform_proj_c(self) -> bool:
+        """Return True when all layers share a single ``proj_c_shared`` matrix.
 
-        In ``proj_random`` mode: einsum ``proj_c @ warm_state`` to
-        (n_layers, d_embd), per-layer contiguous.
-
-        In ``raw_hidden`` mode: broadcast a single
-        ``last_correction_hidden`` vector across all layers, scaled by
-        the cortex's overall correction magnitude (the L2 norm of warm_state
-        projected onto the "correction direction" pi/2 from origin, which
-        we approximate with the full warm norm for simplicity). Per-layer
-        expressivity is lost in this mode but the cvec is guaranteed
-        semantically aligned to a real LM residual.
+        The uniform path lets the driver push one cvec to every layer at
+        once, avoiding per-layer stack/concatenation on every articulation.
         """
+        return self.proj_c_shared is not None
+
+    def emit_all_cvecs_flat(self) -> np.ndarray:
+        """Return a single contiguous flat buffer of all per-layer cvecs.
+
+        Shape is ``(n_layers * n_embd,)`` and can be passed directly to
+        ``LlamaCVecDriver.set_cvecs_flat``. Requires that payloads have
+        been recomputed; returns ``ValueError`` if no flat buffer is
+        available (e.g., ``raw_hidden`` mode or non-shared proj_random
+        before recomputation).
+        """
+        if self._dirty:
+            self._recompute_payloads()
+        if self._cvec_payloads_flat is None:
+            raise ValueError("flat cvec buffer not available in current mode")
+        return self._cvec_payloads_flat
+
+    def emit_uniform_cvec(self) -> np.ndarray:
+        """Return the single steering vector used for every layer.
+
+        Requires ``has_uniform_proj_c()``; raises ``ValueError`` otherwise.
+        The result is the same contiguous buffer stored in
+        ``_cvec_payloads_flat``, so the driver can pass it straight through.
+        """
+        if not self.has_uniform_proj_c():
+            raise ValueError(
+                "emit_uniform_cvec() requires a shared projector; "
+                "use emit_cvec(layer_idx) or emit_all_cvecs() instead"
+            )
+        if self._dirty:
+            self._recompute_payloads()
+        return self._cvec_payloads_flat
+
+    def _recompute_payloads(self) -> None:
+        """Project warm_state through the active projector(s).
+
+        In uniform/shared mode: one ``proj_c_shared @ warm_state`` vector is
+        computed, cached as a single flat contiguous vector, and referenced
+        from every per-layer payload slot.  This lets the articulation path
+        push one cvec to the driver via ``set_cvec_uniform`` instead of
+        concatenating a per-layer stack.
+
+        In ``raw_hidden`` mode: broadcast a single ``last_correction_hidden``
+        vector across all layers, scaled by the cortex's overall correction
+        magnitude.
+
+        In ``proj_random`` mode (legacy per-layer): einsum
+        ``proj_c @ warm_state`` to ``(n_layers, d_embd)``.
+        """
+        if self.proj_c_shared is not None:
+            vec = (self.proj_c_shared @ self.warm_state).astype(np.float32)
+            shared_payload = np.ascontiguousarray(vec)
+            self._cvec_payloads = [shared_payload for _ in range(self.config.n_layers)]
+            self._cvec_payloads_flat = shared_payload
+            self._dirty = False
+            return
+
         if self.config.steering_mode == "raw_hidden":
             # Use the warm_state's norm as the amplitude. This couples the
             # cortex's learned intent magnitude to the cvec's steering
@@ -259,25 +310,27 @@ class KVCortex:
             )
             v = (unit_h * amp).astype(np.float32)
             self._cvec_payloads = [
-                np.ascontiguousarray(v.copy())
-                for _ in range(self.config.n_layers)
+                np.ascontiguousarray(v.copy()) for _ in range(self.config.n_layers)
             ]
+            self._cvec_payloads_flat = None
             self._dirty = False
             return
 
-        # ``proj_random`` (default).
-        w = self.warm_state                            # (d_cortex,)
-        projected = np.einsum(
-            "lec,c->le", self.proj_c, w
-        ).astype(np.float32)                           # (n_layers, d_embd)
+        # ``proj_random`` (default): one distinct projector per layer.
+        w = self.warm_state  # (d_cortex,)
+        projected = np.einsum("lec,c->le", self.proj_c, w).astype(
+            np.float32
+        )  # (n_layers, d_embd)
         self._cvec_payloads = [
-            np.ascontiguousarray(projected[i])
-            for i in range(self.config.n_layers)
+            np.ascontiguousarray(projected[i]) for i in range(self.config.n_layers)
         ]
+        self._cvec_payloads_flat = np.ascontiguousarray(projected).reshape(-1)
         self._dirty = False
 
     # Forward passthrough for callers that want flat forward(hidden) -> intent
-    def forward(self, lm_hidden: np.ndarray, correction_signal: float = 0.0) -> np.ndarray:
+    def forward(
+        self, lm_hidden: np.ndarray, correction_signal: float = 0.0
+    ) -> np.ndarray:
         """observe() + return warm_state. Convenience for the cortex-as-fn view."""
         return self.observe(lm_hidden, correction_signal=correction_signal)
 
@@ -313,8 +366,8 @@ class KVCortex:
 
         # Replay absorption (only if enough replays crossed the threshold).
         if replays is not None and len(replays) >= c.consolidate_replay_threshold:
-            stacked = np.stack(replays, axis=0)            # (R, d_embd)
-            deltas = self.proj_hidden @ stacked.T          # (d_cortex, R)
+            stacked = np.stack(replays, axis=0)  # (R, d_embd)
+            deltas = self.proj_hidden @ stacked.T  # (d_cortex, R)
             avg_delta = np.mean(np.tanh(deltas), axis=1).astype(np.float32)
             self.cold_state = (
                 self.cold_state
@@ -324,8 +377,7 @@ class KVCortex:
         # Slow EMA nudge.
         effective_slow = np.clip(c.consolidate_slow_step * strength, 0.0, 1.0)
         self.cold_state = (
-            (1.0 - effective_slow) * self.cold_state
-            + effective_slow * self.warm_state
+            (1.0 - effective_slow) * self.cold_state + effective_slow * self.warm_state
         ).astype(np.float32)
 
         self.consolidate_count += 1
@@ -353,27 +405,27 @@ class KVCortex:
     # ------------------------------------------------------------------
     # SVD-initialised articulation projector
     # ------------------------------------------------------------------
-    def init_proj_c_from_svd(self, hiddens: np.ndarray) -> None:
-        """Re-initialise ``proj_c`` so its columns are the top-``d_cortex``
-        right singular vectors of a batch of correction hiddens.
+    def init_proj_c_from_svd(
+        self,
+        hiddens: np.ndarray,
+        shared: bool = True,
+    ) -> None:
+        """Re-initialise ``proj_c`` / ``proj_c_shared`` from correction SVD.
 
         WHY: ``proj_random`` init draws cvecs from a random subspace, so
         the cortex's steering direction lives in noise rather than in
         correction-aligned structure. Initialising the projector from a
         real SVD basis makes ``proj_c @ warm_state`` land in the
-        correction subspace by construction. Because ``proj_c`` is part
-        of the persisted cortex state (see ``KVCortex.save`` and
-        ``CortexAgent.save`` at ``cortex_agent.py``), the steering
-        direction then survives cold boot -- unlike ``raw_hidden`` mode,
-        whose direction lives in the transient ``last_correction_hidden``
-        field that reload discards. See GOALS.md "meaningful cvec
-        steering" sub-goal.
+        correction subspace by construction. Because the projector is part
+        of the persisted cortex state, the steering direction survives cold
+        boot -- unlike ``raw_hidden`` mode, whose direction lives in the
+        transient ``last_correction_hidden`` field that reload discards.
 
-        Same SVD basis is broadcast across all layers: per-layer Gaussian
-        perturbation would reintroduce the off-manifold noise that
-        motivated ``raw_hidden`` in the first place. Per-layer
-        expressivity can be recovered later via a ``train_step``-on-
-        ``proj_c`` path (not implemented today).
+        By default the same SVD basis is stored once in
+        ``proj_c_shared`` and reused for every layer (the *uniform* path).
+        Callers that need per-layer expressivity can pass ``shared=False``
+        to keep the legacy stacked ``proj_c`` of shape
+        ``(n_layers, d_embd, d_cortex)``.
 
         NOTE: ``hiddens`` should come from the same LM and the same
         pooling path (``peek_embedding(last_token_only=False)``) that
@@ -387,6 +439,9 @@ class KVCortex:
                 last dim ``d_embd``. ``N`` should be >= ``d_cortex`` so
                 the SVD yields ``d_cortex`` non-degenerate right
                 singular vectors.
+            shared: when True (default), store one shared projector used
+                by every layer; when False, broadcast it into the legacy
+                per-layer ``proj_c`` stack.
         """
         h = np.asarray(hiddens, dtype=np.float32).reshape(
             np.asarray(hiddens).shape[0], -1
@@ -406,18 +461,24 @@ class KVCortex:
         # We take the top d_cortex rows -- the leading right singular
         # vectors -- as the projector's basis.
         _, _, Vt = np.linalg.svd(centered, full_matrices=False)
-        basis = Vt[: self.config.d_cortex]                       # (d_cortex, d_embd)
+        basis = Vt[: self.config.d_cortex]  # (d_cortex, d_embd)
         # Slab shape (d_embd, d_cortex): each column is one singular
         # vector, scaled by 1/sqrt(d_cortex) to match proj_random's
         # bound convention so emit_cvec magnitudes are comparable.
         slab = (basis.T / np.sqrt(self.config.d_cortex)).astype(np.float32)
-        self.proj_c = np.stack(
-            [slab.copy() for _ in range(self.config.n_layers)],
-            axis=0,
-        )
+        if shared:
+            self.proj_c_shared = slab
+            self.proj_c = None
+        else:
+            self.proj_c = np.stack(
+                [slab.copy() for _ in range(self.config.n_layers)],
+                axis=0,
+            )
+            self.proj_c_shared = None
         # No warm_state change: this rewrites the projector only. The
         # next emit_cvec() will regenerate payloads from the current
         # warm_state.
+        self._cvec_payloads_flat = None
         self._dirty = True
 
     # ------------------------------------------------------------------
@@ -454,31 +515,31 @@ class KVCortex:
     # ------------------------------------------------------------------
     # Introspection / persistence
     # ------------------------------------------------------------------
-    def status(self) -> dict[str, Any]:
+    def status(self, include_size: bool = False) -> dict[str, Any]:
         """Cross-organ status contract.
 
         Reports warm/cold norms and drift so the driver and harness can
         observe cortex behaviour without poking numpy arrays directly.
-        `serialized_bytes` is the canonical pickle size; `record_count`
-        tracks corrections absorbed (the meaningful learning signal).
+        `serialized_bytes` is only computed when ``include_size=True`` to
+        avoid expensive pickle calls in hot loops.
         """
-        return {
+        result = {
             "project": "plastic_cortex.kv",
             "d_cortex": self.config.d_cortex,
             "n_layers": self.config.n_layers,
             "warm_norm": float(np.linalg.norm(self.warm_state)),
             "cold_norm": float(np.linalg.norm(self.cold_state)),
-            "warm_cold_drift": float(
-                np.linalg.norm(self.warm_state - self.cold_state)
-            ),
+            "warm_cold_drift": float(np.linalg.norm(self.warm_state - self.cold_state)),
             "update_count": self.update_count,
             "correction_count": self.correction_count,
             "consolidate_count": self.consolidate_count,
-            "serialized_bytes": len(
-                pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
-            ),
             "record_count": self.correction_count,
         }
+        if include_size:
+            result["serialized_bytes"] = len(
+                pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
+            )
+        return result
 
     # Pickle: the projectors (proj_hidden, proj_k, proj_v) ARE the learned
     # state. RNG state is intentionally not serialised: it is deterministic
@@ -489,6 +550,14 @@ class KVCortex:
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         self.__dict__.update(state)
+        # Migration for pickles saved before the shared/uniform projector
+        # work (proj_c_shared, _cvec_payloads_flat) was introduced.
+        if "proj_c_shared" not in self.__dict__:
+            self.__dict__["proj_c_shared"] = None
+        if "_cvec_payloads_flat" not in self.__dict__:
+            self.__dict__["_cvec_payloads_flat"] = None
+        # Force a payload rebuild on first read; loaded state is cold anyway.
+        self.__dict__["_dirty"] = True
 
     def save(self, path: Path | str) -> None:
         path = Path(path)

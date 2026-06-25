@@ -303,7 +303,7 @@ class SkillImmuneCortex:
         self.merged = merged
         self.detectors = merged + leftover
 
-    def status(self) -> dict:
+    def status(self, include_size: bool = False) -> dict:
         """Return a serializable status snapshot.
 
         ``bytes`` measures the JSON-serialized snapshot byte length (kept for
@@ -319,11 +319,13 @@ class SkillImmuneCortex:
             "skill_count": len(self.skills),
             "class_counts": dict(self._class_counts),
             "record_count": len(self.detectors) + len(self.skills),
-            "serialized_bytes": len(pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)),
         }
+        if include_size:
+            payload["serialized_bytes"] = len(
+                pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
+            )
         payload["bytes"] = len(json.dumps(payload, default=str).encode("utf-8"))
         return payload
-
     def to_dict(self) -> dict:
         return {
             "config": self.config,

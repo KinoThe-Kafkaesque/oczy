@@ -54,9 +54,17 @@ from oczy.experiments.codebase_qa.knowledge_store import KnowledgeStore
 # replaced by the WorldModelCritic's drift-based signal once Goal 3 fully
 # converts the critic to a tensor-input consumer.
 _CORRECTION_MARKERS = (
-    "no, ", "no:", "wrong, ", "wrong:", "correction:",
-    "correct:", "expected:", "not what i meant",
-    "i meant", "actually,", "rather than",
+    "no, ",
+    "no:",
+    "wrong, ",
+    "wrong:",
+    "correction:",
+    "correct:",
+    "expected:",
+    "not what i meant",
+    "i meant",
+    "actually,",
+    "rather than",
 )
 
 
@@ -202,7 +210,6 @@ class CortexAgent:
         """Delegate to the driver: stop prepending an articulation prefix."""
         self.driver.clear_articulation_prefix()
 
-
     def should_consolidate(self) -> bool:
         """Return True when the digestive gate says consolidation pressure
         has crossed the configured threshold.
@@ -282,7 +289,10 @@ class CortexAgent:
         # compatibility, treat any episode whose drift crossed the legacy
         # threshold as a correction-like event when gating identity/immune.
         gate_correction = float(
-            max(correction_signal, self._last_drift > self.config.correction_drift_threshold)
+            max(
+                correction_signal,
+                self._last_drift > self.config.correction_drift_threshold,
+            )
         )
         scores = self.digestive_gate.ingest(
             drift=float(np.clip(self._last_drift, 0.0, 1.0)),
@@ -324,11 +334,13 @@ class CortexAgent:
         if scores["identity_weight"] > 0:
             tokens = re.findall(r"[A-Za-z][A-Za-z0-9_]+", text)
             label = tokens[0] if tokens else "unknown"
-            self.identity_hypernetwork.update_identity({
-                "source": "user" if correction_signal < 0.5 else "user_correction",
-                "correct_label": label,
-                "token": label,
-            })
+            self.identity_hypernetwork.update_identity(
+                {
+                    "source": "user" if correction_signal < 0.5 else "user_correction",
+                    "correct_label": label,
+                    "token": label,
+                }
+            )
 
         if scores["immune_weight"] > 0:
             self.skill_immune_cortex.add_detector(
@@ -384,7 +396,6 @@ class CortexAgent:
         if self.knowledge_store is not None:
             self.knowledge_store.add_fact(key, value, metadata)
 
-
     # ------------------------------------------------------------------
     # Articulation (LM generation with cortex steering)
     # ------------------------------------------------------------------
@@ -436,8 +447,13 @@ class CortexAgent:
             raise ValueError("articulate() needs a prompt or a prior perceive()")
 
         if apply_steering:
-            cvecs = self.cortex.emit_all_cvecs()
-            self.driver.set_cvecs_per_layer(cvecs, scale=self.config.articulate_scale)
+            if self.cortex.has_uniform_proj_c():
+                vec = self.cortex.emit_uniform_cvec()
+                self.driver.set_cvec_uniform(vec, scale=self.config.articulate_scale)
+            else:
+                self.driver.set_cvecs_per_layer(
+                    self.cortex.emit_all_cvecs(), scale=self.config.articulate_scale
+                )
             try:
                 return self.driver.generate(
                     prompt,
@@ -465,20 +481,14 @@ class CortexAgent:
         meta = self.metabolize(utterance) if metabolize else {"metabolized": False}
 
         consolidation = {"auto_consolidated": False}
-        if (
-            metabolize
-            and self.config.auto_consolidate
-            and self.should_consolidate()
-        ):
+        if metabolize and self.config.auto_consolidate and self.should_consolidate():
             pressure = self.digestive_gate._pressure
             cfg = self.digestive_gate.config
             threshold = cfg.consolidation_pressure_threshold
-            strength = (
-                1.0 + (pressure / threshold) * 9.0
-                if threshold > 0
-                else 1.0
+            strength = 1.0 + (pressure / threshold) * 9.0 if threshold > 0 else 1.0
+            strength = float(
+                np.clip(strength, 1.0, self.cortex.config.max_consolidation_strength)
             )
-            strength = float(np.clip(strength, 1.0, self.cortex.config.max_consolidation_strength))
             consolidation = {
                 "auto_consolidated": True,
                 "consolidation_strength": strength,
@@ -531,7 +541,11 @@ class CortexAgent:
         replays: list[np.ndarray] = []
         for s in summaries:
             hidden = s.get("representative_hidden")
-            if isinstance(hidden, np.ndarray) and hidden.ndim == 1 and hidden.shape[0] > 0:
+            if (
+                isinstance(hidden, np.ndarray)
+                and hidden.ndim == 1
+                and hidden.shape[0] > 0
+            ):
                 replays.append(hidden.copy())
                 continue
             q = s.get("representative_query") or ""
@@ -555,6 +569,7 @@ class CortexAgent:
             "replay_count": len(replays),
             "cold_drift": cold_drift,
         }
+
     # Persistence
     # ------------------------------------------------------------------
     def save(self, path: Path | str) -> None:
@@ -568,7 +583,14 @@ class CortexAgent:
         payload = {
             "cortex_cold": self.cortex.cold_state.copy(),
             "cortex_proj_hidden": self.cortex.proj_hidden.copy(),
-            "cortex_proj_c": self.cortex.proj_c.copy(),
+            "cortex_proj_c": (
+                self.cortex.proj_c.copy() if self.cortex.proj_c is not None else None
+            ),
+            "cortex_proj_c_shared": (
+                self.cortex.proj_c_shared.copy()
+                if self.cortex.proj_c_shared is not None
+                else None
+            ),
             "cortex_config": self.cortex.config,
             "neural_hippocampus": self.neural_hippocampus,
             "world_model_critic": self.world_model_critic,
@@ -582,7 +604,9 @@ class CortexAgent:
         tmp.replace(path)
 
     @classmethod
-    def load(cls, path: Path | str, config: CortexAgentConfig | None = None) -> "CortexAgent":
+    def load(
+        cls, path: Path | str, config: CortexAgentConfig | None = None
+    ) -> "CortexAgent":
         """Reconstruct a CortexAgent from a saved state file.
 
         The cortex's cold_state, proj_hidden, and proj_c are restored
@@ -597,7 +621,14 @@ class CortexAgent:
         # initialised cortex had in cold_state and projectors.
         agent.cortex.cold_state = payload["cortex_cold"].astype(np.float32)
         agent.cortex.proj_hidden = payload["cortex_proj_hidden"].astype(np.float32)
-        agent.cortex.proj_c = payload["cortex_proj_c"].astype(np.float32)
+        # Restore whichever projector representation was persisted:
+        # legacy per-layer stack, or the new shared/uniform slab.
+        proj_c = payload.get("cortex_proj_c")
+        agent.cortex.proj_c = proj_c.astype(np.float32) if proj_c is not None else None
+        proj_c_shared = payload.get("cortex_proj_c_shared")
+        agent.cortex.proj_c_shared = (
+            proj_c_shared.astype(np.float32) if proj_c_shared is not None else None
+        )
         agent.cortex.reset_warm_from_cold()
 
         agent.neural_hippocampus = payload["neural_hippocampus"]

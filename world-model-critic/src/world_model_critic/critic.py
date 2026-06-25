@@ -201,21 +201,25 @@ class WorldModelCritic:
         actual = 1.0 if actual_was_correction else 0.0
         return abs(self._last_correction_prob - actual)
 
-    def status(self) -> dict:
+    def status(self, include_size: bool = False) -> dict:
         """Return a standardized status snapshot for cross-organ metrics.
 
         The shape is shared across organs so the agent glue layer's memory
         metrics can compare them apples-to-apples.  All values are plain
         Python types so the result is JSON-serializable.
         """
-        return {
+        result = {
             "project": "world_model_critic",
             "ready": True,
             "record_count": len(self.records),
-            "serialized_bytes": len(pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)),
             "weights": list(self.weights),
             "ambiguous_word_count": len(self.ambiguous_words),
         }
+        if include_size:
+            result["serialized_bytes"] = len(
+                pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
+            )
+        return result
 
     # ------------------------------------------------------------------
     # Internal helpers

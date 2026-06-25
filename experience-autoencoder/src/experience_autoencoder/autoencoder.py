@@ -440,15 +440,20 @@ class ExperienceAutoencoder:
         self._A /= np.where(norms == 0, 1.0, norms)
         return float(error)
 
-    def status(self) -> dict[str, Any]:
-        return {
+    def status(self, include_size: bool = False) -> dict[str, Any]:
+        result = {
             "project": "experience_autoencoder",
             "ready": True,
             "latent_dim": LATENT_DIM,
             "vocab_size": len(self._vocab),
-            "serialized_bytes": len(pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)),
             "record_count": len(self._vocab),
         }
+        if include_size:
+            result["serialized_bytes"] = len(
+                pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
+            )
+        return result
+
 
 
 def _episode_tokens(episode: dict[str, Any]) -> set[str]:

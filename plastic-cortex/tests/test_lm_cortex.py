@@ -24,7 +24,7 @@ def _status_without_serialized_bytes(obj):
     pickle-protocol artifact, not a behavioral change, so the roundtrip tests
     exclude the field from equality checks.
     """
-    s = dict(obj.status())
+    s = dict(obj.status(include_size=True))
     s.pop("serialized_bytes", None)
     return s
 

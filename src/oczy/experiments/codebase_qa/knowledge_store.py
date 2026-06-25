@@ -239,17 +239,19 @@ class KnowledgeStore:
         lines.append("")
         return "\n".join(lines)
 
-    def status(self) -> dict:
+    def status(self, include_size: bool = False) -> dict:
         """Return serializable status metadata."""
         dim = None
         if self._facts and "key_emb" in self._facts[0]:
             dim = int(self._facts[0]["key_emb"].shape[0])
-        return {
+        result = {
             "project": "oczy.experiments.codebase_qa.knowledge_store",
-            "serialized_bytes": len(pickle.dumps(self)),
             "record_count": len(self._facts),
             "dim": dim,
         }
+        if include_size:
+            result["serialized_bytes"] = len(pickle.dumps(self))
+        return result
 
     def __getstate__(self) -> dict:
         # Drop the embedding function; it may be unpickleable.

@@ -127,18 +127,21 @@ class IdentityHypernetwork:
         updated += step
         setattr(self.latents, z_field, updated)
 
-    def status(self) -> dict:
+    def status(self, include_size: bool = False) -> dict:
         """Return a serialisable status snapshot."""
-        return {
+        result = {
             "project": "identity_hypernetwork",
             "ready": True,
             "latent_dim": self.latent_dim,
             "num_concepts": self.output_dim,
             "latents": self.latents.to_dict(),
-            "serialized_bytes": len(pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)),
             "record_count": len(self.concepts),
         }
-
+        if include_size:
+            result["serialized_bytes"] = len(
+                pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
+            )
+        return result
     def grow_vocab(self, new_concepts: list[str]) -> None:
         """Add new concepts to the vocabulary, extending ``W`` with one fresh row each.
 

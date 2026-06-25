@@ -102,7 +102,7 @@ def test_status_reported_fields():
     critic.predict_acceptance(AMBIGUOUS_QUERY, AMBIGUOUS_ANSWER)
     critic.record_outcome(AMBIGUOUS_QUERY, AMBIGUOUS_ANSWER, None)
 
-    status = critic.status()
+    status = critic.status(include_size=True)
 
     assert set(status.keys()) == {
         "project",

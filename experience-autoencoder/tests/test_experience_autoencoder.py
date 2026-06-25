@@ -188,7 +188,7 @@ def test_status_reports_serialized_bytes_and_record_count():
     # Encode an episode so vocab grows beyond the empty baseline.
     ae.encode(_profile_episode("corrected"))
 
-    status = ae.status()
+    status = ae.status(include_size=True)
 
     assert "serialized_bytes" in status
     assert "record_count" in status

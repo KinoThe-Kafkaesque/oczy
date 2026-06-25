@@ -628,7 +628,7 @@ class LMPlasticCortex:
 
         return float(loss)
 
-    def status(self) -> dict[str, Any]:
+    def status(self, include_size: bool = False) -> dict[str, Any]:
         """Return a serializable status dictionary."""
         param_bytes = int(
             self.E.nbytes
@@ -639,12 +639,7 @@ class LMPlasticCortex:
             + self.b_vocab.nbytes
         )
         fast_count = int(np.count_nonzero(self.fast.boosts))
-        # LMPlasticCortex pickles cleanly (verified): numpy arrays, stdlib
-        # counters, and the CharTokenizer/FastWeightLM adapters all round-trip
-        # without needing a try/except. Numba kernels are module-level
-        # functions, so they are not part of instance state.
-        serialized_bytes = len(pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL))
-        return {
+        result = {
             "project": "plastic_cortex_lm",
             "type": "LMPlasticCortex",
             "vocab_size": self.vocab_size,
@@ -652,14 +647,18 @@ class LMPlasticCortex:
             "param_bytes": param_bytes,
             "fast_weights_count": fast_count,
             "corrections": self.correction_count,
-            # Cross-organ memory-metrics fields.
-            "serialized_bytes": serialized_bytes,
             # record_count uses the total number of tokens the cortex has
-            # observed across training and answering -- it is the closest
-            # analogue to "how much has this been trained" available without a
-            # dedicated step counter.
+            # observed across training and answering.
             "record_count": int(self._token_total),
         }
+        if include_size:
+            # LMPlasticCortex pickles cleanly (verified): numpy arrays,
+            # stdlib counters, and the CharTokenizer/FastWeightLM adapters.
+            # Numba kernels are module-level functions, not instance state.
+            result["serialized_bytes"] = len(
+                pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
+            )
+        return result
 
     def reset_state(self) -> None:
         """Clear recurrent state and fast weights."""

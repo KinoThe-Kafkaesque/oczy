@@ -8,7 +8,7 @@ from identity_hypernetwork import IdentityHypernetwork, IdentityLatents
 
 def test_instantiation_and_status():
     agent = IdentityHypernetwork()
-    status = agent.status()
+    status = agent.status(include_size=True)
     assert status["project"] == "identity_hypernetwork"
     assert status["ready"] is True
     assert status["latent_dim"] == 8
@@ -118,7 +118,7 @@ def test_hypernetwork_grow_increases_latent_dim():
     assert grown.latent_dim == 8
     assert grown.latents.dim == 8
     assert grown.W.shape == (14, 32)
-    assert grown.status()["latent_dim"] == 8
+    assert grown.status(include_size=True)["latent_dim"] == 8
     assert np.allclose(grown.latents.to_array()[:16], before_latent)
     assert np.allclose(grown.latents.to_array()[16:], 0)
 
@@ -205,7 +205,7 @@ def test_update_identity_learns_unknown_label():
 
 def test_status_reports_serialized_bytes_and_record_count():
     agent = IdentityHypernetwork()
-    status = agent.status()
+    status = agent.status(include_size=True)
     assert status["record_count"] == len(agent.concepts)
     assert status["record_count"] == status["num_concepts"]
     assert isinstance(status["serialized_bytes"], int)
@@ -214,6 +214,6 @@ def test_status_reports_serialized_bytes_and_record_count():
     before_bytes = status["serialized_bytes"]
     before_count = status["record_count"]
     agent.grow_vocab(["docker", "container"])
-    after = agent.status()
+    after = agent.status(include_size=True)
     assert after["record_count"] == before_count + 2
     assert after["serialized_bytes"] > before_bytes

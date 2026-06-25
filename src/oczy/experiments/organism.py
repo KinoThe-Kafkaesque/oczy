@@ -403,9 +403,13 @@ class OrganismAgent:
         yet been updated.
         """
         try:
-            status = module.status()
+            status = module.status(include_size=True)
         except Exception:
-            status = None
+            try:
+                status = module.status()
+            except Exception:
+                status = None
+
 
         if isinstance(status, dict):
             # Canonical contract: every organ reports this.

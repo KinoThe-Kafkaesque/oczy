@@ -12,11 +12,11 @@ from oczy.experiments.codebase_qa.knowledge_store import KnowledgeStore
 
 def test_adding_facts_increases_record_count() -> None:
     store = KnowledgeStore()
-    assert store.status()["record_count"] == 0
+    assert store.status(include_size=True)["record_count"] == 0
     store.add_fact("python version", "Requires Python 3.10 or newer.")
-    assert store.status()["record_count"] == 1
+    assert store.status(include_size=True)["record_count"] == 1
     store.add_fact("license", "MIT license.")
-    assert store.status()["record_count"] == 2
+    assert store.status(include_size=True)["record_count"] == 2
 
 
 def test_keyword_recall_top_k_ordered_by_score() -> None:
@@ -92,7 +92,7 @@ def test_pickle_roundtrip_preserves_facts_and_uses_keyword_fallback() -> None:
 
 def test_status_returns_expected_keys() -> None:
     store = KnowledgeStore()
-    status = store.status()
+    status = store.status(include_size=True)
     assert status["project"] == "oczy.experiments.codebase_qa.knowledge_store"
     assert "serialized_bytes" in status
     assert "record_count" in status
@@ -106,7 +106,7 @@ def test_status_reports_embedding_dim() -> None:
 
     store = KnowledgeStore(embed_fn=embed_fn)
     store.add_fact("key", "value")
-    assert store.status()["dim"] == 32
+    assert store.status(include_size=True)["dim"] == 32
 
 
 def test_empty_store_returns_empty_recall() -> None:

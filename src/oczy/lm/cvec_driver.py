@@ -20,6 +20,7 @@ current llama-cpp-python binding — that work is tracked under Goal 2.
 from __future__ import annotations
 
 import ctypes
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -71,8 +72,8 @@ class LlamaCVecDriver:
     def __init__(self, llm: Llama, config: CVecDriverConfig | None = None) -> None:
         self.config = config or CVecDriverConfig()
         self._llm = llm
-        self._ctx_obj = llm._ctx          # LlamaContext wrapper
-        self._ctx_p = self._ctx_obj.ctx   # raw llama_context_p pointer (int)
+        self._ctx_obj = llm._ctx  # LlamaContext wrapper
+        self._ctx_p = self._ctx_obj.ctx  # raw llama_context_p pointer (int)
         self.n_embd: int = int(llm.n_embd())
         self.n_vocab: int = int(llm.n_vocab())
         self.n_layers: int = self._probe_n_layers()
@@ -80,6 +81,10 @@ class LlamaCVecDriver:
         # Track per-layer set ranges so clear_cvec() rewinds exactly what was set.
         self._applied_layer_ranges: list[tuple[int, int]] = []
         self._articulation_prefix: str | None = None
+        # LRU cache for embeddings: keyed by (prompt, last_token_only).
+        # Per-instance so different LMs never collide.
+        self._embedding_cache: OrderedDict[tuple[str, bool], np.ndarray] = OrderedDict()
+        self._embedding_cache_maxsize: int = 128
 
     @classmethod
     def load(cls, config: CVecDriverConfig | None = None) -> "LlamaCVecDriver":
@@ -124,17 +129,15 @@ class LlamaCVecDriver:
             )
         vec = np.ascontiguousarray(vec, dtype=np.float32).reshape(-1)
         if vec.shape[0] != self.n_embd:
-            raise ValueError(
-                "vec dim %d != n_embd %d" % (vec.shape[0], self.n_embd)
-            )
+            raise ValueError("vec dim %d != n_embd %d" % (vec.shape[0], self.n_embd))
         ptr = vec.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
         # il_end is exclusive: layer_idx..layer_idx+1 selects exactly one layer.
         rc = llama_cpp.llama_set_adapter_cvec(
             self._ctx_p,
             ptr,
-            vec.shape[0],   # len: total float count
-            self.n_embd,    # n_embd per layer
-            layer_idx,      # il_start
+            vec.shape[0],  # len: total float count
+            self.n_embd,  # n_embd per layer
+            layer_idx,  # il_start
             layer_idx + 1,  # il_end (exclusive)
         )
         if rc == 0:
@@ -187,17 +190,55 @@ class LlamaCVecDriver:
         rc = llama_cpp.llama_set_adapter_cvec(
             self._ctx_p,
             ptr,
-            flat.shape[0],            # len: n_embd * n_layers
-            self.n_embd,              # one cvec per layer is n_embd floats
-            0,                        # il_start
-            self.n_layers,            # il_end (exclusive)
+            flat.shape[0],  # len: n_embd * n_layers
+            self.n_embd,  # one cvec per layer is n_embd floats
+            0,  # il_start
+            self.n_layers,  # il_end (exclusive)
         )
         if rc == 0:
             self._cvec_active = True
             self._applied_layer_ranges = [(0, self.n_layers)]
         return rc
 
-    def set_cvec_uniform(self, vec: np.ndarray) -> int:
+    def set_cvecs_flat(
+        self,
+        flat: np.ndarray,
+        scale: float = 1.0,
+    ) -> int:
+        """Apply per-layer cvecs from an already flattened ``(n_layers*n_embd,)`` buffer.
+
+        This is the fast path used by the cortex when it already caches
+        the contiguous flat array; it skips the ``np.stack`` done by
+        ``set_cvecs_per_layer``.
+        """
+        expected = self.n_layers * self.n_embd
+        flat = np.ascontiguousarray(flat, dtype=np.float32).reshape(-1)
+        if flat.shape[0] != expected:
+            raise ValueError(
+                "flat cvec length %d != n_layers*n_embd %d" % (flat.shape[0], expected)
+            )
+        if scale != 1.0:
+            flat = (flat * scale).astype(np.float32)
+            flat = np.ascontiguousarray(flat)
+        ptr = flat.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        rc = llama_cpp.llama_set_adapter_cvec(
+            self._ctx_p,
+            ptr,
+            flat.shape[0],
+            self.n_embd,
+            0,
+            self.n_layers,
+        )
+        if rc == 0:
+            self._cvec_active = True
+            self._applied_layer_ranges = [(0, self.n_layers)]
+        return rc
+
+    def set_cvec_uniform(
+        self,
+        vec: np.ndarray,
+        scale: float = 1.0,
+    ) -> int:
         """Apply the same steering vector to every layer at once.
 
         Convenience for cortex states where layer-specific projection is
@@ -206,9 +247,10 @@ class LlamaCVecDriver:
         """
         vec = np.ascontiguousarray(vec, dtype=np.float32).reshape(-1)
         if vec.shape[0] != self.n_embd:
-            raise ValueError(
-                "vec dim %d != n_embd %d" % (vec.shape[0], self.n_embd)
-            )
+            raise ValueError("vec dim %d != n_embd %d" % (vec.shape[0], self.n_embd))
+        if scale != 1.0:
+            vec = (vec * scale).astype(np.float32)
+            vec = np.ascontiguousarray(vec)
         ptr = vec.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
         rc = llama_cpp.llama_set_adapter_cvec(
             self._ctx_p,
@@ -265,7 +307,6 @@ class LlamaCVecDriver:
     def articulation_prefix(self) -> str | None:
         return self._articulation_prefix
 
-
     # ------------------------------------------------------------------
     # LM forward (generation + perception)
     # ------------------------------------------------------------------
@@ -313,6 +354,9 @@ class LlamaCVecDriver:
         that single token -- this is the closest approximation available
         without layer-L binding work.
 
+        Embeddings are cached per (prompt, last_token_only) up to a
+        small LRU bound to avoid repeated LM calls for the same query.
+
         Args:
             prompt: text to embed
             last_token_only: when True (default), embed just the last
@@ -322,6 +366,12 @@ class LlamaCVecDriver:
         Returns:
             ``ndarray`` of shape ``(n_embd,)``, dtype ``float32``.
         """
+        cache_key = (prompt, bool(last_token_only))
+        cache = self._embedding_cache
+        if cache_key in cache:
+            cache.move_to_end(cache_key)
+            return cache[cache_key]
+
         if last_token_only:
             # Embed the prompt's last token in isolation: this gives a
             # token-conditioned hidden we can feed straight to cortex.observe.
@@ -337,8 +387,13 @@ class LlamaCVecDriver:
         emb_list = result["data"][0]["embedding"]
         emb = np.asarray(emb_list, dtype=np.float32)
         if emb.ndim == 2:
-            emb = emb[-1]   # take last token row if multiple came back
-        return np.ascontiguousarray(emb.reshape(-1))
+            emb = emb[-1]  # take last token row if multiple came back
+        emb = np.ascontiguousarray(emb.reshape(-1))
+
+        if len(cache) >= self._embedding_cache_maxsize:
+            cache.popitem(last=False)
+        cache[cache_key] = emb
+        return emb
 
     # ------------------------------------------------------------------
     # Introspection

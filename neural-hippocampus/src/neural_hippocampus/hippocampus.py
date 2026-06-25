@@ -111,7 +111,7 @@ class NeuralHippocampus:
 
         return summaries
 
-    def status(self) -> dict[str, Any]:
+    def status(self, include_size: bool = False) -> dict[str, Any]:
         """Return a serializable status snapshot with byte/episode counts.
 
         Fields:
@@ -122,20 +122,22 @@ class NeuralHippocampus:
           for this organ; standardized key for cross-organ status consumers).
         - ``slow_update_count``: number of consolidated slow-update summaries.
         - ``trace_bytes``: approximate size of the raw trace buffer (pickle).
-        - ``serialized_bytes``: pickle size of the entire organ object
-          (``pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)`` length).
+        - ``serialized_bytes``: only present when ``include_size=True``;
+          avoids expensive pickle calls in hot loops.
         """
-        return {
+        result = {
             "project": "neural_hippocampus",
             "ready": True,
             "episode_count": self.memory.episode_count(),
             "record_count": self.memory.episode_count(),
             "slow_update_count": len(self.slow_updates),
             "trace_bytes": self.memory.byte_count(),
-            "serialized_bytes": len(
-                pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
-            ),
         }
+        if include_size:
+            result["serialized_bytes"] = len(
+                pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
+            )
+        return result
 
     def forward(self, x: Any) -> Any:
         """Placeholder one-step forward call.
