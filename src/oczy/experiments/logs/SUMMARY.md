@@ -48,15 +48,20 @@ Commits since previous summary:
    The string-only logistic path is preserved; the MLP path is gated by
    `use_hidden=True` and lazy-initializes on first hidden vector. Benchmark
    unchanged: `code_qa_accuracy=1.0` (run #50).
+9. `b951011` — Add a signed SGD replay train step on `KVCortex.proj_hidden` and
+   wire `CortexAgent.consolidate()` to call it per hippocampal summary.
+   Correction summaries reinforce the response direction, neutral summaries
+   suppress it.  Gated off by default via `KVCortexConfig.replay_sgd_step`.
+   Fast tests pass; benchmark unchanged: `code_qa_accuracy=1.0` (run #51).
 
-Test status: `pytest: 177 passed` fast (targeted smoke + reserved-position + tensor-critic unit tests pass;
-full slow/model suite not rerun). `ruff check` clean on changed files.
+Test status: `pytest: 193 passed` fast (targeted smoke + reserved-position + tensor-critic +
+replay-SGD unit tests pass; full slow/model suite not rerun). `ruff check` clean on changed files.
 
 Remaining blocks:
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
 - Exact-token uptake via cvec alone remains blocked; `ReservedPosition` prefix is the
   practical exact-recall surface, and it can now be selected automatically by the
   knowledge store.
-- WorldModelCritic now has a tensor-input MLP path but it is not yet the default;
-  the organ still relies primarily on string features until hidden-input
-  experimentation proves a clear advantage.
+- WorldModelCritic now has a tensor-input MLP path but it is not yet the default.
+- Hippocampal replay now has a differentiable SGD path on `proj_hidden`, gated by
+  `replay_sgd_step` and defaulting to off.
