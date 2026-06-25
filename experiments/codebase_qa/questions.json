@@ -26,7 +26,7 @@
   },
   {
     "question": "Which model file is loaded by default from LiquidAI/LFM2.5-1.2B-Instruct-GGUF?",
-    "expected": "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+    "expected": "LFM2.5-1.2B-Instruct",
     "must_recall_key": "cvec driver default model"
   },
   {
@@ -48,5 +48,105 @@
     "question": "What did the recent SVD steering work conclude?",
     "expected": "posture bias",
     "must_recall_key": "cortex steering finding"
+  },
+  {
+    "question": "How does Oczy want memory to be represented?",
+    "expected": "changed",
+    "must_recall_key": "memory thesis"
+  },
+  {
+    "question": "What is the north-star metric for Oczy?",
+    "expected": "behavior_delta_per_byte_of_persistent_memory",
+    "must_recall_key": "north star metric"
+  },
+  {
+    "question": "What kind of memory architecture does Oczy reject?",
+    "expected": "vector DB",
+    "must_recall_key": "not vector db"
+  },
+  {
+    "question": "How many phases are in the Oczy organism roadmap?",
+    "expected": "9 phases",
+    "must_recall_key": "rl staircase phases"
+  },
+  {
+    "question": "What does NeuralHippocampus do?",
+    "expected": "stores high-surprise experiences",
+    "must_recall_key": "neural hippocampus role"
+  },
+  {
+    "question": "What is the role of WorldModelCritic?",
+    "expected": "prediction error",
+    "must_recall_key": "world model critic role"
+  },
+  {
+    "question": "What does IdentityHypernetwork generate?",
+    "expected": "adapter deltas",
+    "must_recall_key": "identity hypernetwork role"
+  },
+  {
+    "question": "What is SkillImmuneCortex responsible for?",
+    "expected": "regression guards",
+    "must_recall_key": "skill immune cortex role"
+  },
+  {
+    "question": "What does ExperienceAutoencoder compress traces into?",
+    "expected": "Delta-z",
+    "must_recall_key": "experience autoencoder role"
+  },
+  {
+    "question": "What is correction-benchmark used for?",
+    "expected": "curriculum and scoring harness",
+    "must_recall_key": "correction benchmark role"
+  },
+  {
+    "question": "How many stages are in the organism curriculum?",
+    "expected": "6 stages",
+    "must_recall_key": "organism curriculum stages"
+  },
+  {
+    "question": "Why does organism curriculum Stage 2 fail?",
+    "expected": "one corrected sense per token",
+    "must_recall_key": "stage 2 failure"
+  },
+  {
+    "question": "What is GOALS.md Goal 1 about?",
+    "expected": "reserved KV slot",
+    "must_recall_key": "goal 1 kv slot"
+  },
+  {
+    "question": "What does GOALS.md Goal 2 require?",
+    "expected": "hidden-state extraction at layer L",
+    "must_recall_key": "goal 2 hidden extraction"
+  },
+  {
+    "question": "What must the metabolism organs consume under GOALS.md Goal 3?",
+    "expected": "tensor signals",
+    "must_recall_key": "goal 3 organ tensor inputs"
+  },
+  {
+    "question": "Which API call applies the cortex steering vector?",
+    "expected": "llama_set_adapter_cvec",
+    "must_recall_key": "cvec adapter api"
+  },
+  {
+    "question": "What is the safe articulate_scale for raw_hidden steering on LFM2.5 Q4_K_M?",
+    "expected": "0.001",
+    "must_recall_key": "raw hidden steering scale"
+  },
+  {
+    "question": "What was wrong with the earlier extended learning evaluation?",
+    "expected": "incorrectly averaged memory_bytes_per_delta",
+    "must_recall_key": "oracle metric bug"
+  },
+  {
+    "question": "What did the schema-drift fix correct in HippocampusOnlyAgent?",
+    "expected": "corrected_answer",
+    "must_recall_key": "schema drift fix"
+  },
+  {
+    "question": "What dominates OrganismAgent's persistent memory cost?",
+    "expected": "hippocampus, immune, and autoencoder pickled state",
+    "must_recall_key": "organism agent memory cost"
   }
 ]

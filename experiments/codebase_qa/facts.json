@@ -10,6 +10,21 @@
     "metadata": { "source": "experiments.txt" }
   },
   {
+    "key": "memory thesis",
+    "value": "Oczy's architecture thesis is that memory should become changed dynamics: activation -> fast state -> fast weights -> neural memory -> slow weights -> forgetting raw trace.",
+    "metadata": { "source": "experiments.txt" }
+  },
+  {
+    "key": "not vector db",
+    "value": "Oczy rejects the 'chat log -> vector DB -> prompt stuffing' memory architecture.",
+    "metadata": { "source": "experiments.txt" }
+  },
+  {
+    "key": "rl staircase phases",
+    "value": "The Oczy organism roadmap has 9 phases: 0 predictive foundation, 1 learned value critic, 2 response policy, 3 differentiable plasticity, 4 intrinsic motivation, 5 hierarchical skills, 6 meta-RL, 7 internal simulation, 8 self-curriculum.",
+    "metadata": { "source": "experiments/rl_pipeline_design.md" }
+  },
+  {
     "key": "workspace packages",
     "value": "The workspace packages are correction-benchmark, experience-autoencoder, identity-hypernetwork, neural-hippocampus, oczy_common, oczy_lm, plastic-cortex, skill-immune-cortex, and world-model-critic.",
     "metadata": { "source": "pyproject.toml" }
@@ -30,6 +45,11 @@
     "metadata": { "source": "plastic-cortex/src/plastic_cortex/kv_cortex.py" }
   },
   {
+    "key": "cortex warm cold state",
+    "value": "KVCortex has warm_state (session-mutable, dies on restart) and cold_state (boot-loaded, written only by consolidate).",
+    "metadata": { "source": "plastic-cortex/src/plastic_cortex/kv_cortex.py" }
+  },
+  {
     "key": "cortex agent config defaults",
     "value": "CortexAgentConfig defaults are KVCortexConfig(), CVecDriverConfig(embedding=True), and articulate_scale=0.001.",
     "metadata": { "source": "experiments/cortex_agent.py" }
@@ -37,6 +57,11 @@
   {
     "key": "cortex agent persistence fields",
     "value": "CortexAgent.save() persists cortex_cold, cortex_proj_hidden, cortex_proj_c, cortex_config, neural_hippocampus, world_model_critic, identity_hypernetwork, skill_immune_cortex, and experience_autoencoder.",
+    "metadata": { "source": "experiments/cortex_agent.py" }
+  },
+  {
+    "key": "cortex agent correction markers",
+    "value": "CortexAgent._looks_like_correction() detects textual correction markers such as 'no', 'wrong', 'incorrect', 'actually', 'correction', 'should be', and 'not quite'.",
     "metadata": { "source": "experiments/cortex_agent.py" }
   },
   {
@@ -53,6 +78,66 @@
     "key": "peek_embedding requirement",
     "value": "peek_embedding() requires CVecDriverConfig(embedding=True) at load time, otherwise the llama.cpp embedding path is disabled.",
     "metadata": { "source": "oczy_lm/cvec_driver.py" }
+  },
+  {
+    "key": "cvec adapter api",
+    "value": "Cortex steering is applied via llama_set_adapter_cvec, a per-context control-vector surface exposed by llama-cpp-python.",
+    "metadata": { "source": "oczy_lm/cvec_driver.py" }
+  },
+  {
+    "key": "goal 1 kv slot",
+    "value": "GOALS.md Goal 1 requires writing real (k, v) pairs into a reserved KV slot.",
+    "metadata": { "source": "GOALS.md" }
+  },
+  {
+    "key": "goal 2 hidden extraction",
+    "value": "GOALS.md Goal 2 requires hidden-state extraction at layer L.",
+    "metadata": { "source": "GOALS.md" }
+  },
+  {
+    "key": "goal 3 organ tensor inputs",
+    "value": "GOALS.md Goal 3 upgrades the five metabolism organs to consume tensor signals from the cortex instead of string features.",
+    "metadata": { "source": "GOALS.md" }
+  },
+  {
+    "key": "neural hippocampus role",
+    "value": "NeuralHippocampus stores high-surprise experiences and replays compressed traces so the cortex can consolidate them.",
+    "metadata": { "source": "neural-hippocampus/src/neural_hippocampus/hippocampus.py" }
+  },
+  {
+    "key": "world model critic role",
+    "value": "WorldModelCritic tracks prediction error / surprise to gate what becomes a memory update.",
+    "metadata": { "source": "world-model-critic/src/world_model_critic/critic.py" }
+  },
+  {
+    "key": "identity hypernetwork role",
+    "value": "IdentityHypernetwork maintains a compact latent identity vector and generates adapter deltas from it.",
+    "metadata": { "source": "identity-hypernetwork/src/identity_hypernetwork/hypernet.py" }
+  },
+  {
+    "key": "skill immune cortex role",
+    "value": "SkillImmuneCortex acts as regression guards, detecting and isolating mistakes that should not be consolidated.",
+    "metadata": { "source": "skill-immune-cortex/src/skill_immune_cortex/immune.py" }
+  },
+  {
+    "key": "experience autoencoder role",
+    "value": "ExperienceAutoencoder compresses raw episode traces into latent Delta-z representations for efficient storage.",
+    "metadata": { "source": "experience-autoencoder/src/experience_autoencoder/autoencoder.py" }
+  },
+  {
+    "key": "correction benchmark role",
+    "value": "correction-benchmark provides a curriculum and scoring harness for correction-driven lifelong-learning agents.",
+    "metadata": { "source": "correction-benchmark/src/correction_benchmark/benchmark.py" }
+  },
+  {
+    "key": "organism curriculum stages",
+    "value": "The organism curriculum has 6 stages: sense grounding, transfer within domain, scope control, dialog, consolidation stress, and cross-domain retention.",
+    "metadata": { "source": "experiments/organism_curriculum/" }
+  },
+  {
+    "key": "stage 2 failure",
+    "value": "Stage 2 scope control fails because the default PlasticCortex backend can only store one corrected sense per token.",
+    "metadata": { "source": "experiments_logs/2026-06-22_organism_curriculum_and_lm_perception.md" }
   },
   {
     "key": "svd init proj_c",
@@ -80,8 +165,23 @@
     "metadata": { "source": "experiments_logs/2026-06-25_svd_init_proj_c_persistence.md" }
   },
   {
-    "key": "cortex agent correction markers",
-    "value": "CortexAgent._looks_like_correction() detects textual correction markers such as 'no', 'wrong', 'incorrect', 'actually', 'correction', 'should be', and 'not quite'.",
-    "metadata": { "source": "experiments/cortex_agent.py" }
+    "key": "raw hidden steering scale",
+    "value": "With steering_mode='raw_hidden' on LFM2.5-1.2B-Instruct Q4_K_M, articulate_scale=0.001 produced clean on-manifold steering while 0.005+ caused repetition garbage.",
+    "metadata": { "source": "experiments_logs/2026-06-24_cortexagent_raw_hidden_steering.md" }
+  },
+  {
+    "key": "oracle metric bug",
+    "value": "memory_bytes_per_delta was incorrectly averaged in the earlier extended learning evaluation, inflating NeuralHippocampus and Always-Wrong scores.",
+    "metadata": { "source": "NOTES.md" }
+  },
+  {
+    "key": "schema drift fix",
+    "value": "A schema-drift bug caused HippocampusOnlyAgent to store correction text under correction= while reading corrected_answer, so replay hints silently never reached the ranker.",
+    "metadata": { "source": "NOTES.md" }
+  },
+  {
+    "key": "organism agent memory cost",
+    "value": "OrganismAgent's persistent memory cost is dominated by the hippocampus, immune, and autoencoder pickled state.",
+    "metadata": { "source": "experiments_logs/2026-06-22_organism_curriculum_and_lm_perception.md" }
   }
 ]

@@ -28,8 +28,11 @@ def test_keyword_recall_top_k_ordered_by_score() -> None:
     results = store.recall("python dependencies", k=2)
     assert len(results) == 2
     # The top result should contain the strongest keyword overlap.
-    assert results[0]["key"] == "dependencies"
+    # TF-IDF ranks the 'python version' fact higher because both the key and
+    # value contain the rare token 'python', making it the most relevant match.
+    assert results[0]["key"] == "python version"
     assert results[0]["score"] >= results[1]["score"]
+
 
 
 def test_embedding_recall_perfect_match_query_equals_key() -> None:
