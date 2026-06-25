@@ -12,25 +12,24 @@ The reference cortex contract lives in
 `plastic-cortex/src/plastic_cortex/kv_cortex.py` (9/9 contract tests
 passing as of 2026-06-23).
 
-## Goal 1 — LM-side KV-write binding
+## Goal 1 — LM-side steering binding
 
-The cortex emits `(k, v)` pairs per attention layer via
-`KVCortex.project_intent(layer_idx)`. The LM driver must write those tensors
-into a **reserved KV slot** at the corresponding layer so attention consults
-the cortex's intent during decoding.
+The cortex emits per-layer steering vectors via `KVCortex.emit_cvec(layer_idx)`.
+`LlamaCVecDriver` binds these into the LM's forward pass via
+`llama_set_adapter_cvec`, which applies the vectors as a per-layer residual
+bias. This is sufficient to shift logits, but the available binding is a
+**residual control vector**, not a reserved KV slot.
 
-**Why it matters:** this is the only place the cortex touches the LM's
-forward pass. Without it, the cortex is decorative — it absorbs hidden
-states and computes intent vectors but those vectors never reach the
-LM, so the agent's behaviour is unchanged.
+**Why it matters:** a control vector steers generation, but its effect is
+small and diffuse with the current tiny cortex dimensions. A reserved KV
+slot would let the cortex inject intent directly into attention at a known
+sequence position, giving stronger and more token-specific steering.
 
-**Surface under investigation:**
-- `llama-cpp-python`'s `Llama.kv_self` attribute exposes the KV cache
-  per layer, but the high-level API wraps it opaquely.
-- `Llama.eval(tokens)` writes to the cache automatically but doesn't
-  expose per-layer per-position writes.
-- Likely needs either a wrapper around the low-level eval (one token at
-  a time, manual KV writes) or a thin binding patchfork.
+**Status:** reserved KV-slot injection is **blocked** on the installed
+`llama-cpp-python` binding. The package exposes `Llama.kv_self` opaquely and
+does not provide a public API to write an arbitrary `(k, v)` tensor directly
+into a chosen layer and position. There is no path today to instantiate a
+reserved slot without a binding fork or an upstream API addition.
 
 **Done when:**
 - A reserved KV slot per layer can be written and overwritten.
@@ -38,6 +37,18 @@ LM, so the agent's behaviour is unchanged.
   versus empty (a measurable behavioural test).
 - Latency: <5 ms per cortex injection, so the loop can keep up with
   token streaming.
+
+### What works today
+
+`LlamaCVecDriver` using `llama_set_adapter_cvec` provides:
+- per-layer cvec application (`set_cvec_layer`, `set_cvecs_per_layer`)
+- clean baseline restoration (`clear_cvec`)
+- demonstrable output shift; boot-persistent output shift via SVD-initialised
+  `proj_c` and amplified consolidation.
+
+The current codebase therefore uses the control-vector surface as the
+practical steering mechanism while Goal 1 remains a future architecture
+upgrade.
 
 ## Goal 2 — Hidden-state extraction at layer L
 
