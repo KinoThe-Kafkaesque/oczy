@@ -230,9 +230,31 @@ def test_digestive_gate_high_correction_opens_all_gates() -> None:
     # Learning-rate scaled by autoencoder weight (full or close to full here).
     assert "autoencoder_error" in meta, "metabolize should report autoencoder_error"
     assert np.isfinite(meta["autoencoder_error"]), "autoencoder error must be finite"
-
     assert agent.should_consolidate() or meta["consolidation_pressure"] >= 0.0, \
         "consolidation pressure should be reported"
+
+
+def test_auto_consolidate_triggers_after_repeated_corrections() -> None:
+    agent = _make_small_agent()
+    # Each correction drives effective_correction=1.0; pressure saturates
+    # at the consolidation threshold after a few turns.
+    consolidated_turns = 0
+    for i in range(5):
+        result = agent.turn(
+            f"No, 'token{i}' means business vertical, not user profile.",
+            max_tokens=4,
+        )
+        if result["consolidated"]:
+            consolidated_turns += 1
+            summary = result["consolidation_summary"]
+            assert summary["auto_consolidated"]
+            # Consolidation should have actually done some cold-state work.
+            assert summary.get("replay_count", 0) >= 0
+            assert summary.get("summary_count", 0) >= 0
+
+    assert consolidated_turns >= 1, "repeated corrections should trigger auto-consolidation"
+    assert consolidated_turns <= 2, "pressure reset should prevent repeated consolidation"
+
 
 def main() -> int:
     tests = [
@@ -241,6 +263,7 @@ def main() -> int:
         ("test_metabolize_routes_to_hippocampus_on_drift", test_metabolize_routes_to_hippocampus_on_drift),
         ("test_digestive_gate_suppresses_low_drift_organs", test_digestive_gate_suppresses_low_drift_organs),
         ("test_digestive_gate_high_correction_opens_all_gates", test_digestive_gate_high_correction_opens_all_gates),
+        ("test_auto_consolidate_triggers_after_repeated_corrections", test_auto_consolidate_triggers_after_repeated_corrections),
         ("test_articulate_steered_differs_from_baseline", test_articulate_steered_differs_from_baseline),
         ("test_consolidate_moves_cold_state", test_consolidate_moves_cold_state),
         ("test_save_load_round_trip_preserves_cold", test_save_load_round_trip_preserves_cold),

@@ -112,6 +112,10 @@ class CortexAgentConfig:
     # behavior is preserved.
     digestive_gate: DigestiveGateConfig | None = None
 
+    # If True, turn() will call consolidate() automatically when the
+    # digestive gate reports pressure above threshold.
+    auto_consolidate: bool = True
+
     articulate_scale: float = 0.001
 
 
@@ -445,7 +449,7 @@ class CortexAgent:
             prompt, max_tokens=max_tokens, temperature=temperature
         )
 
-    # Convenience: perceive -> metabolize -> articulate in one call.
+    # Convenience: perceive -> metabolize -> optionally consolidate -> articulate.
     def turn(
         self,
         utterance: str,
@@ -454,9 +458,19 @@ class CortexAgent:
         temperature: float = 0.0,
         metabolize: bool = True,
     ) -> dict[str, Any]:
-        """One full turn: absorb input, run metabolism, articulate reply."""
+        """One full turn: absorb input, run metabolism, optionally consolidate, articulate reply."""
         warm = self.perceive(utterance, correction_signal=correction_signal)
         meta = self.metabolize(utterance) if metabolize else {"metabolized": False}
+
+        consolidation = {"auto_consolidated": False}
+        if (
+            metabolize
+            and self.config.auto_consolidate
+            and self.should_consolidate()
+        ):
+            consolidation = {"auto_consolidated": True, **self.consolidate()}
+            self.digestive_gate.reset()
+
         reply = self.articulate(
             prompt=utterance, max_tokens=max_tokens, temperature=temperature
         )
@@ -466,6 +480,8 @@ class CortexAgent:
             "correction_signal": self._last_correction_signal,
             "metabolized": meta.get("metabolized", False),
             "hippocampus_wrote": meta.get("hippocampus_wrote", False),
+            "consolidated": consolidation["auto_consolidated"],
+            "consolidation_summary": consolidation,
             "reply": reply,
         }
 
