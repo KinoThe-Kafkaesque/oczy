@@ -72,10 +72,16 @@ Commits since previous summary:
     via a lazy-initialized MLP, rather than from string heuristics alone.
     Standalone `WorldModelCritic` keeps `use_hidden=False` for backward
     compatibility. Benchmark unchanged: `code_qa_accuracy=1.0` (run #56).
+13. `18acbf8` — Wire the world-model critic's correction-likelihood
+    probability into `DigestiveGate.ingest()` as a learned surprise signal,
+    blended with the raw latent drift. `CortexAgent.metabolize()` passes
+    `world_model_critic._last_correction_prob` to the gate. Default weights
+    keep behavior near the old drift-only regime when the critic is
+    unavailable. Benchmark unchanged: `code_qa_accuracy=1.0` (run #57).
 
-Test status: `pytest: 219 passed` fast (reserve-position + tensor-critic + replay-SGD +
-identity-adapter + hidden-delta + default-critic unit tests pass; full slow/model
-suite not rerun). `ruff check` clean on changed files.
+Test status: `pytest: 226 passed` fast (reserve-position + tensor-critic + replay-SGD +
+identity-adapter + hidden-delta + default-critic + critic-gate unit tests pass;
+full slow/model suite not rerun). `ruff check` clean on changed files.
 
 Remaining blocks:
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
@@ -90,5 +96,7 @@ Remaining blocks:
 - ExperienceAutoencoder now has a hidden-state-delta path, but it is trained passively
   and has not yet been shown to compress behavior-changing episodes better than the
   legacy text-token path.
-- WorldModelCritic is now tensor-input-by-default inside CortexAgent, but the MLP
-  effect on downstream behavior has not yet been measured in a real correction loop.
+- WorldModelCritic is now tensor-input-by-default inside CortexAgent and its output
+  feeds the digestive gate, but these pieces have not yet been measured in a real
+  correction/uptake loop.
+- ExperienceAutoencoder now has a hidden-state-delta path, but it is trained passively
