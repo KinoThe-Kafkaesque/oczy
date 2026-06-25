@@ -61,38 +61,37 @@ The current codebase therefore uses **cvec for posture** and **prefix for
 exact fact recall**, while Goal 1 remains a future architecture upgrade for
 direct KV-slot writes.
 
-### First-class reserved-position API (planned)
+### First-class reserved-position API (implemented)
 
-`LlamaCVecDriver` should expose a `ReservedPosition` abstraction separate
-from cvec steering:
+`LlamaCVecDriver` now exposes `ReservedPosition` as a dataclass separate
+from cvec steering.  The abstraction records provenance and optional
+measured uptake so the organism can later learn which reserved positions
+work:
 
 ```python
-class ReservedPosition:
-    """A fixed prefix-style slot that occupies known KV positions."""
-    text: str                # concept-defining text injected before the prompt
-    source: str              # "hand_coded" | "knowledge_store" | "cortex_generated"
-    exact_uptake_score: float  # fraction of probes where target token appears
-    domain_uptake_score: float
+from oczy.lm import ReservedPosition
 
-class LlamaCVecDriver:
-    # Steering surfaces
-    set_cvecs_per_layer(cvecs)        # residual posture/framing
-    set_reserved_position(pos: ReservedPosition | None)  # exact fact recall
-    clear_all_steering()
-
-    # Metrics hook
-    evaluate_position(pos, probes) -> dict[str, float]
+driver.set_reserved_position(
+    ReservedPosition(
+        text="In this codebase, profile means business vertical. ",
+        source="knowledge_store",
+    )
+)
 ```
 
-When a reserved position is set, the driver prepends `text` to every generate
-call. The cortex/KnowledgeStore is responsible for generating or selecting
-`text`; the driver only manages the slot. If a cvec is also set, its scale
-must be attenuated (`articulate_scale` < 0.01) under a prefix to prevent
-interference.
+`LlamaCVecDriver` now provides two complementary surfaces:
+1. Residual control vectors via `set_cvecs_per_layer` / `set_cvec_uniform`
+   for posture/framing.
+2. Reserved positions via `set_reserved_position` / `clear_reserved_position`
+   for exact fact recall.
 
-Long-term, this abstraction should also accept a **prefilled KV cache chunk**
-once the binding supports it, so the reserved position is not burned as text
-tokens on every forward pass.
+When a reserved position is set, the driver prepends `text` to every
+`generate()` call.  If a cvec is also set, its scale must be attenuated
+(`articulate_scale` < 0.01) under a prefix to prevent interference.
+
+Long-term, this abstraction should accept a **prefilled KV cache chunk**
+once the binding supports it, so the reserved position is not burned as
+text tokens on every forward pass.
 
 ## Goal 2 — Hidden-state extraction at layer L
 
