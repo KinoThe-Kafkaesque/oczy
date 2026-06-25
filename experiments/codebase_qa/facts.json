@@ -337,7 +337,7 @@
   },
   {
     "key": "goals sequencing",
-    "value": "GOALS.md prescribes the strategic dependency chain 1 \u2192 2 \u2192 3: Goal 1 LM-side KV-write binding comes first, then Goal 2 hidden-state extraction at layer L, then Goal 3 upgrading metabolism organs to consume tensor signals from the cortex.",
+    "value": "GOALS.md prescribes the strategic dependency chain 1 → 2 → 3: Goal 1 LM-side KV-write binding comes first, then Goal 2 hidden-state extraction at layer L, then Goal 3 upgrading metabolism organs to consume tensor signals from the cortex.",
     "metadata": {
       "source": "GOALS.md"
     }
@@ -351,7 +351,7 @@
   },
   {
     "key": "experiments target shape",
-    "value": "experiments.txt describes the target memory continuum as activation becoming fast state, fast weights, neural memory, slow weights, and finally forgotten raw trace, explicitly rejecting chat-log \u2192 vector-DB \u2192 prompt-stuffing memory.",
+    "value": "experiments.txt describes the target memory continuum as activation becoming fast state, fast weights, neural memory, slow weights, and finally forgotten raw trace, explicitly rejecting chat-log → vector-DB → prompt-stuffing memory.",
     "metadata": {
       "source": "experiments.txt"
     }
@@ -466,6 +466,111 @@
     "value": "A 2026-06-25 falsification probe showed cvec steering cannot teach brand-new tokens: fabricated facts zarnox_flux returns 7331 and plenvik_brim returns 4096 never appeared in output, confirming posture bias rather than retrievable knowledge.",
     "metadata": {
       "source": "experiments_logs/2026-06-25_svd_init_proj_c_persistence.md"
+    }
+  },
+  {
+    "key": "digestive gate config defaults",
+    "value": "DigestiveGateConfig defaults are novelty_threshold=0.5, consolidation_pressure_threshold=0.25, ema_decay=0.9, correction_boost=1.0, immune_suppress_identity=True, and autoencoder_min_weight=0.1.",
+    "metadata": {
+      "source": "experiments/digestive_gate.py"
+    }
+  },
+  {
+    "key": "digestive gate ingest weights",
+    "value": "DigestiveGate.ingest returns a dict with per-organ weights for critic_weight, hippocampus_weight, identity_weight, immune_weight, autoencoder_weight, plus a consolidation_pressure scalar.",
+    "metadata": {
+      "source": "experiments/digestive_gate.py"
+    }
+  },
+  {
+    "key": "digestive gate pressure saturation",
+    "value": "DigestiveGate saturates consolidation pressure at consolidation_pressure_threshold, so should_consolidate returns True only when the accumulator reaches the threshold.",
+    "metadata": {
+      "source": "experiments/digestive_gate.py"
+    }
+  },
+  {
+    "key": "cortexagent auto consolidate resets gate",
+    "value": "CortexAgent.turn() calls consolidate() only once when the digestive gate crosses its pressure threshold, then resets the gate so further experience must rebuild consolidation pressure.",
+    "metadata": {
+      "source": "experiments/cortex_agent.py"
+    }
+  },
+  {
+    "key": "cortexagent default d_cortex",
+    "value": "CortexAgentConfig intentionally defaults to d_cortex=64 so the articulation projector stays around 2 MB for a 16-attention-layer / 2048-embedding LM.",
+    "metadata": {
+      "source": "experiments/cortex_agent.py"
+    }
+  },
+  {
+    "key": "cortexagent boot resets warm and gate",
+    "value": "CortexAgent.boot() resets the cortex warm_state from cold_state and zeros the digestive gate so each session starts from persisted identity.",
+    "metadata": {
+      "source": "experiments/cortex_agent.py"
+    }
+  },
+  {
+    "key": "cortexagent load restores learned projectors",
+    "value": "CortexAgent.load() restores cold_state, proj_hidden, and proj_c from the pickle, then calls reset_warm_from_cold() so the warm state matches the reloaded cold identity.",
+    "metadata": {
+      "source": "experiments/cortex_agent.py"
+    }
+  },
+  {
+    "key": "cortexagent articulate steering toggle",
+    "value": "CortexAgent.articulate() can run with apply_steering=False to generate an unsteered baseline, or apply steering via driver.set_cvecs_per_layer at articulate_scale and clear the cvec afterwards.",
+    "metadata": {
+      "source": "experiments/cortex_agent.py"
+    }
+  },
+  {
+    "key": "cortexagent knowledge store recall",
+    "value": "CortexAgent.articulate() prepends retrieved facts from the attached knowledge_store to the prompt when recall_query or the last utterance is provided.",
+    "metadata": {
+      "source": "experiments/cortex_agent.py"
+    }
+  },
+  {
+    "key": "cvec driver default context threads",
+    "value": "CVecDriverConfig defaults include n_ctx=512, n_threads=4, n_gpu_layers=0, and embedding=True to enable peek_embedding.",
+    "metadata": {
+      "source": "oczy_lm/cvec_driver.py"
+    }
+  },
+  {
+    "key": "cvec driver status fields",
+    "value": "LlamaCVecDriver.status() returns n_embd, n_layers, n_vocab, cvec_active, applied_layer_ranges, and lm_loaded.",
+    "metadata": {
+      "source": "oczy_lm/cvec_driver.py"
+    }
+  },
+  {
+    "key": "cvec driver clear baseline",
+    "value": "LlamaCVecDriver.clear_cvec() calls llama_set_adapter_cvec with NULL data over the full layer range, returning generation to the unsteered baseline.",
+    "metadata": {
+      "source": "oczy_lm/cvec_driver.py"
+    }
+  },
+  {
+    "key": "kvcortex alpha blend",
+    "value": "KVCortex.observe() blends alpha_warm (0.02) and alpha_correction (5.0) linearly by correction_signal and clips the result into [0, 1] to set the per-turn plasticity rate.",
+    "metadata": {
+      "source": "plastic-cortex/src/plastic_cortex/kv_cortex.py"
+    }
+  },
+  {
+    "key": "kvcortex last correction hidden capture",
+    "value": "KVCortex.observe() stores a copy of the incoming lm_hidden vector in last_correction_hidden whenever correction_signal exceeds 0.5, so raw_hidden cvecs can anchor to a real correction residual.",
+    "metadata": {
+      "source": "plastic-cortex/src/plastic_cortex/kv_cortex.py"
+    }
+  },
+  {
+    "key": "kvcortex consolidate replay threshold",
+    "value": "KVCortex.consolidate() only absorbs replay hiddens into cold_state when at least consolidate_replay_threshold (3) replays are supplied, but it always applies the slow EMA nudge.",
+    "metadata": {
+      "source": "plastic-cortex/src/plastic_cortex/kv_cortex.py"
     }
   }
 ]

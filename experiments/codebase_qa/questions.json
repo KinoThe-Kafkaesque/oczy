@@ -24,7 +24,18 @@
   },
   {
     "question": "Which fields does CortexAgent.save() persist?",
-    "expected": "cortex_cold",
+    "expected": [
+      "cortex_cold",
+      "KVCortex.cold_state",
+      "cortex_proj_hidden",
+      "cortex_proj_c",
+      "cortex_config",
+      "neural_hippocampus",
+      "world_model_critic",
+      "identity_hypernetwork",
+      "skill_immune_cortex",
+      "experience_autoencoder"
+    ],
     "must_recall_key": "cortex agent persistence fields"
   },
   {
@@ -155,7 +166,12 @@
   },
   {
     "question": "What was wrong with the earlier extended learning evaluation?",
-    "expected": ["incorrectly averaged memory_bytes_per_delta", "memory usage incorrectly", "NeuralHippocampus", "Always-Wrong"],
+    "expected": [
+      "incorrectly averaged memory_bytes_per_delta",
+      "memory usage incorrectly",
+      "NeuralHippocampus",
+      "Always-Wrong"
+    ],
     "must_recall_key": "oracle metric bug"
   },
   {
@@ -207,10 +223,17 @@
     "question": "What gets stored by CortexAgent.save()?",
     "expected": [
       "cortex_cold",
+      "KVCortex.cold_state",
+      "cortex_proj_hidden",
+      "cortex_proj_c",
+      "cortex_config",
       "neural_hippocampus",
       "world_model_critic",
       "identity_hypernetwork",
-      "cortex-related structures"
+      "skill_immune_cortex",
+      "experience_autoencoder",
+      "cortex-related fields",
+      "continuity across boot cycles"
     ],
     "must_recall_key": "cortex agent persistence fields"
   },
@@ -226,7 +249,12 @@
   },
   {
     "question": "What caused the earlier extended-learning evaluation to over-penalize some memory strategies?",
-    "expected": ["memory_bytes_per_delta", "memory usage incorrectly", "inflating scores", "NeuralHippocampus"],
+    "expected": [
+      "memory_bytes_per_delta",
+      "memory usage incorrectly",
+      "inflating scores",
+      "NeuralHippocampus"
+    ],
     "must_recall_key": "oracle metric bug"
   },
   {
@@ -338,7 +366,7 @@
   {
     "question": "What strategic dependency chain in GOALS.md must be followed so that Goal 3 organs can consume live tensor signals from the cortex?",
     "expected": [
-      "1 \u2192 2 \u2192 3",
+      "1 → 2 → 3",
       "Goal 1",
       "Goal 2",
       "Goal 3"
@@ -536,5 +564,180 @@
       "posture bias"
     ],
     "must_recall_key": "cortex steering falsification probe 2026-06-25"
+  },
+  {
+    "question": "What are the default tuning knobs in DigestiveGateConfig?",
+    "expected": [
+      "DigestiveGateConfig defaults",
+      "consolidation_pressure_threshold",
+      "immunity_suppress_identity",
+      "autoencoder weight",
+      "weight of 0.1",
+      "threshold of 0.5"
+    ],
+    "must_recall_key": "digestive gate config defaults"
+  },
+  {
+    "question": "Which organ weights and scalar does DigestiveGate.ingest return after a metabolic step?",
+    "expected": [
+      "critic_weight",
+      "hippocampus_weight",
+      "identity_weight",
+      "immune_weight",
+      "autoencoder_weight",
+      "consolidation_pressure"
+    ],
+    "must_recall_key": "digestive gate ingest weights"
+  },
+  {
+    "question": "How does DigestiveGate decide that consolidation should fire?",
+    "expected": [
+      "consolidation_pressure",
+      "threshold",
+      "reaches the threshold",
+      "should_consolidate",
+      "pressure >= threshold"
+    ],
+    "must_recall_key": "digestive gate pressure saturation"
+  },
+  {
+    "question": "What does CortexAgent.turn() do after an auto-consolidation event so the gate doesn't stay permanently triggered?",
+    "expected": [
+      "digestive_gate.reset()",
+      "resets the gate",
+      "resets consolidation pressure",
+      "rebuild pressure"
+    ],
+    "must_recall_key": "cortexagent auto consolidate resets gate"
+  },
+  {
+    "question": "Why does CortexAgentConfig default d_cortex to 64 instead of the KVCortexConfig default of 128?",
+    "expected": [
+      "CortexAgentConfig is 64",
+      "KVCortexConfig defaults to 128",
+      "default d_cortex",
+      "64",
+      "128",
+      "configuration setting",
+      "scaling factor"
+    ],
+    "must_recall_key": "cortexagent default d_cortex"
+  },
+  {
+    "question": "What happens when CortexAgent.boot() is called at the start of a session?",
+    "expected": [
+      "resets the warm state",
+      "clears the digestive gate",
+      "fresh session",
+      "reset_warm_from_cold",
+      "digestive_gate.reset",
+      "starts from persisted identity"
+    ],
+    "must_recall_key": "cortexagent boot resets warm and gate"
+  },
+  {
+    "question": "What learned state does CortexAgent.load() restore, and what happens to warm state?",
+    "expected": [
+      "cold_state",
+      "proj_hidden",
+      "proj_c",
+      "reset_warm_from_cold",
+      "warm state is not persisted",
+      "warm_state matches cold"
+    ],
+    "must_recall_key": "cortexagent load restores learned projectors"
+  },
+  {
+    "question": "How does CortexAgent.articulate() support a baseline comparison against steering?",
+    "expected": [
+      "unsteered model",
+      "cvecs per layer",
+      "raw_hidden corrections",
+      "baseline",
+      "apply_steering=False",
+      "set_cvecs_per_layer",
+      "clear_cvec"
+    ],
+    "must_recall_key": "cortexagent articulate steering toggle"
+  },
+  {
+    "question": "How does CortexAgent ground its articulated prompt using the knowledge store?",
+    "expected": [
+      "knowledge_store",
+      "format_context",
+      "prepends retrieved facts",
+      "recall_query",
+      "last utterance"
+    ],
+    "must_recall_key": "cortexagent knowledge store recall"
+  },
+  {
+    "question": "What are the default resource settings in CVecDriverConfig for loading the local LM?",
+    "expected": [
+      "n_ctx=512",
+      "n_threads=4",
+      "n_gpu_layers=0",
+      "embedding=True",
+      "LFM2.5-1.2B-Instruct-Q4_K_M"
+    ],
+    "must_recall_key": "cvec driver default context threads"
+  },
+  {
+    "question": "What runtime state does LlamaCVecDriver.status() expose?",
+    "expected": [
+      "n_embd",
+      "n_layers",
+      "n_vocab",
+      "cvec_active",
+      "applied_layer_ranges",
+      "lm_loaded"
+    ],
+    "must_recall_key": "cvec driver status fields"
+  },
+  {
+    "question": "How does LlamaCVecDriver.clear_cvec() return the LM to its unsteered baseline?",
+    "expected": [
+      "llama_set_adapter_cvec",
+      "NULL data",
+      "full layer range",
+      "unsteered baseline",
+      "clear_cvec"
+    ],
+    "must_recall_key": "cvec driver clear baseline"
+  },
+  {
+    "question": "How does KVCortex.observe() set the plasticity rate from its two alpha values?",
+    "expected": [
+      "alpha_warm",
+      "alpha_correction",
+      "linear blend",
+      "correction_signal",
+      "clipped to [0,1]",
+      "0.02",
+      "5.0"
+    ],
+    "must_recall_key": "kvcortex alpha blend"
+  },
+  {
+    "question": "When does KVCortex capture last_correction_hidden, and what is it used for?",
+    "expected": [
+      "correction_signal > 0.5",
+      "correction_signal exceeds 0.5",
+      "lm_hidden",
+      "raw_hidden steering mode",
+      "real correction residual"
+    ],
+    "must_recall_key": "kvcortex last correction hidden capture"
+  },
+  {
+    "question": "Under what condition does KVCortex.consolidate() absorb replay hiddens into cold_state?",
+    "expected": [
+      "consolidate_replay_threshold",
+      "at least 3 replays",
+      "three replays",
+      "replays supplied",
+      "slow EMA nudge"
+    ],
+    "must_recall_key": "kvcortex consolidate replay threshold"
   }
 ]
