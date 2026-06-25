@@ -313,17 +313,26 @@ class CortexAgent:
             immune_conflict=0.0,
         )
 
-        # Drive the critic with the cortex's drift scalar when the gate
-        # allows it (default critic weight is 1.0, so this keeps the
-        # previous always-on behavior unless a custom config lowers it).
+        # Drive the critic with the cortex's hidden vector when the gate
+        # allows it. The critic trains on the same latent signal the cortex
+        # saw, moving it from string heuristics toward tensor-input world
+        # modeling (GOALS.md Goal 3). Fall back to the drift scalar only if
+        # no hidden is available (e.g., driver embedding disabled).
         if scores["critic_weight"] > 0:
-            self.world_model_critic._last_correction_prob = float(
-                np.clip(self._last_drift, 0.0, 1.0)
+            hidden_for_critic = self._last_hidden
+            pred = self.world_model_critic.predict_acceptance(
+                query=text,
+                proposed_answer="",
+                lm_hidden=hidden_for_critic,
             )
+            self.world_model_critic._last_correction_prob = pred[
+                "correction_likelihood"
+            ]
             self.world_model_critic.record_outcome(
                 query=text,
-                proposed_answer="",  # CortexAgent has no string answer to score.
+                proposed_answer="",
                 correction=text if correction_signal > 0.5 else None,
+                lm_hidden=hidden_for_critic,
             )
 
         # High-drift episodes go to hippocampal storage as a replay bank

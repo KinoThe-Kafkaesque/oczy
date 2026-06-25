@@ -28,6 +28,8 @@ import math
 import pickle
 import re
 
+import numpy as np
+
 # Hard-coded lexical markers of uncertainty.  These are the "fast priors" the
 # critic starts with; the rest of the learning is data-driven.
 AMBIGUOUS_WORDS = frozenset(
@@ -100,6 +102,17 @@ class WorldModelCritic:
         # Learning hyperparameters.
         self.learning_rate = float(cfg.get("learning_rate", 1.0))
         self.similarity_threshold = float(cfg.get("similarity_threshold", 0.25))
+        # Hidden-vector MLP configuration.
+        self.d_hidden = int(cfg.get("d_hidden", 0))
+        self.mlp_hidden_units = int(cfg.get("mlp_hidden_units", 16))
+        self.use_hidden = bool(cfg.get("use_hidden", False))
+
+        # MLP weights for tensor-input mode (lazy-initialized).
+        self.W1: np.ndarray | None = None
+        self.b1: np.ndarray | None = None
+        self.W2: np.ndarray | None = None
+        self.b2: float = 0.0
+
         self.ambiguous_words = frozenset(cfg.get("ambiguous_words", AMBIGUOUS_WORDS))
 
         # Cap linear record growth.
@@ -129,7 +142,12 @@ class WorldModelCritic:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def predict_acceptance(self, query: str, proposed_answer: str) -> dict:
+    def predict_acceptance(
+        self,
+        query: str,
+        proposed_answer: str,
+        lm_hidden: np.ndarray | None = None,
+    ) -> dict:
         """Predict the outcome of proposing `proposed_answer` for `query`.
 
         Returns a dict with:
@@ -138,7 +156,11 @@ class WorldModelCritic:
           - key_uncertainty: aggregate uncertainty (high when near 0.5).
         """
         x = self._features(query, proposed_answer)
-        correction_prob = self._predict_correction_prob(x)
+        if self.use_hidden and lm_hidden is not None and self.d_hidden > 0:
+            self._ensure_mlp(lm_hidden.shape[0])
+            correction_prob, _ = self._mlp_forward(x, lm_hidden)
+        else:
+            correction_prob = self._predict_correction_prob(x)
         accepted_prob = 1.0 - correction_prob
         # Variance of a Bernoulli with p = correction_prob; peaks at 0.5.
         uncertainty = math.sqrt(correction_prob * (1.0 - correction_prob))
@@ -155,6 +177,7 @@ class WorldModelCritic:
         query: str,
         proposed_answer: str,
         correction: str | None,
+        lm_hidden: np.ndarray | None = None,
     ) -> None:
         """Record what actually happened and perform one online update.
 
@@ -166,8 +189,17 @@ class WorldModelCritic:
 
         # Prediction error is measured against the model *before* it saw this
         # outcome.
+        use_mlp = (
+            self.use_hidden
+            and lm_hidden is not None
+            and self.d_hidden > 0
+        )
         x_prior = self._features(query, proposed_answer)
-        prob_prior = self._predict_correction_prob(x_prior)
+        if use_mlp:
+            self._ensure_mlp(lm_hidden.shape[0])
+            prob_prior, _ = self._mlp_forward(x_prior, lm_hidden)
+        else:
+            prob_prior = self._predict_correction_prob(x_prior)
         self._last_correction_prob = prob_prior
 
         # Update memory first so the similarity feature for this record can be
@@ -192,8 +224,22 @@ class WorldModelCritic:
 
         # Recompute features with the new record visible (important for the
         # prior-correction-rate term) and take one gradient step.
-
         x_post = self._features(query, proposed_answer)
+
+        # Hidden-vector MLP update.
+        if use_mlp:
+            prob_post, cache = self._mlp_forward(x_post, lm_hidden)
+            error = target - prob_post
+            x_input, z1, h, _ = cache
+            # Gradient of MSE/cross-entropy error w.r.t. weights.
+            self.W2 = self.W2 + self.learning_rate * error * h
+            self.b2 += self.learning_rate * error
+            grad_h = error * self.W2
+            grad_z1 = grad_h * (1.0 - h * h)
+            self.W1 = self.W1 + self.learning_rate * np.outer(grad_z1, x_input)
+            self.b1 = self.b1 + self.learning_rate * grad_z1
+
+        # String-logistic model update (always kept live as a fallback).
         prob_post = self._predict_correction_prob(x_post)
         error = target - prob_post
         for i in self._learnable:
@@ -265,6 +311,43 @@ class WorldModelCritic:
         x3 = self._similar_correction_rate(query)
 
         return [x0, x1, x2, x3]
+
+    def _ensure_mlp(self, d_hidden: int) -> None:
+        """Lazy-initialize the small hidden-vector MLP if not present."""
+        n_string_features = 4
+        input_dim = n_string_features + d_hidden
+        if (
+            self.W1 is not None
+            and self.b1 is not None
+            and self.W2 is not None
+            and self.W1.shape == (self.mlp_hidden_units, input_dim)
+            and self.b1.shape == (self.mlp_hidden_units,)
+            and self.W2.shape == (self.mlp_hidden_units,)
+        ):
+            return
+        rng = np.random.RandomState((id(self) & 0xFFFFFFFF) ^ d_hidden)
+        self.W1 = rng.randn(self.mlp_hidden_units, input_dim) * 0.01
+        self.b1 = rng.randn(self.mlp_hidden_units) * 0.01
+        self.W2 = rng.randn(self.mlp_hidden_units) * 0.01
+        self.b2 = 0.0
+
+    def _mlp_forward(
+        self,
+        x_str: list[float],
+        lm_hidden: np.ndarray,
+    ) -> tuple[float, tuple[np.ndarray, np.ndarray, np.ndarray, float]]:
+        """Forward pass of the hidden-vector MLP.
+
+        Returns the scalar correction probability and a cache of intermediate
+        activations needed for the online gradient update.
+        """
+        x_input = np.concatenate([np.asarray(x_str, dtype=float), lm_hidden])
+        z1 = self.W1 @ x_input + self.b1
+        h = np.tanh(z1)
+        z2 = float(self.W2 @ h + self.b2)
+        p = _sigmoid(z2)
+        return p, (x_input, z1, h, p)
+
 
     def _similar_correction_rate(self, query: str) -> float:
         """Return the empirical correction rate for queries similar to `query`."""
