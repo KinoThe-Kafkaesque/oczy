@@ -38,9 +38,17 @@ Commits since previous summary:
 4. `a5468b6` — Complete remaining review items:\n+   - bound linear-growth organs (`WorldModelCritic`, `IdentityHypernetwork`,\n+     `SurpriseGatedMemory`) with configurable caps and decay,\n+   - driver profiles + `OCZY_*` env-aware config for `CVecDriverConfig` and\n+     `LanguageAdapterConfig`,\n+   - versioned non-pickle `KVCortex` persistence via `manifest.json` + `arrays.npz`.
 5. `7450067` — Tidy tooling config and fix ruff warnings.
 6. `a9cca21` — Update `GOALS.md` to mark reserved-position API implemented.
+7. `3985f04` — Wire ReservedPosition selection from the KnowledgeStore into
+   `CortexAgent.articulate()`. Added `KnowledgeStore.get_reserved_position()` and
+   tagged five facts with `reserved_token` metadata. `CortexAgent.articulate()` now
+   applies the reserved prefix when recalling facts and skips cvec steering to avoid
+   cvec+prefix interference. Benchmark: `code_qa_accuracy=1.0` (run #49).
 
-Test status: `pytest: 186 passed` (170 fast + 16 slow/model), 6 deprecation\n+warnings only. `ruff check` clean on changed files.
+Test status: `pytest: 177 passed` fast (targeted smoke + reserved-position unit tests pass;
+full slow/model suite not rerun). `ruff check` clean on changed files.
 
-Remaining blocks (not in the optimization list):
+Remaining blocks:
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
-- Exact-token uptake via cvec alone remains blocked; `ReservedPosition` prefix is the\n+  practical exact-recall surface.
+- Exact-token uptake via cvec alone remains blocked; `ReservedPosition` prefix is the
+  practical exact-recall surface, and it can now be selected automatically by the
+  knowledge store.
