@@ -1,0 +1,52 @@
+[
+  {
+    "question": "What is Oczy?",
+    "expected": "Plastic World Model Agent",
+    "must_recall_key": "oczy project description"
+  },
+  {
+    "question": "Which workspace packages exist in the Oczy repository?",
+    "expected": "correction-benchmark",
+    "must_recall_key": "workspace packages"
+  },
+  {
+    "question": "What are the default dimensions in KVCortexConfig?",
+    "expected": "d_cortex=128",
+    "must_recall_key": "kvcortex config defaults"
+  },
+  {
+    "question": "Which steering modes does KVCortex support?",
+    "expected": "'proj_random' and 'raw_hidden'",
+    "must_recall_key": "kvcortex steering modes"
+  },
+  {
+    "question": "Which fields does CortexAgent.save() persist?",
+    "expected": "cortex_cold",
+    "must_recall_key": "cortex agent persistence fields"
+  },
+  {
+    "question": "Which model file is loaded by default from LiquidAI/LFM2.5-1.2B-Instruct-GGUF?",
+    "expected": "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+    "must_recall_key": "cvec driver default model"
+  },
+  {
+    "question": "What is required in CVecDriverConfig for peek_embedding() to work?",
+    "expected": "embedding=True",
+    "must_recall_key": "peek_embedding requirement"
+  },
+  {
+    "question": "Where is the KnowledgeStore class implemented?",
+    "expected": "experiments/codebase_qa/knowledge_store.py",
+    "must_recall_key": "knowledge store module"
+  },
+  {
+    "question": "What shape is experiments/lm_perception/reports/correction_hiddens.npy?",
+    "expected": "(72, 2048)",
+    "must_recall_key": "correction hiddens shape"
+  },
+  {
+    "question": "What did the recent SVD steering work conclude?",
+    "expected": "posture bias",
+    "must_recall_key": "cortex steering finding"
+  }
+]

@@ -1,0 +1,77 @@
+[
+  {
+    "key": "oczy project description",
+    "value": "Oczy is a Plastic World Model Agent monorepo that turns experience into changed weights rather than retrieved traces.",
+    "metadata": { "source": "README.md" }
+  },
+  {
+    "key": "north star metric",
+    "value": "The north-star metric is behavior_delta_per_byte_of_persistent_memory; a high score means the organism learns a lot while keeping persistent memory small.",
+    "metadata": { "source": "experiments.txt" }
+  },
+  {
+    "key": "workspace packages",
+    "value": "The workspace packages are correction-benchmark, experience-autoencoder, identity-hypernetwork, neural-hippocampus, oczy_common, oczy_lm, plastic-cortex, skill-immune-cortex, and world-model-critic.",
+    "metadata": { "source": "pyproject.toml" }
+  },
+  {
+    "key": "kvcortex config defaults",
+    "value": "KVCortexConfig defaults are d_cortex=128, d_embd=2048, n_layers=28, alpha_warm=0.02, alpha_correction=5.0, and steering_mode='proj_random'.",
+    "metadata": { "source": "plastic-cortex/src/plastic_cortex/kv_cortex.py" }
+  },
+  {
+    "key": "kvcortex steering modes",
+    "value": "KVCortex supports steering_mode='proj_random' (per-layer cvecs from proj_c @ warm_state) and 'raw_hidden' (last correction hidden broadcast across layers).",
+    "metadata": { "source": "plastic-cortex/src/plastic_cortex/kv_cortex.py" }
+  },
+  {
+    "key": "cortex agent config defaults",
+    "value": "CortexAgentConfig defaults are KVCortexConfig(), CVecDriverConfig(embedding=True), and articulate_scale=0.001.",
+    "metadata": { "source": "experiments/cortex_agent.py" }
+  },
+  {
+    "key": "cortex agent persistence fields",
+    "value": "CortexAgent.save() persists cortex_cold, cortex_proj_hidden, cortex_proj_c, cortex_config, neural_hippocampus, world_model_critic, identity_hypernetwork, skill_immune_cortex, and experience_autoencoder.",
+    "metadata": { "source": "experiments/cortex_agent.py" }
+  },
+  {
+    "key": "cvec driver default model",
+    "value": "CVecDriverConfig loads LiquidAI/LFM2.5-1.2B-Instruct-GGUF/LFM2.5-1.2B-Instruct-Q4_K_M.gguf by default, with n_ctx=512 and n_threads=4.",
+    "metadata": { "source": "oczy_lm/cvec_driver.py" }
+  },
+  {
+    "key": "peek_embedding requirement",
+    "value": "peek_embedding() requires CVecDriverConfig(embedding=True) at load time, otherwise the llama.cpp embedding path is disabled.",
+    "metadata": { "source": "oczy_lm/cvec_driver.py" }
+  },
+  {
+    "key": "svd init proj_c",
+    "value": "KVCortex.init_proj_c_from_svd(hiddens) initializes proj_c from the top-d_cortex right singular vectors of centered correction hiddens, broadcasting the same slab to every layer.",
+    "metadata": { "source": "plastic-cortex/src/plastic_cortex/kv_cortex.py" }
+  },
+  {
+    "key": "correction hiddens shape",
+    "value": "experiments/lm_perception/reports/correction_hiddens.npy has shape (72, 2048): 12 canonical correction episodes times 6 paraphrase templates, each a 2048-dim final-layer hidden.",
+    "metadata": { "source": "experiments/lm_perception/collect_correction_hiddens.py" }
+  },
+  {
+    "key": "svd top singular values",
+    "value": "The top singular values reported for correction_hiddens.npy are [179, 153, 133, 120, 112, 109, 100, 99].",
+    "metadata": { "source": "experiments_logs/2026-06-25_svd_init_proj_c_persistence.md" }
+  },
+  {
+    "key": "knowledge store module",
+    "value": "The KnowledgeStore class lives in experiments/codebase_qa/knowledge_store.py and supports embedding-based or keyword-fallback retrieval.",
+    "metadata": { "source": "experiments/codebase_qa/knowledge_store.py" }
+  },
+  {
+    "key": "cortex steering finding",
+    "value": "The 2026-06-25 SVD work found that cvec steering is a posture bias, not retrievable knowledge: it cannot manufacture tokens the LM has no pretrained prior on.",
+    "metadata": { "source": "experiments_logs/2026-06-25_svd_init_proj_c_persistence.md" }
+  },
+  {
+    "key": "cortex agent correction markers",
+    "value": "CortexAgent._looks_like_correction() detects textual correction markers such as 'no', 'wrong', 'incorrect', 'actually', 'correction', 'should be', and 'not quite'.",
+    "metadata": { "source": "experiments/cortex_agent.py" }
+  }
+]

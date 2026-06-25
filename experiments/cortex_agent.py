@@ -59,6 +59,7 @@ from experience_autoencoder import ExperienceAutoencoder
 from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
 from oczy_lm import CVecDriverConfig, LlamaCVecDriver
 
+from experiments.codebase_qa.knowledge_store import KnowledgeStore
 
 # Heuristic correction-signal detector. The cortex's neuromodulator needs
 # to know when to fire high plasticity; this is a stop-gap that will be
@@ -112,7 +113,11 @@ class CortexAgent:
     writes per-context cortex state.
     """
 
-    def __init__(self, config: CortexAgentConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: CortexAgentConfig | None = None,
+        knowledge_store: KnowledgeStore | None = None,
+    ) -> None:
         self.config = config or CortexAgentConfig()
         ccfg = self.config.cortex or KVCortexConfig()
         dcfg = self.config.driver or CVecDriverConfig()
@@ -143,6 +148,9 @@ class CortexAgent:
         self.identity_hypernetwork = IdentityHypernetwork()
         self.skill_immune_cortex = SkillImmuneCortex()
         self.experience_autoencoder = ExperienceAutoencoder()
+        # Optional codebase knowledge store; recalled facts can be injected
+        # into prompts during articulate() to ground the agent in repo facts.
+        self.knowledge_store = knowledge_store
 
         self._last_utterance: str | None = None
         self._last_hidden: np.ndarray | None = None
@@ -295,6 +303,28 @@ class CortexAgent:
         }
 
     # ------------------------------------------------------------------
+    # Knowledge store methods
+    # ------------------------------------------------------------------
+    def learn_fact(
+        self,
+        key: str,
+        value: str,
+        metadata: dict | None = None,
+    ) -> None:
+        """Add a codebase fact to the attached knowledge store (no-op without one).
+
+        Example::
+
+            agent.learn_fact(
+                "plastic-cortex vocab_size bug",
+                "Clamp at vocab_size was removed so a 103-char tokenizer fits.",
+            )
+        """
+        if self.knowledge_store is not None:
+            self.knowledge_store.add_fact(key, value, metadata)
+
+
+    # ------------------------------------------------------------------
     # Articulation (LM generation with cortex steering)
     # ------------------------------------------------------------------
     def articulate(
@@ -303,6 +333,7 @@ class CortexAgent:
         max_tokens: int = 64,
         temperature: float = 0.0,
         apply_steering: bool = True,
+        recall_query: str | None = None,
     ) -> str:
         """Generate text with the cortex's intent currently applied.
 
@@ -317,6 +348,10 @@ class CortexAgent:
                 cvecs before generation and clear them after. If False,
                 generate without cortex steering -- useful for baseline
                 comparisons and the test suite.
+            recall_query: optional query for the attached knowledge store.
+                If provided (or defaulted from ``self._last_utterance`` when
+                the store is present), retrieved facts are prepended to the
+                prompt. No recall is performed when no store is attached.
 
         Returns:
             The LM's generated text. The cortex state is unchanged by this
@@ -324,6 +359,16 @@ class CortexAgent:
         """
         if prompt is None:
             prompt = self._last_utterance or ""
+
+        # Ground the prompt with retrieved repo facts when a knowledge
+        # store is attached. Explicit recall_query takes precedence; otherwise
+        # fall back to the last perceived utterance so perceive()->articulate()
+        # chains naturally carry conversational context into recall.
+        if self.knowledge_store is not None:
+            query = recall_query if recall_query is not None else self._last_utterance
+            if query is not None:
+                prompt = self.knowledge_store.format_context(query) + prompt
+
         if not prompt:
             raise ValueError("articulate() needs a prompt or a prior perceive()")
 

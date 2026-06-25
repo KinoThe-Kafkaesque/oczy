@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""Deterministic codebase-QA benchmark harness.
+
+Measures code_qa_accuracy with and without retrieved repository facts injected
+into the prompt.  Uses the LFM2.5-1.2B-Instruct Q4_K_M GGUF via
+LlamaCVecDriver embeddings and the shared KnowledgeStore.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import pickle
+import sys
+from pathlib import Path
+from typing import Any
+
+# Repo root is two directories above this script (experiments/codebase_qa/).
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+import numpy as np
+
+from experiments.codebase_qa.knowledge_store import KnowledgeStore
+from oczy_lm import CVecDriverConfig, LlamaCVecDriver
+
+_FACTS_PATH = Path(__file__).with_name("facts.json")
+_QUESTIONS_PATH = Path(__file__).with_name("questions.json")
+_CACHE_DIR = Path(__file__).with_name(".cache")
+_CACHE_PATH = _CACHE_DIR / "embedding_cache.pkl"
+
+
+def _load_json(path: Path) -> list[dict[str, Any]]:
+    with path.open("r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _load_embedding_cache() -> dict[str, np.ndarray]:
+    if _CACHE_PATH.exists():
+        with _CACHE_PATH.open("rb") as fh:
+            cache = pickle.load(fh)
+            if isinstance(cache, dict):
+                return cache
+    return {}
+
+
+def _save_embedding_cache(cache: dict[str, np.ndarray]) -> None:
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = _CACHE_PATH.with_suffix(".tmp")
+    with tmp.open("wb") as fh:
+        pickle.dump(cache, fh, protocol=pickle.HIGHEST_PROTOCOL)
+    tmp.replace(_CACHE_PATH)
+
+
+def _make_embed_fn(driver: LlamaCVecDriver, cache: dict[str, np.ndarray]):
+    def embed(text: str) -> np.ndarray:
+        if text not in cache:
+            cache[text] = driver.peek_embedding(text, last_token_only=False)
+        return cache[text]
+
+    return embed
+
+
+def _build_prompt(question: str, context: str = "") -> str:
+    body = f"Answer briefly.\nQuestion: {question}\nAnswer:"
+    if context:
+        return f"{context}{body}"
+    return body
+
+
+def _score(expected: str, answer: str) -> int:
+    return 1 if expected.lower() in answer.lower() else 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Oczy codebase-QA benchmark.")
+    parser.add_argument(
+        "--no-recall",
+        action="store_true",
+        help="Only run the baseline (no retrieved-context) path.",
+    )
+    args = parser.parse_args()
+
+    facts = _load_json(_FACTS_PATH)
+    questions = _load_json(_QUESTIONS_PATH)
+
+    print("Loading LlamaCVecDriver...")
+    cfg = CVecDriverConfig(n_ctx=512, n_threads=4, embedding=True)
+    driver = LlamaCVecDriver.load(cfg)
+
+    if hasattr(driver._llm, "set_seed"):
+        driver._llm.set_seed(42)
+
+    cache = _load_embedding_cache()
+    store = KnowledgeStore(embed_fn=_make_embed_fn(driver, cache))
+
+    for fact in facts:
+        store.add_fact(fact["key"], fact["value"], fact.get("metadata", {}))
+
+    _save_embedding_cache(cache)
+
+    print(f"Knowledge store status: {store.status()}")
+    print(f"Benchmarking {len(questions)} questions...")
+
+    baseline_scores: list[int] = []
+    recall_scores: list[int] = []
+
+    for idx, item in enumerate(questions, start=1):
+        question = item["question"]
+        expected = item["expected"]
+
+        baseline_prompt = _build_prompt(question)
+        baseline_answer = driver.generate(
+            baseline_prompt,
+            max_tokens=48,
+            temperature=0.0,
+            stop=["\n"],
+        )
+        baseline_hit = _score(expected, baseline_answer)
+        baseline_scores.append(baseline_hit)
+
+        if args.no_recall:
+            print(
+                f"Q{idx}: {question}\n"
+                f"  expected: {expected!r}\n"
+                f"  baseline: {baseline_answer.strip()!r} | score: {baseline_hit}"
+            )
+            continue
+
+        context = store.format_context(question, k=3)
+        recall_prompt = _build_prompt(question, context)
+        recall_answer = driver.generate(
+            recall_prompt,
+            max_tokens=48,
+            temperature=0.0,
+            stop=["\n"],
+        )
+        recall_hit = _score(expected, recall_answer)
+        recall_scores.append(recall_hit)
+
+        print(
+            f"Q{idx}: {question}\n"
+            f"  expected: {expected!r}\n"
+            f"  baseline: {baseline_answer.strip()!r} | score: {baseline_hit}\n"
+            f"  recall:   {recall_answer.strip()!r} | score: {recall_hit}"
+        )
+
+    baseline_acc = sum(baseline_scores) / len(baseline_scores) if baseline_scores else 0.0
+    recall_acc = sum(recall_scores) / len(recall_scores) if recall_scores else 0.0
+    recall_lift = recall_acc - baseline_acc
+
+    print(f"METRIC baseline_accuracy={baseline_acc:.4f}")
+    if not args.no_recall:
+        print(f"METRIC code_qa_accuracy={recall_acc:.4f}")
+        print(f"METRIC recall_lift={recall_lift:.4f}")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
