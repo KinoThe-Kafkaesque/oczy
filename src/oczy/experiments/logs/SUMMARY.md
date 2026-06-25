@@ -60,10 +60,17 @@ Commits since previous summary:
     this delta through `KVCortex.set_state_bias`, which is added to
     `warm_state` during cvec emission. Benchmark unchanged:
     `code_qa_accuracy=1.0` (run #54).
+11. `877f329` — Convert `ExperienceAutoencoder` to optionally compress
+    hidden-state deltas (`last_hidden - prev_hidden`) instead of raw text
+    tokens. The new path is gated by `use_hidden_delta` (default off) and
+    lazy-initializes a separate `_A_hidden` sensing matrix. `CortexAgent`
+    now stores `_prev_hidden`, computes the delta, and trains the autoencoder
+    on it. Legacy text-token path unchanged. Benchmark unchanged:
+    `code_qa_accuracy=1.0` (run #55).
 
-Test status: `pytest: 205 passed` fast (reserve-position + tensor-critic + replay-SGD +
-identity-adapter unit tests pass; full slow/model suite not rerun). `ruff check` clean
-on changed files.
+Test status: `pytest: 214 passed` fast (reserve-position + tensor-critic + replay-SGD +
+identity-adapter + hidden-delta unit tests pass; full slow/model suite not rerun).
+`ruff check` clean on changed files.
 
 Remaining blocks:
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
@@ -76,3 +83,6 @@ Remaining blocks:
 - IdentityHypernetwork now emits real `d_cortex`-dimensional adapter deltas that are
   applied at articulation time, but the concept→latent mapping is still partially
   hand-seeded and the effect on downstream behavior has not yet been measured.
+- ExperienceAutoencoder now has a hidden-state-delta path, but it is trained passively
+  and has not yet been shown to compress behavior-changing episodes better than the
+  legacy text-token path.
