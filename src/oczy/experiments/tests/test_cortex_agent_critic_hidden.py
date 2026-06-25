@@ -88,6 +88,77 @@ class _RecordingCritic:
         return {"record_count": len(self.records)}
 
 
+def test_critic_use_hidden_default() -> None:
+    """CortexAgent now constructs WorldModelCritic with use_hidden=True."""
+    driver = _MockDriver(n_embd=8, n_layers=2)
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=4),
+        driver=driver,
+    )
+    agent = CortexAgent(cfg, driver=driver)
+    assert agent.world_model_critic.use_hidden is True
+    assert agent.world_model_critic.mlp_hidden_units == 16
+    assert agent.world_model_critic.d_hidden == 0
+
+
+def test_metabolize_trains_critic_mlp() -> None:
+    """One correction turn lazy-initializes the critic MLP from the hidden vector."""
+    driver = _MockDriver(n_embd=8, n_layers=2)
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=4),
+        driver=driver,
+    )
+    agent = CortexAgent(cfg, driver=driver)
+    agent.boot()
+
+    assert agent.world_model_critic.W1 is None
+
+    agent.perceive("No, 'profile' here means business vertical.")
+    assert agent._last_hidden is not None
+    agent.metabolize()
+
+    critic = agent.world_model_critic
+    assert critic.d_hidden == driver.n_embd
+    assert critic.W1 is not None
+    assert critic.W1.shape == (critic.mlp_hidden_units, 4 + driver.n_embd)
+    assert critic.b1 is not None
+    assert critic.W2 is not None
+
+
+def test_predict_hidden_changes_with_similar_input() -> None:
+    """After one correction update, close hidden vectors yield closer predictions."""
+    driver = _MockDriver(n_embd=8, n_layers=2)
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=4),
+        driver=driver,
+    )
+    agent = CortexAgent(cfg, driver=driver)
+    agent.boot()
+
+    query = "What does profile mean here?"
+    agent.perceive("No, 'profile' here means business vertical.")
+    agent.metabolize()
+
+    base = agent._last_hidden.copy()
+    rng = np.random.RandomState(7)
+    close_1 = base + rng.randn(driver.n_embd).astype(np.float32) * 0.05
+    close_2 = base + rng.randn(driver.n_embd).astype(np.float32) * 0.05
+    distant = base + rng.randn(driver.n_embd).astype(np.float32) * 5.0
+
+    critic = agent.world_model_critic
+    p_close_1 = critic.predict_acceptance(query, "", lm_hidden=close_1)[
+        "correction_likelihood"
+    ]
+    p_close_2 = critic.predict_acceptance(query, "", lm_hidden=close_2)[
+        "correction_likelihood"
+    ]
+    p_distant = critic.predict_acceptance(query, "", lm_hidden=distant)[
+        "correction_likelihood"
+    ]
+
+    assert abs(p_close_1 - p_close_2) < abs(p_close_1 - p_distant)
+
+
 def test_metabolize_passes_lm_hidden_to_critic() -> None:
     driver = _MockDriver(n_embd=8, n_layers=2)
     cfg = CortexAgentConfig(

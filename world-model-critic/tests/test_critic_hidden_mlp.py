@@ -1,5 +1,7 @@
 """Tests for WorldModelCritic hidden-vector MLP mode."""
 
+from __future__ import annotations
+
 import pickle
 
 import numpy as np
@@ -53,6 +55,24 @@ def test_hidden_mode_respects_gates():
     assert critic_on.W1 is None
 
 
+def test_mlp_lazy_initializes() -> None:
+    """Calling predict_acceptance with a hidden vector creates W1/W2 on demand."""
+    critic = WorldModelCritic(config={"use_hidden": True, "mlp_hidden_units": 16})
+    assert critic.d_hidden == 0
+    assert critic.W1 is None
+
+    hidden = np.zeros(8, dtype=float)
+    critic.predict_acceptance(_Q, _A, lm_hidden=hidden)
+
+    assert critic.d_hidden == 8
+    assert critic.W1 is not None
+    assert critic.b1 is not None
+    assert critic.W2 is not None
+    assert critic.W1.shape == (16, 4 + 8)
+    assert critic.b1.shape == (16,)
+    assert critic.W2.shape == (16,)
+
+
 def test_record_outcome_updates_mlp_weights():
     """Recording an outcome with lm_hidden must move at least W2 from its init."""
     critic = WorldModelCritic(
@@ -73,6 +93,23 @@ def test_record_outcome_updates_mlp_weights():
     assert not np.allclose(critic.W2, w2_before)
     assert critic.b1 is not None
     assert not np.allclose(critic.b1, 0.0) or not np.allclose(critic.b2, 0.0)
+
+
+def test_mlp_trains_on_outcome() -> None:
+    """Recording a correction outcome moves the same-hidden prediction toward correction."""
+    critic = WorldModelCritic(
+        config={
+            "d_hidden": 8,
+            "use_hidden": True,
+            "mlp_hidden_units": 16,
+            "learning_rate": 1.0,
+        }
+    )
+    hidden = np.random.RandomState(0).randn(8).astype(float)
+    before = critic.predict_acceptance(_Q, _A, lm_hidden=hidden)["correction_likelihood"]
+    critic.record_outcome(_Q, _A, "Actually, it's Paris.", lm_hidden=hidden)
+    after = critic.predict_acceptance(_Q, _A, lm_hidden=hidden)["correction_likelihood"]
+    assert after > before
 
 
 def test_pickle_roundtrip_preserves_mlp_weights():

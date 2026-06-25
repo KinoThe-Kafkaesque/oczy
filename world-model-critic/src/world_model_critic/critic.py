@@ -139,6 +139,17 @@ class WorldModelCritic:
         # `prediction_error`.
         self._last_correction_prob: float | None = None
 
+    def __setstate__(self, state: dict) -> None:
+        """Restore a pickled critic; inject defaults added after v1."""
+        self.__dict__.update(state)
+        self.d_hidden = int(getattr(self, "d_hidden", 0))
+        self.mlp_hidden_units = int(getattr(self, "mlp_hidden_units", 16))
+        self.use_hidden = bool(getattr(self, "use_hidden", False))
+        self.W1 = getattr(self, "W1", None)
+        self.b1 = getattr(self, "b1", None)
+        self.W2 = getattr(self, "W2", None)
+        self.b2 = float(getattr(self, "b2", 0.0))
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -156,7 +167,7 @@ class WorldModelCritic:
           - key_uncertainty: aggregate uncertainty (high when near 0.5).
         """
         x = self._features(query, proposed_answer)
-        if self.use_hidden and lm_hidden is not None and self.d_hidden > 0:
+        if self.use_hidden and lm_hidden is not None:
             self._ensure_mlp(lm_hidden.shape[0])
             correction_prob, _ = self._mlp_forward(x, lm_hidden)
         else:
@@ -189,11 +200,7 @@ class WorldModelCritic:
 
         # Prediction error is measured against the model *before* it saw this
         # outcome.
-        use_mlp = (
-            self.use_hidden
-            and lm_hidden is not None
-            and self.d_hidden > 0
-        )
+        use_mlp = self.use_hidden and lm_hidden is not None
         x_prior = self._features(query, proposed_answer)
         if use_mlp:
             self._ensure_mlp(lm_hidden.shape[0])
@@ -315,6 +322,10 @@ class WorldModelCritic:
     def _ensure_mlp(self, d_hidden: int) -> None:
         """Lazy-initialize the small hidden-vector MLP if not present."""
         n_string_features = 4
+        if self.d_hidden > 0 and d_hidden != self.d_hidden:
+            # Observed hidden dimension has changed; force re-initialization.
+            self.W1 = None
+        self.d_hidden = d_hidden
         input_dim = n_string_features + d_hidden
         if (
             self.W1 is not None

@@ -155,7 +155,7 @@ class CortexAgent:
         # drive the cortex (no string-fed fast-weight replacement of the
         # cortex's intent).
         self.neural_hippocampus = NeuralHippocampus()
-        self.world_model_critic = WorldModelCritic()
+        self.world_model_critic = WorldModelCritic({"use_hidden": True, "mlp_hidden_units": 16})
         self.identity_hypernetwork = IdentityHypernetwork()
         self.skill_immune_cortex = SkillImmuneCortex()
         self.experience_autoencoder = ExperienceAutoencoder(
