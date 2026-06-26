@@ -144,6 +144,38 @@ def test_policy_update_skipped_when_disabled() -> None:
 
     assert len(mock_cortex.policy_update_calls) == 0
 
+class _LowSurpriseCritic:
+    """Returns a low prediction error so the slow-memory gate stays closed."""
+
+    def predict_acceptance(self, query: str, proposed_answer: str) -> dict[str, float]:
+        return {"accepted_prob": 0.1}
+
+    def record_outcome(
+        self, query: str, proposed_answer: str, correction: str
+    ) -> None:
+        pass
+
+
+def test_policy_update_fires_even_when_critic_not_surprised() -> None:
+    """Policy update must not be blocked by the critic-surprise gate."""
+    mock_cortex = _MockCortexAgent()
+    organism = OrganismAgent(
+        {"use_cortex_policy": True, "cortex_agent": mock_cortex}
+    )
+    organism.plastic_cortex.labels = ["a", "b"]
+    organism.plastic_cortex.answer = lambda request: "a"
+    organism.world_model_critic = _LowSurpriseCritic()
+    organism._surprise_threshold = 0.5
+
+    organism.learn("x", "No, it is b.")
+
+    assert len(mock_cortex.policy_update_calls) == 2
+    negative = [c for c in mock_cortex.policy_update_calls if c["reward"] == -1.0]
+    positive = [c for c in mock_cortex.policy_update_calls if c["reward"] == 1.0]
+    assert len(negative) == 1
+    assert len(positive) == 1
+    assert positive[0]["chosen_idx"] == positive[0]["candidates"].index("b")
+
 
 def test_policy_update_adds_expected_answer_to_candidates() -> None:
     """Policy update receives the expected label even if not a prior candidate."""

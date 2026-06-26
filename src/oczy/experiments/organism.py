@@ -421,30 +421,30 @@ class OrganismAgent:
                     response=expected_answer,
                 )
 
-            if (
-                self.use_cortex_policy
-                and self.cortex_agent is not None
-                and hasattr(self.cortex_agent, "policy_update")
-            ):
-                try:
-                    labels = list(self.plastic_cortex.labels)
-                    if expected_answer and expected_answer not in labels:
-                        labels.append(expected_answer)
-                    if prior_answer and prior_answer not in labels:
-                        labels.insert(0, prior_answer)
-                    chosen_idx = labels.index(prior_answer)
+        if (
+            self.use_cortex_policy
+            and self.cortex_agent is not None
+            and hasattr(self.cortex_agent, "policy_update")
+        ):
+            try:
+                labels = list(self.plastic_cortex.labels)
+                if expected_answer and expected_answer not in labels:
+                    labels.append(expected_answer)
+                if prior_answer and prior_answer not in labels:
+                    labels.insert(0, prior_answer)
+                chosen_idx = labels.index(prior_answer)
+                self._policy_update_with_baseline(
+                    request, labels, chosen_idx=chosen_idx, reward=-1.0
+                )
+                # Also reinforce the corrected expected action positively.
+                if expected_answer and expected_answer in labels:
+                    expected_idx = labels.index(expected_answer)
                     self._policy_update_with_baseline(
-                        request, labels, chosen_idx=chosen_idx, reward=-1.0
+                        request, labels, chosen_idx=expected_idx, reward=1.0
                     )
-                    # Also reinforce the corrected expected action positively.
-                    if expected_answer and expected_answer in labels:
-                        expected_idx = labels.index(expected_answer)
-                        self._policy_update_with_baseline(
-                            request, labels, chosen_idx=expected_idx, reward=1.0
-                        )
-                except Exception:
-                    # Policy update is advisory; never break the correction path.
-                    pass
+            except Exception:
+                # Policy update is advisory; never break the correction path.
+                pass
 
     @staticmethod
     def _extract_expected_from_correction(correction: str) -> str:
