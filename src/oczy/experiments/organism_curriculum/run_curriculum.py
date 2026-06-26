@@ -562,16 +562,19 @@ def main(argv: list[str] | None = None) -> int:
         agent_config.setdefault("use_cortex_policy", True)
         agent_config.setdefault("use_value_baseline", True)
         agent_config.setdefault("use_acceptance_policy_reward", True)
+        agent_config.setdefault("policy_suppresses_fast_answer", True)
         print("Enabled policy-loop gates for cortex shim.")
     if args.use_cortex_agent_mock:
         agent_config.setdefault("use_cortex_policy", True)
         agent_config.setdefault("use_value_baseline", True)
         agent_config.setdefault("use_acceptance_policy_reward", True)
+        agent_config.setdefault("policy_suppresses_fast_answer", True)
         print("Enabled policy-loop gates for CortexAgent mock driver.")
     if args.use_real_driver:
         agent_config.setdefault("use_cortex_policy", True)
         agent_config.setdefault("use_value_baseline", True)
         agent_config.setdefault("use_acceptance_policy_reward", True)
+        agent_config.setdefault("policy_suppresses_fast_answer", True)
         print("Enabled policy-loop gates for real LM driver.")
 
     stage_names = tuple(args.stages) if args.stages else None

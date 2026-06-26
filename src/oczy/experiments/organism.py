@@ -88,6 +88,9 @@ class OrganismAgent:
         self.use_cortex_policy = bool(config.get("use_cortex_policy", False))
         self.use_value_baseline = bool(config.get("use_value_baseline", False))
         self.cortex_policy_weight = float(config.get("cortex_policy_weight", 1.0))
+        self.policy_suppresses_fast_answer = bool(
+            config.get("policy_suppresses_fast_answer", False)
+        )
         self.cortex_agent: CortexAgent | None = config.get("cortex_agent")
         if self.use_cortex_lm_answer and self.cortex_agent is None:
             warnings.warn(
@@ -252,8 +255,15 @@ class OrganismAgent:
             if not label_tokens:
                 return policy_delta
 
-            # Start from strong preference for what the fast organ returned.
-            score = 1.0 if label == fast_answer else 0.0
+            # Start from strong preference for what the fast organ returned,
+            # unless policy signal is active and configured to suppress the bias.
+            fast_bias = (
+                0.0
+                if self.policy_suppresses_fast_answer and policy_scores is not None
+                else 1.0
+            )
+            score = fast_bias if label == fast_answer else 0.0
+
             if replay_hint and label == replay_hint:
                 score += 0.5
 

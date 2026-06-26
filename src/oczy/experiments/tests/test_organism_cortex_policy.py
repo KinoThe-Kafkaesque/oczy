@@ -83,10 +83,11 @@ def test_cortex_policy_default_off_uses_legacy_ranking() -> None:
 
 
 def test_cortex_policy_boosts_preferred_candidate() -> None:
-    """Policy head favours 'b' even though the fast organ returned 'a'."""
-    # Matching candidate order ["a", "b"]: low logit for "a", high logit for "b".
-    # Softmax turns these into probabilities; weight=2.0 keeps "b" ahead of the
-    # fast-answer bias (+1.0) plus token overlap (0).
+    """Policy head favours 'beta' even though the fast organ returned 'alpha'."""
+    # Matching candidate order ["alpha", "beta"]: low logit for "alpha",
+    # high logit for "beta". Softmax turns these into probabilities;
+    # weight=2.0 keeps "beta" ahead of the fast-answer bias (+1.0) plus
+    # token overlap (0).
     mock_cortex = _MockCortexAgent(policy_scores=np.array([0.0, 10.0]))
     organism = OrganismAgent(
         {
@@ -95,11 +96,48 @@ def test_cortex_policy_boosts_preferred_candidate() -> None:
             "cortex_agent": mock_cortex,
         }
     )
-    organism.plastic_cortex.labels = ["a", "b"]
-    organism.plastic_cortex.answer = lambda request: "a"
+    organism.plastic_cortex.labels = ["alpha", "beta"]
+    organism.plastic_cortex.answer = lambda request: "alpha"
 
-    assert organism.answer("x") == "b"
+    assert organism.answer("x") == "beta"
     assert mock_cortex._last_utterance == "x"
+
+
+def test_policy_suppresses_fast_answer_weak_preference_wins() -> None:
+    """With suppression on, even a weak policy preference for the non-fast
+    candidate controls ranking."""
+    mock_cortex = _MockCortexAgent(policy_scores=np.array([0.0, 0.6]))
+    organism = OrganismAgent(
+        {
+            "use_cortex_policy": True,
+            "policy_suppresses_fast_answer": True,
+            "cortex_policy_weight": 1.0,
+            "cortex_agent": mock_cortex,
+        }
+    )
+    organism.plastic_cortex.labels = ["alpha", "beta"]
+    organism.plastic_cortex.answer = lambda request: "alpha"
+
+    # Fast answer is "alpha"; policy slightly prefers "beta".
+    assert organism.answer("x") == "beta"
+
+
+def test_policy_suppresses_fast_answer_default_off_uses_legacy() -> None:
+    """Without the suppression flag, legacy +1.0 fast-answer bias wins over a
+    weak policy preference."""
+    mock_cortex = _MockCortexAgent(policy_scores=np.array([0.0, 0.6]))
+    organism = OrganismAgent(
+        {
+            "use_cortex_policy": True,
+            "cortex_policy_weight": 1.0,
+            "cortex_agent": mock_cortex,
+        }
+    )
+    organism.plastic_cortex.labels = ["alpha", "beta"]
+    organism.plastic_cortex.answer = lambda request: "alpha"
+
+    # Legacy bias keeps "alpha" at the top despite the weak preference for "beta".
+    assert organism.answer("x") == "alpha"
 
 
 def test_cortex_policy_warning_without_cortex_agent() -> None:
