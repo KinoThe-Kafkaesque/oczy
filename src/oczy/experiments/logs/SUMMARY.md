@@ -402,7 +402,47 @@ Remaining blocks:
   `policy_suppresses_fast_answer` flag lets the head dominate final ranking in probe
   modes. Stages 0+1 reach near-perfect retention/transfer with the real LM driver,
   and Stage 2 scope control is starting to show policy-driven alternate-sense selection.
+35. `a1e9313` — Add `src/oczy/experiments/needle_sweep.py`, a runnable
+    needle-position/length sweep benchmark. It emits `METRIC` and `ASI`
+    lines that the autoresearch harness can parse. At length 512, the
+    baseline single-embed metabolism achieves recall `0/5` across positions,
+    while the pipeline with a 64-token fixed-window chunker and pass-through
+    salience achieves recall `5/5` at a cost of ~10 embedding calls per
+    position. Fast suite unchanged at `290 passed`; benchmark remains
+    `code_qa_accuracy=1.0` (run #81).
+
+Test status: `pytest: 290 passed` fast (reserve-position + tensor-critic + replay-SGD +
+identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
+value-head + value-head-wiring + policy-head + organism-policy + policy-correction-loop +
+policy-positive-reward + actor-critic-baseline + acceptance-reward +
+curriculum-shim-margin + curriculum-cortex-agent-mock +
+curriculum-cortex-agent-transfer + policy-request-context +
+policy-update-ungated + policy-suppresses-fast-answer + ingestion-pipeline +
+needle-stressor + needle-sweep unit tests pass; slow needle tests 3 passed).
+`ruff check` clean on changed files.
+
+Remaining blocks:
+- Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
+- Exact-token uptake via cvec alone remains blocked; `ReservedPosition` prefix is the
+  practical exact-recall surface, and it can now be selected automatically by the
+  knowledge store.
+- Hippocampal replay now has a differentiable SGD path on `proj_hidden`, gated by
+  `replay_sgd_step` and defaulting to off.
+- IdentityHypernetwork now emits real `d_cortex`-dimensional adapter deltas that are
+  applied at articulation time, but the concept→latent mapping is still partially
+  hand-seeded and the effect on downstream behavior has not yet been measured.
+- WorldModelCritic now has tensor-input correction prediction (default in CortexAgent),
+  a learned value head that is trained with TD on every `metabolize()`, and feeds the
+  digestive gate, but none have been validated in a real correction/uptake loop.
+- CortexAgent's policy head can now optionally consume a request-context hidden vector
+  in addition to warm_state and candidate hidden vectors, gated by
+  `use_policy_request_context`. The ranking contribution remains normalized to
+  softmax probabilities, and policy updates fire on every correction. The
+  `policy_suppresses_fast_answer` flag lets the head dominate final ranking in probe
+  modes. Stages 0+1 reach near-perfect retention/transfer with the real LM driver,
+  and Stage 2 scope control is starting to show policy-driven alternate-sense selection.
 - CortexAgent now has a configurable `IngestionPipeline` upstream of metabolism that
-  produces `ChunkSignal` traces and a `TurnDigest` for the digestive gate; needle-per-turn
-  stressor tests prove the pipeline retrieves deep needles that the single-embed baseline
-  misses. Next step is a position/length sweep script and the ablation ladder.
+  produces `ChunkSignal` traces and a `TurnDigest` for the digestive gate. A
+  needle-position/length sweep script (`src/oczy/experiments/needle_sweep.py`)
+  demonstrates that the pipeline retrieves deep needles the single-embed baseline
+  misses. Next step is salience-filtered cost ablation and the embedder fork decision.
