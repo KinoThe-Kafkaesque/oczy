@@ -242,6 +242,7 @@ def _run_probe(
     n_ctx: int = 4096,
     use_prefix: bool = False,
     auto_consolidate: bool = False,
+    hybrid_cap: float = 10.0,
 ) -> _ProbeResult:
     """Run one probe: perceive, metabolize, consolidate, retrieve."""
     long_turn = _make_long_turn(total_length_tokens=length)
@@ -268,9 +269,8 @@ def _run_probe(
         threshold = gate_cfg.consolidation_pressure_threshold
         strength = 1.0 + (pressure / threshold) * 9.0 if threshold > 0 else 1.0
         if mode == "hybrid" and agent._last_digest is not None:
-            strength = float(
-                np.clip(strength * (1.0 + agent._last_digest.drift_max), 1.0, 10.0)
-            )
+            raw = strength * (1.0 + agent._last_digest.drift_max)
+            strength = float(raw if hybrid_cap <= 0.0 else np.clip(raw, 1.0, hybrid_cap))
         summary = agent.consolidate(strength=strength)
         auto_consolidated = 1
         agent.digestive_gate.reset()
@@ -280,7 +280,8 @@ def _run_probe(
         # consolidation regimes rather than just a flag.
         digest = agent._last_digest
         if mode == "hybrid" and digest is not None:
-            strength = float(np.clip(1.0 * (1.0 + digest.drift_max), 1.0, 10.0))
+            raw = 1.0 * (1.0 + digest.drift_max)
+            strength = float(raw if hybrid_cap <= 0.0 else np.clip(raw, 1.0, hybrid_cap))
         summary = agent.consolidate(strength=strength)
 
     if use_prefix:
@@ -354,6 +355,12 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Let the DigestiveGate decide whether consolidation fires.",
     )
+    parser.add_argument(
+        "--hybrid-cap",
+        type=float,
+        default=10.0,
+        help="Cap hybrid consolidation strength (default: 10.0; 0 means uncapped).",
+    )
     args = parser.parse_args(argv)
 
     config = json.loads(args.config) if args.config else {}
@@ -368,6 +375,7 @@ def main(argv: list[str] | None = None) -> None:
         n_ctx=args.n_ctx,
         use_prefix=args.use_prefix,
         auto_consolidate=args.auto_consolidate,
+        hybrid_cap=args.hybrid_cap,
     )
 
     print(

@@ -48,6 +48,17 @@ def test_multi_fact_stressor_auto_consolidate_mock() -> None:
     assert metric["auto_consolidated"] in {"0", "1"}
     assert any(line.startswith("ASI") for line in lines)
 
+
+def test_multi_fact_stressor_hybrid_cap_uncapped() -> None:
+    """With hybrid-cap 0 the hybrid strength can exceed the default 10.0 cap."""
+    lines = _capture_output(
+        ["--mode", "hybrid", "--auto-consolidate", "--hybrid-cap", "0", "--length", "256"]
+    )
+    metric = _parse_metric(lines)
+    if metric["auto_consolidated"] == "1":
+        assert float(metric["consolidation_strength"]) > 10.0
+    assert any(line.startswith("ASI") for line in lines)
+
 def test_multi_fact_stressor_runs_scalar() -> None:
     lines = _capture_output(["--mode", "scalar"])
     metric = _parse_metric(lines)
