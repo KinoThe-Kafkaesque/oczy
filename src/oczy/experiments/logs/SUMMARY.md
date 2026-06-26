@@ -482,7 +482,57 @@ Remaining blocks:
   `policy_suppresses_fast_answer` flag lets the head dominate final ranking in probe
   modes. Stages 0+1 reach near-perfect retention/transfer with the real LM driver,
   and Stage 2 scope control is starting to show policy-driven alternate-sense selection.
+
 - CortexAgent now has a configurable `IngestionPipeline` upstream of metabolism with
   working salience filtering: `lexical-novelty` keeps 100% needle recall while cutting
-  same-LM embedding calls by ~95% at 4k tokens vs pass-through. Next step is the
-  embedder fork decision or causal-gold salience validation.
+  same-LM embedding calls by ~95% at 4k tokens vs pass-through.
+
+36. `87ff263` — Add `mock-foreign` embedder option to `IngestionPipeline`.
+    It builds a deterministic character-trigram histogram and projects it
+    into `n_embd` via a lazy learned projection layer, exercising the
+    foreign-embedding + projection architecture without adding dependencies.
+    The pipeline now injects `n_embd` into `ctx_state` from the driver so
+    all embedders can size correctly. Needle sweep at 512 tokens:
+    same-LM `mean_recall=1.00` with 14 embedding calls; mock-foreign
+    `mean_recall=1.00` with 5 calls (no driver forwards). Fast suite
+    `293 passed`. Benchmark `code_qa_accuracy=1.0` (run #83).
+
+Test status: `pytest: 293 passed` fast (reserve-position + tensor-critic + replay-SGD +
+identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
+value-head + value-head-wiring + policy-head + organism-policy + policy-correction-loop +
+policy-positive-reward + actor-critic-baseline + acceptance-reward +
+curriculum-shim-margin + curriculum-cortex-agent-mock +
+curriculum-cortex-agent-transfer + policy-request-context +
+policy-update-ungated + policy-suppresses-fast-answer + ingestion-pipeline +
+needle-stressor + needle-sweep + salience-threshold + mock-foreign-embedder unit tests pass;
+slow needle tests 3 passed).
+`ruff check` clean on changed files.
+
+Remaining blocks:
+- Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
+- Exact-token uptake via cvec alone remains blocked; `ReservedPosition` prefix is the
+  practical exact-recall surface, and it can now be selected automatically by the
+  knowledge store.
+- Hippocampal replay now has a differentiable SGD path on `proj_hidden`, gated by
+  `replay_sgd_step` and defaulting to off.
+- IdentityHypernetwork now emits real `d_cortex`-dimensional adapter deltas that are
+  applied at articulation time, but the concept→latent mapping is still partially
+  hand-seeded and the effect on downstream behavior has not yet been measured.
+- WorldModelCritic now has tensor-input correction prediction (default in CortexAgent),
+  a learned value head that is trained with TD on every `metabolize()`, and feeds the
+  digestive gate, but none have been validated in a real correction/uptake loop.
+- CortexAgent's policy head can now optionally consume a request-context hidden vector
+  in addition to warm_state and candidate hidden vectors, gated by
+  `use_policy_request_context`. The ranking contribution remains normalized to
+  softmax probabilities, and policy updates fire on every correction. The
+  `policy_suppresses_fast_answer` flag lets the head dominate final ranking in probe
+  modes. Stages 0+1 reach near-perfect retention/transfer with the real LM driver,
+  and Stage 2 scope control is starting to show policy-driven alternate-sense selection.
+- CortexAgent now has a configurable `IngestionPipeline` upstream of metabolism with
+  pluggable chunkers, salience filters, embedders (same-LM and mock-foreign with learned
+  projection), and aggregators. Synthetic needle sweeps show lexical-novelty salience
+  cuts same-LM embedding calls dramatically while preserving recall, and mock-foreign
+  projection matches same-LM recall in the synthetic setting. Next steps: (1) evaluate a
+  real foreign sentence embedder (MiniLM/BGE) with trained projection, or (2) move on
+  to architecture S vs H gate comparison since same-LM + lexical-novelty is already
+  cheap enough on realistic turn lengths.
