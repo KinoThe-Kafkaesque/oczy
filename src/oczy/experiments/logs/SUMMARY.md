@@ -212,11 +212,46 @@ Remaining blocks:
 - WorldModelCritic now has tensor-input correction prediction (default in CortexAgent),
   a learned value head that is trained with TD on every `metabolize()`, and feeds the
   digestive gate, but none have been validated in a real correction/uptake loop.
-- CortexAgent now has an `answer()` method, a learned response-policy head, and
-  `OrganismAgent` can use it for ranking and symmetric (+/-) policy-gradient updates
-  with an optional value-head baseline and an optional acceptance reward on
   predicted-accepted answers. The policy head's ranking contribution is now normalized
   to softmax probabilities for stable, bounded influence. A curriculum instrumentation
   hook (`--policy-log`), a deterministic shim, a mock-driver `CortexAgent`, and a real
   LM driver (`--use-real-driver`) are available. The real LM-driven stages 0+1 achieve
   near-perfect retention and transfer in the probe configuration.
+
+31. `a07fa77` — Add gated `use_policy_request_context` to `CortexAgent`.
+    `perceive()` stores a request-context hidden vector and `_policy_features()`
+    concatenates `[warm_state; request_context; candidate_hidden]`, giving the
+    policy head a fixed context signal for context-dependent ranking. Default
+    off so the benchmark is unaffected. Fast suite: `268 passed`.
+    Real-driver stages 0+1 unchanged; stage 2 still shows `uptake=0/8`
+    because the curriculum's default commonsense responses are label-wrong
+    but never trigger a correction signal, so the policy head cannot learn
+    the alternate sense. Benchmark unchanged: `code_qa_accuracy=1.0` (run #76).
+
+Test status: `pytest: 268 passed` fast (reserve-position + tensor-critic + replay-SGD +
+identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
+value-head + value-head-wiring + policy-head + organism-policy + policy-correction-loop +
+policy-positive-reward + actor-critic-baseline + acceptance-reward +
+curriculum-shim-margin + curriculum-cortex-agent-mock +
+curriculum-cortex-agent-transfer + policy-request-context unit tests pass).
+`ruff check` clean on changed files.
+
+Remaining blocks:
+- Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
+- Exact-token uptake via cvec alone remains blocked; `ReservedPosition` prefix is the
+  practical exact-recall surface, and it can now be selected automatically by the
+  knowledge store.
+- Hippocampal replay now has a differentiable SGD path on `proj_hidden`, gated by
+  `replay_sgd_step` and defaulting to off.
+- IdentityHypernetwork now emits real `d_cortex`-dimensional adapter deltas that are
+  applied at articulation time, but the concept→latent mapping is still partially
+  hand-seeded and the effect on downstream behavior has not yet been measured.
+- WorldModelCritic now has tensor-input correction prediction (default in CortexAgent),
+  a learned value head that is trained with TD on every `metabolize()`, and feeds the
+  digestive gate, but none have been validated in a real correction/uptake loop.
+- CortexAgent's policy head can now optionally consume a request-context hidden vector
+  in addition to warm_state and candidate hidden vectors, gated by
+  `use_policy_request_context`. The ranking contribution remains normalized to
+  softmax probabilities. Stages 0+1 of the organism curriculum reach near-perfect
+  retention and transfer with the real LM driver; stage 2 scope control is blocked
+  by the absence of fired corrections on the alternate-sense episodes.
