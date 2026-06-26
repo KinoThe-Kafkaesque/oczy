@@ -167,12 +167,20 @@ Commits since previous summary:
     Fast suite: `265 passed`. Benchmark unchanged: `code_qa_accuracy=1.0`
     (run #71).
 
-Test status: `pytest: 265 passed` fast (reserve-position + tensor-critic + replay-SGD +
+28. `1b1b067` — Add transfer-generalization test for the real `CortexAgent`
+    policy head on organism curriculum stages 0+1. After stage 0 corrections,
+    the policy head assigns a higher score to the corrected label than to the
+    original wrong label on stage 1 transfer probes (different wording).
+    Fast suite: `266 passed`. Benchmark unchanged: `code_qa_accuracy=1.0`
+    (run #72).
+
+Test status: `pytest: 266 passed` fast (reserve-position + tensor-critic + replay-SGD +
 identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
 value-head + value-head-wiring + policy-head + organism-policy + policy-correction-loop +
 policy-positive-reward + actor-critic-baseline + acceptance-reward +
-curriculum-shim-margin + curriculum-cortex-agent-mock unit tests pass; full slow/model
-suite not rerun). `ruff check` clean on changed files.
+curriculum-shim-margin + curriculum-cortex-agent-mock +
+curriculum-cortex-agent-transfer unit tests pass; full slow/model suite not rerun).
+`ruff check` clean on changed files.
 
 Remaining blocks:
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
@@ -192,5 +200,6 @@ Remaining blocks:
   with an optional value-head baseline and an optional acceptance reward on
   predicted-accepted answers. A curriculum instrumentation hook (`--policy-log`), a
   deterministic shim (`--use-cortex-shim`), and a real `CortexAgent` mock-driver path
-  (`--use-cortex-agent-mock`) are available and have regression tests. A real LM-driven
-  CortexAgent policy head has not yet been exercised in this harness.
+  (`--use-cortex-agent-mock`) are available and have regression tests, including a
+  transfer-generalization test. A real LM-driven CortexAgent policy head has not yet
+  been exercised in this harness.
