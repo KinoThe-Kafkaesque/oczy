@@ -174,6 +174,13 @@ Commits since previous summary:
     Fast suite: `266 passed`. Benchmark unchanged: `code_qa_accuracy=1.0`
     (run #72).
 
+29. `b9028b8` — Add `--use-real-driver` to the curriculum runner, which loads
+    the local `LFM2.5-1.2B-Instruct-Q4_K_M.gguf` model and attaches a real
+    `CortexAgent` with `use_policy_head=True`. A probe of stages 0+1 completed
+    in ~14s and produced a corrected-answer policy margin delta of `+1.4291`
+    on real model hidden vectors, far stronger than the mock-driver probe.
+    Benchmark unchanged: `code_qa_accuracy=1.0` (run #73).
+
 Test status: `pytest: 266 passed` fast (reserve-position + tensor-critic + replay-SGD +
 identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
 value-head + value-head-wiring + policy-head + organism-policy + policy-correction-loop +
@@ -199,7 +206,8 @@ Remaining blocks:
   `OrganismAgent` can use it for ranking and symmetric (+/-) policy-gradient updates
   with an optional value-head baseline and an optional acceptance reward on
   predicted-accepted answers. A curriculum instrumentation hook (`--policy-log`), a
-  deterministic shim (`--use-cortex-shim`), and a real `CortexAgent` mock-driver path
-  (`--use-cortex-agent-mock`) are available and have regression tests, including a
-  transfer-generalization test. A real LM-driven CortexAgent policy head has not yet
-  been exercised in this harness.
+  deterministic shim (`--use-cortex-shim`), a mock-driver `CortexAgent`
+  (`--use-cortex-agent-mock`), and a real LM driver (`--use-real-driver`) are
+  available for probing the policy loop; mock-driver paths have regression tests.
+  Transfer accuracy with the real driver remains low because PlasticCortex fast weights
+  still dominate ranking in this configuration.
