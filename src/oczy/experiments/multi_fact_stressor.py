@@ -381,6 +381,11 @@ def _run_probe(
     memory_bytes = len(pickle.dumps(agent.neural_hippocampus))
     prefix_source: str | None = None
     if auto_prefix:
+        print(
+            "ASI event=deprecated_auto_prefix "
+            "message=--auto-prefix is deprecated; use --use-agent-prefix to validate "
+            "the live CortexAgent.use_hippocampus_prefix path"
+        )
         derived = _derive_prefix_from_hippocampus(agent)
         if derived is not None:
             prefix_text, prefix_source = derived
@@ -493,7 +498,8 @@ def main(argv: list[str] | None = None) -> None:
         "--auto-prefix",
         action="store_true",
         help=(
-            "Derive a ReservedPosition prefix from the hippocampal slow-updates"
+            "[DEPRECATED] Use --use-agent-prefix instead. "
+            "Derive a ReservedPosition prefix from hippocampal slow-updates"
             " / traces after consolidation. Takes precedence over --use-prefix."
         ),
     )

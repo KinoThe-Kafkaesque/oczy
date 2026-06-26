@@ -149,13 +149,14 @@ def test_multi_fact_stressor_runs_real_driver() -> None:
 
 
 def test_multi_fact_stressor_auto_prefix_mock() -> None:
-    """Auto-prefix should derive a hippocampal prefix and report it."""
+    """Auto-prefix still derives a hippocampal prefix but emits a deprecation ASI."""
     lines = _capture_output(["--auto-prefix", "--length", "64"])
     metric = _parse_metric(lines)
     _assert_valid_metric(metric, "scalar")
     assert metric["prefix_source"] == "hippocampus"
     assert metric["co_recall"] in {"0", "1"}
     assert any(line.startswith("ASI") for line in lines)
+    assert any("deprecated_auto_prefix" in line for line in lines)
 
 
 def test_multi_fact_stressor_auto_prefix_empty_fallback_mock(
@@ -170,7 +171,7 @@ def test_multi_fact_stressor_auto_prefix_empty_fallback_mock(
     metric = _parse_metric(lines)
     _assert_valid_metric(metric, "scalar")
     assert metric["prefix_source"] == "None"
-    assert any(line.startswith("ASI") for line in lines)
+    assert any("deprecated_auto_prefix" in line for line in lines)
 
 
 def test_multi_fact_stressor_use_prefix_source_hand() -> None:
