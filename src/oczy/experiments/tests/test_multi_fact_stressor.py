@@ -122,6 +122,17 @@ def test_max_traces_prunes_to_target() -> None:
     assert int(metric["memory_bytes"]) > 0
 
 
+def test_multi_fact_stressor_domain_recall_mock() -> None:
+    """The domain-recall flag should append domain-co-recall metrics."""
+    lines = _capture_output(["--domain-recall", "--length", "64"])
+    metric = _parse_metric(lines)
+    assert "domain_co_recall" in metric
+    assert metric["domain_co_recall"] in {"0", "1"}
+    assert "domain_recall_a" in metric
+    assert "domain_recall_b" in metric
+    assert metric["co_recall"] in {"0", "1"}
+    assert any(line.startswith("ASI") for line in lines)
+
 
 @pytest.mark.slow
 @pytest.mark.requires_model

@@ -30,6 +30,8 @@ QUERY_A = "What is the codeword for project alpha?"
 QUERY_B = "What is the codeword for project beta?"
 TARGET_A = "skylark"
 TARGET_B = "rook"
+DOMAIN_A = ["alpha", "skylark", "project alpha"]
+DOMAIN_B = ["beta", "rook", "project beta"]
 
 DEFAULT_FACT_A_POSITION = 0.25
 DEFAULT_FACT_B_POSITION = 0.75
@@ -142,6 +144,9 @@ class _ProbeResult:
     recall_a: int
     recall_b: int
     co_recall: int
+    domain_recall_a: int
+    domain_recall_b: int
+    domain_co_recall: int
     traces_stored: int
     embedding_calls: int
     cold_drift: float
@@ -225,14 +230,24 @@ def _build_agent(
     return agent
 
 
-def _recall_fact(agent: CortexAgent, query: str, target: str) -> int:
-    """Return 1 if ``target`` appears in the agent's answer to ``query``.
-
+def _recall_fact(
+    agent: CortexAgent,
+    query: str,
+    target: str | None = None,
+    *,
+    domain_targets: list[str] | None = None,
+) -> int:
+    """Return 1 if ``target`` (or any ``domain_targets`` keyword) appears in the agent's answer.
+    If ``domain_targets`` is not None, it takes precedence and exact target matching is skipped.
     The query is wrapped in a brief instruction template so the Instruct-tuned
     real driver answers rather than returning empty text.
     """
     prompt = f"Answer briefly.\nQuestion: {query}\nAnswer:"
     answer = agent.articulate(prompt=prompt, apply_steering=False).lower()
+    if domain_targets is not None:
+        return 1 if any(kw.lower() in answer for kw in domain_targets) else 0
+    if target is None:
+        raise ValueError("either target or domain_targets must be provided")
     return 1 if target.lower() in answer else 0
 
 
@@ -246,6 +261,7 @@ def _run_probe(
     auto_consolidate: bool = False,
     hybrid_cap: float = 10.0,
     max_traces: int | None = None,
+    domain_recall: bool = False,
 ) -> _ProbeResult:
     """Run one probe: perceive, metabolize, consolidate, retrieve."""
     long_turn = _make_long_turn(total_length_tokens=length)
@@ -303,6 +319,17 @@ def _run_probe(
     recall_a = _recall_fact(agent, QUERY_A, TARGET_A)
     recall_b = _recall_fact(agent, QUERY_B, TARGET_B)
     co_recall = 1 if (recall_a and recall_b) else 0
+    domain_recall_a = 0
+    domain_recall_b = 0
+    domain_co_recall = 0
+    if domain_recall:
+        domain_recall_a = _recall_fact(
+            agent, QUERY_A, target=None, domain_targets=DOMAIN_A
+        )
+        domain_recall_b = _recall_fact(
+            agent, QUERY_B, target=None, domain_targets=DOMAIN_B
+        )
+        domain_co_recall = 1 if (domain_recall_a and domain_recall_b) else 0
 
     return _ProbeResult(
         mode=mode,
@@ -313,6 +340,9 @@ def _run_probe(
         recall_b=recall_b,
         co_recall=co_recall,
         traces_stored=agent.neural_hippocampus.status()["episode_count"],
+        domain_recall_a=domain_recall_a,
+        domain_recall_b=domain_recall_b,
+        domain_co_recall=domain_co_recall,
         embedding_calls=getattr(agent.driver, "embedding_calls", 0),
         cold_drift=float(summary.get("cold_drift", 0.0)),
         consolidation_strength=strength,
@@ -376,6 +406,11 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Prune hippocampus to N most recent traces after consolidation (optional).",
     )
+    parser.add_argument(
+        "--domain-recall",
+        action="store_true",
+        help="Also report domain-level recall (keyword hit, not exact token).",
+    )
     args = parser.parse_args(argv)
 
     config = json.loads(args.config) if args.config else {}
@@ -392,21 +427,31 @@ def main(argv: list[str] | None = None) -> None:
         auto_consolidate=args.auto_consolidate,
         hybrid_cap=args.hybrid_cap,
         max_traces=args.max_traces,
+        domain_recall=args.domain_recall,
     )
 
-    print(
-        f"METRIC mode={result.mode} use_prefix={result.use_prefix} "
-        f"auto_consolidated={result.auto_consolidated} "
-        f"length={result.length} "
-        f"recall_a={result.recall_a} "
-        f"recall_b={result.recall_b} "
-        f"co_recall={result.co_recall} "
-        f"traces={result.traces_stored} "
-        f"embedding_calls={result.embedding_calls} "
-        f"memory_bytes={result.memory_bytes} "
-        f"cold_drift={result.cold_drift:.6f} "
-        f"consolidation_strength={result.consolidation_strength:.6f}"
-    )
+    metric_parts = [
+        f"METRIC mode={result.mode} use_prefix={result.use_prefix}",
+        f"auto_consolidated={result.auto_consolidated}",
+        f"length={result.length}",
+        f"recall_a={result.recall_a}",
+        f"recall_b={result.recall_b}",
+        f"co_recall={result.co_recall}",
+    ]
+    if args.domain_recall:
+        metric_parts.extend([
+            f"domain_recall_a={result.domain_recall_a}",
+            f"domain_recall_b={result.domain_recall_b}",
+            f"domain_co_recall={result.domain_co_recall}",
+        ])
+    metric_parts.extend([
+        f"traces={result.traces_stored}",
+        f"embedding_calls={result.embedding_calls}",
+        f"memory_bytes={result.memory_bytes}",
+        f"cold_drift={result.cold_drift:.6f}",
+        f"consolidation_strength={result.consolidation_strength:.6f}",
+    ])
+    print(" ".join(metric_parts))
 
 
     asi_config = {
