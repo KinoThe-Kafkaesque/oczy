@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import pickle
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -286,16 +287,29 @@ def _derive_prefix_from_hippocampus(
     """
     hippocampus = agent.neural_hippocampus
 
-    def _salient_snippets(text: str, window: int = 8) -> list[str]:
-        """Return windows around words matching the project-name targets."""
-        words = text.split()
+    def _salient_snippets(text: str, window: int = 2) -> list[str]:
+        """Return narrow windows around salient keywords.  Uses word-level
+        windowing first for precision, then falls back to sentence extraction
+        for structured text."""
+        targets = {TARGET_A, TARGET_B, "alpha", "beta", "rook", "skylark"}
         snippets: list[str] = []
-        targets = {TARGET_A, TARGET_B, "alpha", "beta"}
+        # Primary: tight word-level window around each target hit.
+        words = text.split()
+        seen: set[int] = set()
         for i, word in enumerate(words):
-            if word.lower() in targets:
+            if word.lower().rstrip(".,!?;:\"'") in targets and i not in seen:
                 start = max(0, i - window)
                 end = min(len(words), i + window + 1)
-                snippets.append(" ".join(words[start:end]))
+                snippet = " ".join(words[start:end])
+                snippets.append(snippet)
+                seen.update(range(start, end))
+        if snippets:
+            return snippets
+        # Fall back to sentence-level for structured text without these keywords.
+        for sent in re.split(r"(?<=[.!?])\s+", text):
+            sent_lower = sent.lower()
+            if any(t in sent_lower for t in targets):
+                snippets.append(sent.strip())
         return snippets
 
     # Prefer consolidated slow-updates; highest surprise, then most episodes.

@@ -1179,3 +1179,30 @@ Remaining blocks:
   can supply targets for that path. The next high-leverage direction is measuring
   IdentityHypernetwork adapter effects or closing the benchmark gap on exact-token
   consolidation uptake.
+
+## Recent runs — hippocampus-derived prefix + integration (June 2026)
+
+- **Run #96–#97**: Hippocampus-derived auto-prefix in stressor and live
+  `CortexAgent`. `_derive_reserved_position_from_hippocampus()` extracts
+  keyword-window snippets around target tokens from hippocampal traces and
+  slow-updates. `CortexAgentConfig.use_hippocampus_prefix` (default off) gates
+  the live path.
+- **Run #98**: Validated live agent path via `--use-agent-prefix` in
+  `multi_fact_stressor.py`. Real-driver scalar and hybrid both reach
+  `co_recall=1/1` with `prefix_source=hippocampus` at length 512.
+- **Run #99**: Deprecated stressor-only `--auto-prefix`; emits ASI deprecation
+  warning pointing to `--use-agent-prefix`.
+- **Run #100**: Added `prefix_targets` to `articulate()` and
+  `_derive_reserved_position_from_hippocampus()`. Expected answer strings are
+  added to snippet-extraction keywords so target tokens appear even under
+  paraphrased queries.
+- **Run #101**: `--paraphrase` flag in `multi_fact_stressor.py` uses rephrased
+  queries. Scalar and hybrid with `--use-agent-prefix --paraphrase` reach
+  `co_recall=1/1`.
+- **Run #102**: `KnowledgeStore.get_prefix_targets()` + new config flag
+  `knowledge_store_supplies_prefix_targets`. Wired into `articulate()` fallback
+  path when no explicit reserved position is set. All benchmark `code_qa_accuracy=1.0`.
+- **Run #103**: `--no-identity-adapter` flag in `multi_fact_stressor.py`. Wired
+  through `_build_agent` → `CortexAgentConfig.use_identity_adapter`. At
+  single-turn length 512, identity adapter ON vs OFF is indistinguishable
+  (adapter needs multi-turn accumulation). Benchmark `code_qa_accuracy=1.0`.

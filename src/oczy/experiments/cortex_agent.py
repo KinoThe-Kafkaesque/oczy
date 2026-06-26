@@ -608,15 +608,17 @@ class CortexAgent:
                         ):
                             keywords.add(token_stripped)
 
-        def _snippets(text: str, window: int = 8) -> list[str]:
+        def _snippets(text: str, window: int = 5) -> list[str]:
             words = text.split()
             found: list[str] = []
+            seen: set[int] = set()
             for i, word in enumerate(words):
                 stem = re.sub(r"[^\w]", "", word).lower()
-                if stem in keywords:
+                if stem in keywords and i not in seen:
                     start = max(0, i - window)
                     end = min(len(words), i + window + 1)
                     found.append(" ".join(words[start:end]))
+                    seen.update(range(start, end))
             return found
 
         all_snippets: list[str] = []
@@ -628,6 +630,16 @@ class CortexAgent:
 
         if not all_snippets:
             return None
+
+        # Deduplicate snippets by normalized text.
+        seen_texts: set[str] = set()
+        deduped: list[str] = []
+        for snippet in all_snippets:
+            norm = snippet.strip().lower()
+            if norm and norm not in seen_texts:
+                seen_texts.add(norm)
+                deduped.append(snippet)
+        all_snippets = deduped
 
         words = " ".join(all_snippets).strip().split()[:max_prefix_tokens]
         text = " ".join(words)
