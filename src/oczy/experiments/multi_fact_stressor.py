@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -30,6 +32,66 @@ TARGET_B = "rook"
 
 DEFAULT_FACT_A_POSITION = 0.25
 DEFAULT_FACT_B_POSITION = 0.75
+
+
+_GGUF_FILE_NAME = "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
+_GGUF_CACHE_PARENT = (
+    Path.home()
+    / ".cache"
+    / "huggingface"
+    / "hub"
+    / "models--LiquidAI--LFM2.5-1.2B-Instruct-GGUF"
+)
+
+_REAL_DRIVER: Any | None = None
+
+
+def _resolve_gguf_path() -> Path | None:
+    """Return the local GGUF path from env or HF cache, or None if missing."""
+    env_path = os.environ.get("OCZY_MODEL_PATH")
+    if env_path:
+        path = Path(env_path)
+        if path.is_file():
+            return path
+    if _GGUF_CACHE_PARENT.exists():
+        for path in sorted(_GGUF_CACHE_PARENT.rglob(_GGUF_FILE_NAME)):
+            if path.is_file():
+                return path
+    return None
+
+
+def _gguf_available() -> bool:
+    """True when a local GGUF can be found without downloading."""
+    return _resolve_gguf_path() is not None
+
+
+def _load_real_driver(n_ctx: int = 4096) -> Any:
+    """Load (or reuse) the real LlamaCVecDriver backed by LFM2.5."""
+    global _REAL_DRIVER
+    if _REAL_DRIVER is not None and _REAL_DRIVER.config.n_ctx == n_ctx:
+        return _REAL_DRIVER
+
+    from llama_cpp import Llama
+
+    from oczy.lm import CVecDriverConfig, LlamaCVecDriver
+
+    config = CVecDriverConfig(n_ctx=n_ctx, n_threads=4, embedding=True)
+    resolved = _resolve_gguf_path()
+    if resolved is None:
+        raise FileNotFoundError(
+            f"{_GGUF_FILE_NAME} not found. Set OCZY_MODEL_PATH or cache the file "
+            "under ~/.cache/huggingface/hub/models--LiquidAI--"
+            "LFM2.5-1.2B-Instruct-GGUF."
+        )
+    llm = Llama(
+        model_path=str(resolved),
+        n_ctx=n_ctx,
+        n_threads=4,
+        embedding=True,
+        verbose=False,
+    )
+    _REAL_DRIVER = LlamaCVecDriver(llm, config)
+    return _REAL_DRIVER
 
 
 class _MockDriver:
@@ -113,9 +175,11 @@ def _make_long_turn(
 def _build_agent(
     mode: str,
     ingestion: dict[str, Any] | None,
+    driver: Any | None = None,
 ) -> CortexAgent:
     """Create a fresh CortexAgent for one multi-fact probe run."""
-    driver = _MockDriver(n_embd=16)
+    if driver is None:
+        driver = _MockDriver(n_embd=16)
     use_hybrid = mode == "hybrid"
     cfg = CortexAgentConfig(
         cortex=KVCortexConfig(d_cortex=4),
@@ -156,10 +220,16 @@ def _run_probe(
     mode: str,
     length: int = 512,
     ingestion: dict[str, Any] | None = None,
+    use_real_driver: bool = False,
+    n_ctx: int = 4096,
 ) -> _ProbeResult:
     """Run one probe: perceive, metabolize, consolidate, retrieve."""
     long_turn = _make_long_turn(total_length_tokens=length)
-    agent = _build_agent(mode=mode, ingestion=ingestion)
+    if use_real_driver:
+        driver = _load_real_driver(n_ctx)
+    else:
+        driver = _MockDriver(n_embd=16)
+    agent = _build_agent(mode=mode, ingestion=ingestion, driver=driver)
 
     agent.perceive(long_turn)
     agent.metabolize()
@@ -184,7 +254,7 @@ def _run_probe(
         recall_b=recall_b,
         co_recall=co_recall,
         traces_stored=agent.neural_hippocampus.status()["episode_count"],
-        embedding_calls=agent.driver.embedding_calls,
+        embedding_calls=getattr(agent.driver, "embedding_calls", 0),
         cold_drift=float(summary.get("cold_drift", 0.0)),
         consolidation_strength=strength,
     )
@@ -213,6 +283,17 @@ def main(argv: list[str] | None = None) -> None:
         default="{}",
         help='JSON config object for pipeline overrides, e.g. {"ingestion":{"chunker_window_tokens":32}}.',
     )
+    parser.add_argument(
+        "--use-real-driver",
+        action="store_true",
+        help="Load the real LFM2.5 GGUF driver instead of the deterministic mock.",
+    )
+    parser.add_argument(
+        "--n-ctx",
+        type=int,
+        default=4096,
+        help="Context size for the real driver (default: 4096).",
+    )
     args = parser.parse_args(argv)
 
     config = json.loads(args.config) if args.config else {}
@@ -224,6 +305,8 @@ def main(argv: list[str] | None = None) -> None:
         mode=args.mode,
         length=args.length,
         ingestion=ingestion,
+        use_real_driver=args.use_real_driver,
+        n_ctx=args.n_ctx,
     )
 
     print(

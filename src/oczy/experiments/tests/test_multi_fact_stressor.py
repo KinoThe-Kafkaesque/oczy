@@ -5,7 +5,9 @@ from __future__ import annotations
 import io
 from contextlib import redirect_stdout
 
-from oczy.experiments.multi_fact_stressor import main
+import pytest
+
+from oczy.experiments.multi_fact_stressor import _gguf_available, main
 
 
 def _capture_output(argv: list[str]) -> list[str]:
@@ -77,3 +79,15 @@ def test_multi_fact_stressor_config_override() -> None:
     _assert_valid_metric(metric, "scalar")
     # A smaller window should produce at least as many traces as the default.
     assert int(metric["embedding_calls"]) > 0
+
+
+
+@pytest.mark.slow
+@pytest.mark.requires_model
+def test_multi_fact_stressor_runs_real_driver() -> None:
+    """Run against the real LFM2.5 GGUF; skipped if the model is not cached."""
+    if not _gguf_available():
+        pytest.skip("LFM2.5 GGUF not found in OCZY_MODEL_PATH or HF cache")
+    lines = _capture_output(["--use-real-driver", "--mode", "scalar", "--length", "256"])
+    assert any(line.startswith("METRIC") for line in lines)
+    assert any(line.startswith("ASI") for line in lines)
