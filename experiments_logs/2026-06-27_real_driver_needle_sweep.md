@@ -1,64 +1,76 @@
-# Real-driver needle sweep verification
+# Real-Driver Needle Sweep — 2026-06-27
 
-**Branch:** `autoresearch/session-20260625`  
-**Date:** 2026-06-26
+## Question
 
-Goal: confirm `needle_sweep.py` can load the real LFM2.5 GGUF driver and emit
-per-position wall-clock timing.
+Can the `IngestionPipeline` use a real foreign CPU sentence embedder to reduce
+wall-clock time versus same-LM embeddings on the LFM2.5 GGUF driver for the
+needle-recall stressor?
 
-## Commands run
+## Method
 
-```bash
-uv run python -m src.oczy.experiments.needle_sweep --length 512
-```
+Extended `src/oczy/experiments/needle_sweep.py` to optionally load the real
+LFM2.5 GGUF driver (`--use-real-driver`, `--n-ctx`). Added per-position and
+total wall-clock timing.
 
-```bash
-uv run python -m src.oczy.experiments.needle_sweep \
-  --use-real-driver --length 128 --positions 0.0,0.5
-```
+Real-driver runs at length 512, positions `[0.0, 0.25, 0.5, 0.75, 1.0]`,
+64-token chunks, `lexical-novelty` salience.
 
-```bash
-uv run pytest src/oczy/experiments/tests/test_ingestion_needle.py -q
-```
+Also cached the MiniLM sentence-transformer model across embedder instances
+(after noticing the model was re-initializing for every position).
 
-```bash
-uv run pytest -m "not slow and not requires_model" -q
-```
+## Results
 
-```bash
-uv run ruff check src/oczy/experiments/needle_sweep.py \
-  src/oczy/experiments/tests/test_ingestion_needle.py
-```
+### Length 512, cached MiniLM
 
-## Observed results
+| embedder | mean_recall | traces | total wall seconds |
+|---|---|---|---|
+| same-lm | 1.00 | 1-2 | 29.6 |
+| foreign-minilm | 1.00 | 1-2 | 42.8 |
 
-Mock sweep:
+Both achieve perfect recall. Foreign-MiniLM is slower at this scale.
 
-```
-METRIC length=512 position=0.00 recall=0 traces=0 embedding_calls=1 wall_seconds=0.002755
-METRIC length=512 position=1.00 recall=0 traces=0 embedding_calls=1 wall_seconds=0.002054
-METRIC length=512 mean_recall=0.00 max_recall=0 embedding_calls_total=5 total_wall_seconds=0.011664
-ASI config={"use_ingestion_pipeline": false, "ingestion": {}}
-```
+## Interpretation
 
-Real-driver sweep (LFM2.5 GGUF present locally):
+- `lexical-novelty` salience keeps only 1-2 chunks per position at length 512,
+  so the total number of embeddings is small.
+- `LlamaCVecDriver.peek_embedding` caches embeddings by prompt, and the filler
+  chunks are mostly identical across positions; after the first chunk, same-LM
+  embedding calls are essentially free.
+- Foreign-MiniLM encodes each surviving chunk via torch on CPU. Even with a
+  cached model, per-call overhead exceeds cached same-LM lookups in this regime.
 
-```
-METRIC length=128 position=0.00 recall=0 traces=0 embedding_calls=0 wall_seconds=2.370353
-METRIC length=128 position=0.50 recall=0 traces=0 embedding_calls=0 wall_seconds=1.708054
-METRIC length=128 mean_recall=0.00 max_recall=0 embedding_calls_total=0 total_wall_seconds=4.078407
-ASI config={"use_ingestion_pipeline": false, "ingestion": {}}
-```
+This means the naive expectation ("foreign embedder is always cheaper") is
+wrong for short/medium turns with high lexical repetition. The cost advantage
+appears only when:
+1. The turn contains many distinct chunks (cache misses dominate),
+2. The foreign embedder is fast (e.g. ONNX/Core ML), or
+3. Same-LM embedding is deliberately uncached or batched per-position.
 
-Tests:
+## Implication for architecture
 
-- `src/oczy/experiments/tests/test_ingestion_needle.py` — 4 passed
-- Fast suite (`not slow and not requires_model`) — 300 passed, 22 deselected
-- `ruff check` — clean
+The embedder fork decision depends strongly on input statistics. The current
+`foreign-minilm` integration is correct but not a universal win. To see savings,
+we must run length 4096 or higher where same-LM does many distinct forward
+passes.
 
-## Conclusion
+## Open questions
 
-`needle_sweep.py` now supports `--use-real-driver` / `--n-ctx`, reuses a single
-`LlamaCVecDriver` across positions, and reports `wall_seconds` per position plus
-`total_wall_seconds`. The slow/requires_model test skips cleanly when the GGUF is
-missing and passes against the local model.
+1. Does foreign-minilm beat same-lm at length 4096 or 8192?
+2. Would `pass-through` salience (embed all chunks) change the ratio?
+3. Is there a smaller/faster sentence model (ONNX) that reduces per-chunk
+   overhead enough to win at length 512?
+
+## Artifacts
+
+- `src/oczy/experiments/needle_sweep.py`
+- `src/oczy/experiments/tests/test_ingestion_needle.py`
+- `src/oczy/experiments/ingestion.py` (MiniLM cache)
+
+## Commits
+
+- `fb954fe` — Make needle_sweep runnable against real LlamaCVecDriver; cache MiniLM model.
+- `dc408b5` — Update SUMMARY with run #89.
+
+## Run
+
+Run #89: benchmark `code_qa_accuracy=1.0`, fast suite `300 passed`.
