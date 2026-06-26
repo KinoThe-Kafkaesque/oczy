@@ -1086,6 +1086,12 @@ Remaining blocks:
     `articulate()`. Real-driver scalar and hybrid both reach `co_recall=1/1`
     with `prefix_source=hippocampus` at length 512. Added mock tests. Fast suite
     `310 passed`; benchmark `code_qa_accuracy=1.0` (run #98).
+52. `c6a5beb` — Deprecate `--auto-prefix` in `multi_fact_stressor.py`. The
+    stressor-only wrapper path still works but emits a deprecation ASI pointing
+    users to `--use-agent-prefix`. Reconstructed the argparse block after earlier
+    edits introduced duplicate argument registrations. Updated tests to assert the
+    deprecation warning. Fast suite `310 passed`; benchmark `code_qa_accuracy=1.0`
+    (run #99).
 
 Test status: `pytest: 310 passed` fast + 1 slow/real-driver construction test
 (reserve-position + tensor-critic + replay-SGD + identity-adapter + hidden-delta +
@@ -1097,7 +1103,7 @@ policy-request-context + policy-update-ungated + policy-suppresses-fast-answer +
 ingestion-pipeline + needle-stressor + needle-sweep + salience-threshold +
 mock-foreign-embedder + hybrid-consolidation + multi-fact-stressor +
 foreign-minilm-embedder + real-driver-needle-sweep + auto-consolidate +
-hybrid-cap + memory-bytes + max-traces + domain-recall + auto-prefix +
+hybrid-cap + memory-bytes + max-traces + domain-recall + auto-prefix (deprecated) +
 use-agent-prefix + use_hippocampus_prefix unit tests pass; slow needle tests
 4 passed, 1 slow real-driver construction test passes).
 `ruff check` clean on changed files.
@@ -1114,7 +1120,8 @@ Remaining blocks:
 - Hippocampus-derived ReservedPosition prefixes close the exact-recall loop without
   hand-coded facts. The live `CortexAgent.use_hippocampus_prefix` path is validated
   end-to-end in the multi-fact stressor: real-driver scalar and hybrid reach
-  `co_recall=1/1` with `prefix_source=hippocampus` at length 512.
+  `co_recall=1/1` with `prefix_source=hippocampus` at length 512. `--auto-prefix` is
+  deprecated in favor of `--use-agent-prefix`.
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
 - Hippocampal replay now has a differentiable SGD path on `proj_hidden`, gated by
   `replay_sgd_step` and defaulting to off.
@@ -1136,6 +1143,7 @@ Remaining blocks:
   foreign-MiniLM with learned projection), a scalar stats gate, a hybrid consolidation-
   strength boost with configurable cap, and stressors for needle recall, multi-fact
   co-retention, domain recall, and hippocampus-derived prefixes. The live
-  `use_hippocampus_prefix` path is validated end-to-end. The next high-leverage
-  direction is measuring IdentityHypernetwork adapter effects, generalizing prefix
-  extraction, or closing the benchmark gap on exact-token consolidation uptake.
+  `use_hippocampus_prefix` path is validated end-to-end and `--auto-prefix` is
+  deprecated. The next high-leverage direction is measuring IdentityHypernetwork
+  adapter effects, generalizing prefix extraction, or closing the benchmark gap on
+  exact-token consolidation uptake.
