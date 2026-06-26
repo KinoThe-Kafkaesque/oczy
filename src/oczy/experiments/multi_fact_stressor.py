@@ -28,18 +28,18 @@ from plastic_cortex.kv_cortex import KVCortexConfig
 
 FACTS: list[str] = [
     "The codeword for project alpha is skylark.",
-    "The codeword for project beta is rook.",
-    "The codeword for project gamma is falcon.",
+    "Correction: the codeword for project beta is not raven, it is rook.",
+    "The secret passphrase for level 7 is marmalade.",
 ]
 QUERIES: list[str] = [
     "What is the codeword for project alpha?",
     "What is the codeword for project beta?",
-    "What is the codeword for project gamma?",
+    "What is the secret passphrase for level 7?",
 ]
 TARGETS: list[str] = [
     "skylark",
     "rook",
-    "falcon",
+    "marmalade",
 ]
 DEFAULT_FACT_POSITIONS: list[float] = [0.2, 0.5, 0.8]
 
@@ -321,7 +321,7 @@ def _derive_prefix_from_hippocampus(
         """Return narrow windows around salient keywords.  Uses word-level
         windowing first for precision, then falls back to sentence extraction
         for structured text."""
-        targets = set(TARGETS) | {"alpha", "beta", "rook", "skylark"}
+        targets = set(TARGETS) | {"alpha", "beta", "gamma", "rook", "skylark", "falcon", "marmalade"}
         snippets: list[str] = []
         # Primary: tight word-level window around each target hit.
         words = text.split()
