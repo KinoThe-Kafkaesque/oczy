@@ -13,24 +13,20 @@ Run: uv run python experiments/tests/test_cortex_agent.py
 
 from __future__ import annotations
 
-import sys
-from unittest.mock import MagicMock
-
-
-import pytest
-
 import dataclasses
+import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import numpy as np
-
-from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
-from oczy.experiments.digestive_gate import DigestiveGateConfig
-from plastic_cortex.kv_cortex import KVCortexConfig
-from oczy.lm import CVecDriverConfig, ReservedPosition
+import pytest
 
 from oczy.experiments.codebase_qa.knowledge_store import KnowledgeStore
+from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
+from oczy.lm import CVecDriverConfig, ReservedPosition
+from plastic_cortex.kv_cortex import KVCortexConfig
+
 pytestmark = [pytest.mark.slow, pytest.mark.requires_model, pytest.mark.llm]
 
 
@@ -401,6 +397,97 @@ def test_articulate_reserved_position_from_knowledge_store() -> None:
     # methods (apply or clear) should have been invoked.
     mock_driver.clear_cvec.assert_not_called()
     mock_driver.clear_reserved_position.assert_called_once()
+
+def test_hippocampus_prefix_derives_from_stored_episode() -> None:
+    """use_hippocampus_prefix derives a ReservedPosition from replayed memory."""
+    mock_driver = MagicMock()
+    mock_driver.n_embd = 64
+    mock_driver.n_layers = 2
+    mock_driver.generate.return_value = "skylark something"
+
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=8),
+        driver=CVecDriverConfig(n_ctx=256, verbose=False, embedding=True),
+        use_hippocampus_prefix=True,
+    )
+    agent = CortexAgent(cfg, driver=mock_driver)
+    agent.boot()
+
+    # Store a memory the hippocampus should replay for the project-alpha query.
+    agent.neural_hippocampus.store(
+        query="What is the codeword for project alpha?",
+        answer="I think it is raven.",
+        correction="No, the codeword for project alpha is skylark.",
+        corrected_answer="The codeword for project alpha is skylark.",
+        prediction_error=1.0,
+    )
+
+    agent.articulate(
+        prompt="Answer briefly.\nQuestion: What is the codeword for project alpha?\nAnswer:",
+        recall_query="codeword project alpha",
+        apply_steering=False,
+        max_tokens=8,
+    )
+
+    assert mock_driver.set_reserved_position.call_count == 1
+    pos = mock_driver.set_reserved_position.call_args[0][0]
+    assert isinstance(pos, ReservedPosition)
+    assert pos.source == "hippocampus"
+    assert "skylark" in pos.text
+    assert "project" in pos.text.lower()
+
+    mock_driver.set_cvec_uniform.assert_not_called()
+    mock_driver.set_cvecs_per_layer.assert_not_called()
+    mock_driver.clear_cvec.assert_not_called()
+    assert mock_driver.clear_reserved_position.call_count == 1
+
+
+def test_knowledge_store_prefix_takes_precedence_over_hippocampus() -> None:
+    """An explicit knowledge-store reserved token wins over the hippocampus prefix."""
+    store = KnowledgeStore()
+    store.add_fact(
+        key="business vertical",
+        value="'Profile' here means business vertical.",
+        metadata={"reserved_token": "vertical"},
+    )
+
+    mock_driver = MagicMock()
+    mock_driver.n_embd = 64
+    mock_driver.n_layers = 2
+    mock_driver.generate.return_value = "vertical something"
+
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=8),
+        driver=CVecDriverConfig(n_ctx=256, verbose=False, embedding=True),
+        use_hippocampus_prefix=True,
+    )
+    agent = CortexAgent(cfg, driver=mock_driver, knowledge_store=store)
+    agent.boot()
+
+    # Plant a hippocampal memory whose keyword should otherwise surface.
+    agent.neural_hippocampus.store(
+        query="What is the codeword for project alpha?",
+        answer="I think it is raven.",
+        correction="No, the codeword for project alpha is skylark.",
+        corrected_answer="The codeword for project alpha is skylark.",
+        prediction_error=1.0,
+    )
+
+    agent.articulate(
+        prompt="What does 'profile' mean here?",
+        recall_query="business profile vertical",
+        apply_steering=False,
+        max_tokens=8,
+    )
+
+    # The knowledge store's explicit reserved token is used, not skylark.
+    assert mock_driver.set_reserved_position.call_count == 1
+    pos = mock_driver.set_reserved_position.call_args[0][0]
+    assert isinstance(pos, ReservedPosition)
+    assert pos.text == "vertical"
+    assert pos.source == "knowledge_store"
+    assert "skylark" not in pos.text
+
 
 def main() -> int:
     tests = [

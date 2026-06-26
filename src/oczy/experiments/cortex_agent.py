@@ -79,6 +79,23 @@ def _softmax(x: np.ndarray) -> np.ndarray:
     return e / np.sum(e)
 
 
+_HIPPO_STOPWORDS = frozenset({
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "must", "shall", "can", "need", "dare", "ought",
+    "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
+    "as", "into", "through", "during", "before", "after", "above", "below",
+    "between", "under", "again", "further", "then", "once", "here", "there",
+    "when", "where", "why", "how", "all", "each", "few", "more", "most",
+    "other", "some", "such", "no", "nor", "not", "only", "own", "same", "so",
+    "than", "too", "very", "just", "and", "but", "if", "or", "because",
+    "until", "while", "that", "this", "these", "those", "i", "me", "my",
+    "we", "our", "you", "your", "he", "him", "his", "she", "her", "it",
+    "its", "they", "them", "their",
+})
+
+
+
 @dataclass
 class CortexAgentConfig:
     """Sizes + LM loading settings for CortexAgent.
@@ -122,6 +139,10 @@ class CortexAgentConfig:
     # Optional ingestion pipeline (default off for benchmark compatibility).
     use_ingestion_pipeline: bool = False
     ingestion: dict[str, Any] | None = None
+    # If True and no explicit ReservedPosition is set by the knowledge store,
+    # articulate() will try to derive a ReservedPosition from hippocampal replay
+    # for the recall query.
+    use_hippocampus_prefix: bool = False
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Restore missing fields for pickled configs from older versions."""
@@ -534,6 +555,63 @@ class CortexAgent:
             self.knowledge_store.add_fact(key, value, metadata)
 
     # ------------------------------------------------------------------
+    def _derive_reserved_position_from_hippocampus(
+        self,
+        query: str,
+        max_prefix_tokens: int = 128,
+    ) -> ReservedPosition | None:
+        """Derive a ReservedPosition from hippocampal replay for ``query``.
+
+        Replays the top-k episodes for ``query`` and extracts keyword-window
+        snippets.  The keywords are the query tokens plus content words
+        (length >= 3, not stopwords).  Snippets are limited to ``max_prefix_tokens``
+        total tokens to avoid polluting the prompt with filler context.
+
+        Returns ``None`` when no memory is available or no keyword matches.
+        """
+        if self.neural_hippocampus is None:
+            return None
+
+        episodes = self.neural_hippocampus.reinforce(query, k=3)
+        if not episodes:
+            return None
+
+        query_tokens = {tok.strip(".,!?;:\"'()[]{}").lower() for tok in query.split()}
+        keywords: set[str] = set(query_tokens)
+
+        for tok in query.lower().split():
+            stripped = re.sub(r"[^\w]", "", tok).lower()
+            if len(stripped) >= 3 and stripped not in _HIPPO_STOPWORDS:
+                keywords.add(stripped)
+
+        def _snippets(text: str, window: int = 8) -> list[str]:
+            words = text.split()
+            found: list[str] = []
+            for i, word in enumerate(words):
+                stem = re.sub(r"[^\w]", "", word).lower()
+                if stem in keywords:
+                    start = max(0, i - window)
+                    end = min(len(words), i + window + 1)
+                    found.append(" ".join(words[start:end]))
+            return found
+
+        all_snippets: list[str] = []
+        for episode in episodes:
+            for key in ("corrected_answer", "correction", "answer", "query"):
+                value = episode.get(key)
+                if value:
+                    all_snippets.extend(_snippets(str(value)))
+
+        if not all_snippets:
+            return None
+
+        words = " ".join(all_snippets).strip().split()[:max_prefix_tokens]
+        text = " ".join(words)
+        if not text:
+            return None
+
+        return ReservedPosition(text=text, source="hippocampus")
+
     # Articulation (LM generation with cortex steering)
     # ------------------------------------------------------------------
     def articulate(
@@ -579,10 +657,6 @@ class CortexAgent:
 
         reserved_position: ReservedPosition | None = None
 
-        # Ground the prompt with retrieved repo facts when a knowledge
-        # store is attached. Explicit recall_query takes precedence; otherwise
-        # fall back to the last perceived utterance so perceive()->articulate()
-        # chains naturally carry conversational context into recall.
         if self.knowledge_store is not None:
             query = recall_query if recall_query is not None else self._last_utterance
             if query is not None:
@@ -591,6 +665,16 @@ class CortexAgent:
                     reserved_position = self.knowledge_store.get_reserved_position(query)
                     if reserved_position is not None:
                         self.set_reserved_position(reserved_position)
+
+        # If no knowledge-store reserved position is available, optionally
+        # derive one from hippocampal replay.  Hippocampus-derived prefix has
+        # lower precedence than an explicit knowledge-store reserved token.
+        if reserved_position is None and self.config.use_hippocampus_prefix:
+            query = recall_query if recall_query is not None else self._last_utterance
+            if query:
+                reserved_position = self._derive_reserved_position_from_hippocampus(query)
+                if reserved_position is not None:
+                    self.set_reserved_position(reserved_position)
 
         if not prompt:
             # Avoid leaking a reserved position if we bail out early.
