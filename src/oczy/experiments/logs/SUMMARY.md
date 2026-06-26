@@ -318,6 +318,42 @@ Remaining blocks:
 - WorldModelCritic now has tensor-input correction prediction (default in CortexAgent),
   a learned value head that is trained with TD on every `metabolize()`, and feeds the
   digestive gate, but none have been validated in a real correction/uptake loop.
+
+34. `ffbe2b9` — Add a configurable `IngestionPipeline` scaffold upstream of
+    `CortexAgent.metabolize()`. The pipeline splits an utterance into
+    `Chunk` objects, runs pluggable chunkers (fixed-window / sentence /
+    paragraph / recursive), salience filters (pass-through /
+    correction-marker / lexical-novelty / centroid-cosine), embedders
+    (none / same-LM / identity placeholder), and observation modes
+    (parallel / sequential). It emits `ChunkSignal` traces for direct
+    hippocampal storage and a `TurnDigest` consumed by a new
+    `DigestiveGate.ingest_digest()` method that maps within-turn
+    statistics onto the existing scalar gate surface. Default off; the
+    benchmark remains `code_qa_accuracy=1.0` (run #79). Fast suite:
+    `290 passed`.
+
+Test status: `pytest: 290 passed` fast (reserve-position + tensor-critic + replay-SGD +
+identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
+value-head + value-head-wiring + policy-head + organism-policy + policy-correction-loop +
+policy-positive-reward + actor-critic-baseline + acceptance-reward +
+curriculum-shim-margin + curriculum-cortex-agent-mock +
+curriculum-cortex-agent-transfer + policy-request-context +
+policy-update-ungated + policy-suppresses-fast-answer + ingestion-pipeline unit tests pass).
+`ruff check` clean on changed files.
+
+Remaining blocks:
+- Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
+- Exact-token uptake via cvec alone remains blocked; `ReservedPosition` prefix is the
+  practical exact-recall surface, and it can now be selected automatically by the
+  knowledge store.
+- Hippocampal replay now has a differentiable SGD path on `proj_hidden`, gated by
+  `replay_sgd_step` and defaulting to off.
+- IdentityHypernetwork now emits real `d_cortex`-dimensional adapter deltas that are
+  applied at articulation time, but the concept→latent mapping is still partially
+  hand-seeded and the effect on downstream behavior has not yet been measured.
+- WorldModelCritic now has tensor-input correction prediction (default in CortexAgent),
+  a learned value head that is trained with TD on every `metabolize()`, and feeds the
+  digestive gate, but none have been validated in a real correction/uptake loop.
 - CortexAgent's policy head can now optionally consume a request-context hidden vector
   in addition to warm_state and candidate hidden vectors, gated by
   `use_policy_request_context`. The ranking contribution remains normalized to
@@ -325,3 +361,7 @@ Remaining blocks:
   `policy_suppresses_fast_answer` flag lets the head dominate final ranking in probe
   modes. Stages 0+1 reach near-perfect retention/transfer with the real LM driver,
   and Stage 2 scope control is starting to show policy-driven alternate-sense selection.
+- CortexAgent now has a configurable `IngestionPipeline` upstream of metabolism that
+  produces `ChunkSignal` traces and a `TurnDigest` for the digestive gate. The
+  pipeline is gated by `use_ingestion_pipeline` and defaults off. Next step is to
+  build needle-per-turn stressors and run the ablation ladder (rows 0-4).
