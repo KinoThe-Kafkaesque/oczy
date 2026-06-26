@@ -408,6 +408,76 @@ class IdentityEmbedder(Embedder):
         return [None] * len(chunks)
 
 
+class MockForeignEmbedder(Embedder):
+    """Deterministic foreign embedder with a lazy linear projection.
+
+    The foreign feature vector is a character-trigram count histogram.
+    On first use the histogram is projected to ``n_embd`` via a small
+    random normal matrix seeded for determinism.
+    """
+
+    embedded = True
+
+    def __init__(self, foreign_dim: int = 32, seed: int = 0) -> None:
+        self.foreign_dim = int(foreign_dim)
+        self.seed = int(seed)
+        self._rng = np.random.default_rng(self.seed)
+        self._W: np.ndarray | None = None
+        self._n_embd: int | None = None
+
+    @staticmethod
+    def _trigram_hash(trigram: str) -> int:
+        """Deterministic hash independent of PYTHONHASHSEED."""
+        h = 0
+        for ch in trigram:
+            h = (h * 31 + ord(ch)) & 0xFFFFFFFF
+        return h
+
+    def _foreign_features(self, text: str) -> np.ndarray:
+        vec = np.zeros(self.foreign_dim, dtype=np.float32)
+        for i in range(len(text) - 2):
+            idx = self._trigram_hash(text[i : i + 3]) % self.foreign_dim
+            vec[idx] += 1.0
+        return vec
+
+    def _resolve_n_embd(self, ctx_state: dict[str, Any] | None) -> int:
+        if ctx_state is not None:
+            n_embd = ctx_state.get("n_embd")
+            if n_embd is not None:
+                return int(n_embd)
+            driver = ctx_state.get("driver")
+            if driver is not None and hasattr(driver, "n_embd"):
+                return int(driver.n_embd)
+        raise ValueError(
+            "MockForeignEmbedder requires ctx_state['n_embd'] or a driver with 'n_embd'"
+        )
+
+    def embed(
+        self,
+        chunks: list[Chunk],
+        ctx_state: dict[str, Any] | None = None,
+    ) -> list[np.ndarray | None]:
+        if not chunks:
+            return []
+
+        n_embd = self._resolve_n_embd(ctx_state)
+        if self._W is None or self._n_embd != n_embd:
+            self._n_embd = n_embd
+            self._W = self._rng.normal(
+                loc=0.0, scale=0.01, size=(self.foreign_dim, n_embd)
+            ).astype(np.float32)
+
+        embeddings: list[np.ndarray | None] = []
+        for chunk in chunks:
+            foreign = self._foreign_features(chunk.text)
+            projected = foreign @ self._W
+            norm = float(np.linalg.norm(projected))
+            if norm > 1e-12:
+                projected = projected / norm
+            embeddings.append(projected.reshape(-1).astype(np.float32))
+        return embeddings
+
+
 # ---------------------------------------------------------------------------
 # Aggregator
 # ---------------------------------------------------------------------------
@@ -516,6 +586,11 @@ class IngestionPipeline:
             return SameLmEmbedder()
         if name == "identity":
             return IdentityEmbedder()
+        if name == "mock-foreign":
+            return MockForeignEmbedder(
+                foreign_dim=int(self.config.get("foreign_embedding_dim", 32)),
+                seed=int(self.config.get("seed", 0)),
+            )
         return NoneEmbedder()
 
     def _build_aggregator(self) -> Aggregator:
@@ -540,6 +615,10 @@ class IngestionPipeline:
             ctx_state["driver"] = self._driver
         if self._cortex is not None and "cortex" not in ctx_state:
             ctx_state["cortex"] = self._cortex
+        if "n_embd" not in ctx_state:
+            source = ctx_state.get("driver") or self._driver
+            if source is not None and hasattr(source, "n_embd"):
+                ctx_state["n_embd"] = int(source.n_embd)
         ctx_state.get("last_utterance")  # consumed if provided upstream
         correction_signal = float(ctx_state.get("correction_signal", 0.0))
 

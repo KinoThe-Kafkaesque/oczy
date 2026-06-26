@@ -210,6 +210,40 @@ def test_same_lm_embedder_mean_pools_2d_output() -> None:
     assert len(signals) == 1
     np.testing.assert_array_equal(signals[0].hidden, np.ones(4, dtype=np.float32) * 2.0)
 
+def test_mock_foreign_embedder_shapes() -> None:
+    driver = FakeDriver(n_embd=8)
+    pipeline = IngestionPipeline({"embedder": "mock-foreign"}, driver=driver)
+    signals, _ = pipeline.process("Hello world!")
+    assert len(signals) == 1
+    assert signals[0].hidden is not None
+    assert signals[0].hidden.shape == (driver.n_embd,)
+    assert signals[0].hidden.dtype == np.float32
+    assert np.linalg.norm(signals[0].hidden) == pytest.approx(1.0)
+
+
+def test_mock_foreign_embedder_is_deterministic() -> None:
+    driver = FakeDriver(n_embd=8)
+    pipeline = IngestionPipeline(
+        {"embedder": "mock-foreign", "seed": 42},
+        driver=driver,
+    )
+    text = "The quick brown fox jumps over the lazy dog."
+    signals_a, _ = pipeline.process(text)
+    signals_b, _ = pipeline.process(text)
+    assert len(signals_a) == len(signals_b) == 1
+    np.testing.assert_array_equal(signals_a[0].hidden, signals_b[0].hidden)
+
+
+def test_mock_foreign_embedder_changes_with_text() -> None:
+    driver = FakeDriver(n_embd=8)
+    pipeline = IngestionPipeline(
+        {"embedder": "mock-foreign", "seed": 42},
+        driver=driver,
+    )
+    a, _ = pipeline.process("alpha")
+    b, _ = pipeline.process("beta")
+    assert not np.allclose(a[0].hidden, b[0].hidden)
+
 
 # ---------------------------------------------------------------------------
 # Observation / drift
