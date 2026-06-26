@@ -181,6 +181,16 @@ Commits since previous summary:
     on real model hidden vectors, far stronger than the mock-driver probe.
     Benchmark unchanged: `code_qa_accuracy=1.0` (run #73).
 
+30. `71baa3f` — Normalize policy-head scores to softmax probabilities in
+    `OrganismAgent._rank_answer`. The raw-score contribution was unbounded
+    and grew across episodes; softmax over the candidate set keeps the
+    policy signal in `[0, 1]` so it can cleanly override the PlasticCortex
+    +1.0 fast-answer bias. Fixed-margin override (run #74) was discarded.
+    Real-driver curriculum stages 0+1 now achieve retention `0.88` and
+    transfer `1.00` (up from `0.38`), with a corrected-answer margin delta of
+    `+1.6694`. Fast suite: `266 passed`. Benchmark unchanged:
+    `code_qa_accuracy=1.0` (run #75).
+
 Test status: `pytest: 266 passed` fast (reserve-position + tensor-critic + replay-SGD +
 identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
 value-head + value-head-wiring + policy-head + organism-policy + policy-correction-loop +
@@ -205,9 +215,8 @@ Remaining blocks:
 - CortexAgent now has an `answer()` method, a learned response-policy head, and
   `OrganismAgent` can use it for ranking and symmetric (+/-) policy-gradient updates
   with an optional value-head baseline and an optional acceptance reward on
-  predicted-accepted answers. A curriculum instrumentation hook (`--policy-log`), a
-  deterministic shim (`--use-cortex-shim`), a mock-driver `CortexAgent`
-  (`--use-cortex-agent-mock`), and a real LM driver (`--use-real-driver`) are
-  available for probing the policy loop; mock-driver paths have regression tests.
-  Transfer accuracy with the real driver remains low because PlasticCortex fast weights
-  still dominate ranking in this configuration.
+  predicted-accepted answers. The policy head's ranking contribution is now normalized
+  to softmax probabilities for stable, bounded influence. A curriculum instrumentation
+  hook (`--policy-log`), a deterministic shim, a mock-driver `CortexAgent`, and a real
+  LM driver (`--use-real-driver`) are available. The real LM-driven stages 0+1 achieve
+  near-perfect retention and transfer in the probe configuration.
