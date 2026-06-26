@@ -246,6 +246,29 @@ def test_mock_foreign_embedder_changes_with_text() -> None:
     b, _ = pipeline.process("beta")
     assert not np.allclose(a[0].hidden, b[0].hidden)
 
+def test_minilm_embedder_shapes() -> None:
+    pytest.importorskip("sentence_transformers")
+    driver = FakeDriver(n_embd=8)
+    pipeline = IngestionPipeline(
+        {"embedder": "foreign-minilm", "foreign_model_name": "all-MiniLM-L6-v2"},
+        driver=driver,
+    )
+    signals, digest = pipeline.process("Hello world!")
+    assert digest.n_chunks >= 1
+    assert all(
+        s.hidden is not None and s.hidden.shape == (driver.n_embd,) for s in signals
+    )
+
+    pipeline2 = IngestionPipeline(
+        {"embedder": "foreign-minilm", "foreign_model_name": "all-MiniLM-L6-v2"},
+        driver=driver,
+    )
+    signals2, _ = pipeline2.process("Hello world!")
+    np.testing.assert_array_equal(signals[0].hidden, signals2[0].hidden)
+
+    signals3, _ = pipeline.process("Goodbye planet.")
+    assert not np.allclose(signals[0].hidden, signals3[0].hidden)
+
 
 # ---------------------------------------------------------------------------
 # Observation / drift

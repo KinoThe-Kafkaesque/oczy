@@ -477,6 +477,78 @@ class MockForeignEmbedder(Embedder):
             embeddings.append(projected.reshape(-1).astype(np.float32))
         return embeddings
 
+class MiniLMEmbedder(Embedder):
+    """Real CPU foreign sentence embedder with lazy linear projection.
+
+    Uses ``sentence-transformers`` and projects the resulting foreign vector
+    into the agent's ``n_embd`` via a learned random normal matrix.
+    """
+
+    embedded = True
+
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", seed: int = 0) -> None:
+        self.model_name = str(model_name)
+        self.seed = int(seed)
+        self._rng = np.random.default_rng(self.seed)
+        self._W: np.ndarray | None = None
+        self._n_embd: int | None = None
+
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "The 'foreign-minilm' embedder requires sentence-transformers. "
+                "Install it with `uv sync --group lm` or `pip install sentence-transformers>=3`."
+            ) from exc
+
+        self._model = SentenceTransformer(self.model_name)
+        self.foreign_dim = int(
+            getattr(self._model, "get_embedding_dimension", self._model.get_sentence_embedding_dimension)()
+        )
+
+    def _resolve_n_embd(self, ctx_state: dict[str, Any] | None) -> int:
+        if ctx_state is not None:
+            n_embd = ctx_state.get("n_embd")
+            if n_embd is not None:
+                return int(n_embd)
+            driver = ctx_state.get("driver")
+            if driver is not None and hasattr(driver, "n_embd"):
+                return int(driver.n_embd)
+        raise ValueError(
+            "MiniLMEmbedder requires ctx_state['n_embd'] or a driver with 'n_embd'"
+        )
+
+    def embed(
+        self,
+        chunks: list[Chunk],
+        ctx_state: dict[str, Any] | None = None,
+    ) -> list[np.ndarray | None]:
+        if not chunks:
+            return []
+
+        n_embd = self._resolve_n_embd(ctx_state)
+        if self._W is None or self._n_embd != n_embd:
+            self._n_embd = n_embd
+            self._W = self._rng.normal(
+                loc=0.0, scale=0.01, size=(self.foreign_dim, n_embd)
+            ).astype(np.float32)
+
+        embeddings: list[np.ndarray | None] = []
+        for chunk in chunks:
+            foreign = np.asarray(
+                self._model.encode(
+                    chunk.text,
+                    convert_to_numpy=True,
+                    show_progress_bar=False,
+                ),
+                dtype=np.float32,
+            ).reshape(-1)
+            projected = foreign @ self._W
+            norm = float(np.linalg.norm(projected))
+            if norm > 1e-12:
+                projected = projected / norm
+            embeddings.append(projected.astype(np.float32))
+        return embeddings
 
 # ---------------------------------------------------------------------------
 # Aggregator
@@ -589,6 +661,11 @@ class IngestionPipeline:
         if name == "mock-foreign":
             return MockForeignEmbedder(
                 foreign_dim=int(self.config.get("foreign_embedding_dim", 32)),
+                seed=int(self.config.get("seed", 0)),
+            )
+        if name == "foreign-minilm":
+            return MiniLMEmbedder(
+                model_name=self.config.get("foreign_model_name", "all-MiniLM-L6-v2"),
                 seed=int(self.config.get("seed", 0)),
             )
         return NoneEmbedder()

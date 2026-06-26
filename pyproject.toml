@@ -31,10 +31,10 @@ bench = [
     "psutil",
 ]
 lm = [
-    "llama-cpp-python>=0.3.31,<0.4",
     "huggingface-hub>=1.0",
+    "llama-cpp-python>=0.3.31,<0.4",
+    "sentence-transformers>=3",
 ]
-
 
 [build-system]
 requires = ["hatchling"]
