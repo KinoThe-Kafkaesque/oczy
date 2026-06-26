@@ -56,18 +56,48 @@ def _run_consolidation_uptake(driver: LlamaCVecDriver, use_hippo_prefix: bool = 
     """
     import numpy as np
 
-    probe = "'Profile' here means business _______."
-    semantic_expected = ["vertical"]  # exact target token
-    domain_expected = ["commercial", "economic", "business", "strategy", "market"]  # related domain
-    correction = "No, 'profile' here means business vertical, not user profile."
+    # Use a novel fact with an unpredictable answer so the LM's priors
+    # cannot override the hippocampus-derived prefix.
+    probe = "What is the secret passphrase for level 7?"
+    semantic_expected = ["marmalade"]  # exact target token
+    domain_expected = ["secret", "passphrase", "marmalade", "level"]  # related domain
+    correction = "The secret passphrase for level 7 is marmalade."
     prompt = _build_prompt(probe)
-    n_turns = 8
+
+    # Build a long filler turn embedding the fact, like the multi-fact stressor.
+    # This fills the KV cache with irrelevant text so the hippocampus-derived
+    # prefix is the most salient content during generation.
+    import random
+    random.seed(42)
+    def _make_long_turn(total_length_tokens: int = 2048) -> str:
+        filler_words = ["neutral"] * 500 + ["context"] * 200 + ["data"] * 200
+        random.shuffle(filler_words)
+        tokens = []
+        while len(" ".join(tokens).split()) < total_length_tokens * 0.95:
+            tokens.append(random.choice(filler_words))
+        insertion_point = len(tokens) // 2
+        tokens.insert(insertion_point, correction)
+        tokens.insert(insertion_point + 30, " ".join(
+            random.choice(filler_words) for _ in range(20)
+        ))
+        return " ".join(tokens)
+
+    long_turn = _make_long_turn(total_length_tokens=2048)
 
     cfg = CortexAgentConfig(
         cortex=KVCortexConfig(d_cortex=8, steering_mode="proj_random"),
         articulate_scale=0.03,
         auto_consolidate=True,
         use_hippocampus_prefix=use_hippo_prefix,
+        use_ingestion_pipeline=True,
+        ingestion={
+            "chunker": "fixed-window",
+            "chunker_window_tokens": 64,
+            "chunker_overlap_tokens": 8,
+            "salience": "lexical-novelty",
+            "embedder": "same-lm",
+            "aggregator": "stats",
+        },
     )
     agent = CortexAgent(config=cfg, knowledge_store=None, driver=driver)
     agent.boot()
@@ -76,50 +106,50 @@ def _run_consolidation_uptake(driver: LlamaCVecDriver, use_hippo_prefix: bool = 
     # (prefix+cvec degrades both; prefix-only achieves exact-token recall).
     apply_steering = not use_hippo_prefix
 
-    prefix_targets = ["vertical"] if use_hippo_prefix else None
+    prefix_targets = ["marmalade"] if use_hippo_prefix else None
     pre_answer = agent.articulate(
         prompt=prompt,
         max_tokens=16,
         temperature=0.0,
         apply_steering=apply_steering,
-        recall_query=correction,
+        recall_query=probe,
         prefix_targets=prefix_targets,
     ).strip()
     pre_score = _score(semantic_expected, pre_answer)
     pre_domain_score = _score(domain_expected, pre_answer)
     pre_normalised = pre_answer.lower()
-    correction_hiddens: list[np.ndarray] = []
-    auto_fired = False
-    for _ in range(n_turns):
-        result = agent.turn(
-            correction,
-            correction_signal=1.0,
-            max_tokens=4,
-            temperature=0.0,
-            metabolize=True,
-        )
-        if result.get("consolidated"):
-            auto_fired = True
-        if agent._last_hidden is not None:
-            correction_hiddens.append(agent._last_hidden.copy())
 
-    if correction_hiddens:
+    # Perceive the long filler turn.  The ingestion pipeline chunks and
+    # the salience filter ensures only novelty-containing chunks reach the
+    # hippocampus.  We collect the hidden vector for SVD init.
+    agent.perceive(long_turn)
+    agent.metabolize()
+    correction_hidden = (
+        agent._last_hidden.copy() if agent._last_hidden is not None else None
+    )
+
+    auto_fired = False
+    if agent.should_consolidate():
+        auto_fired = True
+
+    if correction_hidden is not None:
         try:
-            agent.cortex.init_proj_c_from_svd(np.vstack(correction_hiddens))
+            # Rank-1 SVD: set proj_c to the correction hidden direction.
+            agent.cortex.init_proj_c_from_svd(
+                np.vstack([correction_hidden])
+            )
         except Exception as exc:  # noqa: BLE001
             print(f"SVD init failed: {exc}")
 
-    if not auto_fired and agent.should_consolidate():
-        auto_fired = True
-
     if not auto_fired:
         agent.consolidate()
+
     post_warm_answer = agent.articulate(
         prompt=prompt,
         max_tokens=16,
         temperature=0.0,
         apply_steering=apply_steering,
-        recall_query=correction,
+        recall_query=probe,
         prefix_targets=prefix_targets,
     ).strip()
     post_warm_score = _score(semantic_expected, post_warm_answer)
@@ -133,7 +163,7 @@ def _run_consolidation_uptake(driver: LlamaCVecDriver, use_hippo_prefix: bool = 
         max_tokens=16,
         temperature=0.0,
         apply_steering=apply_steering,
-        recall_query=correction,
+        recall_query=probe,
         prefix_targets=prefix_targets,
     ).strip()
     post_cold_score = _score(semantic_expected, post_cold_answer)
