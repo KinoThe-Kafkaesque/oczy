@@ -528,6 +528,54 @@ def test_knowledge_store_prefix_takes_precedence_over_hippocampus() -> None:
     assert "skylark" not in pos.text
 
 
+def test_hippocampus_prefix_uses_knowledge_store_targets() -> None:
+    """Knowledge-store fact values feed prefix_targets for hippocampal replay."""
+    store = KnowledgeStore()
+    store.add_fact(
+        key="project alpha codeword",
+        value="The codeword for project alpha is skylark.",
+    )
+
+    mock_driver = MagicMock()
+    mock_driver.n_embd = 64
+    mock_driver.n_layers = 2
+    mock_driver.generate.return_value = "skylark something"
+
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=8),
+        driver=CVecDriverConfig(n_ctx=256, verbose=False, embedding=True),
+        use_hippocampus_prefix=True,
+        knowledge_store_supplies_prefix_targets=True,
+    )
+    agent = CortexAgent(cfg, driver=mock_driver, knowledge_store=store)
+    agent.boot()
+
+    # Plant a hippocampal memory that mentions the target token.
+    agent.neural_hippocampus.store(
+        query="What is the codeword for project alpha?",
+        answer="I don't know.",
+        correction="The codeword is skylark.",
+        corrected_answer="skylark",
+        prediction_error=1.0,
+    )
+
+    # The query paraphrases the fact; without the knowledge-store target value,
+    # the hippocampus replay would not know to surface "skylark".
+    agent.articulate(
+        prompt="Answer briefly.\nQuestion: What do we call project alpha?\nAnswer:",
+        recall_query="project alpha codeword",
+        apply_steering=False,
+        max_tokens=8,
+    )
+
+    assert mock_driver.set_reserved_position.call_count == 1
+    pos = mock_driver.set_reserved_position.call_args[0][0]
+    assert isinstance(pos, ReservedPosition)
+    assert pos.source == "hippocampus"
+    assert "skylark" in pos.text.lower()
+
+
+
 def main() -> int:
     tests = [
         ("test_perceive_produces_warm_state", test_perceive_produces_warm_state),

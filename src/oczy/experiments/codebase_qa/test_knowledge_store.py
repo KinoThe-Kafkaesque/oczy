@@ -156,3 +156,45 @@ def test_get_reserved_position_respects_min_score() -> None:
     )
 
     assert store.get_reserved_position("alpha beta query", k=1, min_score=0.18) is None
+
+
+def test_get_prefix_targets_uses_value_when_no_reserved_metadata() -> None:
+    store = KnowledgeStore()
+    store.add_fact("plain fact", "The answer is horizontal.")
+
+    targets = store.get_prefix_targets("plain fact", k=1, min_score=0.0)
+
+    assert targets == ["The answer is horizontal."]
+
+
+def test_get_prefix_targets_prefers_prefix_target_metadata() -> None:
+    store = KnowledgeStore()
+    store.add_fact(
+        "business vertical",
+        "The term 'Profile' refers to a business vertical.",
+        metadata={"prefix_target": "vertical"},
+    )
+
+    targets = store.get_prefix_targets("business vertical", k=1, min_score=0.0)
+
+    assert targets == ["vertical"]
+
+
+def test_get_prefix_targets_returns_none_below_min_score() -> None:
+    store = KnowledgeStore()
+    store.add_fact("gamma fact", "Qwerty placeholder detail.")
+
+    assert store.get_prefix_targets("alpha beta query", k=1, min_score=0.18) is None
+
+
+def test_get_prefix_targets_falls_back_to_reserved_token() -> None:
+    store = KnowledgeStore()
+    store.add_fact(
+        "business vertical",
+        "The term 'Profile' refers to a business vertical.",
+        metadata={"reserved_token": "vertical"},
+    )
+
+    targets = store.get_prefix_targets("business vertical", k=1, min_score=0.0)
+
+    assert targets == ["vertical"]

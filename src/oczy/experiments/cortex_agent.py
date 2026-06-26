@@ -143,6 +143,10 @@ class CortexAgentConfig:
     # articulate() will try to derive a ReservedPosition from hippocampal replay
     # for the recall query.
     use_hippocampus_prefix: bool = False
+    # If True, derive prefix_targets from the knowledge store's recalled facts
+    # when no explicit reserved position is found and use_hippocampus_prefix is
+    # enabled. Default off so the benchmark path is unchanged.
+    knowledge_store_supplies_prefix_targets: bool = False
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Restore missing fields for pickled configs from older versions."""
@@ -684,6 +688,28 @@ class CortexAgent:
                     reserved_position = self.knowledge_store.get_reserved_position(query)
                     if reserved_position is not None:
                         self.set_reserved_position(reserved_position)
+
+                # If no explicit reserved token was found and the config asks
+                # the knowledge store to supply prefix targets, enrich the
+                # hippocampus-derived prefix keyword set with recalled fact
+                # values so even paraphrased queries can surface exact tokens.
+                if (
+                    reserved_position is None
+                    and self.config.use_hippocampus_prefix
+                    and self.config.knowledge_store_supplies_prefix_targets
+                ):
+                    ks_targets = self.knowledge_store.get_prefix_targets(query)
+                    if ks_targets:
+                        if prefix_targets:
+                            seen = set(prefix_targets)
+                            merged = list(prefix_targets)
+                            for target in ks_targets:
+                                if target not in seen:
+                                    merged.append(target)
+                                    seen.add(target)
+                            prefix_targets = merged
+                        else:
+                            prefix_targets = ks_targets
 
         # If no knowledge-store reserved position is available, optionally
         # derive one from hippocampal replay.  Hippocampus-derived prefix has

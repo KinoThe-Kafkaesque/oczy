@@ -271,6 +271,40 @@ class KnowledgeStore:
             exact_uptake_score=top["score"],
         )
 
+    def get_prefix_targets(
+        self,
+        query: str,
+        k: int = 3,
+        min_score: float = 0.18,
+    ) -> list[str] | None:
+        """Return target strings from recalled facts to guide hippocampal replay.
+
+        Ranks facts for ``query`` and returns the target string for each fact
+        whose relevance score meets ``min_score``.  Target resolution order:
+        ``metadata["prefix_target"]``, then ``metadata["reserved_token"]``,
+        then the fact's ``value``.  Returns ``None`` when no facts meet the
+        score threshold.
+        """
+        facts = self.recall(query, k=k)
+        if not facts:
+            return None
+
+        targets: list[str] = []
+        for fact in facts:
+            if fact["score"] < min_score:
+                continue
+            metadata = fact.get("metadata", {}) or {}
+            target = metadata.get("prefix_target")
+            if target is None:
+                target = metadata.get("reserved_token")
+            if target is None:
+                target = fact.get("value")
+            if isinstance(target, str) and target.strip():
+                targets.append(target.strip())
+
+        return targets if targets else None
+
+
     def status(self, include_size: bool = False) -> dict:
         """Return serializable status metadata."""
         dim = None
