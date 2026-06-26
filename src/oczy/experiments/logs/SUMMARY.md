@@ -1213,3 +1213,21 @@ Remaining blocks:
   deduplication in cortex_agent, punctuation-stripping in multi_fact_stressor.
   All lengths 512/2048/4096 now pass co_recall=1/1 with scalar, hybrid,
   and paraphrase variants. Benchmark code_qa_accuracy=1.0.
+
+- **Run #105**: Validated hippocampus-derived prefix at extreme lengths
+  (512–131072). Mechanism is length-independent due to chunked ingestion +
+  salience filter. Benchmark code_qa_accuracy=1.0.
+- **Run #109**: Wired hippocampus prefix into consolidation_uptake probe.
+  Disabled cvec steering (prefix+cvec degrades both per POC). Result:
+  `post_warm_domain` and `post_cold_domain` recovered 0→1. Exact token
+  still 0 — fill-in-the-blank/KV-cache interaction remained.
+- **Runs #111–#115 (discarded)**: Attempted prompt format changes (Q&A,
+  novel facts, long filler turns) to close exact-token gap. All failed.
+  Root cause identified as `use_ingestion_pipeline=False` — no hippocampus
+  episodes were ever stored.
+- **Run #116 — BREAKTHROUGH**: Closed the consolidation_uptake exact-token gap.
+  Root cause: `use_ingestion_pipeline` defaulted to `False`, so `perceive()`
+  never stored episodes in the hippocampus. Enabling the ingestion pipeline
+  (`use_ingestion_pipeline=True`) with the stressor's chunking config fixed
+  it. All consolidation_uptake metrics now at 1.0: `post_warm=1, post_cold=1,
+  delta=1, output_shift=1, cold_output_shift=1`.
