@@ -26,6 +26,27 @@ from oczy.experiments.organism_curriculum.scoring import categorize_results, pro
 from oczy.experiments.organism_curriculum.validation import validate_curriculum
 
 
+def _load_real_cortex_agent() -> Any:
+    """Load a CortexAgent backed by the local LFM2.5 GGUF model."""
+    from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
+    from oczy.lm import CVecDriverConfig, LlamaCVecDriver
+    from plastic_cortex.kv_cortex import KVCortexConfig
+
+    print("Loading real LlamaCVecDriver...")
+    driver = LlamaCVecDriver.load(
+        CVecDriverConfig(n_ctx=128, n_threads=4, embedding=True)
+    )
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=4),
+        use_policy_head=True,
+        policy_learning_rate=0.001,
+    )
+    cortex = CortexAgent(cfg, driver=driver)
+    cortex.boot()
+    print("Real CortexAgent loaded.")
+    return cortex
+
+
 class _DeterministicCortexShim:
     """Lightweight deterministic policy-head stand-in for probe harness.
 
@@ -381,7 +402,6 @@ def write_report(
     payload = {
         "agent": agent_name,
         "use_lm": use_lm,
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "stages": serializable,
     }
     with out_path.open("w", encoding="utf-8") as fh:
@@ -406,15 +426,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Feed episodes through the LM perception layer (LanguageAdapter).",
     )
-    p.add_argument(
+    cortex_group = p.add_mutually_exclusive_group()
+    cortex_group.add_argument(
         "--use-cortex-shim",
         action="store_true",
-        help="Attach a deterministic hand-rolled CortexAgent shim for policy-loop probing.",
+        help="Attach a deterministic hand-rolled CortexAgent shim.",
     )
-    p.add_argument(
+    cortex_group.add_argument(
         "--use-cortex-agent-mock",
         action="store_true",
-        help="Attach a real CortexAgent with a deterministic mock driver for policy-loop probing.",
+        help="Attach a CortexAgent with a deterministic mock LM driver.",
+    )
+    cortex_group.add_argument(
+        "--use-real-driver",
+        action="store_true",
+        help="Attach a CortexAgent backed by the real LFM2.5 GGUF model.",
     )
     p.add_argument(
         "--stages",
@@ -525,9 +551,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     agent_config: dict[str, Any] = json.loads(args.config)
-    if args.use_cortex_shim and args.use_cortex_agent_mock:
-        print("Cannot use both --use-cortex-shim and --use-cortex-agent-mock; using --use-cortex-agent-mock.")
-        args.use_cortex_shim = False
+
 
     if args.use_cortex_shim:
         agent_config.setdefault("use_cortex_policy", True)
@@ -539,6 +563,11 @@ def main(argv: list[str] | None = None) -> int:
         agent_config.setdefault("use_value_baseline", True)
         agent_config.setdefault("use_acceptance_policy_reward", True)
         print("Enabled policy-loop gates for CortexAgent mock driver.")
+    if args.use_real_driver:
+        agent_config.setdefault("use_cortex_policy", True)
+        agent_config.setdefault("use_value_baseline", True)
+        agent_config.setdefault("use_acceptance_policy_reward", True)
+        print("Enabled policy-loop gates for real LM driver.")
 
     stage_names = tuple(args.stages) if args.stages else None
     stages = build_curriculum(stage_names=stage_names)
@@ -597,6 +626,11 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print("CortexAgent already present; mock driver not attached.")
 
+    if args.use_real_driver and isinstance(agent, OrganismAgent):
+        if agent.cortex_agent is None:
+            agent.cortex_agent = _load_real_cortex_agent()
+        else:
+            print("CortexAgent already present; real driver not attached.")
 
     adapter = None
     if args.lm:
