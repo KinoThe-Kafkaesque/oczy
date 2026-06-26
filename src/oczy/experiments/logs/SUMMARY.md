@@ -735,9 +735,52 @@ Remaining blocks:
   `policy_suppresses_fast_answer` flag lets the head dominate final ranking in probe
   modes. Stages 0+1 reach near-perfect retention/transfer with the real LM driver,
   and Stage 2 scope control is starting to show policy-driven alternate-sense selection.
+42. `fb954fe` — Extend `needle_sweep.py` with `--use-real-driver` and
+    `--n-ctx`, plus per-position and total wall-clock timing. Also caches
+    the MiniLM sentence-transformer model across embedder instances to avoid
+    repeated model loads. Real-driver length-512 needle sweep:
+    `same-lm` = 29.6s, `foreign-minilm` = 42.8s, both `mean_recall=1.00`.
+    Foreign-MiniLM is not cheaper at this scale because `lexical-novelty`
+    keeps only 1-2 chunks per position and `same-lm` embedding is cached.
+    Fast suite `300 passed`; benchmark `code_qa_accuracy=1.0` (run #89).
+
+Test status: `pytest: 300 passed` fast + 1 slow/real-driver construction test
+(reserve-position + tensor-critic + replay-SGD + identity-adapter + hidden-delta +
+default-critic + critic-gate + cortex-answer-loop + value-head + value-head-wiring +
+policy-head + organism-policy + policy-correction-loop + policy-positive-reward +
+actor-critic-baseline + acceptance-reward + curriculum-shim-margin +
+curriculum-cortex-agent-mock + curriculum-cortex-agent-transfer +
+policy-request-context + policy-update-ungated + policy-suppresses-fast-answer +
+ingestion-pipeline + needle-stressor + needle-sweep + salience-threshold +
+mock-foreign-embedder + hybrid-consolidation + multi-fact-stressor +
+foreign-minilm-embedder + real-driver-needle-sweep unit tests pass; slow needle
+tests 4 passed, 1 slow real-driver construction test passes).
+`ruff check` clean on changed files.
+
+Remaining blocks:
+- Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
+- Exact-token uptake via cvec alone remains blocked; `ReservedPosition` prefix is the
+  practical exact-recall surface, and it can now be selected automatically by the
+  knowledge store.
+- Hippocampal replay now has a differentiable SGD path on `proj_hidden`, gated by
+  `replay_sgd_step` and defaulting to off.
+- IdentityHypernetwork now emits real `d_cortex`-dimensional adapter deltas that are
+  applied at articulation time, but the concept→latent mapping is still partially
+  hand-seeded and the effect on downstream behavior has not yet been measured.
+- WorldModelCritic now has tensor-input correction prediction (default in CortexAgent),
+  a learned value head that is trained with TD on every `metabolize()`, and feeds the
+  digestive gate, but none have been validated in a real correction/uptake loop.
+- CortexAgent's policy head can now optionally consume a request-context hidden vector
+  in addition to warm_state and candidate hidden vectors, gated by
+  `use_policy_request_context`. The ranking contribution remains normalized to
+  softmax probabilities, and policy updates fire on every correction. The
+  `policy_suppresses_fast_answer` flag lets the head dominate final ranking in probe
+  modes. Stages 0+1 reach near-perfect retention/transfer with the real LM driver,
+  and Stage 2 scope control is starting to show policy-driven alternate-sense selection.
 - CortexAgent now has a configurable `IngestionPipeline` upstream of metabolism with
   pluggable chunkers, salience filters, embedders (same-LM, mock-foreign, and optional
   foreign-MiniLM with learned projection), a scalar stats gate, an optional hybrid
   consolidation-strength boost, and stressors for needle recall and multi-fact turns.
-  The foreign-MiniLM integration is ready; the next frontier is a real-driver needle
-  sweep comparing wall-clock and recall of foreign-MiniLM versus same-LM on LFM2.5.
+  Real-driver length-512 needle sweep shows same-lm (29.6s) still beats foreign-minilm
+  (42.8s) when lexical-novelty keeps only 1-2 chunks. Next frontier is length 4096 to
+  stress the cache-miss regime where same-lm pays for many forward passes.
