@@ -160,47 +160,6 @@ class _ProbeResult:
     consolidation_strength: float
     memory_bytes: int
 
-def _make_long_turn(
-    fact_a: str | None = None,
-    fact_b: str | None = None,
-    *,
-    fact_a_position: float = 0.25,
-    fact_b_position: float = 0.75,
-    total_length_tokens: int = 512,
-) -> str:
-    """Return a long whitespace-delimited text with two facts buried inside."""
-    if fact_a is None:
-        fact_a = FACTS[0] if len(FACTS) > 0 else ""
-    if fact_b is None:
-        fact_b = FACTS[1] if len(FACTS) > 1 else ""
-    """Return a long whitespace-delimited text with two facts buried inside."""
-    assert 0.0 <= fact_a_position <= 1.0
-    assert 0.0 <= fact_b_position <= 1.0
-    tokens_a = fact_a.split()
-    tokens_b = fact_b.split()
-    assert len(tokens_a) + len(tokens_b) <= total_length_tokens
-
-    words = ["neutral"] * total_length_tokens
-    idx_a = int(total_length_tokens * fact_a_position)
-    idx_b = int(total_length_tokens * fact_b_position)
-
-    # Keep facts from overlapping; if they would, nudge the later one.
-    if idx_a <= idx_b < idx_a + len(tokens_a):
-        idx_b = idx_a + len(tokens_a)
-    if idx_b <= idx_a < idx_b + len(tokens_b):
-        idx_a = idx_b + len(tokens_b)
-
-    assert idx_a + len(tokens_a) <= total_length_tokens
-    assert idx_b + len(tokens_b) <= total_length_tokens
-
-    for i, tok in enumerate(tokens_a):
-        words[idx_a + i] = tok
-    for i, tok in enumerate(tokens_b):
-        words[idx_b + i] = tok
-    return " ".join(words)
-
-
-
 def _make_long_turn_multi(
     facts: list[str],
     *,
