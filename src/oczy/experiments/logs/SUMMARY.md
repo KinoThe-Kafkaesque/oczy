@@ -1206,3 +1206,10 @@ Remaining blocks:
   through `_build_agent` → `CortexAgentConfig.use_identity_adapter`. At
   single-turn length 512, identity adapter ON vs OFF is indistinguishable
   (adapter needs multi-turn accumulation). Benchmark `code_qa_accuracy=1.0`.
+
+- **Run #104**: Fixed hippocampus-derived prefix quality regression at length 2048.
+  Root cause: snippet window=8 pulled in "neutral" filler noise that confused
+  LM attention at intermediate context lengths. Fix: window=5 + snippet
+  deduplication in cortex_agent, punctuation-stripping in multi_fact_stressor.
+  All lengths 512/2048/4096 now pass co_recall=1/1 with scalar, hybrid,
+  and paraphrase variants. Benchmark code_qa_accuracy=1.0.
