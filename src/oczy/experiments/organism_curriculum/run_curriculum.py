@@ -83,6 +83,40 @@ class _DeterministicCortexShim:
         self._policy_b += 0.05 * advantage * (1.0 - probs[chosen_idx])
 
 
+
+class _MockDriver:
+    """Deterministic LM driver stand-in for probe harness.
+
+    Returns fixed-shape hidden vectors without loading a model.
+    """
+
+    def __init__(self, n_embd: int = 8, n_layers: int = 2) -> None:
+        self.n_embd = n_embd
+        self.n_layers = n_layers
+
+    def peek_embedding(
+        self, text: str, last_token_only: bool = True
+    ) -> np.ndarray:
+        del last_token_only
+        # Deterministic, nearly-orthogonal hidden vectors so the policy head
+        # learns a clear corrected-vs-wrong margin in the probe harness.
+        idx = sum(ord(c) for c in text) % self.n_embd
+        h = np.zeros(self.n_embd, dtype=np.float64)
+        h[idx] = 1.0
+        # Add a small length signal so repeated text still differs from others.
+        h[(idx + 1) % self.n_embd] = float(len(text)) * 0.05
+        return h
+
+    def generate(
+        self,
+        prompt: str,
+        max_tokens: int = 64,
+        temperature: float = 0.0,
+        stop: list[str] | str | None = None,
+    ) -> str:
+        del prompt, max_tokens, temperature, stop
+        return "mock"
+
 @dataclass
 class EpisodeResult:
     id: str
@@ -373,6 +407,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Feed episodes through the LM perception layer (LanguageAdapter).",
     )
     p.add_argument(
+        "--use-cortex-shim",
+        action="store_true",
+        help="Attach a deterministic hand-rolled CortexAgent shim for policy-loop probing.",
+    )
+    p.add_argument(
+        "--use-cortex-agent-mock",
+        action="store_true",
+        help="Attach a real CortexAgent with a deterministic mock driver for policy-loop probing.",
+    )
+    p.add_argument(
         "--stages",
         nargs="+",
         help="Run only these stage files by basename (without .json).",
@@ -392,11 +436,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--report-name",
         default="run.json",
         help="Report filename.",
-    )
-    p.add_argument(
-        "--use-cortex-shim",
-        action="store_true",
-        help="Attach a deterministic CortexAgent shim to OrganismAgent for policy-loop probing.",
     )
     p.add_argument(
         "--policy-log",
@@ -486,11 +525,20 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     agent_config: dict[str, Any] = json.loads(args.config)
+    if args.use_cortex_shim and args.use_cortex_agent_mock:
+        print("Cannot use both --use-cortex-shim and --use-cortex-agent-mock; using --use-cortex-agent-mock.")
+        args.use_cortex_shim = False
+
     if args.use_cortex_shim:
         agent_config.setdefault("use_cortex_policy", True)
         agent_config.setdefault("use_value_baseline", True)
         agent_config.setdefault("use_acceptance_policy_reward", True)
         print("Enabled policy-loop gates for cortex shim.")
+    if args.use_cortex_agent_mock:
+        agent_config.setdefault("use_cortex_policy", True)
+        agent_config.setdefault("use_value_baseline", True)
+        agent_config.setdefault("use_acceptance_policy_reward", True)
+        print("Enabled policy-loop gates for CortexAgent mock driver.")
 
     stage_names = tuple(args.stages) if args.stages else None
     stages = build_curriculum(stage_names=stage_names)
@@ -516,6 +564,39 @@ def main(argv: list[str] | None = None) -> int:
             print("Deterministic CortexAgent shim attached.")
         else:
             print("CortexAgent already present; shim not attached.")
+
+    if args.use_cortex_agent_mock and isinstance(agent, OrganismAgent):
+        if agent.cortex_agent is None:
+            from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
+            from plastic_cortex.kv_cortex import KVCortexConfig
+
+            driver = _MockDriver()
+            cfg = CortexAgentConfig(
+                cortex=KVCortexConfig(d_cortex=4),
+                use_policy_head=True,
+            )
+            cortex = CortexAgent(cfg, driver=driver)
+            cortex.boot()
+
+            # Work around OrganismAgent's array-valued ``_prev_hidden or _last_hidden``
+            # guard, which raises on numpy arrays. Masking _prev_hidden lets the
+            # value-baseline path fall through to _last_hidden.
+            orig_perceive = cortex.perceive
+
+            def _patched_perceive(
+                utterance: str, correction_signal: float | None = None
+            ) -> np.ndarray:
+                out = orig_perceive(utterance, correction_signal=correction_signal)
+                cortex._prev_hidden = None
+                return out
+
+            cortex.perceive = _patched_perceive.__get__(cortex, CortexAgent)
+
+            agent.cortex_agent = cortex
+            print("CortexAgent with mock driver attached.")
+        else:
+            print("CortexAgent already present; mock driver not attached.")
+
 
     adapter = None
     if args.lm:

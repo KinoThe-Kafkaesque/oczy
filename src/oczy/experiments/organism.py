@@ -313,10 +313,9 @@ class OrganismAgent:
             return
         baseline = 0.0
         if self.use_value_baseline:
-            value_hidden = (
-                getattr(self.cortex_agent, "_prev_hidden", None)
-                or getattr(self.cortex_agent, "_last_hidden", None)
-            )
+            value_hidden = getattr(self.cortex_agent, "_prev_hidden", None)
+            if value_hidden is None:
+                value_hidden = getattr(self.cortex_agent, "_last_hidden", None)
             if value_hidden is not None and hasattr(
                 self.cortex_agent.world_model_critic, "predict_value"
             ):
