@@ -201,3 +201,12 @@ def test_multi_fact_stressor_use_agent_prefix_takes_precedence_over_hand_prefix(
     assert metric["prefix_source"] == "hippocampus"
     assert metric["use_prefix"] == "True"
     assert any(line.startswith("ASI") for line in lines)
+
+
+def test_multi_fact_stressor_paraphrase_mock() -> None:
+    """The paraphrase flag should run without error and emit a valid METRIC."""
+    lines = _capture_output(["--use-agent-prefix", "--paraphrase", "--length", "64"])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    assert metric["prefix_source"] == "hippocampus"
+    assert any(line.startswith("ASI") for line in lines)

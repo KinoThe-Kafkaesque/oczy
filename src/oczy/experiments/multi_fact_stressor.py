@@ -33,6 +33,8 @@ TARGET_A = "skylark"
 TARGET_B = "rook"
 DOMAIN_A = ["alpha", "skylark", "project alpha"]
 DOMAIN_B = ["beta", "rook", "project beta"]
+PARAPHRASE_A = "What name is used for project alpha?"
+PARAPHRASE_B = "What do we call project beta?"
 
 DEFAULT_FACT_A_POSITION = 0.25
 DEFAULT_FACT_B_POSITION = 0.75
@@ -237,12 +239,18 @@ def _recall_fact(
     target: str | None = None,
     *,
     domain_targets: list[str] | None = None,
+    recall_query: str | None = None,
 ) -> int:
     """Return 1 if ``target`` (or any ``domain_targets`` keyword) appears in the agent's answer.
+
     If ``domain_targets`` is not None, it takes precedence and exact target matching is skipped.
     The query is wrapped in a brief instruction template so the Instruct-tuned
     real driver answers rather than returning empty text.
+
+    ``recall_query`` is passed to ``agent.articulate()`` for hippocampal replay; it
+    defaults to ``query`` when not provided.
     """
+    effective_recall_query = recall_query if recall_query is not None else query
     prompt = f"Answer briefly.\nQuestion: {query}\nAnswer:"
     targets: list[str] = []
     if target is not None:
@@ -250,7 +258,7 @@ def _recall_fact(
     answer = agent.articulate(
         prompt=prompt,
         apply_steering=False,
-        recall_query=query,
+        recall_query=effective_recall_query,
         prefix_targets=targets if targets else None,
     ).lower()
     if domain_targets is not None:
@@ -340,6 +348,7 @@ def _run_probe(
     hybrid_cap: float = 10.0,
     max_traces: int | None = None,
     domain_recall: bool = False,
+    use_paraphrase: bool = False,
 ) -> _ProbeResult:
     """Run one probe: perceive, metabolize, consolidate, retrieve."""
     long_turn = _make_long_turn(total_length_tokens=length)
@@ -422,24 +431,40 @@ def _run_probe(
         )
         prefix_source = "hand"
 
-    recall_a = _recall_fact(agent, QUERY_A, TARGET_A)
-    recall_b = _recall_fact(agent, QUERY_B, TARGET_B)
+    domain_recall_a = 0
+    domain_recall_b = 0
+    if use_paraphrase:
+        recall_a = _recall_fact(
+            agent, QUERY_A, TARGET_A, recall_query=PARAPHRASE_A
+        )
+        recall_b = _recall_fact(
+            agent, QUERY_B, TARGET_B, recall_query=PARAPHRASE_B
+        )
+        if domain_recall:
+            domain_recall_a = _recall_fact(
+                agent, QUERY_A, target=None, domain_targets=DOMAIN_A,
+                recall_query=PARAPHRASE_A
+            )
+            domain_recall_b = _recall_fact(
+                agent, QUERY_B, target=None, domain_targets=DOMAIN_B,
+                recall_query=PARAPHRASE_B
+            )
+    else:
+        recall_a = _recall_fact(agent, QUERY_A, TARGET_A)
+        recall_b = _recall_fact(agent, QUERY_B, TARGET_B)
+        if domain_recall:
+            domain_recall_a = _recall_fact(
+                agent, QUERY_A, target=None, domain_targets=DOMAIN_A
+            )
+            domain_recall_b = _recall_fact(
+                agent, QUERY_B, target=None, domain_targets=DOMAIN_B
+            )
 
     if use_agent_prefix:
         agent.set_reserved_position = orig_set  # type: ignore[method-assign]
 
     co_recall = 1 if (recall_a and recall_b) else 0
-    domain_recall_a = 0
-    domain_recall_b = 0
-    domain_co_recall = 0
-    if domain_recall:
-        domain_recall_a = _recall_fact(
-            agent, QUERY_A, target=None, domain_targets=DOMAIN_A
-        )
-        domain_recall_b = _recall_fact(
-            agent, QUERY_B, target=None, domain_targets=DOMAIN_B
-        )
-        domain_co_recall = 1 if (domain_recall_a and domain_recall_b) else 0
+    domain_co_recall = 1 if (domain_recall_a and domain_recall_b) else 0
 
     return _ProbeResult(
         mode=mode,
@@ -540,6 +565,11 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Also report domain-level recall (keyword hit, not exact token).",
     )
+    parser.add_argument(
+        "--paraphrase",
+        action="store_true",
+        help="Use paraphrased recall queries that omit the original keywords.",
+    )
     args = parser.parse_args(argv)
 
     config = json.loads(args.config) if args.config else {}
@@ -559,6 +589,7 @@ def main(argv: list[str] | None = None) -> None:
         hybrid_cap=args.hybrid_cap,
         max_traces=args.max_traces,
         domain_recall=args.domain_recall,
+        use_paraphrase=args.paraphrase,
     )
 
     metric_parts = [
