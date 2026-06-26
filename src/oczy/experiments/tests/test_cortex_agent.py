@@ -442,6 +442,45 @@ def test_hippocampus_prefix_derives_from_stored_episode() -> None:
     assert mock_driver.clear_reserved_position.call_count == 1
 
 
+def test_hippocampus_prefix_targets_surface_expected_token() -> None:
+    """prefix_targets lets snippet extraction find tokens absent from the query."""
+    mock_driver = MagicMock()
+    mock_driver.n_embd = 64
+    mock_driver.n_layers = 2
+    mock_driver.generate.return_value = "skylark something"
+
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=8),
+        driver=CVecDriverConfig(n_ctx=256, verbose=False, embedding=True),
+        use_hippocampus_prefix=True,
+    )
+    agent = CortexAgent(cfg, driver=mock_driver)
+    agent.boot()
+    agent.neural_hippocampus.store(
+        query="What is the codeword for project alpha?",
+        answer="I don't know.",
+        correction="The codeword is skylark.",
+        corrected_answer="skylark",
+        prediction_error=1.0,
+    )
+
+    agent.articulate(
+        prompt="Answer briefly.\nQuestion: What do we call project alpha?\nAnswer:",
+        recall_query="What do we call project alpha?",
+        apply_steering=False,
+        prefix_targets=["skylark"],
+        max_tokens=8,
+    )
+
+    assert mock_driver.set_reserved_position.call_count == 1
+    pos = mock_driver.set_reserved_position.call_args[0][0]
+    assert isinstance(pos, ReservedPosition)
+    # The target token should be in the derived prefix even though the query never
+    # contained it.
+    assert "skylark" in pos.text.lower()
+    assert pos.source == "hippocampus"
+
+
 def test_knowledge_store_prefix_takes_precedence_over_hippocampus() -> None:
     """An explicit knowledge-store reserved token wins over the hippocampus prefix."""
     store = KnowledgeStore()

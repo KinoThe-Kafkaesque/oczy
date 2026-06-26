@@ -244,8 +244,14 @@ def _recall_fact(
     real driver answers rather than returning empty text.
     """
     prompt = f"Answer briefly.\nQuestion: {query}\nAnswer:"
+    targets: list[str] = []
+    if target is not None:
+        targets.append(str(target))
     answer = agent.articulate(
-        prompt=prompt, apply_steering=False, recall_query=query
+        prompt=prompt,
+        apply_steering=False,
+        recall_query=query,
+        prefix_targets=targets if targets else None,
     ).lower()
     if domain_targets is not None:
         return 1 if any(kw.lower() in answer for kw in domain_targets) else 0

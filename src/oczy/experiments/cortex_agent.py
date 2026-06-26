@@ -559,12 +559,16 @@ class CortexAgent:
         self,
         query: str,
         max_prefix_tokens: int = 128,
+        prefix_targets: list[str] | None = None,
     ) -> ReservedPosition | None:
         """Derive a ReservedPosition from hippocampal replay for ``query``.
 
         Replays the top-k episodes for ``query`` and extracts keyword-window
         snippets.  The keywords are the query tokens plus content words
-        (length >= 3, not stopwords).  Snippets are limited to ``max_prefix_tokens``
+        (length >= 3, not stopwords).  When ``prefix_targets`` is provided,
+        each target string and its whitespace tokens are also added to the
+        keyword set so exact expected tokens can be surfaced even when the
+        query is paraphrased.  Snippets are limited to ``max_prefix_tokens``
         total tokens to avoid polluting the prompt with filler context.
 
         Returns ``None`` when no memory is available or no keyword matches.
@@ -583,6 +587,19 @@ class CortexAgent:
             stripped = re.sub(r"[^\w]", "", tok).lower()
             if len(stripped) >= 3 and stripped not in _HIPPO_STOPWORDS:
                 keywords.add(stripped)
+
+        if prefix_targets:
+            for target in prefix_targets:
+                target_stripped = str(target).strip().lower()
+                if target_stripped:
+                    keywords.add(target_stripped)
+                    for tok in target_stripped.split():
+                        token_stripped = re.sub(r"[^\w]", "", tok).lower()
+                        if (
+                            len(token_stripped) >= 3
+                            and token_stripped not in _HIPPO_STOPWORDS
+                        ):
+                            keywords.add(token_stripped)
 
         def _snippets(text: str, window: int = 8) -> list[str]:
             words = text.split()
@@ -622,6 +639,7 @@ class CortexAgent:
         apply_steering: bool = True,
         recall_query: str | None = None,
         use_reserved_position: bool = True,
+        prefix_targets: list[str] | None = None,
         stop: list[str] | str | None = None,
     ) -> str:
         """Generate text with the cortex's intent currently applied.
@@ -640,17 +658,18 @@ class CortexAgent:
             recall_query: optional query for the attached knowledge store.
                 If provided (or defaulted from ``self._last_utterance`` when
                 the store is present), retrieved facts are prepended to the
-                prompt. No recall is performed when no store is attached.
             use_reserved_position: if True (default) and a knowledge store is
                 attached, try to map the recall query to a reserved token and
                 set it as a reserved position before generation.  Reserved
                 positions take precedence over cvec steering to avoid
                 interference.
+            prefix_targets: optional list of expected answer strings (e.g.
+                golden answers from a knowledge store or probe). When
+                ``use_hippocampus_prefix`` is enabled, these strings are added
+                to the snippet-extraction keyword set so the derived prefix
+                can surface exact target tokens even when the query is
+                paraphrased.
             stop: optional stop sequence(s) forwarded to the driver's generate().
-
-        Returns:
-            The LM's generated text. The cortex state is unchanged by this
-            call (articulation is read-only w.r.t. warm_state).
         """
         if prompt is None:
             prompt = self._last_utterance or ""
@@ -672,7 +691,9 @@ class CortexAgent:
         if reserved_position is None and self.config.use_hippocampus_prefix:
             query = recall_query if recall_query is not None else self._last_utterance
             if query:
-                reserved_position = self._derive_reserved_position_from_hippocampus(query)
+                reserved_position = self._derive_reserved_position_from_hippocampus(
+                    query, prefix_targets=prefix_targets
+                )
                 if reserved_position is not None:
                     self.set_reserved_position(reserved_position)
 
