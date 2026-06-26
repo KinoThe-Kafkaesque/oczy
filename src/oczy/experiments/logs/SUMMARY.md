@@ -156,12 +156,23 @@ Commits since previous summary:
     positive. Fast suite: `264 passed`. Benchmark unchanged:
     `code_qa_accuracy=1.0` (run #70).
 
-Test status: `pytest: 264 passed` fast (reserve-position + tensor-critic + replay-SGD +
+27. `78e12ad` — Extend the curriculum runner with `--use-cortex-agent-mock`,
+    which attaches a *real* `CortexAgent` driven by a deterministic mock LM
+    driver (no real model required). Stage 0 probe run produced absolute
+    delta `-0.0178` and margin delta `+0.0185`. Also fixed a numpy truth-value
+    bug in `OrganismAgent._policy_update_with_baseline` that would break the
+    value-head baseline path when `_prev_hidden` is a numpy array. Added
+    regression test
+    `src/oczy/experiments/organism_curriculum/tests/test_cortex_agent_policy_delta.py`.
+    Fast suite: `265 passed`. Benchmark unchanged: `code_qa_accuracy=1.0`
+    (run #71).
+
+Test status: `pytest: 265 passed` fast (reserve-position + tensor-critic + replay-SGD +
 identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
 value-head + value-head-wiring + policy-head + organism-policy + policy-correction-loop +
 policy-positive-reward + actor-critic-baseline + acceptance-reward +
-curriculum-shim-margin unit tests pass; full slow/model suite not rerun). `ruff check`
-clean on changed files.
+curriculum-shim-margin + curriculum-cortex-agent-mock unit tests pass; full slow/model
+suite not rerun). `ruff check` clean on changed files.
 
 Remaining blocks:
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
@@ -179,7 +190,7 @@ Remaining blocks:
 - CortexAgent now has an `answer()` method, a learned response-policy head, and
   `OrganismAgent` can use it for ranking and symmetric (+/-) policy-gradient updates
   with an optional value-head baseline and an optional acceptance reward on
-  predicted-accepted answers. A curriculum instrumentation hook (`--policy-log`) and a
-  deterministic shim (`--use-cortex-shim`) are available; the shim now reports absolute
-  and margin policy deltas and has a regression test. A real CortexAgent policy head
-  has not yet been exercised end-to-end.
+  predicted-accepted answers. A curriculum instrumentation hook (`--policy-log`), a
+  deterministic shim (`--use-cortex-shim`), and a real `CortexAgent` mock-driver path
+  (`--use-cortex-agent-mock`) are available and have regression tests. A real LM-driven
+  CortexAgent policy head has not yet been exercised in this harness.
