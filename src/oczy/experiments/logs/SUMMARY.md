@@ -819,11 +819,56 @@ Remaining blocks:
   `policy_suppresses_fast_answer` flag lets the head dominate final ranking in probe
   modes. Stages 0+1 reach near-perfect retention/transfer with the real LM driver,
   and Stage 2 scope control is starting to show policy-driven alternate-sense selection.
+44. (Run #91, no code change) — Directly compared `same-lm` and
+    `foreign-minilm` embedders in the real-driver multi-fact stressor with a
+    reserved-position prefix. Both reach `co_recall=1/1`; same-lm takes 8.8s,
+    foreign-minilm takes 25.0s. Foreign-MiniLM preserves recall quality but
+    is not faster in this regime. An attempt to add an ONNX Runtime foreign
+    embedder failed because `optimum[onnxruntime]` requires
+    `huggingface-hub<1.0`, which conflicts with the repo's `lm` dependency
+    group (`>=1.0`); the environment was cleaned up and the fast suite passes.
+    Benchmark `code_qa_accuracy=1.0` (run #91).
+
+Test status: `pytest: 300 passed` fast + 1 slow/real-driver construction test
+(reserve-position + tensor-critic + replay-SGD + identity-adapter + hidden-delta +
+default-critic + critic-gate + cortex-answer-loop + value-head + value-head-wiring +
+policy-head + organism-policy + policy-correction-loop + policy-positive-reward +
+actor-critic-baseline + acceptance-reward + curriculum-shim-margin +
+curriculum-cortex-agent-mock + curriculum-cortex-agent-transfer +
+policy-request-context + policy-update-ungated + policy-suppresses-fast-answer +
+ingestion-pipeline + needle-stressor + needle-sweep + salience-threshold +
+mock-foreign-embedder + hybrid-consolidation + multi-fact-stressor +
+foreign-minilm-embedder + real-driver-needle-sweep unit tests pass; slow needle
+tests 4 passed, 1 slow real-driver construction test passes).
+`ruff check` clean on changed files.
+
+Remaining blocks:
+- ONNX-Runtime foreign embedder is blocked by `optimum`'s dependency range
+  (`huggingface-hub<1.0`) conflicting with the repo's `lm` group.
+- Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
+- Exact-token uptake via cvec alone remains blocked; `ReservedPosition` prefix is the
+  practical exact-recall surface, and it can now be selected automatically by the
+  knowledge store.
+- Hippocampal replay now has a differentiable SGD path on `proj_hidden`, gated by
+  `replay_sgd_step` and defaulting to off.
+- IdentityHypernetwork now emits real `d_cortex`-dimensional adapter deltas that are
+  applied at articulation time, but the concept→latent mapping is still partially
+  hand-seeded and the effect on downstream behavior has not yet been measured.
+- WorldModelCritic now has tensor-input correction prediction (default in CortexAgent),
+  a learned value head that is trained with TD on every `metabolize()`, and feeds the
+  digestive gate, but none have been validated in a real correction/uptake loop.
+- CortexAgent's policy head can now optionally consume a request-context hidden vector
+  in addition to warm_state and candidate hidden vectors, gated by
+  `use_policy_request_context`. The ranking contribution remains normalized to
+  softmax probabilities, and policy updates fire on every correction. The
+  `policy_suppresses_fast_answer` flag lets the head dominate final ranking in probe
+  modes. Stages 0+1 reach near-perfect retention/transfer with the real LM driver,
+  and Stage 2 scope control is starting to show policy-driven alternate-sense selection.
 - CortexAgent now has a configurable `IngestionPipeline` upstream of metabolism with
   pluggable chunkers, salience filters, embedders (same-LM, mock-foreign, and optional
   foreign-MiniLM with learned projection), a scalar stats gate, an optional hybrid
   consolidation-strength boost, and stressors for needle recall and multi-fact turns.
-  Real-driver needle sweep across lengths 512 and 4096 shows cached same-lm embeddings
-  via llama.cpp are faster than CPU foreign-MiniLM in every tested configuration.
-  The practical implication: unless a faster foreign backend (ONNX/GPU) is used or
-  same-lm caching is deliberately disabled, the embedder fork favors same-lm.
+  Real-driver measurements show same-lm is faster and foreign-MiniLM matches recall
+  quality. The embedder fork favors same-lm in this environment; ONNX is blocked by
+  dependency conflict. Architecture S vs H has not yet been behaviorally discriminated
+  because consolidation rarely fires naturally in the current probes.
