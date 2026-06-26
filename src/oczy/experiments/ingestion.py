@@ -484,7 +484,7 @@ class MiniLMEmbedder(Embedder):
     into the agent's ``n_embd`` via a learned random normal matrix.
     """
 
-    embedded = True
+    _model_cache: dict[str, Any] = {}
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2", seed: int = 0) -> None:
         self.model_name = str(model_name)
@@ -493,17 +493,21 @@ class MiniLMEmbedder(Embedder):
         self._W: np.ndarray | None = None
         self._n_embd: int | None = None
 
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ModuleNotFoundError as exc:
-            raise RuntimeError(
-                "The 'foreign-minilm' embedder requires sentence-transformers. "
-                "Install it with `uv sync --group lm` or `pip install sentence-transformers>=3`."
-            ) from exc
+        if self.model_name not in self._model_cache:
+            try:
+                from sentence_transformers import SentenceTransformer
+            except ModuleNotFoundError as exc:
+                raise RuntimeError(
+                    "The 'foreign-minilm' embedder requires sentence-transformers. "
+                    "Install it with `uv sync --group lm` or `pip install sentence-transformers>=3`."
+                ) from exc
+            self._model_cache[self.model_name] = SentenceTransformer(self.model_name)
 
-        self._model = SentenceTransformer(self.model_name)
+        self._model = self._model_cache[self.model_name]
         self.foreign_dim = int(
-            getattr(self._model, "get_embedding_dimension", self._model.get_sentence_embedding_dimension)()
+            getattr(
+                self._model, "get_embedding_dimension", self._model.get_sentence_embedding_dimension
+            )()
         )
 
     def _resolve_n_embd(self, ctx_state: dict[str, Any] | None) -> int:

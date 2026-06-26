@@ -12,12 +12,16 @@ on its own.
 
 from __future__ import annotations
 
+import io
+from contextlib import redirect_stdout
+
 import numpy as np
 import pytest
 
 from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
 from oczy.experiments.digestive_gate import DigestiveGateConfig
 from oczy.experiments.ingestion import FixedWindowChunker
+from oczy.experiments.needle_sweep import _gguf_available, main
 from plastic_cortex.kv_cortex import KVCortexConfig
 
 NEEDLE = "The secret codeword is octarine."
@@ -174,3 +178,36 @@ class TestIngestionNeedle:
             f"embedding calls ({calls}) should match fixed-window chunk count "
             f"({expected_chunks})"
         )
+
+
+def _capture_output(argv: list[str]) -> list[str]:
+    """Run the needle sweep CLI and return emitted lines."""
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        main(argv)
+    return buf.getvalue().strip().splitlines()
+
+
+def _parse_metric(lines: list[str]) -> dict[str, str]:
+    """Extract the first ``METRIC`` line as a key/value map."""
+    for line in lines:
+        if line.startswith("METRIC"):
+            parts = line[len("METRIC") :].strip().split()
+            return {k: v for k, v in (p.split("=", 1) for p in parts)}
+    raise AssertionError(f"no METRIC line in output: {lines}")
+
+
+@pytest.mark.slow
+@pytest.mark.requires_model
+def test_needle_sweep_runs_real_driver() -> None:
+    """Run against the real LFM2.5 GGUF; skipped if the model is not cached."""
+    if not _gguf_available():
+        pytest.skip("LFM2.5 GGUF not found in OCZY_MODEL_PATH or HF cache")
+    lines = _capture_output(
+        ["--use-real-driver", "--length", "128", "--positions", "0.0,0.5"]
+    )
+    assert any(line.startswith("METRIC") for line in lines)
+    metric = _parse_metric(lines)
+    assert metric["length"] == "128"
+    assert float(metric["wall_seconds"]) >= 0.0
+    assert any(line.startswith("ASI") for line in lines)
