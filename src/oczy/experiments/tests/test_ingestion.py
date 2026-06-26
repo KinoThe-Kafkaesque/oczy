@@ -132,12 +132,12 @@ def test_correction_marker_filter_marks_only_correction_chunks() -> None:
     text = "No, this is wrong. It is fine."
     signals, digest = pipeline.process(text)
 
-    assert digest.n_chunks == 2
-    assert digest.n_survived == 2  # threshold 0 keeps everything
+    assert digest.n_survived == 1  # default threshold drops non-correction chunk
     assert signals[0].salience == pytest.approx(1.0)
     assert signals[0].is_correction is True
-    assert signals[1].is_correction is False
-    assert digest.correction_fraction == pytest.approx(0.5)
+    assert digest.correction_fraction == pytest.approx(1.0)
+
+
 
 
 def test_lexical_novelty_filter_higher_score_for_novel_tokens() -> None:

@@ -548,8 +548,9 @@ class IngestionPipeline:
             chunks = [Chunk(text=utterance, span=(0, len(utterance)), position=0)]
 
         saliences = self._salience.score(chunks, ctx_state)
-
-        threshold = float(self.config.get("salience_threshold", 0.0))
+        salience_kind = self.config.get("salience", "pass-through")
+        default_threshold = 0.0 if salience_kind == "pass-through" else 0.5
+        threshold = float(self.config.get("salience_threshold", default_threshold))
         scored = [(chunk, float(sal)) for chunk, sal in zip(chunks, saliences, strict=True) if sal >= threshold]
 
         top_k = self.config.get("salience_top_k")
