@@ -1108,8 +1108,17 @@ Remaining blocks:
     confirming that `prefix_targets` keeps hippocampus-derived prefix extraction
     robust to paraphrase. Added mock test. Fast suite `311 passed`; benchmark
     `code_qa_accuracy=1.0` (run #101).
+55. `311cf19` — Integrate KnowledgeStore golden answers into hippocampus-derived
+    prefix extraction. Added `KnowledgeStore.get_prefix_targets()` which returns
+    target strings from recalled facts (preferring `metadata["prefix_target"]` or
+    `"reserved_token"`, then the fact `"value"`). Added
+    `CortexAgentConfig.knowledge_store_supplies_prefix_targets` (default False) and
+    wired it into `articulate()`: when no explicit `ReservedPosition` is found, the
+    recalled fact values feed `prefix_targets` to the hippocampus helper. Added
+    unit tests. Fast suite `315 passed`; benchmark `code_qa_accuracy=1.0`
+    (run #102).
 
-Test status: `pytest: 311 passed` fast + 1 slow/real-driver construction test
+Test status: `pytest: 315 passed` fast + 1 slow/real-driver construction test
 (reserve-position + tensor-critic + replay-SGD + identity-adapter + hidden-delta +
 default-critic + critic-gate + cortex-answer-loop + value-head + value-head-wiring +
 policy-head + organism-policy + policy-correction-loop + policy-positive-reward +
@@ -1120,8 +1129,9 @@ ingestion-pipeline + needle-stressor + needle-sweep + salience-threshold +
 mock-foreign-embedder + hybrid-consolidation + multi-fact-stressor +
 foreign-minilm-embedder + real-driver-needle-sweep + auto-consolidate +
 hybrid-cap + memory-bytes + max-traces + domain-recall + auto-prefix (deprecated) +
-use-agent-prefix + paraphrase + prefix_targets + use_hippocampus_prefix unit tests
-pass; slow needle tests 4 passed, 1 slow real-driver construction test passes).
+use-agent-prefix + paraphrase + prefix_targets + knowledge_store_prefix_targets +
+use_hippocampus_prefix unit tests pass; slow needle tests 4 passed, 1 slow
+real-driver construction test passes).
 `ruff check` clean on changed files.
 
 Remaining blocks:
@@ -1140,6 +1150,9 @@ Remaining blocks:
   at length 512. `--auto-prefix` is deprecated in favor of `--use-agent-prefix`.
   `prefix_targets` makes extraction robust to paraphrase by surfacing expected answer
   tokens even when the query omits them.
+- KnowledgeStore can now supply `prefix_targets` to the hippocampus-derived prefix
+  path via `knowledge_store_supplies_prefix_targets`, so recalled facts without a
+  hand-seeded `reserved_token` can still guide exact-token extraction.
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
 - Hippocampal replay now has a differentiable SGD path on `proj_hidden`, gated by
   `replay_sgd_step` and defaulting to off.
@@ -1162,6 +1175,7 @@ Remaining blocks:
   strength boost with configurable cap, and stressors for needle recall, multi-fact
   co-retention, domain recall, hippocampus-derived prefixes, and paraphrased recall.
   The live `use_hippocampus_prefix` path is validated end-to-end under paraphrase,
-  `--auto-prefix` is deprecated, and `prefix_targets` improves robustness. The next
-  high-leverage direction is measuring IdentityHypernetwork adapter effects or closing
-  the benchmark gap on exact-token consolidation uptake.
+  `--auto-prefix` is deprecated, `prefix_targets` improves robustness, and KnowledgeStore
+  can supply targets for that path. The next high-leverage direction is measuring
+  IdentityHypernetwork adapter effects or closing the benchmark gap on exact-token
+  consolidation uptake.
