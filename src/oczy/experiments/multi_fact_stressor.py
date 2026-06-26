@@ -214,7 +214,7 @@ def _make_long_turn_multi(
         int(total_length_tokens * (i + 1) / (len(facts) + 1))
         for i in range(len(facts))
     ]
-    for pos, fact in zip(positions, facts):
+    for pos, fact in zip(positions, facts, strict=True):
         fact_tokens = fact.split()
         for offset, token in enumerate(fact_tokens):
             idx = pos + offset
@@ -464,8 +464,8 @@ def _run_probe(
         prefix_source = "hand"
 
     recall_scores: list[int] = []
-    for i, (query, target) in enumerate(zip(_queries, _targets)):
-        recall_scores.append(_recall_fact(agent, query, target))
+    for _query, _target in zip(_queries, _targets, strict=True):
+        recall_scores.append(_recall_fact(agent, _query, _target))
     co_recall = 1 if all(recall_scores) else 0
 
     if use_agent_prefix:
