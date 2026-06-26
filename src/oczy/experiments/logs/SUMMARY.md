@@ -1062,9 +1062,65 @@ Remaining blocks:
   `policy_suppresses_fast_answer` flag lets the head dominate final ranking in probe
   modes. Stages 0+1 reach near-perfect retention/transfer with the real LM driver,
   and Stage 2 scope control is starting to show policy-driven alternate-sense selection.
+49. `f1f1392` — Add `--auto-prefix` to `multi_fact_stressor.py`: derive a
+    `ReservedPosition` prefix from hippocampal traces/slow-updates instead of
+    using the hand-coded `FACT_A + FACT_B` literal. The initial whole-utterance
+    fallback returned mostly filler and scored `co_recall=0/0`; the final
+    implementation extracts fact-bearing snippets around project-name keywords
+    (`skylark`, `rook`, `alpha`, `beta`). Real-driver scalar and hybrid both
+    reach `co_recall=1/1` at length 512 with `prefix_source=hippocampus`,
+    matching the hand-coded prefix. This closes the exact-recall loop without
+    hard-coded facts. Added tests. Fast suite `308 passed`; benchmark
+    `code_qa_accuracy=1.0` (run #96).
+
+Test status: `pytest: 308 passed` fast + 1 slow/real-driver construction test
+(reserve-position + tensor-critic + replay-SGD + identity-adapter + hidden-delta +
+default-critic + critic-gate + cortex-answer-loop + value-head + value-head-wiring +
+policy-head + organism-policy + policy-correction-loop + policy-positive-reward +
+actor-critic-baseline + acceptance-reward + curriculum-shim-margin +
+curriculum-cortex-agent-mock + curriculum-cortex-agent-transfer +
+policy-request-context + policy-update-ungated + policy-suppresses-fast-answer +
+ingestion-pipeline + needle-stressor + needle-sweep + salience-threshold +
+mock-foreign-embedder + hybrid-consolidation + multi-fact-stressor +
+foreign-minilm-embedder + real-driver-needle-sweep + auto-consolidate +
+hybrid-cap + memory-bytes + max-traces + domain-recall + auto-prefix unit tests
+pass; slow needle tests 4 passed, 1 slow real-driver construction test passes).
+`ruff check` clean on changed files.
+
+Remaining blocks:
+- The ingestion-design-matrix experiments are provisionally complete. Same-lm is the
+  practical embedder choice in this environment; foreign-MiniLM preserves quality but
+  is not cheaper; ONNX is blocked by dependency conflict.
+- Hybrid consolidation modulation shows a mechanical strength difference when uncapped
+  (36 vs 10), but no measured improvement in exact recall, memory-per-byte, or
+  domain-level recall over scalar.
+- Cvec-only steering reliably shifts answers into the correct semantic domain
+  (domain_co_recall=1/1 in multi-fact stressor) but cannot force exact target tokens.
+- Hippocampus-derived ReservedPosition prefixes close the exact-recall loop without
+  hand-coded facts: scalar and hybrid both reach co_recall=1/1 at length 512.
+- The next high-impact work is either (a) integrating auto-prefix into the live
+  CortexAgent articulation path so it fires without the stressor wrapper, or (b)
+  measuring the IdentityHypernetwork adapter effect on recall/behavior.
+- Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
+- Hippocampal replay now has a differentiable SGD path on `proj_hidden`, gated by
+  `replay_sgd_step` and defaulting to off.
+- IdentityHypernetwork now emits real `d_cortex`-dimensional adapter deltas that are
+  applied at articulation time, but the concept→latent mapping is still partially
+  hand-seeded and the effect on downstream behavior has not yet been measured.
+- WorldModelCritic now has tensor-input correction prediction (default in CortexAgent),
+  a learned value head that is trained with TD on every `metabolize()`, and feeds the
+  digestive gate, but none have been validated in a real correction/uptake loop.
+- CortexAgent's policy head can now optionally consume a request-context hidden vector
+  in addition to warm_state and candidate hidden vectors, gated by
+  `use_policy_request_context`. The ranking contribution remains normalized to
+  softmax probabilities, and policy updates fire on every correction. The
+  `policy_suppresses_fast_answer` flag lets the head head dominate final ranking in probe
+  modes. Stages 0+1 reach near-perfect retention/transfer with the real LM driver,
+  and Stage 2 scope control is starting to show policy-driven alternate-sense selection.
 - CortexAgent now has a configurable `IngestionPipeline` upstream of metabolism with
   pluggable chunkers, salience filters, embedders (same-LM, mock-foreign, and optional
   foreign-MiniLM with learned projection), a scalar stats gate, a hybrid consolidation-
   strength boost with configurable cap, and stressors for needle recall, multi-fact
-  co-retention, and domain recall. The next high-leverage direction is closing the
-  exact-recall loop via hippocampus-derived prefixes or identity-hypernetwork adapters.
+  co-retention, domain recall, and hippocampus-derived prefixes. The next high-leverage
+  direction is integrating auto-prefix into live CortexAgent articulation or measuring
+  IdentityHypernetwork adapter effects.
