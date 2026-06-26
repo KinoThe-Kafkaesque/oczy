@@ -180,3 +180,23 @@ def test_multi_fact_stressor_use_prefix_source_hand() -> None:
     _assert_valid_metric(metric, "scalar")
     assert metric["prefix_source"] == "hand"
     assert any(line.startswith("ASI") for line in lines)
+
+
+def test_multi_fact_stressor_use_agent_prefix_mock() -> None:
+    """The live-agent prefix path should derive a hippocampal prefix and report it."""
+    lines = _capture_output(["--use-agent-prefix", "--length", "64"])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    assert metric["prefix_source"] == "hippocampus"
+    assert metric["use_prefix"] == "False"
+    assert any(line.startswith("ASI") for line in lines)
+
+
+def test_multi_fact_stressor_use_agent_prefix_takes_precedence_over_hand_prefix() -> None:
+    """When both --use-agent-prefix and --use-prefix are given, the live-agent path wins."""
+    lines = _capture_output(["--use-agent-prefix", "--use-prefix", "--length", "64"])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    assert metric["prefix_source"] == "hippocampus"
+    assert metric["use_prefix"] == "True"
+    assert any(line.startswith("ASI") for line in lines)

@@ -244,7 +244,9 @@ def _recall_fact(
     real driver answers rather than returning empty text.
     """
     prompt = f"Answer briefly.\nQuestion: {query}\nAnswer:"
-    answer = agent.articulate(prompt=prompt, apply_steering=False).lower()
+    answer = agent.articulate(
+        prompt=prompt, apply_steering=False, recall_query=query
+    ).lower()
     if domain_targets is not None:
         return 1 if any(kw.lower() in answer for kw in domain_targets) else 0
     if target is None:
@@ -311,6 +313,14 @@ def _derive_prefix_from_hippocampus(
     return None
 
 
+
+def _agent_prefix_source(agent: Any) -> str | None:
+    """Return the source label for a ReservedPosition set by the live CortexAgent."""
+    pos = getattr(agent, "reserved_position", None)
+    if pos is None:
+        return None
+    return getattr(pos, "source", None)
+
 def _run_probe(
     mode: str,
     length: int = 512,
@@ -319,6 +329,7 @@ def _run_probe(
     n_ctx: int = 4096,
     use_prefix: bool = False,
     auto_prefix: bool = False,
+    use_agent_prefix: bool = False,
     auto_consolidate: bool = False,
     hybrid_cap: float = 10.0,
     max_traces: int | None = None,
@@ -381,6 +392,18 @@ def _run_probe(
                 "ASI event=auto_prefix_no_memory "
                 "message=hippocampus yielded no prefix; continuing without prefix"
             )
+    elif use_agent_prefix:
+        agent.config.use_hippocampus_prefix = True
+        # Wrap set_reserved_position to observe the source set by the live agent.
+        orig_set = agent.set_reserved_position
+
+        def _capturing_set(position: ReservedPosition | None) -> None:
+            if position is not None:
+                nonlocal prefix_source
+                prefix_source = getattr(position, "source", None)
+            orig_set(position)
+
+        agent.set_reserved_position = _capturing_set  # type: ignore[method-assign]
     elif use_prefix:
         prefix_text = f"{FACT_A} {FACT_B} "
         agent.set_reserved_position(
@@ -390,6 +413,10 @@ def _run_probe(
 
     recall_a = _recall_fact(agent, QUERY_A, TARGET_A)
     recall_b = _recall_fact(agent, QUERY_B, TARGET_B)
+
+    if use_agent_prefix:
+        agent.set_reserved_position = orig_set  # type: ignore[method-assign]
+
     co_recall = 1 if (recall_a and recall_b) else 0
     domain_recall_a = 0
     domain_recall_b = 0
@@ -471,6 +498,15 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument(
+        "--use-agent-prefix",
+        action="store_true",
+        help=(
+            "Enable CortexAgent.use_hippocampus_prefix so the live agent derives"
+            " the ReservedPosition during articulate(). Takes precedence over"
+            " --use-prefix but not --auto-prefix."
+        ),
+    )
+    parser.add_argument(
         "--auto-consolidate",
         action="store_true",
         help="Let the DigestiveGate decide whether consolidation fires.",
@@ -506,6 +542,7 @@ def main(argv: list[str] | None = None) -> None:
         n_ctx=args.n_ctx,
         use_prefix=args.use_prefix,
         auto_prefix=args.auto_prefix,
+        use_agent_prefix=args.use_agent_prefix,
         auto_consolidate=args.auto_consolidate,
         hybrid_cap=args.hybrid_cap,
         max_traces=args.max_traces,
