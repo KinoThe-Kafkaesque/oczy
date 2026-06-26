@@ -1079,8 +1079,15 @@ Remaining blocks:
     Explicit knowledge-store reserved tokens still take precedence. Added mock
     tests verifying hippocampus-derived source and precedence. Fast suite
     `308 passed`; benchmark `code_qa_accuracy=1.0` (run #97).
+51. `e580526` — Add `--use-agent-prefix` to `multi_fact_stressor.py`. This
+    validates the live `CortexAgent.use_hippocampus_prefix` path: the stressor
+    enables the config flag, passes `recall_query` through `_recall_fact`, and
+    captures the source of the `ReservedPosition` set by the agent during
+    `articulate()`. Real-driver scalar and hybrid both reach `co_recall=1/1`
+    with `prefix_source=hippocampus` at length 512. Added mock tests. Fast suite
+    `310 passed`; benchmark `code_qa_accuracy=1.0` (run #98).
 
-Test status: `pytest: 308 passed` fast + 1 slow/real-driver construction test
+Test status: `pytest: 310 passed` fast + 1 slow/real-driver construction test
 (reserve-position + tensor-critic + replay-SGD + identity-adapter + hidden-delta +
 default-critic + critic-gate + cortex-answer-loop + value-head + value-head-wiring +
 policy-head + organism-policy + policy-correction-loop + policy-positive-reward +
@@ -1091,8 +1098,8 @@ ingestion-pipeline + needle-stressor + needle-sweep + salience-threshold +
 mock-foreign-embedder + hybrid-consolidation + multi-fact-stressor +
 foreign-minilm-embedder + real-driver-needle-sweep + auto-consolidate +
 hybrid-cap + memory-bytes + max-traces + domain-recall + auto-prefix +
-use_hippocampus_prefix unit tests pass; slow needle tests 4 passed, 1 slow
-real-driver construction test passes).
+use-agent-prefix + use_hippocampus_prefix unit tests pass; slow needle tests
+4 passed, 1 slow real-driver construction test passes).
 `ruff check` clean on changed files.
 
 Remaining blocks:
@@ -1105,9 +1112,9 @@ Remaining blocks:
 - Cvec-only steering reliably shifts answers into the correct semantic domain
   (domain_co_recall=1/1 in multi-fact stressor) but cannot force exact target tokens.
 - Hippocampus-derived ReservedPosition prefixes close the exact-recall loop without
-  hand-coded facts: scalar and hybrid both reach co_recall=1/1 at length 512 in the
-  stressor, and `CortexAgent` now supports the same mechanism via
-  `use_hippocampus_prefix`.
+  hand-coded facts. The live `CortexAgent.use_hippocampus_prefix` path is validated
+  end-to-end in the multi-fact stressor: real-driver scalar and hybrid reach
+  `co_recall=1/1` with `prefix_source=hippocampus` at length 512.
 - Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
 - Hippocampal replay now has a differentiable SGD path on `proj_hidden`, gated by
   `replay_sgd_step` and defaulting to off.
@@ -1128,6 +1135,7 @@ Remaining blocks:
   pluggable chunkers, salience filters, embedders (same-LM, mock-foreign, and optional
   foreign-MiniLM with learned projection), a scalar stats gate, a hybrid consolidation-
   strength boost with configurable cap, and stressors for needle recall, multi-fact
-  co-retention, domain recall, and hippocampus-derived prefixes. The next high-leverage
-  direction is validating the live `use_hippocampus_prefix` path with a real multi-fact
-  probe or measuring IdentityHypernetwork adapter effects.
+  co-retention, domain recall, and hippocampus-derived prefixes. The live
+  `use_hippocampus_prefix` path is validated end-to-end. The next high-leverage
+  direction is measuring IdentityHypernetwork adapter effects, generalizing prefix
+  extraction, or closing the benchmark gap on exact-token consolidation uptake.
