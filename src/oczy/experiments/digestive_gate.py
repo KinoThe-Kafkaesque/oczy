@@ -30,7 +30,7 @@ class DigestiveGateConfig:
     autoencoder_min_weight: float = 0.1
     # Ingestion pipeline integration.
     use_ingestion_pipeline: bool = False
-
+    use_hybrid_consolidation: bool = False
 
     # World-model critic integration.
     use_critic_correction_prob: bool = True

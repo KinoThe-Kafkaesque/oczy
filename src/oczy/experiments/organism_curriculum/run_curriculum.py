@@ -20,14 +20,13 @@ from typing import Any
 
 import numpy as np
 
+from oczy.experiments.digestive_gate import DigestiveGateConfig
 from oczy.experiments.organism import LMBackendAgent, OrganismAgent
 from oczy.experiments.organism_curriculum.dataset import Episode, Probe, Stage, build_curriculum
 from oczy.experiments.organism_curriculum.scoring import categorize_results, probe_matches
 from oczy.experiments.organism_curriculum.validation import validate_curriculum
 
-
 def _load_real_cortex_agent(config: dict[str, Any] | None = None) -> Any:
-    """Load a CortexAgent backed by the local LFM2.5 GGUF model."""
     from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
     from oczy.lm import CVecDriverConfig, LlamaCVecDriver
     from plastic_cortex.kv_cortex import KVCortexConfig
@@ -40,7 +39,16 @@ def _load_real_cortex_agent(config: dict[str, Any] | None = None) -> Any:
         cortex=KVCortexConfig(d_cortex=4),
         use_policy_head=True,
         policy_learning_rate=0.001,
+        use_ingestion_pipeline=bool(config and config.get("use_ingestion_pipeline", False)),
     )
+    if config and config.get("ingestion"):
+        cfg.ingestion = dict(config["ingestion"])
+    if config and config.get("use_hybrid_consolidation"):
+        if cfg.digestive_gate is None:
+            cfg.digestive_gate = DigestiveGateConfig()
+        cfg.digestive_gate = cfg.digestive_gate.__class__(
+            **{**cfg.digestive_gate.__dict__, "use_hybrid_consolidation": True}
+        )
     if config and config.get("use_policy_request_context"):
         cfg.use_policy_request_context = True
     cortex = CortexAgent(cfg, driver=driver)
@@ -611,7 +619,16 @@ def main(argv: list[str] | None = None) -> int:
             cfg = CortexAgentConfig(
                 cortex=KVCortexConfig(d_cortex=4),
                 use_policy_head=True,
+                use_ingestion_pipeline=bool(agent_config.get("use_ingestion_pipeline", False)),
             )
+            if agent_config.get("ingestion"):
+                cfg.ingestion = dict(agent_config["ingestion"])
+            if agent_config.get("use_hybrid_consolidation"):
+                if cfg.digestive_gate is None:
+                    cfg.digestive_gate = DigestiveGateConfig()
+                cfg.digestive_gate = cfg.digestive_gate.__class__(
+                    **{**cfg.digestive_gate.__dict__, "use_hybrid_consolidation": True}
+                )
             if agent_config.get("use_policy_request_context"):
                 cfg.use_policy_request_context = True
             cortex = CortexAgent(cfg, driver=driver)

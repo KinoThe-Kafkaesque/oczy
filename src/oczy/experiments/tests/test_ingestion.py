@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 
 from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
-from oczy.experiments.digestive_gate import DigestiveGate
+from oczy.experiments.digestive_gate import DigestiveGate, DigestiveGateConfig
 from oczy.experiments.ingestion import (
     Chunk,
     ChunkSignal,
@@ -454,3 +456,54 @@ def test_cortex_agent_without_pipeline_unchanged() -> None:
     agent.metabolize()
     after = agent.neural_hippocampus.status()["episode_count"]
     assert after > before, "legacy path should still write one hippocampus episode on high drift"
+
+
+def test_hybrid_consolidation_boosts_strength() -> None:
+    """When use_hybrid_consolidation is enabled, turn() scales consolidation strength by drift_max."""
+    driver = _FakeDriver(n_embd=8, n_layers=4)
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=8),
+        use_ingestion_pipeline=True,
+        auto_consolidate=True,
+        digestive_gate=DigestiveGateConfig(
+            consolidation_pressure_threshold=0.1,
+            use_ingestion_pipeline=True,
+            use_hybrid_consolidation=True,
+        ),
+        ingestion={"embedder": "same-lm"},
+    )
+    agent = CortexAgent(cfg, driver=driver)
+    agent.boot()
+
+    # Long correction turn to produce chunked signals and a non-zero TurnDigest.
+    agent.perceive(
+        "No, that is wrong. Actually, 'profile' here means business vertical. "
+        "It is not about user profile. It is about the market segment.",
+        correction_signal=1.0,
+    )
+    agent.metabolize()
+    assert agent._last_digest is not None
+    assert agent._last_digest.drift_max >= 0.0
+
+    captured: dict[str, Any] = {}
+
+    def fake_consolidate(*, strength: float = 1.0) -> dict[str, Any]:
+        captured["strength"] = strength
+        return {"mock": True}
+
+    agent.consolidate = fake_consolidate  # type: ignore[method-assign]
+    agent.should_consolidate = lambda: True  # type: ignore[method-assign]
+    agent.articulate = lambda **_: ""  # type: ignore[method-assign]
+
+    pressure = agent.digestive_gate._pressure
+    threshold = agent.digestive_gate.config.consolidation_pressure_threshold
+    baseline = 1.0 + (pressure / threshold) * 9.0 if threshold > 0 else 1.0
+
+    result = agent.turn("ok")
+
+    assert result["consolidated"] is True
+    assert "consolidation_strength" in result["consolidation_summary"]
+    assert captured["strength"] > baseline
+    assert captured["strength"] == pytest.approx(
+        min(baseline * (1.0 + agent._last_digest.drift_max), 10.0)
+    )

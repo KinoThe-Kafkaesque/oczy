@@ -40,7 +40,7 @@ from identity_hypernetwork import IdentityHypernetwork
 from neural_hippocampus import NeuralHippocampus
 from oczy.experiments.codebase_qa.knowledge_store import KnowledgeStore
 from oczy.experiments.digestive_gate import DigestiveGate, DigestiveGateConfig
-from oczy.experiments.ingestion import IngestionPipeline
+from oczy.experiments.ingestion import IngestionPipeline, TurnDigest
 from oczy.lm import CVecDriverConfig, LlamaCVecDriver, ReservedPosition
 from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
 from skill_immune_cortex import SkillImmuneCortex
@@ -215,6 +215,7 @@ class CortexAgent:
         else:
             self.ingestion_pipeline = None
 
+        self._last_digest: TurnDigest | None = None
 
         # Optional codebase knowledge store; recalled facts can be injected
         # into prompts during articulate() to ground the agent in repo facts.
@@ -229,6 +230,7 @@ class CortexAgent:
         self._policy_W: np.ndarray | None = None
         self._policy_b: float = 0.0
         self._last_request_hidden: np.ndarray | None = None
+
 
     # ------------------------------------------------------------------
     # Boot / cold path
@@ -245,6 +247,7 @@ class CortexAgent:
         self._last_utterance = None
         self._last_hidden = None
         self._prev_hidden = None
+        self._last_digest = None
         self._last_request_hidden = None
         self._last_correction_signal = 0.0
         self._prev_correction_signal = 0.0
@@ -380,6 +383,7 @@ class CortexAgent:
                 "correction_signal": correction_signal,
             }
             signals, digest = self.ingestion_pipeline.process(text, ctx_state=ctx_state)
+            self._last_digest = digest
             for signal in signals:
                 self.neural_hippocampus.store(
                     query=signal.text,
@@ -628,18 +632,25 @@ class CortexAgent:
         temperature: float = 0.0,
         metabolize: bool = True,
     ) -> dict[str, Any]:
-        """One full turn: absorb input, run metabolism, optionally consolidate, articulate reply."""
         warm = self.perceive(utterance, correction_signal=correction_signal)
         meta = self.metabolize(utterance) if metabolize else {"metabolized": False}
-
         consolidation = {"auto_consolidated": False}
         if metabolize and self.config.auto_consolidate and self.should_consolidate():
             pressure = self.digestive_gate._pressure
             cfg = self.digestive_gate.config
             threshold = cfg.consolidation_pressure_threshold
-            strength = 1.0 + (pressure / threshold) * 9.0 if threshold > 0 else 1.0
+            base_strength = 1.0 + (pressure / threshold) * 9.0 if threshold > 0 else 1.0
+            if (
+                self.ingestion_pipeline is not None
+                and cfg.use_hybrid_consolidation
+                and self._last_digest is not None
+            ):
+                base_strength = min(
+                    base_strength * (1.0 + self._last_digest.drift_max),
+                    10.0,
+                )
             strength = float(
-                np.clip(strength, 1.0, self.cortex.config.max_consolidation_strength)
+                np.clip(base_strength, 1.0, self.cortex.config.max_consolidation_strength)
             )
             consolidation = {
                 "auto_consolidated": True,
