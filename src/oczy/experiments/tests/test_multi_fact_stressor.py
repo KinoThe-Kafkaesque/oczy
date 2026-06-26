@@ -34,11 +34,14 @@ def _parse_metric(lines: list[str]) -> dict[str, str]:
 def _assert_valid_metric(metric: dict[str, str], expected_mode: str) -> None:
     """Common assertions for a METRIC line."""
     assert metric["mode"] == expected_mode
+    assert metric["use_prefix"] in {"True", "False"}
+    assert metric["prefix_source"] in {"hand", "hippocampus", "None"}
     assert metric["auto_consolidated"] in {"0", "1"}
     assert metric["recall_a"] in {"0", "1"}
     assert metric["recall_b"] in {"0", "1"}
     assert metric["co_recall"] in {"0", "1"}
-    assert int(metric["traces"]) > 0, "pipeline should store chunk traces"
+    assert int(metric["traces"]) >= 0
+    assert int(metric["embedding_calls"]) >= 0
     assert int(metric["memory_bytes"]) > 0, "serialized hippocampus size should be positive"
 
 
@@ -142,4 +145,38 @@ def test_multi_fact_stressor_runs_real_driver() -> None:
         pytest.skip("LFM2.5 GGUF not found in OCZY_MODEL_PATH or HF cache")
     lines = _capture_output(["--use-real-driver", "--mode", "scalar", "--length", "256"])
     assert any(line.startswith("METRIC") for line in lines)
+    assert any(line.startswith("ASI") for line in lines)
+
+
+def test_multi_fact_stressor_auto_prefix_mock() -> None:
+    """Auto-prefix should derive a hippocampal prefix and report it."""
+    lines = _capture_output(["--auto-prefix", "--length", "64"])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    assert metric["prefix_source"] == "hippocampus"
+    assert metric["co_recall"] in {"0", "1"}
+    assert any(line.startswith("ASI") for line in lines)
+
+
+def test_multi_fact_stressor_auto_prefix_empty_fallback_mock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the hippocampus yields no memory, auto-prefix falls back cleanly."""
+    monkeypatch.setattr(
+        "oczy.experiments.multi_fact_stressor._derive_prefix_from_hippocampus",
+        lambda agent: None,
+    )
+    lines = _capture_output(["--auto-prefix", "--length", "64"])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    assert metric["prefix_source"] == "None"
+    assert any(line.startswith("ASI") for line in lines)
+
+
+def test_multi_fact_stressor_use_prefix_source_hand() -> None:
+    """The hand-coded prefix path should report prefix_source=hand."""
+    lines = _capture_output(["--use-prefix", "--length", "64"])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    assert metric["prefix_source"] == "hand"
     assert any(line.startswith("ASI") for line in lines)

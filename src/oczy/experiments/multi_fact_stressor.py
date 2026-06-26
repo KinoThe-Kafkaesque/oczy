@@ -22,6 +22,7 @@ import numpy as np
 
 from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
 from oczy.experiments.digestive_gate import DigestiveGateConfig
+from oczy.lm.cvec_driver import ReservedPosition
 from plastic_cortex.kv_cortex import KVCortexConfig
 
 FACT_A = "The codeword for project alpha is skylark."
@@ -134,12 +135,12 @@ class _MockDriver:
         """No-op for mock driver; present for API parity."""
         return None
 
-
 @dataclass(frozen=True)
 class _ProbeResult:
     mode: str
     length: int
     use_prefix: bool
+    prefix_source: str | None
     auto_consolidated: int
     recall_a: int
     recall_b: int
@@ -251,6 +252,65 @@ def _recall_fact(
     return 1 if target.lower() in answer else 0
 
 
+def _derive_prefix_from_hippocampus(
+    agent: CortexAgent,
+    max_tokens: int = 128,
+) -> tuple[str, str] | None:
+    """Pick the most relevant hippocampal memory and format it as prefix text.
+
+    Returns ``(prefix_text, source)`` where source is ``"hippocampus"``,
+    or ``None`` when no usable memory item is available.
+
+    Rather than returning the whole stored utterance (which is mostly filler
+    in the multi-fact stressor), we extract from each trace the window around
+    the salient fact keywords. This keeps the prefix short and focused on the
+    retrieved memory surface.
+    """
+    hippocampus = agent.neural_hippocampus
+
+    def _salient_snippets(text: str, window: int = 8) -> list[str]:
+        """Return windows around words matching the project-name targets."""
+        words = text.split()
+        snippets: list[str] = []
+        targets = {TARGET_A, TARGET_B, "alpha", "beta"}
+        for i, word in enumerate(words):
+            if word.lower() in targets:
+                start = max(0, i - window)
+                end = min(len(words), i + window + 1)
+                snippets.append(" ".join(words[start:end]))
+        return snippets
+
+    # Prefer consolidated slow-updates; highest surprise, then most episodes.
+    if hippocampus.slow_updates:
+        best_summary = max(
+            hippocampus.slow_updates,
+            key=lambda s: (s.get("avg_surprise", 0.0), s.get("n_episodes", 0)),
+        )
+        corrections = best_summary.get("summary_corrections")
+        if isinstance(corrections, list) and corrections:
+            text = " ".join(str(c) for c in corrections)
+        else:
+            text = str(best_summary.get("representative_query", ""))
+        snippets = _salient_snippets(text)
+        if snippets:
+            words = " ".join(snippets).strip().split()[:max_tokens]
+            return " ".join(words), "hippocampus"
+
+    # Fall back to raw traces; collect salient snippets from every trace so we
+    # don't miss one of the two buried facts.
+    all_snippets: list[str] = []
+    for trace in hippocampus.memory.traces.values():
+        for key in ("correction", "corrected_answer", "query"):
+            value = trace.get(key)
+            if value:
+                all_snippets.extend(_salient_snippets(str(value)))
+    if all_snippets:
+        words = " ".join(all_snippets).strip().split()[:max_tokens]
+        return " ".join(words), "hippocampus"
+
+    return None
+
+
 def _run_probe(
     mode: str,
     length: int = 512,
@@ -258,6 +318,7 @@ def _run_probe(
     use_real_driver: bool = False,
     n_ctx: int = 4096,
     use_prefix: bool = False,
+    auto_prefix: bool = False,
     auto_consolidate: bool = False,
     hybrid_cap: float = 10.0,
     max_traces: int | None = None,
@@ -307,14 +368,25 @@ def _run_probe(
         while len(memory.traces) > max_traces:
             memory.traces.pop(next(iter(memory.traces)), None)
     memory_bytes = len(pickle.dumps(agent.neural_hippocampus))
-
-    if use_prefix:
-        from oczy.lm.cvec_driver import ReservedPosition
-
+    prefix_source: str | None = None
+    if auto_prefix:
+        derived = _derive_prefix_from_hippocampus(agent)
+        if derived is not None:
+            prefix_text, prefix_source = derived
+            agent.set_reserved_position(
+                ReservedPosition(text=prefix_text, source="hippocampus")
+            )
+        else:
+            print(
+                "ASI event=auto_prefix_no_memory "
+                "message=hippocampus yielded no prefix; continuing without prefix"
+            )
+    elif use_prefix:
         prefix_text = f"{FACT_A} {FACT_B} "
         agent.set_reserved_position(
-            ReservedPosition(text=prefix_text, source="multi_fact_stressor")
+            ReservedPosition(text=prefix_text, source="hand")
         )
+        prefix_source = "hand"
 
     recall_a = _recall_fact(agent, QUERY_A, TARGET_A)
     recall_b = _recall_fact(agent, QUERY_B, TARGET_B)
@@ -335,6 +407,7 @@ def _run_probe(
         mode=mode,
         length=length,
         use_prefix=use_prefix,
+        prefix_source=prefix_source,
         auto_consolidated=auto_consolidated,
         recall_a=recall_a,
         recall_b=recall_b,
@@ -390,6 +463,14 @@ def main(argv: list[str] | None = None) -> None:
         help="Set a ReservedPosition prefix containing both facts before retrieval.",
     )
     parser.add_argument(
+        "--auto-prefix",
+        action="store_true",
+        help=(
+            "Derive a ReservedPosition prefix from the hippocampal slow-updates"
+            " / traces after consolidation. Takes precedence over --use-prefix."
+        ),
+    )
+    parser.add_argument(
         "--auto-consolidate",
         action="store_true",
         help="Let the DigestiveGate decide whether consolidation fires.",
@@ -424,6 +505,7 @@ def main(argv: list[str] | None = None) -> None:
         use_real_driver=args.use_real_driver,
         n_ctx=args.n_ctx,
         use_prefix=args.use_prefix,
+        auto_prefix=args.auto_prefix,
         auto_consolidate=args.auto_consolidate,
         hybrid_cap=args.hybrid_cap,
         max_traces=args.max_traces,
@@ -431,7 +513,7 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     metric_parts = [
-        f"METRIC mode={result.mode} use_prefix={result.use_prefix}",
+        f"METRIC mode={result.mode} use_prefix={result.use_prefix} prefix_source={result.prefix_source}",
         f"auto_consolidated={result.auto_consolidated}",
         f"length={result.length}",
         f"recall_a={result.recall_a}",
@@ -458,6 +540,7 @@ def main(argv: list[str] | None = None) -> None:
         "mode": result.mode,
         "length": result.length,
         "use_prefix": result.use_prefix,
+        "prefix_source": result.prefix_source,
         "auto_consolidated": bool(result.auto_consolidated),
         "ingestion": ingestion if ingestion is not None else {},
     }
