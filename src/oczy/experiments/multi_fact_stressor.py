@@ -1,0 +1,255 @@
+"""Multi-fact turn stressor.
+
+Buries a novel fact and a correction-style fact in neutral filler, processes
+the long turn through a CortexAgent using the chunked ingestion pipeline,
+forces consolidation, and measures independent and co-recall.
+
+Output lines are prefixed with ``METRIC`` so the autoresearch harness can
+parse them.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from dataclasses import dataclass
+from typing import Any
+
+import numpy as np
+
+from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
+from oczy.experiments.digestive_gate import DigestiveGateConfig
+from plastic_cortex.kv_cortex import KVCortexConfig
+
+FACT_A = "The codeword for project alpha is skylark."
+FACT_B = "Correction: the codeword for project beta is not raven, it is rook."
+QUERY_A = "What is the codeword for project alpha?"
+QUERY_B = "What is the codeword for project beta?"
+TARGET_A = "skylark"
+TARGET_B = "rook"
+
+DEFAULT_FACT_A_POSITION = 0.25
+DEFAULT_FACT_B_POSITION = 0.75
+
+
+class _MockDriver:
+    """Deterministic stand-in LM driver with an embedding-call counter."""
+
+    def __init__(self, n_embd: int = 16) -> None:
+        self.n_embd = n_embd
+        self.n_layers = 2
+        self.embedding_calls = 0
+
+    def peek_embedding(
+        self,
+        text: str,
+        last_token_only: bool = True,  # noqa: ARG002
+    ) -> np.ndarray:
+        self.embedding_calls += 1
+        idx = sum(ord(c) for c in text) % self.n_embd
+        h = np.zeros(self.n_embd, dtype=np.float32)
+        h[idx] = 1.0
+        h[(idx + 1) % self.n_embd] = float(len(text)) * 0.05
+        return h
+
+    def generate(
+        self,
+        prompt: str,  # noqa: ARG002
+        max_tokens: int = 64,  # noqa: ARG002
+        temperature: float = 0.0,  # noqa: ARG002
+        stop: list[str] | str | None = None,  # noqa: ARG002
+    ) -> str:
+        return "mock"
+
+
+@dataclass(frozen=True)
+class _ProbeResult:
+    mode: str
+    length: int
+    recall_a: int
+    recall_b: int
+    co_recall: int
+    traces_stored: int
+    embedding_calls: int
+    cold_drift: float
+    consolidation_strength: float
+
+
+def _make_long_turn(
+    fact_a: str = FACT_A,
+    fact_b: str = FACT_B,
+    *,
+    fact_a_position: float = DEFAULT_FACT_A_POSITION,
+    fact_b_position: float = DEFAULT_FACT_B_POSITION,
+    total_length_tokens: int = 512,
+) -> str:
+    """Return a long whitespace-delimited text with two facts buried inside."""
+    assert 0.0 <= fact_a_position <= 1.0
+    assert 0.0 <= fact_b_position <= 1.0
+    tokens_a = fact_a.split()
+    tokens_b = fact_b.split()
+    assert len(tokens_a) + len(tokens_b) <= total_length_tokens
+
+    words = ["neutral"] * total_length_tokens
+    idx_a = int(total_length_tokens * fact_a_position)
+    idx_b = int(total_length_tokens * fact_b_position)
+
+    # Keep facts from overlapping; if they would, nudge the later one.
+    if idx_a <= idx_b < idx_a + len(tokens_a):
+        idx_b = idx_a + len(tokens_a)
+    if idx_b <= idx_a < idx_b + len(tokens_b):
+        idx_a = idx_b + len(tokens_b)
+
+    assert idx_a + len(tokens_a) <= total_length_tokens
+    assert idx_b + len(tokens_b) <= total_length_tokens
+
+    for i, tok in enumerate(tokens_a):
+        words[idx_a + i] = tok
+    for i, tok in enumerate(tokens_b):
+        words[idx_b + i] = tok
+    return " ".join(words)
+
+
+def _build_agent(
+    mode: str,
+    ingestion: dict[str, Any] | None,
+) -> CortexAgent:
+    """Create a fresh CortexAgent for one multi-fact probe run."""
+    driver = _MockDriver(n_embd=16)
+    use_hybrid = mode == "hybrid"
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=4),
+        use_ingestion_pipeline=True,
+        auto_consolidate=False,
+        digestive_gate=DigestiveGateConfig(
+            novelty_threshold=1.0,
+            use_ingestion_pipeline=False,
+            use_hybrid_consolidation=use_hybrid,
+        ),
+    )
+
+    effective_ingestion: dict[str, Any] = {
+        "chunker": "fixed-window",
+        "chunker_window_tokens": 64,
+        "chunker_overlap_tokens": 8,
+        "salience": "lexical-novelty",
+        "embedder": "same-lm",
+        "aggregator": "stats",
+    }
+    if ingestion is not None:
+        effective_ingestion.update(ingestion)
+    cfg.ingestion = effective_ingestion
+
+    agent = CortexAgent(cfg, driver=driver)
+    agent.neural_hippocampus.memory.surprise_threshold = 0.0
+    agent.boot()
+    return agent
+
+
+def _recall_fact(agent: CortexAgent, query: str, target: str) -> int:
+    """Return 1 if ``target`` appears in the agent's answer to ``query``."""
+    answer = agent.articulate(prompt=query, apply_steering=False).lower()
+    return 1 if target.lower() in answer else 0
+
+
+def _run_probe(
+    mode: str,
+    length: int = 512,
+    ingestion: dict[str, Any] | None = None,
+) -> _ProbeResult:
+    """Run one probe: perceive, metabolize, consolidate, retrieve."""
+    long_turn = _make_long_turn(total_length_tokens=length)
+    agent = _build_agent(mode=mode, ingestion=ingestion)
+
+    agent.perceive(long_turn)
+    agent.metabolize()
+
+    # In hybrid mode, mirror the strength boost CortexAgent.turn() applies
+    # when auto-consolidation fires, so the comparison is between two real
+    # consolidation regimes rather than just a flag.
+    digest = agent._last_digest
+    strength = 1.0
+    if mode == "hybrid" and digest is not None:
+        strength = float(np.clip(1.0 * (1.0 + digest.drift_max), 1.0, 10.0))
+    summary = agent.consolidate(strength=strength)
+
+    recall_a = _recall_fact(agent, QUERY_A, TARGET_A)
+    recall_b = _recall_fact(agent, QUERY_B, TARGET_B)
+    co_recall = 1 if (recall_a and recall_b) else 0
+
+    return _ProbeResult(
+        mode=mode,
+        length=length,
+        recall_a=recall_a,
+        recall_b=recall_b,
+        co_recall=co_recall,
+        traces_stored=agent.neural_hippocampus.status()["episode_count"],
+        embedding_calls=agent.driver.embedding_calls,
+        cold_drift=float(summary.get("cold_drift", 0.0)),
+        consolidation_strength=strength,
+    )
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="Multi-fact turn stressor for CortexAgent consolidation."
+    )
+    parser.add_argument(
+        "--length",
+        type=int,
+        default=512,
+        help="Total turn length in whitespace tokens (default: 512).",
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="scalar",
+        choices=["scalar", "hybrid"],
+        help="Consolidation mode: scalar (S) or hybrid (H).",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="{}",
+        help='JSON config object for pipeline overrides, e.g. {"ingestion":{"chunker_window_tokens":32}}.',
+    )
+    args = parser.parse_args(argv)
+
+    config = json.loads(args.config) if args.config else {}
+    ingestion = config.get("ingestion")
+    if ingestion is not None and not isinstance(ingestion, dict):
+        raise ValueError("config 'ingestion' must be a JSON object")
+
+    result = _run_probe(
+        mode=args.mode,
+        length=args.length,
+        ingestion=ingestion,
+    )
+
+    print(
+        f"METRIC mode={result.mode} "
+        f"length={result.length} "
+        f"recall_a={result.recall_a} "
+        f"recall_b={result.recall_b} "
+        f"co_recall={result.co_recall} "
+        f"traces={result.traces_stored} "
+        f"embedding_calls={result.embedding_calls} "
+        f"cold_drift={result.cold_drift:.6f} "
+        f"consolidation_strength={result.consolidation_strength:.6f}"
+    )
+
+    asi_config = {
+        "mode": result.mode,
+        "length": result.length,
+        "ingestion": ingestion if ingestion is not None else {},
+    }
+    print(
+        f"ASI mode={result.mode} "
+        f"co_recall={result.co_recall} "
+        f"traces={result.traces_stored} "
+        f"config={json.dumps(asi_config)}"
+    )
+
+
+if __name__ == "__main__":
+    main()
