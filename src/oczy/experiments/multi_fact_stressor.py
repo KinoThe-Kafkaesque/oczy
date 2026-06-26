@@ -196,6 +196,7 @@ def _build_agent(
     ingestion: dict[str, Any] | None,
     driver: Any | None = None,
     auto_consolidate: bool = False,
+    use_identity_adapter: bool = True,
 ) -> CortexAgent:
     """Create a fresh CortexAgent for one multi-fact probe run."""
     if driver is None:
@@ -205,6 +206,7 @@ def _build_agent(
         cortex=KVCortexConfig(d_cortex=4),
         use_ingestion_pipeline=True,
         auto_consolidate=auto_consolidate,
+        use_identity_adapter=use_identity_adapter,
         digestive_gate=DigestiveGateConfig(
             novelty_threshold=1.0,
             use_ingestion_pipeline=False,
@@ -349,18 +351,19 @@ def _run_probe(
     max_traces: int | None = None,
     domain_recall: bool = False,
     use_paraphrase: bool = False,
+    use_identity_adapter: bool = True,
 ) -> _ProbeResult:
     """Run one probe: perceive, metabolize, consolidate, retrieve."""
     long_turn = _make_long_turn(total_length_tokens=length)
+    driver: Any | None = None
     if use_real_driver:
         driver = _load_real_driver(n_ctx)
-    else:
-        driver = _MockDriver(n_embd=16)
     agent = _build_agent(
         mode=mode,
         ingestion=ingestion,
         driver=driver,
         auto_consolidate=auto_consolidate,
+        use_identity_adapter=use_identity_adapter,
     )
 
     agent.perceive(long_turn)
@@ -570,6 +573,11 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Use paraphrased recall queries that omit the original keywords.",
     )
+    parser.add_argument(
+        "--no-identity-adapter",
+        action="store_true",
+        help="Disable applying the IdentityHypernetwork state adapter bias.",
+    )
     args = parser.parse_args(argv)
 
     config = json.loads(args.config) if args.config else {}
@@ -590,8 +598,8 @@ def main(argv: list[str] | None = None) -> None:
         max_traces=args.max_traces,
         domain_recall=args.domain_recall,
         use_paraphrase=args.paraphrase,
+        use_identity_adapter=not args.no_identity_adapter,
     )
-
     metric_parts = [
         f"METRIC mode={result.mode} use_prefix={result.use_prefix} prefix_source={result.prefix_source}",
         f"auto_consolidated={result.auto_consolidated}",

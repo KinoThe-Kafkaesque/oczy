@@ -147,6 +147,9 @@ class CortexAgentConfig:
     # when no explicit reserved position is found and use_hippocampus_prefix is
     # enabled. Default off so the benchmark path is unchanged.
     knowledge_store_supplies_prefix_targets: bool = False
+    # If True (default), apply the IdentityHypernetwork-generated state_adapter
+    # bias in metabolize(). Set False to isolate the adapter's behavioral effect.
+    use_identity_adapter: bool = True
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Restore missing fields for pickled configs from older versions."""
@@ -493,7 +496,7 @@ class CortexAgent:
                 bias = self.identity_hypernetwork.generate_state_adapter(
                     self.cortex.config.d_cortex
                 )
-                if bias is not None:
+                if bias is not None and self.config.use_identity_adapter:
                     self.cortex.set_state_bias(bias)
             except AttributeError:
                 # Older IdentityHypernetwork implementations do not expose a
