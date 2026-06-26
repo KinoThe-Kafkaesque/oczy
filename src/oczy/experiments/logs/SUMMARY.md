@@ -441,8 +441,48 @@ Remaining blocks:
   `policy_suppresses_fast_answer` flag lets the head dominate final ranking in probe
   modes. Stages 0+1 reach near-perfect retention/transfer with the real LM driver,
   and Stage 2 scope control is starting to show policy-driven alternate-sense selection.
-- CortexAgent now has a configurable `IngestionPipeline` upstream of metabolism that
-  produces `ChunkSignal` traces and a `TurnDigest` for the digestive gate. A
-  needle-position/length sweep script (`src/oczy/experiments/needle_sweep.py`)
-  demonstrates that the pipeline retrieves deep needles the single-embed baseline
-  misses. Next step is salience-filtered cost ablation and the embedder fork decision.
+35. `42c4ef9` — Fix the default `salience_threshold` in `IngestionPipeline`
+    so non-`pass-through` filters (correction-marker, lexical-novelty,
+    centroid-cosine) drop chunks below salience 0.5 by default. Updated
+    `test_correction_marker_filter_marks_only_correction_chunks` to expect
+    only the correction chunk to survive. Verified with `needle_sweep.py`:
+    at length 512, lexical-novelty recall stays 5/5 while embedding calls
+    drop from 50 (pass-through) to 14; at length 4096, pass-through fails
+    retrieval with 222 calls while lexical-novelty succeeds with only 8
+    calls. Fast suite `290 passed`. Benchmark `code_qa_accuracy=1.0`
+    (run #82).
+
+Test status: `pytest: 290 passed` fast (reserve-position + tensor-critic + replay-SGD +
+identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
+value-head + value-head-wiring + policy-head + organism-policy + policy-correction-loop +
+policy-positive-reward + actor-critic-baseline + acceptance-reward +
+curriculum-shim-margin + curriculum-cortex-agent-mock +
+curriculum-cortex-agent-transfer + policy-request-context +
+policy-update-ungated + policy-suppresses-fast-answer + ingestion-pipeline +
+needle-stressor + needle-sweep + salience-threshold unit tests pass; slow needle tests 3 passed).
+`ruff check` clean on changed files.
+
+Remaining blocks:
+- Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
+- Exact-token uptake via cvec alone remains blocked; `ReservedPosition` prefix is the
+  practical exact-recall surface, and it can now be selected automatically by the
+  knowledge store.
+- Hippocampal replay now has a differentiable SGD path on `proj_hidden`, gated by
+  `replay_sgd_step` and defaulting to off.
+- IdentityHypernetwork now emits real `d_cortex`-dimensional adapter deltas that are
+  applied at articulation time, but the concept→latent mapping is still partially
+  hand-seeded and the effect on downstream behavior has not yet been measured.
+- WorldModelCritic now has tensor-input correction prediction (default in CortexAgent),
+  a learned value head that is trained with TD on every `metabolize()`, and feeds the
+  digestive gate, but none have been validated in a real correction/uptake loop.
+- CortexAgent's policy head can now optionally consume a request-context hidden vector
+  in addition to warm_state and candidate hidden vectors, gated by
+  `use_policy_request_context`. The ranking contribution remains normalized to
+  softmax probabilities, and policy updates fire on every correction. The
+  `policy_suppresses_fast_answer` flag lets the head dominate final ranking in probe
+  modes. Stages 0+1 reach near-perfect retention/transfer with the real LM driver,
+  and Stage 2 scope control is starting to show policy-driven alternate-sense selection.
+- CortexAgent now has a configurable `IngestionPipeline` upstream of metabolism with
+  working salience filtering: `lexical-novelty` keeps 100% needle recall while cutting
+  same-LM embedding calls by ~95% at 4k tokens vs pass-through. Next step is the
+  embedder fork decision or causal-gold salience validation.
