@@ -82,10 +82,16 @@ def test_cortex_policy_default_off_uses_legacy_ranking() -> None:
 
 def test_cortex_policy_boosts_preferred_candidate() -> None:
     """Policy head favours 'b' even though the fast organ returned 'a'."""
-    # Matching candidate order ["a", "b"]: low for "a", high for "b".
+    # Matching candidate order ["a", "b"]: low logit for "a", high logit for "b".
+    # Softmax turns these into probabilities; weight=2.0 keeps "b" ahead of the
+    # fast-answer bias (+1.0) plus token overlap (0).
     mock_cortex = _MockCortexAgent(policy_scores=np.array([0.0, 10.0]))
     organism = OrganismAgent(
-        {"use_cortex_policy": True, "cortex_agent": mock_cortex}
+        {
+            "use_cortex_policy": True,
+            "cortex_policy_weight": 2.0,
+            "cortex_agent": mock_cortex,
+        }
     )
     organism.plastic_cortex.labels = ["a", "b"]
     organism.plastic_cortex.answer = lambda request: "a"

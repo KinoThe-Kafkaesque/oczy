@@ -228,11 +228,24 @@ class OrganismAgent:
 
         def _score(label: str) -> float:
             label_tokens = _tokens(label)
-            policy_delta = (
-                self.cortex_policy_weight * float(policy_scores.get(label, 0.0))
-                if policy_scores is not None
-                else 0.0
-            )
+            policy_delta = 0.0
+            if policy_scores is not None:
+                candidate_labels = candidates
+                if candidate_labels:
+                    import numpy as np
+                    raw = np.array(
+                        [float(policy_scores.get(c, 0.0)) for c in candidate_labels],
+                        dtype=np.float64,
+                    )
+                    max_raw = float(np.max(raw))
+                    centered = raw - max_raw
+                    exp = np.exp(centered)
+                    denom = float(np.sum(exp))
+                    if denom > 0.0:
+                        policy_probs = exp / denom
+                        idx = candidate_labels.index(label) if label in candidate_labels else -1
+                        if idx >= 0:
+                            policy_delta = self.cortex_policy_weight * float(policy_probs[idx])
 
             # A policy head can still express a preference for a label that
             # happens to have no usable tokens here.
