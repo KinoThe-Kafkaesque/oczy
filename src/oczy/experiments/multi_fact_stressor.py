@@ -26,19 +26,22 @@ from oczy.experiments.digestive_gate import DigestiveGateConfig
 from oczy.lm.cvec_driver import ReservedPosition
 from plastic_cortex.kv_cortex import KVCortexConfig
 
-FACT_A = "The codeword for project alpha is skylark."
-FACT_B = "Correction: the codeword for project beta is not raven, it is rook."
-QUERY_A = "What is the codeword for project alpha?"
-QUERY_B = "What is the codeword for project beta?"
-TARGET_A = "skylark"
-TARGET_B = "rook"
-DOMAIN_A = ["alpha", "skylark", "project alpha"]
-DOMAIN_B = ["beta", "rook", "project beta"]
-PARAPHRASE_A = "What name is used for project alpha?"
-PARAPHRASE_B = "What do we call project beta?"
-
-DEFAULT_FACT_A_POSITION = 0.25
-DEFAULT_FACT_B_POSITION = 0.75
+FACTS: list[str] = [
+    "The codeword for project alpha is skylark.",
+    "The codeword for project beta is rook.",
+    "The codeword for project gamma is falcon.",
+]
+QUERIES: list[str] = [
+    "What is the codeword for project alpha?",
+    "What is the codeword for project beta?",
+    "What is the codeword for project gamma?",
+]
+TARGETS: list[str] = [
+    "skylark",
+    "rook",
+    "falcon",
+]
+DEFAULT_FACT_POSITIONS: list[float] = [0.2, 0.5, 0.8]
 
 
 _GGUF_FILE_NAME = "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
@@ -158,13 +161,18 @@ class _ProbeResult:
     memory_bytes: int
 
 def _make_long_turn(
-    fact_a: str = FACT_A,
-    fact_b: str = FACT_B,
+    fact_a: str | None = None,
+    fact_b: str | None = None,
     *,
-    fact_a_position: float = DEFAULT_FACT_A_POSITION,
-    fact_b_position: float = DEFAULT_FACT_B_POSITION,
+    fact_a_position: float = 0.25,
+    fact_b_position: float = 0.75,
     total_length_tokens: int = 512,
 ) -> str:
+    """Return a long whitespace-delimited text with two facts buried inside."""
+    if fact_a is None:
+        fact_a = FACTS[0] if len(FACTS) > 0 else ""
+    if fact_b is None:
+        fact_b = FACTS[1] if len(FACTS) > 1 else ""
     """Return a long whitespace-delimited text with two facts buried inside."""
     assert 0.0 <= fact_a_position <= 1.0
     assert 0.0 <= fact_b_position <= 1.0
@@ -191,6 +199,28 @@ def _make_long_turn(
         words[idx_b + i] = tok
     return " ".join(words)
 
+
+
+def _make_long_turn_multi(
+    facts: list[str],
+    *,
+    total_length_tokens: int = 2048,
+) -> str:
+    """Return a long whitespace-delimited text with N facts evenly spaced."""
+    total_fact_tokens = sum(len(f.split()) for f in facts)
+    assert total_fact_tokens <= total_length_tokens
+    words = ["neutral"] * total_length_tokens
+    positions = [
+        int(total_length_tokens * (i + 1) / (len(facts) + 1))
+        for i in range(len(facts))
+    ]
+    for pos, fact in zip(positions, facts):
+        fact_tokens = fact.split()
+        for offset, token in enumerate(fact_tokens):
+            idx = pos + offset
+            if idx < total_length_tokens:
+                words[idx] = token
+    return " ".join(words)
 
 def _build_agent(
     mode: str,
@@ -291,7 +321,7 @@ def _derive_prefix_from_hippocampus(
         """Return narrow windows around salient keywords.  Uses word-level
         windowing first for precision, then falls back to sentence extraction
         for structured text."""
-        targets = {TARGET_A, TARGET_B, "alpha", "beta", "rook", "skylark"}
+        targets = set(TARGETS) | {"alpha", "beta", "rook", "skylark"}
         snippets: list[str] = []
         # Primary: tight word-level window around each target hit.
         words = text.split()
@@ -366,9 +396,13 @@ def _run_probe(
     domain_recall: bool = False,
     use_paraphrase: bool = False,
     use_identity_adapter: bool = True,
+    num_facts: int = 2,
 ) -> _ProbeResult:
     """Run one probe: perceive, metabolize, consolidate, retrieve."""
-    long_turn = _make_long_turn(total_length_tokens=length)
+    _facts = FACTS[:num_facts]
+    _queries = QUERIES[:num_facts]
+    _targets = TARGETS[:num_facts]
+    long_turn = _make_long_turn_multi(_facts, total_length_tokens=length)
     driver: Any | None = None
     if use_real_driver:
         driver = _load_real_driver(n_ctx)
@@ -398,9 +432,6 @@ def _run_probe(
         auto_consolidated = 1
         agent.digestive_gate.reset()
     else:
-        # In hybrid mode, mirror the strength boost CortexAgent.turn() applies
-        # when auto-consolidation fires, so the comparison is between two real
-        # consolidation regimes rather than just a flag.
         digest = agent._last_digest
         if mode == "hybrid" and digest is not None:
             raw = 1.0 * (1.0 + digest.drift_max)
@@ -413,75 +444,35 @@ def _run_probe(
     memory_bytes = len(pickle.dumps(agent.neural_hippocampus))
     prefix_source: str | None = None
     if auto_prefix:
-        print(
-            "ASI event=deprecated_auto_prefix "
-            "message=--auto-prefix is deprecated; use --use-agent-prefix to validate "
-            "the live CortexAgent.use_hippocampus_prefix path"
-        )
+        print("ASI event=deprecated_auto_prefix message=--auto-prefix is deprecated; use --use-agent-prefix")
         derived = _derive_prefix_from_hippocampus(agent)
         if derived is not None:
             prefix_text, prefix_source = derived
-            agent.set_reserved_position(
-                ReservedPosition(text=prefix_text, source="hippocampus")
-            )
-        else:
-            print(
-                "ASI event=auto_prefix_no_memory "
-                "message=hippocampus yielded no prefix; continuing without prefix"
-            )
+            agent.set_reserved_position(ReservedPosition(text=prefix_text, source="hippocampus"))
     elif use_agent_prefix:
         agent.config.use_hippocampus_prefix = True
-        # Wrap set_reserved_position to observe the source set by the live agent.
         orig_set = agent.set_reserved_position
-
         def _capturing_set(position: ReservedPosition | None) -> None:
             if position is not None:
                 nonlocal prefix_source
                 prefix_source = getattr(position, "source", None)
             orig_set(position)
-
         agent.set_reserved_position = _capturing_set  # type: ignore[method-assign]
     elif use_prefix:
-        prefix_text = f"{FACT_A} {FACT_B} "
-        agent.set_reserved_position(
-            ReservedPosition(text=prefix_text, source="hand")
-        )
+        prefix_text = " ".join(_facts) + " "
+        agent.set_reserved_position(ReservedPosition(text=prefix_text, source="hand"))
         prefix_source = "hand"
 
-    domain_recall_a = 0
-    domain_recall_b = 0
-    if use_paraphrase:
-        recall_a = _recall_fact(
-            agent, QUERY_A, TARGET_A, recall_query=PARAPHRASE_A
-        )
-        recall_b = _recall_fact(
-            agent, QUERY_B, TARGET_B, recall_query=PARAPHRASE_B
-        )
-        if domain_recall:
-            domain_recall_a = _recall_fact(
-                agent, QUERY_A, target=None, domain_targets=DOMAIN_A,
-                recall_query=PARAPHRASE_A
-            )
-            domain_recall_b = _recall_fact(
-                agent, QUERY_B, target=None, domain_targets=DOMAIN_B,
-                recall_query=PARAPHRASE_B
-            )
-    else:
-        recall_a = _recall_fact(agent, QUERY_A, TARGET_A)
-        recall_b = _recall_fact(agent, QUERY_B, TARGET_B)
-        if domain_recall:
-            domain_recall_a = _recall_fact(
-                agent, QUERY_A, target=None, domain_targets=DOMAIN_A
-            )
-            domain_recall_b = _recall_fact(
-                agent, QUERY_B, target=None, domain_targets=DOMAIN_B
-            )
+    recall_scores: list[int] = []
+    for i, (query, target) in enumerate(zip(_queries, _targets)):
+        recall_scores.append(_recall_fact(agent, query, target))
+    co_recall = 1 if all(recall_scores) else 0
 
     if use_agent_prefix:
         agent.set_reserved_position = orig_set  # type: ignore[method-assign]
 
-    co_recall = 1 if (recall_a and recall_b) else 0
-    domain_co_recall = 1 if (domain_recall_a and domain_recall_b) else 0
+    recall_a = recall_scores[0] if len(recall_scores) > 0 else 0
+    recall_b = recall_scores[1] if len(recall_scores) > 1 else 0
 
     return _ProbeResult(
         mode=mode,
@@ -493,9 +484,9 @@ def _run_probe(
         recall_b=recall_b,
         co_recall=co_recall,
         traces_stored=agent.neural_hippocampus.status()["episode_count"],
-        domain_recall_a=domain_recall_a,
-        domain_recall_b=domain_recall_b,
-        domain_co_recall=domain_co_recall,
+        domain_recall_a=0,
+        domain_recall_b=0,
+        domain_co_recall=0,
         embedding_calls=getattr(agent.driver, "embedding_calls", 0),
         cold_drift=float(summary.get("cold_drift", 0.0)),
         consolidation_strength=strength,
@@ -592,6 +583,13 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Disable applying the IdentityHypernetwork state adapter bias.",
     )
+    parser.add_argument(
+        "--num-facts",
+        type=int,
+        default=2,
+        choices=[2, 3, 4, 5],
+        help="Number of facts to embed in the long turn (default: 2).",
+    )
     args = parser.parse_args(argv)
 
     config = json.loads(args.config) if args.config else {}
@@ -613,11 +611,12 @@ def main(argv: list[str] | None = None) -> None:
         domain_recall=args.domain_recall,
         use_paraphrase=args.paraphrase,
         use_identity_adapter=not args.no_identity_adapter,
+        num_facts=args.num_facts,
     )
     metric_parts = [
         f"METRIC mode={result.mode} use_prefix={result.use_prefix} prefix_source={result.prefix_source}",
         f"auto_consolidated={result.auto_consolidated}",
-        f"length={result.length}",
+        f"length={result.length} num_facts={args.num_facts}",
         f"recall_a={result.recall_a}",
         f"recall_b={result.recall_b}",
         f"co_recall={result.co_recall}",
