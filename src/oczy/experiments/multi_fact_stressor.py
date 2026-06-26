@@ -137,6 +137,7 @@ class _ProbeResult:
     mode: str
     length: int
     use_prefix: bool
+    auto_consolidated: int
     recall_a: int
     recall_b: int
     co_recall: int
@@ -144,7 +145,6 @@ class _ProbeResult:
     embedding_calls: int
     cold_drift: float
     consolidation_strength: float
-
 
 def _make_long_turn(
     fact_a: str = FACT_A,
@@ -185,6 +185,7 @@ def _build_agent(
     mode: str,
     ingestion: dict[str, Any] | None,
     driver: Any | None = None,
+    auto_consolidate: bool = False,
 ) -> CortexAgent:
     """Create a fresh CortexAgent for one multi-fact probe run."""
     if driver is None:
@@ -193,11 +194,14 @@ def _build_agent(
     cfg = CortexAgentConfig(
         cortex=KVCortexConfig(d_cortex=4),
         use_ingestion_pipeline=True,
-        auto_consolidate=False,
+        auto_consolidate=auto_consolidate,
         digestive_gate=DigestiveGateConfig(
             novelty_threshold=1.0,
             use_ingestion_pipeline=False,
             use_hybrid_consolidation=use_hybrid,
+            consolidation_pressure_threshold=(
+                0.05 if auto_consolidate else 0.25
+            ),
         ),
     )
 
@@ -237,6 +241,7 @@ def _run_probe(
     use_real_driver: bool = False,
     n_ctx: int = 4096,
     use_prefix: bool = False,
+    auto_consolidate: bool = False,
 ) -> _ProbeResult:
     """Run one probe: perceive, metabolize, consolidate, retrieve."""
     long_turn = _make_long_turn(total_length_tokens=length)
@@ -244,19 +249,39 @@ def _run_probe(
         driver = _load_real_driver(n_ctx)
     else:
         driver = _MockDriver(n_embd=16)
-    agent = _build_agent(mode=mode, ingestion=ingestion, driver=driver)
+    agent = _build_agent(
+        mode=mode,
+        ingestion=ingestion,
+        driver=driver,
+        auto_consolidate=auto_consolidate,
+    )
 
     agent.perceive(long_turn)
     agent.metabolize()
 
-    # In hybrid mode, mirror the strength boost CortexAgent.turn() applies
-    # when auto-consolidation fires, so the comparison is between two real
-    # consolidation regimes rather than just a flag.
-    digest = agent._last_digest
+    auto_consolidated = 0
+    summary: dict[str, Any] = {}
     strength = 1.0
-    if mode == "hybrid" and digest is not None:
-        strength = float(np.clip(1.0 * (1.0 + digest.drift_max), 1.0, 10.0))
-    summary = agent.consolidate(strength=strength)
+    if auto_consolidate and agent.should_consolidate():
+        pressure = agent.digestive_gate._pressure
+        gate_cfg = agent.digestive_gate.config
+        threshold = gate_cfg.consolidation_pressure_threshold
+        strength = 1.0 + (pressure / threshold) * 9.0 if threshold > 0 else 1.0
+        if mode == "hybrid" and agent._last_digest is not None:
+            strength = float(
+                np.clip(strength * (1.0 + agent._last_digest.drift_max), 1.0, 10.0)
+            )
+        summary = agent.consolidate(strength=strength)
+        auto_consolidated = 1
+        agent.digestive_gate.reset()
+    else:
+        # In hybrid mode, mirror the strength boost CortexAgent.turn() applies
+        # when auto-consolidation fires, so the comparison is between two real
+        # consolidation regimes rather than just a flag.
+        digest = agent._last_digest
+        if mode == "hybrid" and digest is not None:
+            strength = float(np.clip(1.0 * (1.0 + digest.drift_max), 1.0, 10.0))
+        summary = agent.consolidate(strength=strength)
 
     if use_prefix:
         from oczy.lm.cvec_driver import ReservedPosition
@@ -274,6 +299,7 @@ def _run_probe(
         mode=mode,
         length=length,
         use_prefix=use_prefix,
+        auto_consolidated=auto_consolidated,
         recall_a=recall_a,
         recall_b=recall_b,
         co_recall=co_recall,
@@ -323,13 +349,17 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Set a ReservedPosition prefix containing both facts before retrieval.",
     )
+    parser.add_argument(
+        "--auto-consolidate",
+        action="store_true",
+        help="Let the DigestiveGate decide whether consolidation fires.",
+    )
     args = parser.parse_args(argv)
 
     config = json.loads(args.config) if args.config else {}
     ingestion = config.get("ingestion")
     if ingestion is not None and not isinstance(ingestion, dict):
         raise ValueError("config 'ingestion' must be a JSON object")
-
     result = _run_probe(
         mode=args.mode,
         length=args.length,
@@ -337,10 +367,12 @@ def main(argv: list[str] | None = None) -> None:
         use_real_driver=args.use_real_driver,
         n_ctx=args.n_ctx,
         use_prefix=args.use_prefix,
+        auto_consolidate=args.auto_consolidate,
     )
 
     print(
         f"METRIC mode={result.mode} use_prefix={result.use_prefix} "
+        f"auto_consolidated={result.auto_consolidated} "
         f"length={result.length} "
         f"recall_a={result.recall_a} "
         f"recall_b={result.recall_b} "
@@ -356,10 +388,12 @@ def main(argv: list[str] | None = None) -> None:
         "mode": result.mode,
         "length": result.length,
         "use_prefix": result.use_prefix,
+        "auto_consolidated": bool(result.auto_consolidated),
         "ingestion": ingestion if ingestion is not None else {},
     }
     print(
         f"ASI mode={result.mode} "
+        f"auto_consolidated={result.auto_consolidated} "
         f"co_recall={result.co_recall} "
         f"traces={result.traces_stored} "
         f"config={json.dumps(asi_config)}"

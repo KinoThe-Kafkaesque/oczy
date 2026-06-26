@@ -34,11 +34,19 @@ def _parse_metric(lines: list[str]) -> dict[str, str]:
 def _assert_valid_metric(metric: dict[str, str], expected_mode: str) -> None:
     """Common assertions for a METRIC line."""
     assert metric["mode"] == expected_mode
+    assert metric["auto_consolidated"] in {"0", "1"}
     assert metric["recall_a"] in {"0", "1"}
     assert metric["recall_b"] in {"0", "1"}
     assert metric["co_recall"] in {"0", "1"}
     assert int(metric["traces"]) > 0, "pipeline should store chunk traces"
 
+
+def test_multi_fact_stressor_auto_consolidate_mock() -> None:
+    lines = _capture_output(["--auto-consolidate", "--length", "64"])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    assert metric["auto_consolidated"] in {"0", "1"}
+    assert any(line.startswith("ASI") for line in lines)
 
 def test_multi_fact_stressor_runs_scalar() -> None:
     lines = _capture_output(["--mode", "scalar"])
