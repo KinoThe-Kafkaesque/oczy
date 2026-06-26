@@ -81,6 +81,14 @@ def test_multi_fact_stressor_config_override() -> None:
     assert int(metric["embedding_calls"]) > 0
 
 
+def test_multi_fact_stressor_mock_prefix_runs() -> None:
+    """The prefix path should run on the mock driver and emit valid output."""
+    lines = _capture_output(["--mode", "scalar", "--use-prefix", "--length", "64"])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    assert metric["use_prefix"] == "True"
+    assert any(line.startswith("ASI") for line in lines)
+
 
 @pytest.mark.slow
 @pytest.mark.requires_model

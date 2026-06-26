@@ -123,11 +123,20 @@ class _MockDriver:
     ) -> str:
         return "mock"
 
+    def set_reserved_position(self, reserved: Any) -> Any:  # noqa: ARG002
+        """No-op for mock driver; present for API parity."""
+        return None
+
+    def clear_reserved_position(self) -> None:
+        """No-op for mock driver; present for API parity."""
+        return None
+
 
 @dataclass(frozen=True)
 class _ProbeResult:
     mode: str
     length: int
+    use_prefix: bool
     recall_a: int
     recall_b: int
     co_recall: int
@@ -211,8 +220,13 @@ def _build_agent(
 
 
 def _recall_fact(agent: CortexAgent, query: str, target: str) -> int:
-    """Return 1 if ``target`` appears in the agent's answer to ``query``."""
-    answer = agent.articulate(prompt=query, apply_steering=False).lower()
+    """Return 1 if ``target`` appears in the agent's answer to ``query``.
+
+    The query is wrapped in a brief instruction template so the Instruct-tuned
+    real driver answers rather than returning empty text.
+    """
+    prompt = f"Answer briefly.\nQuestion: {query}\nAnswer:"
+    answer = agent.articulate(prompt=prompt, apply_steering=False).lower()
     return 1 if target.lower() in answer else 0
 
 
@@ -222,6 +236,7 @@ def _run_probe(
     ingestion: dict[str, Any] | None = None,
     use_real_driver: bool = False,
     n_ctx: int = 4096,
+    use_prefix: bool = False,
 ) -> _ProbeResult:
     """Run one probe: perceive, metabolize, consolidate, retrieve."""
     long_turn = _make_long_turn(total_length_tokens=length)
@@ -243,6 +258,14 @@ def _run_probe(
         strength = float(np.clip(1.0 * (1.0 + digest.drift_max), 1.0, 10.0))
     summary = agent.consolidate(strength=strength)
 
+    if use_prefix:
+        from oczy.lm.cvec_driver import ReservedPosition
+
+        prefix_text = f"{FACT_A} {FACT_B} "
+        agent.set_reserved_position(
+            ReservedPosition(text=prefix_text, source="multi_fact_stressor")
+        )
+
     recall_a = _recall_fact(agent, QUERY_A, TARGET_A)
     recall_b = _recall_fact(agent, QUERY_B, TARGET_B)
     co_recall = 1 if (recall_a and recall_b) else 0
@@ -250,6 +273,7 @@ def _run_probe(
     return _ProbeResult(
         mode=mode,
         length=length,
+        use_prefix=use_prefix,
         recall_a=recall_a,
         recall_b=recall_b,
         co_recall=co_recall,
@@ -294,6 +318,11 @@ def main(argv: list[str] | None = None) -> None:
         default=4096,
         help="Context size for the real driver (default: 4096).",
     )
+    parser.add_argument(
+        "--use-prefix",
+        action="store_true",
+        help="Set a ReservedPosition prefix containing both facts before retrieval.",
+    )
     args = parser.parse_args(argv)
 
     config = json.loads(args.config) if args.config else {}
@@ -307,10 +336,11 @@ def main(argv: list[str] | None = None) -> None:
         ingestion=ingestion,
         use_real_driver=args.use_real_driver,
         n_ctx=args.n_ctx,
+        use_prefix=args.use_prefix,
     )
 
     print(
-        f"METRIC mode={result.mode} "
+        f"METRIC mode={result.mode} use_prefix={result.use_prefix} "
         f"length={result.length} "
         f"recall_a={result.recall_a} "
         f"recall_b={result.recall_b} "
@@ -321,9 +351,11 @@ def main(argv: list[str] | None = None) -> None:
         f"consolidation_strength={result.consolidation_strength:.6f}"
     )
 
+
     asi_config = {
         "mode": result.mode,
         "length": result.length,
+        "use_prefix": result.use_prefix,
         "ingestion": ingestion if ingestion is not None else {},
     }
     print(
