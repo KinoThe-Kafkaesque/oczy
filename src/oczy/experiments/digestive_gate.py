@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from typing import Any
 
+import numpy as np
+
 
 @dataclass(frozen=True)
 class DigestiveGateConfig:
@@ -26,6 +28,9 @@ class DigestiveGateConfig:
     correction_boost: float = 1.0
     immune_suppress_identity: bool = True
     autoencoder_min_weight: float = 0.1
+    # Ingestion pipeline integration.
+    use_ingestion_pipeline: bool = False
+
 
     # World-model critic integration.
     use_critic_correction_prob: bool = True
@@ -140,6 +145,36 @@ class DigestiveGate:
             "consolidation_pressure": self._pressure,
             "critic_correction_prob": critic_correction_prob,
         }
+
+    def ingest_digest(
+        self,
+        digest: Any,  # TurnDigest is imported lazily to keep this module lightweight.
+        *,
+        identity_relevance: float = 0.5,
+        immune_conflict: float = 0.0,
+    ) -> dict[str, Any]:
+        """Map a TurnDigest onto the scalar ingest() surface.
+
+        Keeps the gate scalar, stateless-across-resets, and backwards-compatible.
+        """
+        return self.ingest(
+            drift=float(digest.drift_max),
+            correction_signal=float(digest.correction_fraction),
+            novelty=self._digest_novelty(digest),
+            identity_relevance=float(identity_relevance),
+            immune_conflict=float(immune_conflict),
+            critic_correction_prob=float(digest.critic_prob_max)
+            if digest.critic_prob_max > 0
+            else None,
+        )
+
+    @staticmethod
+    def _digest_novelty(digest: Any) -> float:
+        """Map within-turn resolution to a unit novelty signal."""
+        if digest.n_chunks == 0:
+            return 0.0
+        density = digest.n_survived / digest.n_chunks
+        return float(np.clip(density + digest.novelty_spread, 0.0, 1.0))
 
     def should_consolidate(self, pressure: float | None = None) -> bool:
         """Return True when consolidation pressure has crossed the threshold."""

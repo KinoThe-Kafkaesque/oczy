@@ -40,6 +40,7 @@ from identity_hypernetwork import IdentityHypernetwork
 from neural_hippocampus import NeuralHippocampus
 from oczy.experiments.codebase_qa.knowledge_store import KnowledgeStore
 from oczy.experiments.digestive_gate import DigestiveGate, DigestiveGateConfig
+from oczy.experiments.ingestion import IngestionPipeline
 from oczy.lm import CVecDriverConfig, LlamaCVecDriver, ReservedPosition
 from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
 from skill_immune_cortex import SkillImmuneCortex
@@ -118,6 +119,16 @@ class CortexAgentConfig:
     use_policy_head: bool = False
     use_policy_request_context: bool = False
     policy_learning_rate: float = 0.05
+    # Optional ingestion pipeline (default off for benchmark compatibility).
+    use_ingestion_pipeline: bool = False
+    ingestion: dict[str, Any] | None = None
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore missing fields for pickled configs from older versions."""
+        self.__dict__.update(state)
+        for field in dataclasses.fields(self):
+            if field.name not in self.__dict__:
+                object.__setattr__(self, field.name, field.default)
 
 
 class CortexAgent:
@@ -192,6 +203,18 @@ class CortexAgent:
             novelty_threshold=self.config.correction_drift_threshold,
         )
         self.digestive_gate = DigestiveGate(config=dg_cfg)
+        # Optional ingestion pipeline sits between perception and the scalar
+        # digestive gate; it produces chunked hippocampal signals and a
+        # TurnDigest that maps back onto the existing ingest() surface.
+        if self.config.use_ingestion_pipeline:
+            self.ingestion_pipeline = IngestionPipeline(
+                config=self.config.ingestion,
+                driver=self.driver,
+                cortex=self.cortex,
+            )
+        else:
+            self.ingestion_pipeline = None
+
 
         # Optional codebase knowledge store; recalled facts can be injected
         # into prompts during articulate() to ground the agent in repo facts.
@@ -345,8 +368,33 @@ class CortexAgent:
                 self._last_drift > self.config.correction_drift_threshold,
             )
         )
+        scores: dict[str, Any] | None = None
 
-        # Drive the critic with the cortex's hidden vector. The critic
+
+        if self.ingestion_pipeline is not None:
+            ctx_state = {
+                "driver": self.driver,
+                "cortex": self.cortex,
+                "warm_state": self.cortex.warm_state.copy(),
+                "last_utterance": self._last_utterance,
+                "correction_signal": correction_signal,
+            }
+            signals, digest = self.ingestion_pipeline.process(text, ctx_state=ctx_state)
+            for signal in signals:
+                self.neural_hippocampus.store(
+                    query=signal.text,
+                    answer="",
+                    correction=signal.text if signal.is_correction else "",
+                    prediction_error=signal.drift or 0.0,
+                    corrected_answer="",
+                    hidden=signal.hidden.copy() if signal.hidden is not None else hidden,
+                )
+            scores = self.digestive_gate.ingest_digest(
+                digest,
+                identity_relevance=0.5,
+                immune_conflict=0.0,
+            )
+
         # trains on the same latent signal the cortex saw, moving it from
         # string heuristics toward tensor-input world modeling (GOALS.md
         # Goal 3). record_outcome sets _last_correction_prob to the prior
@@ -377,27 +425,28 @@ class CortexAgent:
             self.world_model_critic, "_last_correction_prob", None
         )
 
-        scores = self.digestive_gate.ingest(
-            drift=float(np.clip(self._last_drift, 0.0, 1.0)),
-            correction_signal=gate_correction,
-            novelty=1.0,
-            identity_relevance=0.5,
-            immune_conflict=0.0,
-            critic_correction_prob=last_prob,
-        )
-        # High-drift episodes go to hippocampal storage as a replay bank
-        # item keyed by the LM's hidden representation. The text field is
-        # kept only for human debugging -- the cortex itself never reads
-        # it back.
-        if scores["hippocampus_weight"] > 0:
-            self.neural_hippocampus.store(
-                query=text,
-                answer="",
-                correction=text,
-                prediction_error=self._last_drift,
-                corrected_answer="",
-                hidden=self._last_hidden.copy(),
+        if scores is None:
+            scores = self.digestive_gate.ingest(
+                drift=float(np.clip(self._last_drift, 0.0, 1.0)),
+                correction_signal=gate_correction,
+                novelty=1.0,
+                identity_relevance=0.5,
+                immune_conflict=0.0,
+                critic_correction_prob=last_prob,
             )
+            # High-drift episodes go to hippocampal storage as a replay bank
+            # item keyed by the LM's hidden representation. The text field is
+            # kept only for human debugging -- the cortex itself never reads
+            # it back.
+            if scores["hippocampus_weight"] > 0:
+                self.neural_hippocampus.store(
+                    query=text,
+                    answer="",
+                    correction=text,
+                    prediction_error=self._last_drift,
+                    corrected_answer="",
+                    hidden=self._last_hidden.copy(),
+                )
 
         # Identity accepts a token / correct_label; use the utterance's
         # first long alphanumeric token as the concept to update.
