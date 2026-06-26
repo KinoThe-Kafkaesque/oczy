@@ -285,11 +285,43 @@ Remaining blocks:
 - WorldModelCritic now has tensor-input correction prediction (default in CortexAgent),
   a learned value head that is trained with TD on every `metabolize()`, and feeds the
   digestive gate, but none have been validated in a real correction/uptake loop.
+33. `c723660` — Add gated `policy_suppresses_fast_answer` flag to
+    `OrganismAgent`. When enabled and a policy signal is present,
+    `_rank_answer` suppresses the legacy `+1.0` fast_answer bias, allowing
+    the learned policy head to drive final selection. The curriculum probe
+    modes (`--use-cortex-shim`, `--use-cortex-agent-mock`, `--use-real-driver`)
+    enable it by default. Added regression tests for weak-preference wins
+    and default-off legacy behavior. Mock/shim Stage 2 remains at full
+    uptake; real-driver Stage 2 now shows non-zero policy-driven learning
+    (retention `0.25`, scope `0.50`). Fast suite: `271 passed`. Benchmark
+    unchanged: `code_qa_accuracy=1.0` (run #78).
+
+Test status: `pytest: 271 passed` fast (reserve-position + tensor-critic + replay-SGD +
+identity-adapter + hidden-delta + default-critic + critic-gate + cortex-answer-loop +
+value-head + value-head-wiring + policy-head + organism-policy + policy-correction-loop +
+policy-positive-reward + actor-critic-baseline + acceptance-reward +
+curriculum-shim-margin + curriculum-cortex-agent-mock +
+curriculum-cortex-agent-transfer + policy-request-context +
+policy-update-ungated + policy-suppresses-fast-answer unit tests pass).
+`ruff check` clean on changed files.
+
+Remaining blocks:
+- Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
+- Exact-token uptake via cvec alone remains blocked; `ReservedPosition` prefix is the
+  practical exact-recall surface, and it can now be selected automatically by the
+  knowledge store.
+- Hippocampal replay now has a differentiable SGD path on `proj_hidden`, gated by
+  `replay_sgd_step` and defaulting to off.
+- IdentityHypernetwork now emits real `d_cortex`-dimensional adapter deltas that are
+  applied at articulation time, but the concept→latent mapping is still partially
+  hand-seeded and the effect on downstream behavior has not yet been measured.
+- WorldModelCritic now has tensor-input correction prediction (default in CortexAgent),
+  a learned value head that is trained with TD on every `metabolize()`, and feeds the
+  digestive gate, but none have been validated in a real correction/uptake loop.
 - CortexAgent's policy head can now optionally consume a request-context hidden vector
   in addition to warm_state and candidate hidden vectors, gated by
   `use_policy_request_context`. The ranking contribution remains normalized to
-  softmax probabilities. Policy updates now fire on every correction regardless of
-  critic surprise. Stages 0+1 reach near-perfect retention/transfer with the real LM
-  driver; Stage 2 scope control is partial: mock/shim reaches full uptake, while the
-  real-driver head learns alternate labels but final ranking is still dominated by
-  token-overlap/identity scoring.
+  softmax probabilities, and policy updates fire on every correction. The
+  `policy_suppresses_fast_answer` flag lets the head dominate final ranking in probe
+  modes. Stages 0+1 reach near-perfect retention/transfer with the real LM driver,
+  and Stage 2 scope control is starting to show policy-driven alternate-sense selection.
