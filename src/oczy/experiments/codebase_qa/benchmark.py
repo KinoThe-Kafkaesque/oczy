@@ -15,8 +15,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from oczy.experiments.codebase_qa.knowledge_store import KnowledgeStore
 from oczy.experiments.codebase_qa.cortex_agent_recall import evaluate
+from oczy.experiments.codebase_qa.knowledge_store import KnowledgeStore
 from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
 from oczy.lm import CVecDriverConfig, LlamaCVecDriver
 from plastic_cortex.kv_cortex import KVCortexConfig
@@ -45,7 +45,7 @@ def _score(expected: str | list[str], answer: str) -> int:
         expected = [expected]
     return 1 if any(exp.lower() in answer for exp in expected) else 0
 
-def _run_consolidation_uptake(driver: LlamaCVecDriver) -> dict[str, Any]:
+def _run_consolidation_uptake(driver: LlamaCVecDriver, use_hippo_prefix: bool = False) -> dict[str, Any]:
     """Probe boot-persistent semantic consolidation via SVD-initialised proj_c.
 
     A fresh CortexAgent is corrected several times toward a target answer.
@@ -67,19 +67,27 @@ def _run_consolidation_uptake(driver: LlamaCVecDriver) -> dict[str, Any]:
         cortex=KVCortexConfig(d_cortex=8, steering_mode="proj_random"),
         articulate_scale=0.03,
         auto_consolidate=True,
+        use_hippocampus_prefix=use_hippo_prefix,
     )
     agent = CortexAgent(config=cfg, knowledge_store=None, driver=driver)
     agent.boot()
+    # When using hippocampus prefix, disable cvec steering to prevent
+    # the interference documented in experiments_logs/2026-06-25_prefix_steering_poc.md
+    # (prefix+cvec degrades both; prefix-only achieves exact-token recall).
+    apply_steering = not use_hippo_prefix
+
+    prefix_targets = ["vertical"] if use_hippo_prefix else None
     pre_answer = agent.articulate(
         prompt=prompt,
         max_tokens=16,
         temperature=0.0,
-        apply_steering=True,
+        apply_steering=apply_steering,
+        recall_query=correction,
+        prefix_targets=prefix_targets,
     ).strip()
     pre_score = _score(semantic_expected, pre_answer)
     pre_domain_score = _score(domain_expected, pre_answer)
     pre_normalised = pre_answer.lower()
-
     correction_hiddens: list[np.ndarray] = []
     auto_fired = False
     for _ in range(n_turns):
@@ -106,13 +114,13 @@ def _run_consolidation_uptake(driver: LlamaCVecDriver) -> dict[str, Any]:
 
     if not auto_fired:
         agent.consolidate()
-
-    # Immediate post-consolidation answer (tests new cold/warm state).
     post_warm_answer = agent.articulate(
         prompt=prompt,
         max_tokens=16,
         temperature=0.0,
-        apply_steering=True,
+        apply_steering=apply_steering,
+        recall_query=correction,
+        prefix_targets=prefix_targets,
     ).strip()
     post_warm_score = _score(semantic_expected, post_warm_answer)
     post_warm_domain_score = _score(domain_expected, post_warm_answer)
@@ -124,7 +132,9 @@ def _run_consolidation_uptake(driver: LlamaCVecDriver) -> dict[str, Any]:
         prompt=prompt,
         max_tokens=16,
         temperature=0.0,
-        apply_steering=True,
+        apply_steering=apply_steering,
+        recall_query=correction,
+        prefix_targets=prefix_targets,
     ).strip()
     post_cold_score = _score(semantic_expected, post_cold_answer)
     post_cold_domain_score = _score(domain_expected, post_cold_answer)
@@ -248,7 +258,7 @@ def main() -> int:
     print(f"METRIC cortex_agent_recall_lift={cortex_res['recall_lift']:.4f}")
 
     print("Running consolidation uptake evaluation...")
-    cons_res = _run_consolidation_uptake(driver)
+    cons_res = _run_consolidation_uptake(driver, use_hippo_prefix=True)
     print(f"METRIC consolidation_uptake_pre={cons_res['pre_score']:.4f}")
     print(f"METRIC consolidation_uptake_post_warm={cons_res['post_warm_score']:.4f}")
     print(f"METRIC consolidation_uptake_post_warm_domain={cons_res['post_warm_domain_score']:.4f}")

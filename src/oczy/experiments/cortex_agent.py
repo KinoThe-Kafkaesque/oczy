@@ -151,6 +151,7 @@ class CortexAgentConfig:
     # bias in metabolize(). Set False to isolate the adapter's behavioral effect.
     use_identity_adapter: bool = True
 
+
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Restore missing fields for pickled configs from older versions."""
         self.__dict__.update(state)
