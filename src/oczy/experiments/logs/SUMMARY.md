@@ -864,11 +864,60 @@ Remaining blocks:
   `policy_suppresses_fast_answer` flag lets the head dominate final ranking in probe
   modes. Stages 0+1 reach near-perfect retention/transfer with the real LM driver,
   and Stage 2 scope control is starting to show policy-driven alternate-sense selection.
+45. `a2814e7` — Add `--auto-consolidate` mode to `multi_fact_stressor.py`.
+    When active the probe lowers the consolidation-pressure threshold so
+    `should_consolidate()` can fire after a single high-drift 512-token
+    turn. Both scalar and hybrid modes auto-consolidate and hit the
+    strength cap of 10.0, producing identical `cold_drift=0.867` and
+    `co_recall=0/0` (cvec-only exact recall remains blocked). Fast suite
+    `301 passed`; benchmark `code_qa_accuracy=1.0` (run #92).
+
+Test status: `pytest: 301 passed` fast + 1 slow/real-driver construction test
+(reserve-position + tensor-critic + replay-SGD + identity-adapter + hidden-delta +
+default-critic + critic-gate + cortex-answer-loop + value-head + value-head-wiring +
+policy-head + organism-policy + policy-correction-loop + policy-positive-reward +
+actor-critic-baseline + acceptance-reward + curriculum-shim-margin +
+curriculum-cortex-agent-mock + curriculum-cortex-agent-transfer +
+policy-request-context + policy-update-ungated + policy-suppresses-fast-answer +
+ingestion-pipeline + needle-stressor + needle-sweep + salience-threshold +
+mock-foreign-embedder + hybrid-consolidation + multi-fact-stressor +
+foreign-minilm-embedder + real-driver-needle-sweep + auto-consolidate unit tests
+pass; slow needle tests 4 passed, 1 slow real-driver construction test passes).
+`ruff check` clean on changed files.
+
+Remaining blocks:
+- Architecture S vs H has not been behaviorally discriminated. With auto-consolidate
+  both modes fire and hit the 10.0 strength cap. To see a difference, either remove
+  the cap, use multi-turn pressure accumulation, or measure domain-level (not exact)
+  recall in the multi-fact probe.
+- ONNX-Runtime foreign embedder is blocked by `optimum`'s dependency range
+  (`huggingface-hub<1.0`) conflicting with the repo's `lm` group.
+- Direct reserved KV-slot injection still blocked by `llama-cpp-python` C API surface.
+- Exact-token uptake via cvec alone remains blocked; `ReservedPosition` prefix is the
+  practical exact-recall surface, and it can now be selected automatically by the
+  knowledge store.
+- Hippocampal replay now has a differentiable SGD path on `proj_hidden`, gated by
+  `replay_sgd_step` and defaulting to off.
+- IdentityHypernetwork now emits real `d_cortex`-dimensional adapter deltas that are
+  applied at articulation time, but the concept→latent mapping is still partially
+  hand-seeded and the effect on downstream behavior has not yet been measured.
+- WorldModelCritic now has tensor-input correction prediction (default in CortexAgent),
+  a learned value head that is trained with TD on every `metabolize()`, and feeds the
+  digestive gate, but none have been validated in a real correction/uptake loop.
+- CortexAgent's policy head can now optionally consume a request-context hidden vector
+  in addition to warm_state and candidate hidden vectors, gated by
+  `use_policy_request_context`. The ranking contribution remains normalized to
+  softmax probabilities, and policy updates fire on every correction. The
+  `policy_suppresses_fast_answer` flag lets the head dominate final ranking in probe
+  modes. Stages 0+1 reach near-perfect retention/transfer with the real LM driver,
+  and Stage 2 scope control is starting to show policy-driven alternate-sense selection.
 - CortexAgent now has a configurable `IngestionPipeline` upstream of metabolism with
   pluggable chunkers, salience filters, embedders (same-LM, mock-foreign, and optional
   foreign-MiniLM with learned projection), a scalar stats gate, an optional hybrid
   consolidation-strength boost, and stressors for needle recall and multi-fact turns.
-  Real-driver measurements show same-lm is faster and foreign-MiniLM matches recall
-  quality. The embedder fork favors same-lm in this environment; ONNX is blocked by
-  dependency conflict. Architecture S vs H has not yet been behaviorally discriminated
-  because consolidation rarely fires naturally in the current probes.
+  The ingestion-design-matrix experiments are provisionally complete: same-lm is the
+  practical embedder choice in this environment, and S vs H cannot be distinguished
+  on exact-token recall. The next high-leverage work is either (a) a domain-level
+  recall metric for multi-fact turns, or (b) returning to the identity-hypernetwork /
+  hippocampus prefix-generation path that closes the exact-recall loop without
+  hand-coded prefixes.
