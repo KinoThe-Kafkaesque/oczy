@@ -39,6 +39,7 @@ def _assert_valid_metric(metric: dict[str, str], expected_mode: str) -> None:
     assert metric["recall_b"] in {"0", "1"}
     assert metric["co_recall"] in {"0", "1"}
     assert int(metric["traces"]) > 0, "pipeline should store chunk traces"
+    assert int(metric["memory_bytes"]) > 0, "serialized hippocampus size should be positive"
 
 
 def test_multi_fact_stressor_auto_consolidate_mock() -> None:
@@ -107,6 +108,19 @@ def test_multi_fact_stressor_mock_prefix_runs() -> None:
     _assert_valid_metric(metric, "scalar")
     assert metric["use_prefix"] == "True"
     assert any(line.startswith("ASI") for line in lines)
+
+def test_memory_bytes_emitted_and_positive() -> None:
+    lines = _capture_output(["--length", "64"])
+    metric = _parse_metric(lines)
+    assert int(metric["memory_bytes"]) > 0
+
+
+def test_max_traces_prunes_to_target() -> None:
+    lines = _capture_output(["--length", "128", "--max-traces", "1"])
+    metric = _parse_metric(lines)
+    assert int(metric["traces"]) <= 1
+    assert int(metric["memory_bytes"]) > 0
+
 
 
 @pytest.mark.slow

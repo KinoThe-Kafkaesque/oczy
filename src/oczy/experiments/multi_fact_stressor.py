@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pickle
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -145,6 +146,7 @@ class _ProbeResult:
     embedding_calls: int
     cold_drift: float
     consolidation_strength: float
+    memory_bytes: int
 
 def _make_long_turn(
     fact_a: str = FACT_A,
@@ -243,6 +245,7 @@ def _run_probe(
     use_prefix: bool = False,
     auto_consolidate: bool = False,
     hybrid_cap: float = 10.0,
+    max_traces: int | None = None,
 ) -> _ProbeResult:
     """Run one probe: perceive, metabolize, consolidate, retrieve."""
     long_turn = _make_long_turn(total_length_tokens=length)
@@ -283,6 +286,11 @@ def _run_probe(
             raw = 1.0 * (1.0 + digest.drift_max)
             strength = float(raw if hybrid_cap <= 0.0 else np.clip(raw, 1.0, hybrid_cap))
         summary = agent.consolidate(strength=strength)
+    if max_traces is not None and max_traces > 0:
+        memory = agent.neural_hippocampus.memory
+        while len(memory.traces) > max_traces:
+            memory.traces.pop(next(iter(memory.traces)), None)
+    memory_bytes = len(pickle.dumps(agent.neural_hippocampus))
 
     if use_prefix:
         from oczy.lm.cvec_driver import ReservedPosition
@@ -308,6 +316,7 @@ def _run_probe(
         embedding_calls=getattr(agent.driver, "embedding_calls", 0),
         cold_drift=float(summary.get("cold_drift", 0.0)),
         consolidation_strength=strength,
+        memory_bytes=memory_bytes,
     )
 
 
@@ -361,6 +370,12 @@ def main(argv: list[str] | None = None) -> None:
         default=10.0,
         help="Cap hybrid consolidation strength (default: 10.0; 0 means uncapped).",
     )
+    parser.add_argument(
+        "--max-traces",
+        type=int,
+        default=None,
+        help="Prune hippocampus to N most recent traces after consolidation (optional).",
+    )
     args = parser.parse_args(argv)
 
     config = json.loads(args.config) if args.config else {}
@@ -376,6 +391,7 @@ def main(argv: list[str] | None = None) -> None:
         use_prefix=args.use_prefix,
         auto_consolidate=args.auto_consolidate,
         hybrid_cap=args.hybrid_cap,
+        max_traces=args.max_traces,
     )
 
     print(
@@ -387,6 +403,7 @@ def main(argv: list[str] | None = None) -> None:
         f"co_recall={result.co_recall} "
         f"traces={result.traces_stored} "
         f"embedding_calls={result.embedding_calls} "
+        f"memory_bytes={result.memory_bytes} "
         f"cold_drift={result.cold_drift:.6f} "
         f"consolidation_strength={result.consolidation_strength:.6f}"
     )
