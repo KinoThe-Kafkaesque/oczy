@@ -8,7 +8,9 @@ from typing import Any
 import numpy as np
 import pytest
 
+from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
 from oczy.experiments.organism import OrganismAgent
+from plastic_cortex.kv_cortex import KVCortexConfig
 
 
 @dataclass
@@ -331,3 +333,53 @@ def test_acceptance_policy_reward_warning_without_cortex_agent() -> None:
     with pytest.warns(UserWarning, match="cortex_agent"):
         organism = OrganismAgent({"use_acceptance_policy_reward": True})
     assert organism.cortex_agent is None
+
+class _RequestContextDriver:
+    def __init__(self, n_embd: int = 8, n_layers: int = 2) -> None:
+        self.n_embd = n_embd
+        self.n_layers = n_layers
+
+    def peek_embedding(
+        self, text: str, last_token_only: bool = True
+    ) -> np.ndarray:
+        seed = hash(text) & 0xFFFFFFFF
+        rng = np.random.default_rng(seed)
+        return rng.normal(0.0, 1.0, size=self.n_embd).astype(np.float32)
+
+
+def test_request_context_expands_policy_features() -> None:
+    driver = _RequestContextDriver(n_embd=8)
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=4),
+        use_policy_head=True,
+        use_policy_request_context=True,
+    )
+    agent = CortexAgent(cfg, driver=driver)
+    agent.boot()
+    agent.perceive("what is the answer")
+    candidates = ["x", "y", "z"]
+    scores = agent.policy_score(candidates)
+    features = agent._policy_features(candidates)
+    expected_dim = 4 + 4 + 8  # warm_state + request_context + candidate_hidden
+    assert features.shape == (3, expected_dim)
+    assert agent._policy_W.shape == (expected_dim,)
+    assert scores.shape == (3,)
+
+
+def test_request_context_disabled_keeps_original_feature_count() -> None:
+    driver = _RequestContextDriver(n_embd=8)
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=4),
+        use_policy_head=True,
+        use_policy_request_context=False,
+    )
+    agent = CortexAgent(cfg, driver=driver)
+    agent.boot()
+    agent.perceive("what is the answer")
+    candidates = ["x", "y", "z"]
+    scores = agent.policy_score(candidates)
+    features = agent._policy_features(candidates)
+    expected_dim = 4 + 8  # warm_state + candidate_hidden
+    assert features.shape == (3, expected_dim)
+    assert agent._policy_W.shape == (expected_dim,)
+    assert scores.shape == (3,)

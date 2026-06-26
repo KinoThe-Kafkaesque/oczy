@@ -26,7 +26,7 @@ from oczy.experiments.organism_curriculum.scoring import categorize_results, pro
 from oczy.experiments.organism_curriculum.validation import validate_curriculum
 
 
-def _load_real_cortex_agent() -> Any:
+def _load_real_cortex_agent(config: dict[str, Any] | None = None) -> Any:
     """Load a CortexAgent backed by the local LFM2.5 GGUF model."""
     from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
     from oczy.lm import CVecDriverConfig, LlamaCVecDriver
@@ -41,6 +41,8 @@ def _load_real_cortex_agent() -> Any:
         use_policy_head=True,
         policy_learning_rate=0.001,
     )
+    if config and config.get("use_policy_request_context"):
+        cfg.use_policy_request_context = True
     cortex = CortexAgent(cfg, driver=driver)
     cortex.boot()
     print("Real CortexAgent loaded.")
@@ -419,7 +421,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--config",
         default="{}",
-        help="JSON config passed to the agent constructor.",
+        help=(
+            "JSON config passed to the agent constructor."
+            " CortexAgent fields such as use_policy_request_context are honored."
+        ),
     )
     p.add_argument(
         "--lm",
@@ -604,6 +609,8 @@ def main(argv: list[str] | None = None) -> int:
                 cortex=KVCortexConfig(d_cortex=4),
                 use_policy_head=True,
             )
+            if agent_config.get("use_policy_request_context"):
+                cfg.use_policy_request_context = True
             cortex = CortexAgent(cfg, driver=driver)
             cortex.boot()
 
@@ -623,14 +630,20 @@ def main(argv: list[str] | None = None) -> int:
 
             agent.cortex_agent = cortex
             print("CortexAgent with mock driver attached.")
+            if getattr(agent.cortex_agent, "config", None):
+                ctx = bool(agent.cortex_agent.config.use_policy_request_context)
+                print("Policy request context: %s" % ctx)
         else:
             print("CortexAgent already present; mock driver not attached.")
 
     if args.use_real_driver and isinstance(agent, OrganismAgent):
         if agent.cortex_agent is None:
-            agent.cortex_agent = _load_real_cortex_agent()
+            agent.cortex_agent = _load_real_cortex_agent(config=agent_config)
         else:
             print("CortexAgent already present; real driver not attached.")
+        if getattr(getattr(agent, "cortex_agent", None), "config", None):
+            ctx = bool(agent.cortex_agent.config.use_policy_request_context)
+            print("Policy request context: %s" % ctx)
 
     adapter = None
     if args.lm:

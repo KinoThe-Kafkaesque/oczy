@@ -116,6 +116,7 @@ class CortexAgentConfig:
 
     # Optional learned response-policy head (Phase 2 REINFORCE policy).
     use_policy_head: bool = False
+    use_policy_request_context: bool = False
     policy_learning_rate: float = 0.05
 
 
@@ -204,6 +205,7 @@ class CortexAgent:
         # Lazy-initialized response-policy head weights.
         self._policy_W: np.ndarray | None = None
         self._policy_b: float = 0.0
+        self._last_request_hidden: np.ndarray | None = None
 
     # ------------------------------------------------------------------
     # Boot / cold path
@@ -220,6 +222,7 @@ class CortexAgent:
         self._last_utterance = None
         self._last_hidden = None
         self._prev_hidden = None
+        self._last_request_hidden = None
         self._last_correction_signal = 0.0
         self._prev_correction_signal = 0.0
         self._last_drift = 0.0
@@ -298,7 +301,12 @@ class CortexAgent:
         self._last_hidden = hidden
         self._last_correction_signal = correction_signal
         self._last_drift = drift
-
+        if self.config.use_policy_request_context:
+            h = self.driver.peek_embedding(utterance, last_token_only=False)
+            h = np.mean(h.reshape(-1, h.shape[-1]), axis=0)
+            self._last_request_hidden = np.tanh(
+                self.cortex.proj_hidden @ h
+            ).astype(np.float32)
         return warm_now
 
     def metabolize(self, utterance: str | None = None) -> dict[str, Any]:
@@ -647,6 +655,8 @@ class CortexAgent:
         if self._policy_W is not None:
             return
         dim = self.cortex.config.d_cortex + candidate_hidden_dim
+        if self.config.use_policy_request_context:
+            dim += self.cortex.config.d_cortex
         rng = np.random.default_rng(id(self))
         self._policy_W = rng.normal(0.0, 0.01, size=(dim,)).astype(
             np.float64
@@ -668,6 +678,10 @@ class CortexAgent:
         warm = self.cortex.warm_state.reshape(1, -1)
         hidden_matrix = np.asarray(hiddens, dtype=np.float64)
         warm_matrix = np.repeat(warm, hidden_matrix.shape[0], axis=0)
+        if self.config.use_policy_request_context and self._last_request_hidden is not None:
+            req = self._last_request_hidden.reshape(1, -1)
+            req_matrix = np.repeat(req, hidden_matrix.shape[0], axis=0)
+            return np.hstack([warm_matrix, req_matrix, hidden_matrix])
         return np.hstack([warm_matrix, hidden_matrix])
 
     def policy_score(self, candidates: list[str]) -> np.ndarray:
