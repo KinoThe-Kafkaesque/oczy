@@ -177,7 +177,18 @@ Logit biasing never touches the residual stream — it operates purely in
 logit space, post-forward.
 
 The unification question — "can a single mechanism encode both domain shift
-AND exact-token signal?" — is answered: **yes, but not via cvec.** Logit
-biasing handles exact-token recall; cvec (at low amplitude) handles domain
-shift. They operate on different surfaces (logit space vs residual stream)
-and can coexist.
+AND exact-token signal?" — is answered: **yes, via composition of cvec +
+logit biasing.** Logit biasing handles exact-token recall (logit space,
+post-forward); cvec at low amplitude handles domain shift (residual stream,
+during forward). They operate on different surfaces and coexist without
+interference.
+
+**Composition proof (run #139):** 2D sweep of cvec_scale × logit_bias on the
+disambiguation probe. At cvec_scale=0.01 + bias=20.0: "vertical slice of
+data" — logit biasing forces exact token "vertical" while cvec shifts
+continuation vocabulary toward business/data domain. Bias ≥ 20.0 forces the
+target token at ALL cvec scales (0.01-1.0). Cvec scale controls continuation
+quality: 0.01=coherent business vocab, 0.10=market vocab with repetition,
+1.0=repetition garbage. Below bias=20.0, cvec dominates (no target token).
+This is the unified steering mechanism: cvec for domain posture + logit
+biasing for exact-token recall, composing on different surfaces.
