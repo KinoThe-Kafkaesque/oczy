@@ -15,7 +15,7 @@ Per-K-point flow:
   4. Apply cvecs via driver.set_cvecs_per_layer at articulate_scale=0.03.
   5. Forward-only on PROBE via driver._llm.eval(prompt_ids) (NO generation).
   6. Extract (n_vocab,) logits at last position via driver._llm._ctx.get_logits().
-  7. Read logit at target token id (" marmalade", BPE-natural continuation).
+  7. Read logit at target token id (" marjoram", BPE-natural continuation).
   8. Read logit at CONTROL token id (" banana", real word NOT in CORRECTION).
 
 Primary metric: drift_logit_spearman = Spearman(K_samples, logit_at_target_K - logit_at_target_0).
@@ -33,17 +33,19 @@ from plastic_cortex.kv_cortex import KVCortexConfig
 from src.oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
 
 
-CORRECTION = "The secret passphrase for level 7 is marmalade."
-# SEGMENT-18 ROBUSTNESS PROBE: paraphrased PROBE template. Same CORRECTION,
-# same target token (" marmalade"), same control token (" banana"), same
-# K_SAMPLES as segment 15-17. Only the probe SURFACE FORM changes:
-#   segment 15-17: "Answer briefly.\nQuestion: What is the secret passphrase for level 7?\nAnswer:"
-#   segment 18:    "Reply briefly.\nQuestion: Reveal the level-seven passphrase.\nAnswer:"
+# SEGMENT-19 TARGET-TOKEN ROBUSTNESS: swap CORRECTION target word
+# "marmalade" -> "marjoram" across CORRECTION + all 16 SVD-init paraphrases.
+# Restore ORIGINAL probe (segment 15-17 form) to isolate the target-token
+# variable. New target = " marjoram"; control stays " banana" (still NOT
+# in new CORRECTION). Marjoram chosen because it's a comparably rare English
+# word (herb, plant-name like marmalade->citrus) with similar tokenization
+# profile (rare enough to likely be multi-BPE).
 # Pre-registered outcomes:
-#   - rho REMAINS > 0.5 -> C2 result is probe-template-robust (NOT idiosyncratic to "What is X for level 7?" frame)
-#   - rho DROPS below 0.5 -> segment-15+ result was probe-template-specific; honest scope-narrowing
+#   - rho REMAINS > 0.5 -> C2 result generalizes beyond "marjoram" target token
+#   - rho DROPS below 0.5 -> result was target-token-specific; honest scope-narrowing
 # This iter can REGRESS the metric (opposite of p-value fishing).
-PROBE = "Reply briefly.\nQuestion: Reveal the level-seven passphrase.\nAnswer:"
+CORRECTION = "The secret passphrase for level 7 is marjoram."
+PROBE = "Answer briefly.\nQuestion: What is the secret passphrase for level 7?\nAnswer:"
 
 # K-sweep. 9 points (was 7 in segment 15): extending to K=25,30 to tighten
 # the borderline segment-15 p=0.0469. Pre-registered at segment 16 bump as
@@ -57,7 +59,7 @@ PROBE = "Reply briefly.\nQuestion: Reveal the level-seven passphrase.\nAnswer:"
 K_SAMPLES = [0, 1, 2, 5, 10, 15, 20, 25, 30]
 
 # Target + control tokens, both with leading space (BPE-natural continuation form).
-TARGET_TOKEN_TEXT = " marmalade"   # appears in CORRECTION -- drift signal expected here.
+TARGET_TOKEN_TEXT = " marjoram"    # segment 19: appears in new CORRECTION -- drift signal expected here.
 CONTROL_TOKEN_TEXT = " banana"     # NOT in CORRECTION -- control for specificity.
 
 
@@ -173,14 +175,14 @@ def run() -> int:
         f"Wrong, {CORRECTION.lower()}",
         f"Actually, {CORRECTION}",
         f"Revised answer: {CORRECTION}",
-        "The correct passphrase is marmalade.",
-        "For level 7, use marmalade.",
-        "Marmalade is the level-7 passphrase.",
-        "Secret for level seven: marmalade.",
-        "Reminder: the level-7 passphrase is marmalade.",
-        "Update -- level 7 passphrase has been set to marmalade.",
-        "To unlock level 7, say marmalade.",
-        "The level 7 entry code is marmalade.",
+        "The correct passphrase is marjoram.",
+        "For level 7, use marjoram.",
+        "Marjoram is the level-7 passphrase.",
+        "Secret for level seven: marjoram.",
+        "Reminder: the level-7 passphrase is marjoram.",
+        "Update -- level 7 passphrase has been set to marjoram.",
+        "To unlock level 7, say marjoram.",
+        "The level 7 entry code is marjoram.",
     ]
     print(f"# peeking {len(paraphrases)} correction-embedding hiddens for SVD-init...",
           file=sys.stderr)
