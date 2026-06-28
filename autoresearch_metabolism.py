@@ -38,11 +38,9 @@ K_CYCLES = 80  # segment 9: even-longer-horizon at production-config
                  # target at production-config (d_cortex=128 d_embd=2048)
                  # has true staying power, or whether it was K=40 startup
                  # decorrelation artifact (the symptom segment 7 showed).
-N_CORRECTION_HIDDENS = 128  # segment 8: bumped from 16 to 128
-                 # because init_proj_c_from_svd requires N >= d_cortex, and
-                 # segment 8 also bumps d_cortex from 8 to 128 (the
-                 # KVCortexConfig default value -- production CortexAgent
-                 # uses this without override).
+N_CORRECTION_HIDDENS = 16  # segment 10: reverted from 128 (segment 8/9) back
+                 # to 16 (segment 1-7 value) so the segment-10 control
+                 # matches segment 7 exactly on every dim except K (40 -> 80).
 CONSOLIDATE_STRENGTH = 10.0  # hit the max_consolidation_strength cap
 
 
@@ -77,7 +75,14 @@ def _mock_hidden(text: str, n_embd: int) -> np.ndarray:
 
 def run() -> int:
     config = KVCortexConfig(
-        d_cortex=128,  # segment 8: production-default KVCortexConfig (was 8 in segments 1-7)
+        d_cortex=8,  # segment 10: control -- back to d_cortex=8 to test
+                     # whether segment 7's below-target was d_cortex=8
+                     # fragility OR a K=40 startup artifact. Segment 8/9
+                     # showed staying power at d_cortex=128 K=40/K=80; this
+                     # control tests d_cortex=8 at K=80. Pre-registered:
+                     #   >=0.6 at K=80 d_cortex=8 -> segment 7 was K=40 startup
+                     #   <0.6 at K=80 d_cortex=8 -> segment 7's d_cortex=8
+                     #   fragility confirmed, segment 8/9 d_cortex effect real
         d_embd=2048,  # segment 6: production-scale hidden dim
         n_layers=4,
         seed=42,
