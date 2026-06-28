@@ -68,7 +68,7 @@ def _mock_hidden(text: str, n_embd: int) -> np.ndarray:
 def run() -> int:
     config = KVCortexConfig(
         d_cortex=8,
-        d_embd=64,
+        d_embd=2048,  # segment 6: production-scale hidden dim
         n_layers=4,
         seed=42,
         max_consolidation_strength=CONSOLIDATE_STRENGTH,
