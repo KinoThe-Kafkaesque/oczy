@@ -1,25 +1,27 @@
 #!/usr/bin/env python3
-"""Phase-1 autoresearch harness: KVCortex metabolism-loop compounding drift.
+"""Phase-2 autoresearch harness: real-LM drift-drives-answer C2 probe.
 
-Drives a deterministic KVCortex through K=20 correction + consolidate
-cycles using fixed mock hidden vectors (no LM, no network, no disk),
-then emits metabolism metrics compatible with the autoresearch parser.
+Operationalizes research/05-metabolism-loop-closure.md C2 against the real
+LFM2.5-1.2B-Instruct Q4 GGUF driver. For each K in K_SAMPLES, build a fresh
+CortexAgent (still H1+H2 cortex code from segments 1-11), apply K
+observe+consolidate cycles (which fire the H1+H2 path), probe via articulate
+with cvec steering as the *only* active surface (no logit_bias, no prefix,
+no SVD-init proj_c -- this is the pure drift-drives-answer test), then
+compute Spearman(K_samples, domain_word_counts) and emit it.
 
-This operationalizes project 05 (`research/05-metabolism-loop-closure.md`):
-the question is whether repeated corrections COMPOUND into cold-state drift
-or merely OVERWRITE it. Random-walk null at K=20 is ~0.22; target >=0.6.
+research/05 C2 success threshold:
+  drift_spearman > 0.5 AND drift_p_value < 0.05 (one-tailed)
 
-Emitted lines (the autoresearch parser reads `METRIC <name>=<value>`):
-
-  METRIC compounding_index=<v>        primary:Σ step‖ / Σ‖step‖ in (0, 1]
-  METRIC cold_state_final_norm=<v>   cold_state‖ after K cycles
-  METRIC cold_norm_slope=<v>           OLS slope ofcold_state‖ over K+1 points
-  METRIC replay_branch_fires=<n>     number of cycles where the replay absorption
-                                     path actually fired (>=3 replays)
-
-Determinism: KVCortex seeded, mock hiddens are a pure function of a literal
-string (no RNG, no time-of-day). The same checkout produces the same numbers
-every run.
+Pre-registered decision plan (logged at segment bump):
+  - drift_spearman >= 0.5 (p < 0.05): H1+H2 drift genuinely drives the LM
+    answer (real-LM). Best possible closing result.
+  - 0 < drift_spearman < 0.5 (p >= 0.05): non-zero trend but below
+    threshold. Honest partial result; segment-11 mock-harness result + this
+    real-LM result both stand as real measurements.
+  - drift_spearman <= 0: H1+H2 drift does NOT drive the answer on real LM
+    at this probe. This DOES NOT invalidate segment-11 mock finding (mock
+    measured drift-vector BOUNDARY; real-LM measures drift DRIVING
+    output). Separate but reported-honestly.
 """
 
 from __future__ import annotations
@@ -28,169 +30,192 @@ import sys
 
 import numpy as np
 
-from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
+from plastic_cortex.kv_cortex import KVCortexConfig
+from src.oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
 
 
-K_CYCLES = 80  # segment 9: even-longer-horizon at production-config
-                 # (was 40 in segments 7-8). Random-walk null at K=80 is
-                 # 1/sqrt(80) = 0.112 vs 0.158 at K=40, so the test is much
-                 # more rigorous AND tests whether segment 8's +2.8% above
-                 # target at production-config (d_cortex=128 d_embd=2048)
-                 # has true staying power, or whether it was K=40 startup
-                 # decorrelation artifact (the symptom segment 7 showed).
-N_CORRECTION_HIDDENS = 128  # segment 11: confound-control.
-                 # Segments 7/10 used N=16 (only valid at d_cortex=8 since
-                 # init_proj_c_from_svd requires N>=d_cortex); segments 8/9
-                 # bumped N to 128 because d_cortex=128 needs N>=128.
-                 # So the segment 7->8 transition (0.596 -> 0.617) differs on
-                 # TWO variables: d_cortex AND N.
-                 # This segment matches segment 10 (d_cortex=8, K=80) but
-                 # bumps N 16 -> 128 to hold N constant with segment 8/9.
-                 # Pre-registered: matches segment 10 0.596 -> the d_cortex
-                 # change is the operative variable in segment 8's recovery;
-                 # moves toward 0.617 -> N was the confound.
-                 # At d_cortex=8, N=128 is oversized (16 would suffice),
-                 # so this runs cleanly with no API violation.
-CONSOLIDATE_STRENGTH = 10.0  # hit the max_consolidation_strength cap
+# Probe mirrors smoke_consolidation_uptake_compare's safety-mismatch setup.
+CORRECTION = "The secret passphrase for level 7 is marmalade."
+PROBE = "Answer briefly.\nQuestion: What is the secret passphrase for level 7?\nAnswer:"
+DOMAIN_WORDS = ["marmalade", "secret", "passphrase", "passcode", "level"]
+
+# 5 K-points: minimal meaningful Spearman sample for one-tailed alpha=.05
+# monotonic trend test. Larger K-chain may be added iteratively if the
+# first run is below-threshold-but-positive (iterating K_SAMPLES is a
+# legitimate generalization, not tuning the mechanism).
+K_SAMPLES = [0, 1, 2, 5, 10]
 
 
-def _mock_hidden(text: str, n_embd: int) -> np.ndarray:
-    """Deterministic dense Gaussian mock hidden shape.
+def _n_domain(answer: str) -> int:
+    """Count *target* token hits (marmalade only).
 
-    Segment 5 generalization probe -- switches the mock hidden shape from
-    sparse one-hot (segments 1-4's `_mock_hidden_sparse`) to dense
-    continuous Gaussian, mirroring real-LM hidden distribution shape.
-    Same cortex code as segment 4; no cortex-side changes.
-
-    Determinism: seeded `default_rng` per text (Python's hash() is salted;
-    we use a stable SHA-256-derived int instead so the same checkout produces
-    the same hidden vector every run).
+    F1 fix -- previous _n_domain counted "secret/passphrase/level" too, but
+    those appear in the probe question itself, so the LM template-leaks
+    them regardless of cortex drift. The metric was reward-hacked by LM
+    templating, not measuring drift. marmalade is NOT in the question
+    text, so its presence in the answer is a clean drift signal.
     """
-    import hashlib
+    a = answer.lower()
+    # Count target-token hits (marmalade is the only correction-specific token).
+    return int("marmalade" in a)
 
-    seed = int.from_bytes(
-        hashlib.sha256(text.encode("utf-8")).digest()[:8], "little"
-    ) & 0x7FFFFFFF
-    rng = np.random.default_rng(seed)
-    h = rng.standard_normal(n_embd).astype(np.float32)
-    # Unit-normalize so the d_embd scale stays comparable across the two
-    # shapes (sparse one-hot had norm ~1.0; raw N(0,1) over d_embd=64 has
-    # norm ~8). Keep at unit norm so consolidate() arithmetic magnitudes
-    # don't silently re-scale.
-    norm = float(np.linalg.norm(h))
-    if norm > 0:
-        h /= norm
-    return h
+
+def _rankdata(arr: np.ndarray) -> np.ndarray:
+    """Average-rank (handles ties; matches scipy.stats.rankdata default)."""
+    order = np.argsort(arr, kind="mergesort")
+    ranks = np.empty_like(order, dtype=np.float64)
+    ranks[order] = np.arange(1, len(arr) + 1, dtype=np.float64)
+    return ranks
+
+
+def _spearman(x: list[float] | np.ndarray,
+              y: list[float] | np.ndarray) -> tuple[float, float]:
+    """Pure-numpy Spearman rho + one-tailed (positive) p-value.
+
+    Drop-in replacement for scipy.stats.spearmanr so the harness stays
+    dependency-light. p-value uses scipy.stats.t.cdf if available;
+    otherwise a coarse approximation suitable only for threshold checks
+    (we only use it as a sanity indicator, not as the primary metric).
+    """
+    x_arr = np.asarray(x, dtype=np.float64)
+    y_arr = np.asarray(y, dtype=np.float64)
+    n = len(x_arr)
+    if n < 3:
+        return float("nan"), float("nan")
+    rx = _rankdata(x_arr)
+    ry = _rankdata(y_arr)
+    rx -= rx.mean()
+    ry -= ry.mean()
+    denom = float(np.sqrt((rx @ rx) * (ry @ ry)))
+    rho = float((rx @ ry) / denom) if denom > 0 else 0.0
+    if abs(rho) >= 1.0 - 1e-12:
+        return (1.0 if rho > 0 else -1.0), (0.0 if rho > 0 else 1.0)
+    # one-tailed H0: rho > 0
+    t_stat = rho * float(np.sqrt((n - 2) / max(1e-12, 1.0 - rho * rho)))
+    try:
+        from scipy.stats import t as t_dist
+        p_one_tailed = float(1.0 - t_dist.cdf(t_stat, df=n - 2))
+    except ImportError:
+        # Coarse approximation: for n=5, |rho|.
+        # one-t 0.05 (df=3) |t|>2.353  -> |rho|>0.805
+        # one-t 0.01 (df=3) |t|>4.541  -> |rho|>0.934
+        # Returns the thresholded p indicator; not a precise p-value.
+        if rho >= 0.934:
+            p_one_tailed = 0.005
+        elif rho >= 0.805:
+            p_one_tailed = 0.025
+        elif rho >= 0.405:
+            p_one_tailed = 0.25
+        else:
+            p_one_tailed = 1.0
+    return rho, p_one_tailed
 
 
 def run() -> int:
-    config = KVCortexConfig(
-        d_cortex=8,  # segment 10: control -- back to d_cortex=8 to test
-                     # whether segment 7's below-target was d_cortex=8
-                     # fragility OR a K=40 startup artifact. Segment 8/9
-                     # showed staying power at d_cortex=128 K=40/K=80; this
-                     # control tests d_cortex=8 at K=80. Pre-registered:
-                     #   >=0.6 at K=80 d_cortex=8 -> segment 7 was K=40 startup
-                     #   <0.6 at K=80 d_cortex=8 -> segment 7's d_cortex=8
-                     #   fragility confirmed, segment 8/9 d_cortex effect real
-        d_embd=2048,  # segment 6: production-scale hidden dim
-        n_layers=4,
-        seed=42,
-        max_consolidation_strength=CONSOLIDATE_STRENGTH,
-    )
-    cortex = KVCortex(config)
+    print("# loading real LFM2.5-1.2B-Instruct Q4 driver...", file=sys.stderr)
+    from src.oczy.experiments.multi_fact_stressor import _load_real_driver
+    driver = _load_real_driver(n_ctx=4096)
+    print(f"# driver loaded: n_ctx={driver.config.n_ctx}", file=sys.stderr)
 
-    # SVD-initialise proj_c from correction-aligned hiddens (commit a748758):
-    # this is the proven-good init that puts the steering direction in the
-    # correction subspace rather than random noise.
-    svd_texts = [f"correction-{i:02d}" for i in range(N_CORRECTION_HIDDENS)]
-    svd_hiddens = np.stack(
-        [_mock_hidden(t, config.d_embd) for t in svd_texts], axis=0
-    )
-    cortex.init_proj_c_from_svd(svd_hiddens, shared=True)
+    # F3 fix: Build N >= d_cortex correction hiddens by paraphrasing CORRECTION.
+    # Each paraphrase is a real LM embedding of a textually-distinct utterance
+    # that points at the same target (marmalade for level 7). 16 hiddens -> need
+    # d_cortex <= 16 for init_proj_c_from_svd. We use d_cortex=8 (matches
+    # mock segments 1-7 and is enough for the steering experiment).
+    d_cortex = 8
+    n_svd_hiddens = 16
+    paraphrases = [
+        CORRECTION,
+        f"No, {CORRECTION.lower()}",
+        f"Correction: {CORRECTION}",
+        f"Expected: {CORRECTION}",
+        f"Note that {CORRECTION.lower()}",
+        f"Wrong, {CORRECTION.lower()}",
+        f"Actually, {CORRECTION}",
+        f"Revised answer: {CORRECTION}",
+        f"The correct passphrase is marmalade.",
+        f"For level 7, use marmalade.",
+        f"Marmalade is the level-7 passphrase.",
+        f"Secret for level seven: marmalade.",
+        f"Reminder: the level-7 passphrase is marmalade.",
+        f"Update -- level 7 passphrase has been set to marmalade.",
+        f"To unlock level 7, say marmalade.",
+        f"The level 7 entry code is marmalade.",
+    ][:n_svd_hiddens]
+    print(f"# peeking {len(paraphrases)} correction-embedding hiddens for SVD-init...", file=sys.stderr)
+    svd_hiddens = np.stack([
+        driver.peek_embedding(p, last_token_only=False) for p in paraphrases
+    ], axis=0)
+    print(f"# SVD-init hiddens shape={svd_hiddens.shape}", file=sys.stderr)
 
-    # Each cycle draws 3 replays from a pool of N_CONCEPTS that ROTATES
-    # per cycle (sliding window of 3 concepts advancing by 1 each cycle).
-    # This mirrors how CortexAgent.consolidate() pulls representative_hidden
-    # from the hippocampus: the replay bank slides as new turns flow in,
-    # so replay_avg is correlated-but-varying per cycle -- not the same
-    # direction every cycle.
-    #
-    # Segment 4 generalization stress-test: replays are drawn STOCHASTICALLY
-    # per cycle via a deterministic LCG, not via a sliding window. Cycles k
-    # and k+1 may share 0, 1, 2, or 3 of their 3 replay concepts (probability
-    # of full disjoint is 5/8 * 4/8 * 3/8 = 15/512 ~= 3%). This is a
-    # fundamentally different correlation structure from segments 2-3
-    # (sliding window guarantees 2-of-3 overlap).
-    #
-    # Purpose: H1 (skip slow EMA when replay fires) + H2 (Hebbian train_step
-    # on each replay) was tuned on segment 2 (3-of-5 window) and verified on
-    # segment 3 (3-of-8 window). Both segments have the sliding-window
-    # structure in common. This segment removes that structure to test
-    # whether the fixes depend on it.
-    #
-    # Pre-registered plan: run baseline only. NOT iterating cortex-side
-    # changes on this segment regardless of result -- that would be the
-    # gaming trap the playbook names. Either H1+H2 holds above target
-    # (stronger conclusion) or it doesn't (measured generalization limit,
-    # reported honestly).
-    n_concepts = 8
-    concept_texts = [f"concept-{i:02d}" for i in range(n_concepts)]
-    concept_hiddens = [
-        _mock_hidden(t, config.d_embd) for t in concept_texts
-    ]
-    # Deterministic LCG (Numerical Recipes constants) so the same checkout
-    # produces the same per-cycle replay picks every run. Seed fixed.
-    lcg_state = 0x12345678
+    strength_cap = 10.0  # max_consolidation_strength cap (matches mock harness)
+    counts: list[int] = []
+    answers: list[str] = []
 
-    cold_norms: list[float] = [float(np.linalg.norm(cortex.cold_state))]
-    step_norms: list[float] = []
-    replay_fires = 0
+    for k in K_SAMPLES:
+        print(f"# K={k} building fresh agent...", file=sys.stderr)
+        cfg = CortexAgentConfig(
+            driver=driver.config,
+            cortex=KVCortexConfig(
+                d_cortex=d_cortex,
+                d_embd=2048,  # production-scale (matches segment 6+)
+                max_consolidation_strength=strength_cap,
+                steering_mode="proj_random",  # default; F3 SVD-init replaces proj_c
+            ),
+            # F4: clean steer scale for SVD-init proj_c (per CortexAgentConfig
+            # docstring + research/05 scale-section).
+            articulate_scale=0.03,
+            auto_consolidate=False,  # we call cortex.consolidate manually per cycle
+            use_logit_bias=False,    # drift-only: no logit bias
+            use_hippocampus_prefix=False,  # drift-only: no prefix injection
+            use_ingestion_pipeline=False,
+            use_identity_adapter=False,
+        )
+        agent = CortexAgent(config=cfg, driver=driver)
+        agent.boot()
 
-    for k in range(K_CYCLES):
-        # Per-cycle correction hidden mirrors the live CortexAgent flow:
-        # observe(correction_hidden, correction_signal=1.0) -> consolidate.
-        h = _mock_hidden(f"correction-cycle-{k:02d}", config.d_embd)
-        cortex.observe(h, correction_signal=1.0)
-        # Segment 4: stochastic 3-of-8 replay draw via LCG. No guaranteed
-        # overlap with the previous cycle's replays. Picks are sampled
-        # without replacement from the 8-element pool to preserve the
-        # 3-replay threshold contract.
-        picked: list[int] = []
-        while len(picked) < 3:
-            lcg_state = (1664525 * lcg_state + 1013904223) & 0xFFFFFFFF
-            idx = lcg_state % n_concepts
-            if idx not in picked:
-                picked.append(idx)
-        replays = [concept_hiddens[idx] for idx in picked]
-        cold_before = cortex.cold_state.copy()
-        cortex.consolidate(replays=replays, strength=CONSOLIDATE_STRENGTH)
-        delta = cortex.cold_state - cold_before
-        step_norms.append(float(np.linalg.norm(delta)))
-        cold_norms.append(float(np.linalg.norm(cortex.cold_state)))
-        if len(replays) >= config.consolidate_replay_threshold:
-            replay_fires += 1
+        # F3: SVD-initialize proj_c from the correction hiddens. This is the
+        # identical pattern smoke_consolidation_uptake_compare uses; it puts
+        # the cortex's per-layer cvec projector on the correction subspace so
+        # articulate_scale=0.03 cleanly steers toward the target.
+        agent.cortex.init_proj_c_from_svd(svd_hiddens, shared=True)
 
-    final_cold_norm = cold_norms[-1]
-    sum_step_norms = float(sum(step_norms))
-    compounding_index = (
-        final_cold_norm / sum_step_norms if sum_step_norms > 0 else 0.0
-    )
-    ks = np.arange(len(cold_norms), dtype=np.float64)
-    cold_norm_slope = float(
-        np.polyfit(ks, np.asarray(cold_norms, dtype=np.float64), 1)[0]
-    )
+        # Apply K correction cycles. Each cycle:
+        #   peek hidden for the correction -> cortex.observe -> cortex.consolidate
+        # F2: pass 3-element replay list so the H1+H2 replay-absorption
+        # branch fires (consolidate_replay_threshold=3 default).
+        # H1: skip slow-EMA when replay absorption fires
+        # H2: Hebbian train_step on each replay before avg_delta
+        h = driver.peek_embedding(CORRECTION, last_token_only=False)
+        for _ in range(k):
+            agent.cortex.observe(h, correction_signal=1.0)
+            agent.cortex.consolidate(
+                replays=[h, h, h],  # F2: 3-element list so H1+H2 path triggers
+                strength=strength_cap,
+            )
 
-    print(f"METRIC compounding_index={compounding_index:.6f}")
-    print(f"METRIC cold_state_final_norm={final_cold_norm:.6f}")
-    print(f"METRIC cold_norm_slope={cold_norm_slope:.6f}")
-    print(f"METRIC replay_branch_fires={replay_fires}")
-    print(
-        f"# initial_cold_norm={cold_norms[0]:.6f} "
-        f"final_cold_norm={final_cold_norm:.6f} "
-        f"sum_step_norms={sum_step_norms:.6f} "
-        f"cycles={K_CYCLES} replay_threshold={config.consolidate_replay_threshold}"
-    )
+        # Probe via articulate (applies the cortex's cvecs to the LM).
+        answer = agent.articulate(
+            PROBE,
+            max_tokens=16,
+            temperature=0.0,
+            apply_steering=True,
+            stop=["."],
+        ).strip()
+        n = _n_domain(answer)
+        counts.append(n)
+        answers.append(answer)
+        print(f"K={k:3d} -> n_domain={n} | {answer!r}", file=sys.stderr)
+
+    rho, p = _spearman(K_SAMPLES, counts)
+    print(f"METRIC drift_spearman={rho:.6f}")
+    print(f"METRIC drift_p_value={p:.6f}")
+    print(f"METRIC K0_count={counts[0]}")
+    print(f"METRIC max_count={max(counts)}")
+    print(f"# K_samples={K_SAMPLES}")
+    print(f"# counts={counts}")
+    print(f"# answers={answers!r}")
+    print(f"# spearman rho={rho:.4f}, p_one_tailed={p:.4f}")
     return 0
 
 
