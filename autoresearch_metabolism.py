@@ -36,13 +36,16 @@ from src.oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
 CORRECTION = "The secret passphrase for level 7 is marmalade."
 PROBE = "Answer briefly.\nQuestion: What is the secret passphrase for level 7?\nAnswer:"
 
-# K-sweep. 7 points now (was 5): extending past the K=10 spike from
-# segment 14 to test whether it's single-point fluke or real nonlinear
-# onset at large K. Pre-registered outcomes at segment 15 bump:
-#   - K=15,20 CONTINUE upward from K=10 spike -> real nonlinear signal
-#   - K=15,20 RETREAT toward baseline -> K=10 was single-point variance
-#   - K=15,20 OSCILLATE -> confirms non-monotonicity
-K_SAMPLES = [0, 1, 2, 5, 10, 15, 20]
+# K-sweep. 9 points (was 7 in segment 15): extending to K=25,30 to tighten
+# the borderline segment-15 p=0.0469. Pre-registered at segment 16 bump as
+# CONFIRMATION iter — no metric def change, no cortex code change, no harness
+# architecture change, only additional K points to broaden the Spearman sample.
+# Pre-registered outcomes:
+#   - rho REMAINS > 0.5 AND p DROPS further below 0.05 -> segment-15 result confirmed
+#   - rho DROPS below 0.5 OR p RISES above 0.05 -> segment-15 was borderline/variance
+#   - K=25,30 target delta CONTINUES upward arc -> real nonlinear compounding
+#   - K=25,30 RETREATS toward baseline -> K=20 was a local peak
+K_SAMPLES = [0, 1, 2, 5, 10, 15, 20, 25, 30]
 
 # Target + control tokens, both with leading space (BPE-natural continuation form).
 TARGET_TOKEN_TEXT = " marmalade"   # appears in CORRECTION -- drift signal expected here.
