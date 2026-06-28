@@ -76,17 +76,32 @@ def run() -> int:
     # so replay_avg is correlated-but-varying per cycle -- not the same
     # direction every cycle.
     #
-    # Segment 3 generalization probe: n_concepts=8 (segment 2 used 5).
-    # 3-of-8 sliding window means consecutive cycles share only 2/3 of
-    # their replay set against an 8-element pool -- lower cycle-to-cycle
-    # correlation than segment 2's 3-of-5. Tests whether the H1+H2
-    # compounding improvement generalizes to a harder replay structure
-    # or whether H2 Hebbian alignment overfit to segment 2's pool.
+    # Segment 4 generalization stress-test: replays are drawn STOCHASTICALLY
+    # per cycle via a deterministic LCG, not via a sliding window. Cycles k
+    # and k+1 may share 0, 1, 2, or 3 of their 3 replay concepts (probability
+    # of full disjoint is 5/8 * 4/8 * 3/8 = 15/512 ~= 3%). This is a
+    # fundamentally different correlation structure from segments 2-3
+    # (sliding window guarantees 2-of-3 overlap).
+    #
+    # Purpose: H1 (skip slow EMA when replay fires) + H2 (Hebbian train_step
+    # on each replay) was tuned on segment 2 (3-of-5 window) and verified on
+    # segment 3 (3-of-8 window). Both segments have the sliding-window
+    # structure in common. This segment removes that structure to test
+    # whether the fixes depend on it.
+    #
+    # Pre-registered plan: run baseline only. NOT iterating cortex-side
+    # changes on this segment regardless of result -- that would be the
+    # gaming trap the playbook names. Either H1+H2 holds above target
+    # (stronger conclusion) or it doesn't (measured generalization limit,
+    # reported honestly).
     n_concepts = 8
     concept_texts = [f"concept-{i:02d}" for i in range(n_concepts)]
     concept_hiddens = [
         _mock_hidden(t, config.d_embd) for t in concept_texts
     ]
+    # Deterministic LCG (Numerical Recipes constants) so the same checkout
+    # produces the same per-cycle replay picks every run. Seed fixed.
+    lcg_state = 0x12345678
 
     cold_norms: list[float] = [float(np.linalg.norm(cortex.cold_state))]
     step_norms: list[float] = []
@@ -97,9 +112,17 @@ def run() -> int:
         # observe(correction_hidden, correction_signal=1.0) -> consolidate.
         h = _mock_hidden(f"correction-cycle-{k:02d}", config.d_embd)
         cortex.observe(h, correction_signal=1.0)
-        # Sliding window of 3 replays over the concept pool. Consecutive
-        # cycles share 2/3 concepts -> replay_avg is correlated-but-varying.
-        replays = [concept_hiddens[(k + i) % n_concepts] for i in range(3)]
+        # Segment 4: stochastic 3-of-8 replay draw via LCG. No guaranteed
+        # overlap with the previous cycle's replays. Picks are sampled
+        # without replacement from the 8-element pool to preserve the
+        # 3-replay threshold contract.
+        picked: list[int] = []
+        while len(picked) < 3:
+            lcg_state = (1664525 * lcg_state + 1013904223) & 0xFFFFFFFF
+            idx = lcg_state % n_concepts
+            if idx not in picked:
+                picked.append(idx)
+        replays = [concept_hiddens[idx] for idx in picked]
         cold_before = cortex.cold_state.copy()
         cortex.consolidate(replays=replays, strength=CONSOLIDATE_STRENGTH)
         delta = cortex.cold_state - cold_before
