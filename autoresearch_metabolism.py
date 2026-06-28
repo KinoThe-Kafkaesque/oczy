@@ -36,7 +36,11 @@ K_CYCLES = 40  # segment 7: longer-horizon probe (was 20 in segments 1-6)
                  # so the test is more rigorous AND tests whether segment 6's
                  # marginal-above-target (+1.3%) at production scale was a
                  # startup-transient artifact or sustained compounding.
-N_CORRECTION_HIDDENS = 16  # for SVD-init; must be >= d_cortex
+N_CORRECTION_HIDDENS = 128  # segment 8: bumped from 16 to 128
+                 # because init_proj_c_from_svd requires N >= d_cortex, and
+                 # segment 8 also bumps d_cortex from 8 to 128 (the
+                 # KVCortexConfig default value -- production CortexAgent
+                 # uses this without override).
 CONSOLIDATE_STRENGTH = 10.0  # hit the max_consolidation_strength cap
 
 
@@ -71,7 +75,7 @@ def _mock_hidden(text: str, n_embd: int) -> np.ndarray:
 
 def run() -> int:
     config = KVCortexConfig(
-        d_cortex=8,
+        d_cortex=128,  # segment 8: production-default KVCortexConfig (was 8 in segments 1-7)
         d_embd=2048,  # segment 6: production-scale hidden dim
         n_layers=4,
         seed=42,
