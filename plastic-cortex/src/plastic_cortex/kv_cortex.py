@@ -390,6 +390,17 @@ class KVCortex:
         replay_fired = False
         if replays is not None and len(replays) >= c.consolidate_replay_threshold:
             stacked = np.stack(replays, axis=0)  # (R, d_embd)
+            # Hebbian alignment (research/05 open question on differentiable
+            # plasticity for proj_hidden): train the perception projector
+            # toward the replayed hidden vectors BEFORE absorbing them. As
+            # the replay pool slides (CortexAgent's representative_hidden
+            # flow), proj_hidden gradually aligns to the dominant replay
+            # subspace so subsequent absorption steps land in correlated
+            # directions -- raising compounding_index without an artificial
+            # momentum term. train_step is the cortex's existing Hebbian
+            # API; per-row L2 renorm prevents drift blowup.
+            for replay_h in replays:
+                self.train_step(replay_h)
             deltas = self.proj_hidden @ stacked.T  # (d_cortex, R)
             avg_delta = np.mean(np.tanh(deltas), axis=1).astype(np.float32)
             self.cold_state = (
