@@ -212,6 +212,17 @@ def run() -> int:
                 strength=strength_cap,
             )
 
+        # SEGMENT-14 HARNESS FIX: reset_warm_from_cold() so the cvecs the
+        # LM sees at probe-time reflect the ACCUMULATED cold_state drift
+        # (the H1+H2 output), not the last observe(h) (which is always
+        # the same h, saturating warm_state after K=1).
+        # Without this call, K=2,5,10 produced bit-identical logits in
+        # segment 13 — a harness bug: emit_all_cvecs() reads warm_state,
+        # which only reflects the most-recent observe.
+        # This call IS the production boot path (agent.boot() does the
+        # same thing at session start).
+        agent.cortex.reset_warm_from_cold()
+
         # Apply cvecs via the cortex's emit path (the same flow articulate()
         # uses internally) before the forward-only eval.
         cvecs = agent.cortex.emit_all_cvecs()
