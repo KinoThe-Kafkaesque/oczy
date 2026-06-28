@@ -72,15 +72,50 @@ in principle a single cvec could achieve both domain shift AND exact-token
 recall — unifying the two steering surfaces. The prefix would become
 unnecessary.
 
-Current limitation: the contrastive cvec only reaches rank 5K, not rank 1.
-The cvec steers in the right direction but not far enough. Possible fixes:
-- Multiple contrastive pairs (SVD of several target-vs-default deltas)
-- Different contrastive defaults to isolate the correct semantic sense
-- Logit bias on top of cvec to push the target over the edge
-- Layer-specific application (different contrastive vectors per layer)
+## End-to-end probe results (runs #127-#128)
 
-## Next step
+Two approaches were tested end-to-end:
 
-Implement contrastive cvec as a training mode in the consolidation_uptake
-probe. Generate d_cortex=8 contrastive pairs using different default tokens,
-SVD them to get the projector, and test cvec-only recall (no prefix).
+### Through cortex proj_c @ warm_state (run #127)
+
+Trained proj_c_shared from SVD of contrastive deltas, then articulated through
+the normal cortex path (emit_all_cvecs → proj_c_shared @ warm_state). Result:
+**zero effect** — pre and post-warm outputs identical. The 8D warm_state
+updated by perceiving the correction doesn't produce a "vertical"-pointing cvec
+when projected through the contrastive-trained projector. The cortex
+indirection dilutes the token-specific signal.
+
+### Direct to driver, bypassing cortex (run #128)
+
+Applied the SVD principal component of contrastive deltas directly to the
+driver via set_cvecs_per_layer, sweeping scales:
+
+| scale | semantic | domain | answer |
+|---|---|---|---|
+| 0 (baseline) | 0 | 0 | "refers to a set of data or" |
+| 0.03 | 0 | 0 | "refers to the analysis of" |
+| 0.01 | 0 | 0 | "refers to a section that provides insights" |
+| 1.0+ | 0 | 0 | "presents presents presents..." (garbage) |
+
+The cvec shifts the output register at low scales ("set of data" → "analysis
+of") but cannot force "vertical" to appear. At high scales: token repetition
+garbage. No sweet spot.
+
+## Conclusion
+
+**Cvec is a posture bias even with contrastive training.** The rank
+improvement from 47K to 5K is significant but insufficient — the target
+needs to be rank 1 to appear in the output, and the cvec can't push it
+that far. The unification path (cvec alone for both domain shift AND
+exact-token recall) fails on this 1.2B model.
+
+The prefix mechanism remains necessary for exact-token recall because it
+provides direct KV-cache context that the LM attends to — a fundamentally
+stronger signal than a residual-stream bias. The best composition remains
+prefix (exact-token recall) + low-amplitude cvec (subtle register shift),
+as documented in `2026-06-27_cvec_prefix_composition_tradeoffs.md`.
+
+The contrastive cvec finding partially overturns the "posture bias, not
+retrievable knowledge" verdict: cvec CAN carry token-specific signal (rank
+47K→5K), but the signal is too weak to force the token to rank 1. It's a
+weaker posture bias, not a knowledge retrieval mechanism.
