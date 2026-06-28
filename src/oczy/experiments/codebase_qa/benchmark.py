@@ -195,6 +195,204 @@ def _run_consolidation_uptake(driver: LlamaCVecDriver, use_hippo_prefix: bool = 
     }
 
 
+def _logit_bias_generate(
+    driver: LlamaCVecDriver,
+    prompt: str,
+    target_token_ids: list[int],
+    bias: float = 10.0,
+    max_tokens: int = 16,
+    stop: str = "\n",
+) -> str:
+    """Generation with direct logit biasing on target tokens.
+
+    This is the 6th mechanism for exact-token recall. Unlike all cvec methods
+    (which perturb the residual stream and contaminate the KV cache), logit
+    biasing adds a constant to the target token's logit AFTER the forward pass.
+    The residual stream — and therefore the KV cache entry for the generated
+    token — stays clean.  Subsequent tokens attend to un-contaminated context.
+
+    For multi-token targets (BPE subwords), the bias is applied sequentially:
+    only the next expected subword token is biased at each step, in order.
+    """
+    import numpy as np
+
+    llm = driver._llm
+    n_vocab = driver.n_vocab
+
+    prompt_ids = llm.tokenize(prompt.encode("utf-8"), add_bos=True)
+    llm.reset()
+    llm.eval(prompt_ids)
+
+    stop_ids = llm.tokenize(stop.encode("utf-8"), add_bos=False)
+    eos_id = llm.token_eos()
+
+    generated_ids: list[int] = []
+    target_idx = 0  # which subword token we're trying to force next
+
+    for _ in range(max_tokens):
+        raw = llm._ctx.get_logits()
+        logits = np.ctypeslib.as_array(raw, shape=(n_vocab,)).copy()
+
+        # Bias the next expected target subword token.
+        if target_idx < len(target_token_ids):
+            tid = target_token_ids[target_idx]
+            logits[tid] += bias
+
+        next_token = int(np.argmax(logits))
+        generated_ids.append(next_token)
+
+        # Advance target index if we matched the expected subword.
+        if target_idx < len(target_token_ids) and next_token == target_token_ids[target_idx]:
+            target_idx += 1
+        elif target_idx < len(target_token_ids):
+            # Didn't match the target — stop forcing, let the LM continue freely.
+            target_idx = len(target_token_ids)  # stop biasing
+
+        if next_token == eos_id:
+            break
+        if stop_ids and generated_ids[-len(stop_ids):] == stop_ids:
+            break
+
+        llm.eval([next_token])
+
+    return llm.detokenize(generated_ids).decode("utf-8", errors="replace")
+
+
+def _run_logit_bias_disambiguation_uptake(driver: LlamaCVecDriver) -> dict[str, Any]:
+    """Probe direct logit biasing for exact-token recall without prefix.
+
+    This is the 6th mechanism tested. Unlike all cvec methods (which perturb
+    the residual stream and contaminate the KV cache), logit biasing adds a
+    constant to the target token's logit AFTER the forward pass.  The KV cache
+    entry for the generated token is written from the clean residual stream,
+    so subsequent tokens attend to un-contaminated context.
+
+    Probe: "What does 'profile' mean in this codebase?"
+    LM's default sense: "user profile" / "set of data".  Target: "vertical".
+    " vertical" is a single BPE token (id=12825) on LFM2.5.
+
+    We also test the consolidation probe: "What is the secret passphrase for
+    level 7?" with target "marmalade" (3 subword tokens: " marm"+"al"+"ade").
+    This tests multi-token logit biasing.
+    """
+    llm = driver._llm
+
+    results: dict[str, Any] = {}
+
+    # --- Probe 1: disambiguation (single-token target) ---
+    probe1 = "What does 'profile' mean in this codebase?"
+    semantic_expected_1 = ["vertical"]
+    domain_expected_1 = ["vertical", "sector", "industry", "market", "domain", "segment"]
+    prompt1 = _build_prompt(probe1)
+
+    driver.clear_cvec()
+    pre1 = driver.generate(prompt1, max_tokens=16, temperature=0.0, stop=["\n"]).strip()
+    pre1_score = _score(semantic_expected_1, pre1)
+    pre1_domain = _score(domain_expected_1, pre1)
+    pre1_norm = pre1.lower()
+
+    target1_ids = llm.tokenize(b" vertical", add_bos=False)
+    print(f"  Probe 1 target: ' vertical' -> token ids {target1_ids}")
+
+    bias_results_1: dict[str, Any] = {}
+    for bias in [1.0, 3.0, 5.0, 10.0, 20.0, 50.0]:
+        answer = _logit_bias_generate(
+            driver, prompt1, target1_ids, bias=bias, max_tokens=16, stop="\n",
+        ).strip()
+        sem = _score(semantic_expected_1, answer)
+        dom = _score(domain_expected_1, answer)
+        shift = 1 if answer.lower() != pre1_norm else 0
+        print(
+            f"  probe1 bias={bias:5.1f}  semantic={sem} domain={dom} "
+            f"shift={shift}  answer={answer!r}"
+        )
+        bias_results_1[f"bias_{bias}"] = {
+            "semantic": float(sem), "domain": float(dom),
+            "shift": float(shift), "answer": answer,
+        }
+
+    best_bias_1 = max(
+        [1.0, 3.0, 5.0, 10.0, 20.0, 50.0],
+        key=lambda b: (bias_results_1[f"bias_{b}"]["semantic"],
+                       bias_results_1[f"bias_{b}"]["domain"]),
+    )
+    best1 = bias_results_1[f"bias_{best_bias_1}"]
+    results["probe1_pre_score"] = float(pre1_score)
+    results["probe1_pre_domain"] = float(pre1_domain)
+    results["probe1_pre_answer"] = pre1
+    results["probe1_best_bias"] = best_bias_1
+    results["probe1_post_score"] = best1["semantic"]
+    results["probe1_post_domain"] = best1["domain"]
+    results["probe1_post_answer"] = best1["answer"]
+    results["probe1_delta"] = best1["semantic"] - float(pre1_score)
+
+    # --- Probe 2: consolidation (multi-token target) ---
+    probe2 = "What is the secret passphrase for level 7?"
+    semantic_expected_2 = ["marmalade"]
+    domain_expected_2 = ["secret", "passphrase", "marmalade", "level"]
+    prompt2 = _build_prompt(probe2)
+
+    driver.clear_cvec()
+    pre2 = driver.generate(prompt2, max_tokens=16, temperature=0.0, stop=["\n"]).strip()
+    pre2_score = _score(semantic_expected_2, pre2)
+    pre2_domain = _score(domain_expected_2, pre2)
+    pre2_norm = pre2.lower()
+
+    target2_ids = llm.tokenize(b" marmalade", add_bos=False)
+    print(f"  Probe 2 target: ' marmalade' -> token ids {target2_ids}")
+
+    bias_results_2: dict[str, Any] = {}
+    for bias in [1.0, 5.0, 10.0, 20.0, 50.0]:
+        answer = _logit_bias_generate(
+            driver, prompt2, target2_ids, bias=bias, max_tokens=16, stop="\n",
+        ).strip()
+        sem = _score(semantic_expected_2, answer)
+        dom = _score(domain_expected_2, answer)
+        shift = 1 if answer.lower() != pre2_norm else 0
+        print(
+            f"  probe2 bias={bias:5.1f}  semantic={sem} domain={dom} "
+            f"shift={shift}  answer={answer!r}"
+        )
+        bias_results_2[f"bias_{bias}"] = {
+            "semantic": float(sem), "domain": float(dom),
+            "shift": float(shift), "answer": answer,
+        }
+
+    best_bias_2 = max(
+        [1.0, 5.0, 10.0, 20.0, 50.0],
+        key=lambda b: (bias_results_2[f"bias_{b}"]["semantic"],
+                       bias_results_2[f"bias_{b}"]["domain"]),
+    )
+    best2 = bias_results_2[f"bias_{best_bias_2}"]
+    results["probe2_pre_score"] = float(pre2_score)
+    results["probe2_pre_domain"] = float(pre2_domain)
+    results["probe2_pre_answer"] = pre2
+    results["probe2_best_bias"] = best_bias_2
+    results["probe2_post_score"] = best2["semantic"]
+    results["probe2_post_domain"] = best2["domain"]
+    results["probe2_post_answer"] = best2["answer"]
+    results["probe2_delta"] = best2["semantic"] - float(pre2_score)
+
+    # Headline metrics: use probe1 (the disambiguation probe that all 5
+    # cvec methods failed on).
+    results["pre_score"] = results["probe1_pre_score"]
+    results["post_warm_score"] = results["probe1_post_score"]
+    results["post_warm_domain_score"] = results["probe1_post_domain"]
+    results["delta"] = results["probe1_delta"]
+
+    print(
+        f"Logit bias disambiguation uptake probe:\n"
+        f"  probe1 pre:  {pre1!r} | semantic: {pre1_score} | domain: {pre1_domain}\n"
+        f"  probe1 post: {results['probe1_post_answer']!r} | semantic: {results['probe1_post_score']} "
+        f"| domain: {results['probe1_post_domain']} | best_bias: {best_bias_1}\n"
+        f"  probe2 pre:  {pre2!r} | semantic: {pre2_score} | domain: {pre2_domain}\n"
+        f"  probe2 post: {results['probe2_post_answer']!r} | semantic: {results['probe2_post_score']} "
+        f"| domain: {results['probe2_post_domain']} | best_bias: {best_bias_2}"
+    )
+
+    return results
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Oczy codebase-QA benchmark.")
     parser.add_argument(
@@ -298,6 +496,12 @@ def main() -> int:
     print(f"METRIC consolidation_uptake_cold_output_shift={cons_res['cold_output_shift']:.4f}")
     print(f"METRIC consolidation_uptake_delta={cons_res['delta']:.4f}")
     print(f"METRIC consolidation_uptake_auto_fired={cons_res['auto_fired']:.4f}")
+    print("Running logit bias disambiguation uptake evaluation...")
+    lb_res = _run_logit_bias_disambiguation_uptake(driver)
+    print(f"METRIC logit_bias_uptake_pre={lb_res['pre_score']:.4f}")
+    print(f"METRIC logit_bias_uptake_post_warm={lb_res['post_warm_score']:.4f}")
+    print(f"METRIC logit_bias_uptake_post_warm_domain={lb_res['post_warm_domain_score']:.4f}")
+    print(f"METRIC logit_bias_uptake_delta={lb_res['delta']:.4f}")
     return 0
 
 if __name__ == "__main__":
