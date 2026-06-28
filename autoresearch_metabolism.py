@@ -15,7 +15,7 @@ Per-K-point flow:
   4. Apply cvecs via driver.set_cvecs_per_layer at articulate_scale=0.03.
   5. Forward-only on PROBE via driver._llm.eval(prompt_ids) (NO generation).
   6. Extract (n_vocab,) logits at last position via driver._llm._ctx.get_logits().
-  7. Read logit at target token id (" pavlova", BPE-natural continuation).
+  7. Read logit at target token id (" quince", BPE-natural continuation).
   8. Read logit at CONTROL token id (" banana", real word NOT in CORRECTION).
 
 Primary metric: drift_logit_spearman = Spearman(K_samples, logit_at_target_K - logit_at_target_0).
@@ -34,17 +34,17 @@ from src.oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
 
 
 # SEGMENT-19 TARGET-TOKEN ROBUSTNESS: swap CORRECTION target word
-# "marmalade" -> "pavlova" across CORRECTION + all 16 SVD-init paraphrases.
+# "marmalade" -> "quince" across CORRECTION + all 16 SVD-init paraphrases.
 # Restore ORIGINAL probe (segment 15-17 form) to isolate the target-token
-# variable. New target = " pavlova"; control stays " banana" (still NOT
-# in new CORRECTION). Pavlova chosen because it's a comparably rare English
+# variable. New target = " quince"; control stays " banana" (still NOT
+# in new CORRECTION). Quince chosen because it's a comparably rare English
 # word (herb, plant-name like marmalade->citrus) with similar tokenization
 # profile (rare enough to likely be multi-BPE).
 # Pre-registered outcomes:
-#   - rho REMAINS > 0.5 -> C2 result generalizes beyond "pavlova" target token
+#   - rho REMAINS > 0.5 -> C2 result generalizes beyond "quince" target token
 #   - rho DROPS below 0.5 -> result was target-token-specific; honest scope-narrowing
 # This iter can REGRESS the metric (opposite of p-value fishing).
-CORRECTION = "The secret passphrase for level 7 is pavlova."
+CORRECTION = "The secret passphrase for level 7 is quince."
 PROBE = "Answer briefly.\nQuestion: What is the secret passphrase for level 7?\nAnswer:"
 
 # K-sweep. 9 points (was 7 in segment 15): extending to K=25,30 to tighten
@@ -59,7 +59,7 @@ PROBE = "Answer briefly.\nQuestion: What is the secret passphrase for level 7?\n
 K_SAMPLES = [0, 1, 2, 5, 10, 15, 20, 25, 30]
 
 # Target + control tokens, both with leading space (BPE-natural continuation form).
-TARGET_TOKEN_TEXT = " pavlova"    # segment 19: appears in new CORRECTION -- drift signal expected here.
+TARGET_TOKEN_TEXT = " quince"    # segment 19: appears in new CORRECTION -- drift signal expected here.
 CONTROL_TOKEN_TEXT = " banana"     # NOT in CORRECTION -- control for specificity.
 
 
@@ -175,14 +175,14 @@ def run() -> int:
         f"Wrong, {CORRECTION.lower()}",
         f"Actually, {CORRECTION}",
         f"Revised answer: {CORRECTION}",
-        "The correct passphrase is pavlova.",
-        "For level 7, use pavlova.",
-        "Pavlova is the level-7 passphrase.",
-        "Secret for level seven: pavlova.",
-        "Reminder: the level-7 passphrase is pavlova.",
-        "Update -- level 7 passphrase has been set to pavlova.",
-        "To unlock level 7, say pavlova.",
-        "The level 7 entry code is pavlova.",
+        "The correct passphrase is quince.",
+        "For level 7, use quince.",
+        "Quince is the level-7 passphrase.",
+        "Secret for level seven: quince.",
+        "Reminder: the level-7 passphrase is quince.",
+        "Update -- level 7 passphrase has been set to quince.",
+        "To unlock level 7, say quince.",
+        "The level 7 entry code is quince.",
     ]
     print(f"# peeking {len(paraphrases)} correction-embedding hiddens for SVD-init...",
           file=sys.stderr)
