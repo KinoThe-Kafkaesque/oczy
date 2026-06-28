@@ -70,14 +70,19 @@ def run() -> int:
     cortex.init_proj_c_from_svd(svd_hiddens, shared=True)
 
     # Each cycle draws 3 replays from a pool of N_CONCEPTS that ROTATES
-    # per cycle (consecutive cycles share 2/3 of their replay set). This
-    # mirrors how CortexAgent.consolidate() pulls representative_hidden
+    # per cycle (sliding window of 3 concepts advancing by 1 each cycle).
+    # This mirrors how CortexAgent.consolidate() pulls representative_hidden
     # from the hippocampus: the replay bank slides as new turns flow in,
     # so replay_avg is correlated-but-varying per cycle -- not the same
-    # direction every cycle. This gives the compounding_index real
-    # headroom on this segment instead of the trivial 1.0 from constant
-    # replays.
-    n_concepts = 5
+    # direction every cycle.
+    #
+    # Segment 3 generalization probe: n_concepts=8 (segment 2 used 5).
+    # 3-of-8 sliding window means consecutive cycles share only 2/3 of
+    # their replay set against an 8-element pool -- lower cycle-to-cycle
+    # correlation than segment 2's 3-of-5. Tests whether the H1+H2
+    # compounding improvement generalizes to a harder replay structure
+    # or whether H2 Hebbian alignment overfit to segment 2's pool.
+    n_concepts = 8
     concept_texts = [f"concept-{i:02d}" for i in range(n_concepts)]
     concept_hiddens = [
         _mock_hidden(t, config.d_embd) for t in concept_texts
