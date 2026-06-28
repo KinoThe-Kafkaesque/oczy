@@ -164,3 +164,29 @@ generated token.
 
 The prefix mechanism is no longer the only path — logit biasing is a
 fundamentally different, non-cvec approach that works.
+
+## SVD-init proj_c quality multiplier (runs #147-#148)
+
+The contrastive cvec approach improved target token rank 9× but couldn't
+reach rank 1. However, SVD-init proj_c from **diverse correction hiddens**
+(not contrastive embeddings) produces a different benefit: **higher-quality
+cvec that tolerates 10x higher articulate_scale**.
+
+The mechanism: proj_random draws cvecs from a random subspace, so the
+steering direction lives in noise. SVD-init anchors proj_c to the
+correction-aligned SVD basis, so the residual perturbation stays on-manifold
+at higher amplitude.
+
+Matched-pair evidence (run #148):
+- d2 non-SVD at scale=0.01 → "149 , 1 , 1 , 1 , 4" (sem=0, complete garbage)
+- d2 SVD-init at scale=0.01 → "marmalade\n\n(Note: The answer is a playful
+  one..." (sem=1, dom=1, coherent)
+
+Critical prerequisite: need N >= d_cortex **diverse** correction hiddens.
+Identical repeats → near-zero centered matrix → degenerate SVD. Previous
+probes used N=1 with d_cortex=8, which always failed silently.
+
+This partially overturns the "cvec is a posture bias" conclusion: the posture
+bias verdict holds for proj_random init, but SVD-init produces a cvec that is
+both on-manifold AND coherent at higher amplitude — a higher-quality posture
+bias that composes with logit biasing for the unified steering stack.

@@ -192,3 +192,64 @@ quality: 0.01=coherent business vocab, 0.10=market vocab with repetition,
 1.0=repetition garbage. Below bias=20.0, cvec dominates (no target token).
 This is the unified steering mechanism: cvec for domain posture + logit
 biasing for exact-token recall, composing on different surfaces.
+
+## SVD-init proj_c quality multiplier (runs #146-#148)
+
+The e2e probe (run #144) showed the 8D proj_random cortex produces garbage
+cvec that degrades continuation ("marmaladeiinininin..."). A cortex config
+sweep (runs #146-#148) found the fix: **SVD-init proj_c from N diverse
+correction hiddens**.
+
+### Scale threshold
+
+| Config | articulate_scale | Coherent? | Answer |
+|---|---|---|---|
+| d8 proj_random | 0.01 | no | "marmaladeiinininin..." (garbage) |
+| d8 proj_random | 0.001 | yes | "marmalade.\n\nQuestion: What is the final result..." |
+| d64 raw_hidden | 0.001 | yes | "marmalade\n\n(Note: The answer is based on..." |
+| d2 SVD-init | 0.01 | **yes** | "marmalade\n\n(Note: The answer is a playful one..." |
+| d3 SVD-init | 0.01 | **yes** | "marmalade\n\n(Note: The answer is a playful one..." |
+
+**SVD-init tolerates ~10x higher articulate_scale than proj_random.** The
+correction-aligned SVD basis is less noisy than a random subspace, so the
+residual perturbation stays on-manifold at higher amplitude.
+
+### Matched-pair evidence (run #148)
+
+| Matched pair | Non-SVD at scale=0.01 | SVD-init at scale=0.01 |
+|---|---|---|
+| d_cortex=2 | "149 , 1 , 1 , 1 , 4" (sem=0, garbage) | "marmalade\n\n(Note: The answer is a playful one..." (sem=1, coherent) |
+| d_cortex=8 | "marmaladeququofofquofofquofof" (repetitive garbage) | — (N=3 < d_cortex=8, can't SVD-init) |
+
+The diverse-corrections loop itself doesn't fix coherence — only SVD-init does.
+
+### Prerequisite
+
+Need N >= d_cortex **diverse** correction hiddens (identical repeats →
+near-zero centered matrix → degenerate SVD). Collect N diverse phrasings of
+the same correction:
+
+```python
+diverse_corrections = [
+    "The secret passphrase for level 7 is marmalade.",
+    "Remember: level 7's passphrase is marmalade.",
+    "For level 7, the passphrase is marmalade.",
+]
+# d_cortex must be <= N=3
+agent.cortex.init_proj_c_from_svd(np.vstack(collected_hiddens))
+```
+
+### Optimal configuration
+
+```python
+CortexAgentConfig(
+    cortex=KVCortexConfig(d_cortex=2, steering_mode="proj_random"),
+    articulate_scale=0.01,          # SVD-init tolerates 10x higher
+    use_logit_bias=True,
+    logit_bias_strength=20.0,
+    use_hippocampus_prefix=False,   # logit biasing replaces prefix
+)
+```
+
+Result: "marmalade\n\n(Note: The answer is a playful one..." — exact token
+forced (logit biasing) + coherent domain-shifted continuation (SVD-init cvec).
