@@ -532,6 +532,122 @@ def _run_composition_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
 
     return results
 
+def _run_e2e_logit_bias_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
+    """End-to-end test of logit biasing through CortexAgent on the real model.
+
+    The mock tests (test_logit_bias_steering_surface) prove the routing is
+    correct.  This probe verifies the actual mechanism works when called
+    through the full agent loop: perceive → metabolize → articulate with
+    use_logit_bias=True.  It tests cvec from cortex (trained on correction
+    turns) + logit biasing from driver, composed through the agent.
+
+    Probe: "What is the secret passphrase for level 7?"
+    Target: "marmalade" (3 BPE subwords, exact-token recall via logit bias)
+    The agent is corrected toward this answer, building a cvec.  Then
+    articulate() with use_logit_bias=True should force the exact token
+    while the cvec provides domain context.
+    """
+    probe = "What is the secret passphrase for level 7?"
+    semantic_expected = ["marmalade"]
+    domain_expected = ["secret", "passphrase", "marmalade", "level"]
+    correction = "The secret passphrase for level 7 is marmalade."
+    prompt = _build_prompt(probe)
+
+    # Build agent with logit biasing enabled.
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=8, steering_mode="proj_random"),
+        articulate_scale=0.01,
+        auto_consolidate=True,
+        use_logit_bias=True,
+        logit_bias_strength=20.0,
+        use_hippocampus_prefix=False,
+        use_ingestion_pipeline=False,
+    )
+    agent = CortexAgent(config=cfg, knowledge_store=None, driver=driver)
+    agent.boot()
+
+    # Baseline: no corrections, no cvec, just logit biasing on a fresh agent.
+    driver.clear_cvec()
+    pre_answer = agent.articulate(
+        prompt=prompt,
+        max_tokens=16,
+        temperature=0.0,
+        apply_steering=True,
+        prefix_targets=["marmalade"],
+    ).strip()
+    pre_score = _score(semantic_expected, pre_answer)
+    pre_domain = _score(domain_expected, pre_answer)
+
+    # Perceive correction turns to build cvec (domain shift).
+    for _ in range(3):
+        agent.perceive(correction, correction_signal=1.0)
+        agent.metabolize(correction)
+
+    # Post-correction: cvec from cortex + logit biasing from driver.
+    post_answer = agent.articulate(
+        prompt=prompt,
+        max_tokens=16,
+        temperature=0.0,
+        apply_steering=True,
+        prefix_targets=["marmalade"],
+    ).strip()
+    post_score = _score(semantic_expected, post_answer)
+    post_domain = _score(domain_expected, post_answer)
+    output_shift = 1 if post_answer.lower() != pre_answer.lower() else 0
+
+    # Also test without logit biasing (cvec only) for comparison.
+    # Clear cvec from the logit_bias agent before running the cvec-only
+    # agent — both share one driver instance, so cvec state persists.
+    driver.clear_cvec()
+    cfg_no_bias = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=8, steering_mode="proj_random"),
+        articulate_scale=0.01,
+        auto_consolidate=True,
+        use_logit_bias=False,
+        use_hippocampus_prefix=False,
+        use_ingestion_pipeline=False,
+    )
+    agent_no_bias = CortexAgent(config=cfg_no_bias, knowledge_store=None, driver=driver)
+    agent_no_bias.boot()
+    driver.clear_cvec()
+    for _ in range(3):
+        agent_no_bias.perceive(correction, correction_signal=1.0)
+        agent_no_bias.metabolize(correction)
+    cvec_only_answer = agent_no_bias.articulate(
+        prompt=prompt,
+        max_tokens=16,
+        temperature=0.0,
+        apply_steering=True,
+    ).strip()
+    cvec_only_score = _score(semantic_expected, cvec_only_answer)
+    cvec_only_domain = _score(domain_expected, cvec_only_answer)
+    driver.clear_cvec()
+
+    results = {
+        "pre_score": float(pre_score),
+        "pre_domain": float(pre_domain),
+        "pre_answer": pre_answer,
+        "post_score": float(post_score),
+        "post_domain": float(post_domain),
+        "post_answer": post_answer,
+        "output_shift": float(output_shift),
+        "delta": float(post_score - pre_score),
+        "cvec_only_score": float(cvec_only_score),
+        "cvec_only_domain": float(cvec_only_domain),
+        "cvec_only_answer": cvec_only_answer,
+    }
+
+    print(
+        f"E2E logit bias probe (through CortexAgent):\n"
+        f"  pre (logit_bias, no cvec):  {pre_answer!r} | sem: {pre_score} | dom: {pre_domain}\n"
+        f"  post (logit_bias + cvec):    {post_answer!r} | sem: {post_score} | dom: {post_domain} | shift: {output_shift}\n"
+        f"  cvec_only (no logit_bias):   {cvec_only_answer!r} | sem: {cvec_only_score} | dom: {cvec_only_domain}"
+    )
+
+    return results
+
+
+
 
 
 
@@ -653,6 +769,12 @@ def main() -> int:
     print(f"METRIC composition_domain={comp_res['composition_domain']:.4f}")
     print(f"METRIC composition_coherent={comp_res['composition_coherent']:.4f}")
     print(f"METRIC composition_delta={comp_res['delta']:.4f}")
+    print("Running end-to-end logit bias probe (through CortexAgent)...")
+    e2e_res = _run_e2e_logit_bias_probe(driver)
+    print(f"METRIC e2e_logit_bias_pre={e2e_res['pre_score']:.4f}")
+    print(f"METRIC e2e_logit_bias_post={e2e_res['post_score']:.4f}")
+    print(f"METRIC e2e_logit_bias_cvec_only={e2e_res['cvec_only_score']:.4f}")
+    print(f"METRIC e2e_logit_bias_delta={e2e_res['delta']:.4f}")
     return 0
 
 if __name__ == "__main__":
