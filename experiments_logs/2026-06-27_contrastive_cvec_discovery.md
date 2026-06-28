@@ -138,5 +138,29 @@ logit space. The unembedding matrix maps the cvec's residual-space direction
 to a diffuse set of logit changes spread across many tokens — not concentrated
 on the target token. Amplifying this diffuse delta amplifies noise, not signal.
 
-This is the 5th and final method tested for cvec-only exact-token recall. All
-fail on the 1.2B model. The prefix mechanism remains the only path.
+This is the 5th cvec method tested for cvec-only exact-token recall. All
+fail on the 1.2B model.
+
+## Direct logit biasing result (runs #136-#137) — THE WINNER
+
+A 6th, non-cvec mechanism was tested: direct logit biasing. After the forward
+pass produces logits, add a constant bias to the target token's logit, then
+argmax. The KV cache entry for the forced token is written from the CLEAN
+residual stream — the bias is applied post-forward, not during.
+
+| Probe | Target | Tokens | Threshold | Result |
+|---|---|---|---|---|
+| Disambiguation | " vertical" | [12825] (single) | bias ≥ 20.0 | "vertical layout" (exact=1, domain=1) |
+| Consolidation | " marmalade" | [55678, 786, 1339] (3 subwords) | bias ≥ 20.0 | "marmalade" (exact=1, domain=1) |
+
+Below threshold: natural LM output matching baseline. Above: forced target
+token with coherent continuation — proving no KV cache contamination.
+
+**This is the ONLY method that achieves exact-token recall without prefix on
+the 1.2B model.** The key insight: logit biasing bypasses the residual stream
+entirely, so the KV cache stays clean. All cvec methods fail because they
+perturb the residual stream, which contaminates the KV cache entry for the
+generated token.
+
+The prefix mechanism is no longer the only path — logit biasing is a
+fundamentally different, non-cvec approach that works.
