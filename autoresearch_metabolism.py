@@ -37,16 +37,31 @@ CONSOLIDATE_STRENGTH = 10.0  # hit the max_consolidation_strength cap
 
 
 def _mock_hidden(text: str, n_embd: int) -> np.ndarray:
-    """Deterministic sparse 'mock driver' hidden vector.
+    """Deterministic dense Gaussian mock hidden shape.
 
-    Pure function of the literal string -- mirrors `multi_fact_stressor`'s
-    `_MockDriver.peek_embedding` so the cortex sees well-separated
-    embeddings without any LM dependency.
+    Segment 5 generalization probe -- switches the mock hidden shape from
+    sparse one-hot (segments 1-4's `_mock_hidden_sparse`) to dense
+    continuous Gaussian, mirroring real-LM hidden distribution shape.
+    Same cortex code as segment 4; no cortex-side changes.
+
+    Determinism: seeded `default_rng` per text (Python's hash() is salted;
+    we use a stable SHA-256-derived int instead so the same checkout produces
+    the same hidden vector every run).
     """
-    idx = sum(ord(c) for c in text) % n_embd
-    h = np.zeros(n_embd, dtype=np.float32)
-    h[idx] = 1.0
-    h[(idx + 1) % n_embd] = float(len(text)) * 0.05
+    import hashlib
+
+    seed = int.from_bytes(
+        hashlib.sha256(text.encode("utf-8")).digest()[:8], "little"
+    ) & 0x7FFFFFFF
+    rng = np.random.default_rng(seed)
+    h = rng.standard_normal(n_embd).astype(np.float32)
+    # Unit-normalize so the d_embd scale stays comparable across the two
+    # shapes (sparse one-hot had norm ~1.0; raw N(0,1) over d_embd=64 has
+    # norm ~8). Keep at unit norm so consolidate() arithmetic magnitudes
+    # don't silently re-scale.
+    norm = float(np.linalg.norm(h))
+    if norm > 0:
+        h /= norm
     return h
 
 
