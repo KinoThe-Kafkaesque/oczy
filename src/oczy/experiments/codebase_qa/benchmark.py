@@ -758,12 +758,8 @@ def _run_order_shuffle_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
     prompt = _build_prompt(probe)
 
     def _make_short_turn(facts_in_order: list[str]) -> str:
-        """Fixed template — only fact order varies, no filler confound."""
-        parts = ["Here is some information."]
-        for i, fact in enumerate(facts_in_order):
-            prefix = "First," if i == 0 else "Next," if i == 1 else "Finally,"
-            parts.append(f"{prefix} {fact}")
-        return " ".join(parts)
+        """Facts only, no template — facts dominate the embedding."""
+        return " ".join(facts_in_order)
 
     def _is_coherent(answer: str) -> int:
         if len(answer) <= 5 or not answer.lower().startswith("marmalade"):
@@ -806,7 +802,7 @@ def _run_order_shuffle_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
                     "chunker": "fixed-window",
                     "chunker_window_tokens": 32,
                     "chunker_overlap_tokens": 4,
-                    "salience": "lexical-novelty",
+                    "salience": "pass-through",
                     "embedder": "same-lm",
                     "aggregator": "stats",
                     "observation_mode": obs_mode,
