@@ -69,12 +69,18 @@ def run() -> int:
     )
     cortex.init_proj_c_from_svd(svd_hiddens, shared=True)
 
-    # Three distinct replay vectors so the additive replay branch fires on
-    # every cycle (consolidate_replay_threshold == 3 by default).
-    replays = [
-        _mock_hidden("concept-A-replay", config.d_embd),
-        _mock_hidden("concept-B-replay", config.d_embd),
-        _mock_hidden("concept-C-replay", config.d_embd),
+    # Each cycle draws 3 replays from a pool of N_CONCEPTS that ROTATES
+    # per cycle (consecutive cycles share 2/3 of their replay set). This
+    # mirrors how CortexAgent.consolidate() pulls representative_hidden
+    # from the hippocampus: the replay bank slides as new turns flow in,
+    # so replay_avg is correlated-but-varying per cycle -- not the same
+    # direction every cycle. This gives the compounding_index real
+    # headroom on this segment instead of the trivial 1.0 from constant
+    # replays.
+    n_concepts = 5
+    concept_texts = [f"concept-{i:02d}" for i in range(n_concepts)]
+    concept_hiddens = [
+        _mock_hidden(t, config.d_embd) for t in concept_texts
     ]
 
     cold_norms: list[float] = [float(np.linalg.norm(cortex.cold_state))]
@@ -86,6 +92,9 @@ def run() -> int:
         # observe(correction_hidden, correction_signal=1.0) -> consolidate.
         h = _mock_hidden(f"correction-cycle-{k:02d}", config.d_embd)
         cortex.observe(h, correction_signal=1.0)
+        # Sliding window of 3 replays over the concept pool. Consecutive
+        # cycles share 2/3 concepts -> replay_avg is correlated-but-varying.
+        replays = [concept_hiddens[(k + i) % n_concepts] for i in range(3)]
         cold_before = cortex.cold_state.copy()
         cortex.consolidate(replays=replays, strength=CONSOLIDATE_STRENGTH)
         delta = cortex.cold_state - cold_before
