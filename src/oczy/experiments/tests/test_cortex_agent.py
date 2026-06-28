@@ -576,6 +576,76 @@ def test_hippocampus_prefix_uses_knowledge_store_targets() -> None:
 
 
 
+def test_logit_bias_steering_surface() -> None:
+    """use_logit_bias routes to logit_bias_generate and keeps cvec active.
+
+    When use_logit_bias=True and prefix_targets are provided, articulate()
+    should call driver.logit_bias_generate() instead of driver.generate(),
+    and cvec should still be applied (logit biasing composes with cvec).
+    """
+    mock_driver = MagicMock()
+    mock_driver.n_embd = 64
+    mock_driver.n_layers = 2
+    mock_driver._llm.tokenize.return_value = [12825]  # " vertical"
+    mock_driver.logit_bias_generate.return_value = "vertical layout"
+
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=8),
+        driver=CVecDriverConfig(n_ctx=256, verbose=False, embedding=True),
+        use_logit_bias=True,
+        logit_bias_strength=20.0,
+    )
+    agent = CortexAgent(cfg, driver=mock_driver)
+    agent.boot()
+
+    result = agent.articulate(
+        prompt="Answer briefly.\nQuestion: What does 'profile' mean?\nAnswer:",
+        prefix_targets=["vertical"],
+        apply_steering=True,
+        max_tokens=16,
+    )
+
+    # Should call logit_bias_generate, not generate.
+    mock_driver.logit_bias_generate.assert_called_once()
+    mock_driver.generate.assert_not_called()
+
+    # Cvec should be applied (logit biasing composes with cvec).
+    assert mock_driver.set_cvec_uniform.called or mock_driver.set_cvecs_per_layer.called
+    mock_driver.clear_cvec.assert_called_once()
+
+    # No reserved position should be set (logit biasing replaces prefix).
+    mock_driver.set_reserved_position.assert_not_called()
+
+    assert result == "vertical layout"
+
+
+def test_logit_bias_off_by_default() -> None:
+    """Without use_logit_bias, articulate() uses driver.generate() normally."""
+    mock_driver = MagicMock()
+    mock_driver.n_embd = 64
+    mock_driver.n_layers = 2
+    mock_driver.generate.return_value = "some answer"
+
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=8),
+        driver=CVecDriverConfig(n_ctx=256, verbose=False, embedding=True),
+    )
+    agent = CortexAgent(cfg, driver=mock_driver)
+    agent.boot()
+
+    result = agent.articulate(
+        prompt="Answer briefly.\nQuestion: What does 'profile' mean?\nAnswer:",
+        prefix_targets=["vertical"],
+        apply_steering=True,
+        max_tokens=16,
+    )
+
+    # Should call generate, not logit_bias_generate.
+    mock_driver.generate.assert_called_once()
+    mock_driver.logit_bias_generate.assert_not_called()
+    assert result == "some answer"
+
+
 def main() -> int:
     tests = [
         ("test_perceive_produces_warm_state", test_perceive_produces_warm_state),

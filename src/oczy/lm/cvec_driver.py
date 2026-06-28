@@ -421,6 +421,96 @@ class LlamaCVecDriver:
         )
         return result["choices"][0]["text"]
 
+    def logit_bias_generate(
+        self,
+        prompt: str,
+        target_token_ids: list[int],
+        bias: float = 20.0,
+        max_tokens: int = 32,
+        stop: Sequence[str] | str | None = None,
+    ) -> str:
+        """Generate with direct logit biasing on target tokens.
+
+        This is the 6th steering surface. Unlike cvec (which perturbs the
+        residual stream and contaminates the KV cache), logit biasing adds a
+        constant to the target token's logit AFTER the forward pass.  The KV
+        cache entry for the forced token is written from the clean residual
+        stream, so subsequent tokens attend to un-contaminated context.
+
+        For multi-token targets (BPE subwords), the bias is applied
+        sequentially: only the next expected subword token is biased at each
+        step, in order.  Once all target subwords are emitted (or the LM
+        produces a non-matching token), biasing stops and the LM continues
+        freely.
+
+        Composes with cvec: cvec is applied during the forward pass
+        (residual stream), logit biasing is applied post-forward (logit
+        space).  They operate on different surfaces and coexist without
+        interference (proven in run #139).
+
+        Args:
+            prompt: the prompt to feed the LM.
+            target_token_ids: BPE token IDs of the target phrase to force.
+            bias: constant added to the target token's logit.  Must be
+                large enough to overcome the LM's prior (≥ 20.0 on
+                LFM2.5-1.2B-Instruct Q4).
+            max_tokens: max generation length.
+            stop: optional stop sequence(s).  Only a single string is
+                supported here (tokenized to detect early stop).
+        """
+        import numpy as np
+
+        llm = self._llm
+        n_vocab = self.n_vocab
+
+        effective_prompt = prompt
+        if self._reserved_position is not None:
+            prefix = self._reserved_position.text
+            if not effective_prompt.startswith(prefix):
+                effective_prompt = prefix + effective_prompt
+
+        prompt_ids = llm.tokenize(effective_prompt.encode("utf-8"), add_bos=True)
+        llm.reset()
+        llm.eval(prompt_ids)
+        n_last_batch = len(prompt_ids)
+
+        stop_ids: list[int] = []
+        if stop:
+            stop_str = stop[0] if isinstance(stop, list) else stop
+            stop_ids = llm.tokenize(stop_str.encode("utf-8"), add_bos=False)
+        eos_id = llm.token_eos()
+
+        generated_ids: list[int] = []
+        target_idx = 0
+
+        for _ in range(max_tokens):
+            raw = llm._ctx.get_logits()
+            full = np.ctypeslib.as_array(raw, shape=(n_last_batch * n_vocab,))
+            logits = full[(n_last_batch - 1) * n_vocab : n_last_batch * n_vocab].copy()
+
+            if target_idx < len(target_token_ids):
+                tid = target_token_ids[target_idx]
+                logits[tid] += bias
+
+            next_token = int(np.argmax(logits))
+            generated_ids.append(next_token)
+
+            if target_idx < len(target_token_ids):
+                if next_token == target_token_ids[target_idx]:
+                    target_idx += 1
+                else:
+                    target_idx = len(target_token_ids)
+
+            if next_token == eos_id:
+                break
+            if stop_ids and generated_ids[-len(stop_ids):] == stop_ids:
+                break
+
+            llm.eval([next_token])
+            n_last_batch = 1
+
+        return llm.detokenize(generated_ids).decode("utf-8", errors="replace")
+
     def peek_embedding(self, prompt: str, last_token_only: bool = True) -> np.ndarray:
         """Return the model's final-layer embedding for ``prompt``.
 

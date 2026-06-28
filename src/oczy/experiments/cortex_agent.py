@@ -150,6 +150,14 @@ class CortexAgentConfig:
     # If True (default), apply the IdentityHypernetwork-generated state_adapter
     # bias in metabolize(). Set False to isolate the adapter's behavioral effect.
     use_identity_adapter: bool = True
+    # If True, articulate() will use direct logit biasing (post-forward logit
+    # space) for exact-token recall instead of the hippocampus-derived prefix.
+    # Logit biasing bypasses the residual stream entirely, so it composes with
+    # cvec steering (proven in run #139).  Default off for benchmark compat.
+    use_logit_bias: bool = False
+    # Bias strength for logit biasing.  Must be large enough to overcome the
+    # LM's prior (≥ 20.0 on LFM2.5-1.2B-Instruct Q4).
+    logit_bias_strength: float = 20.0
 
 
     def __setstate__(self, state: dict[str, Any]) -> None:
@@ -745,10 +753,30 @@ class CortexAgent:
                 self.clear_reserved_position()
             raise ValueError("articulate() needs a prompt or a prior perceive()")
 
-        # Reserved positions handle exact-token recall; applying a cvec at the
-        # same time causes the two steering surfaces to interfere.  Only apply
-        # the cortex's residual steering when no reserved position is active.
-        if apply_steering and reserved_position is None:
+        # Determine whether to use logit biasing for exact-token recall.
+        # Logit biasing operates in logit space (post-forward) and composes
+        # with cvec (residual stream, during forward) — proven in run #139.
+        # This is gated by use_logit_bias and requires prefix_targets to
+        # tokenize into target token IDs.
+        use_logit_bias = (
+            self.config.use_logit_bias
+            and prefix_targets is not None
+            and not reserved_position
+        )
+        target_token_ids: list[int] = []
+        if use_logit_bias:
+            for target_str in prefix_targets:
+                ids = self.driver._llm.tokenize(
+                    f" {target_str}".encode(), add_bos=False,
+                )
+                target_token_ids.extend(ids)
+
+        # Reserved positions handle exact-token recall via prefix context;
+        # applying a cvec at the same time causes the two steering surfaces to
+        # interfere.  Only apply the cortex's residual steering when no
+        # reserved position is active.  Logit biasing composes with cvec, so
+        # cvec stays active when use_logit_bias is on.
+        if apply_steering and (reserved_position is None or use_logit_bias):
             if self.cortex.has_uniform_proj_c():
                 vec = self.cortex.emit_uniform_cvec()
                 self.driver.set_cvec_uniform(vec, scale=self.config.articulate_scale)
@@ -758,6 +786,14 @@ class CortexAgent:
                 )
 
         try:
+            if use_logit_bias and target_token_ids:
+                return self.driver.logit_bias_generate(
+                    prompt,
+                    target_token_ids=target_token_ids,
+                    bias=self.config.logit_bias_strength,
+                    max_tokens=max_tokens,
+                    stop=stop,
+                )
             return self.driver.generate(
                 prompt,
                 max_tokens=max_tokens,
@@ -765,7 +801,7 @@ class CortexAgent:
                 stop=stop,
             )
         finally:
-            if apply_steering and reserved_position is None:
+            if apply_steering and (reserved_position is None or use_logit_bias):
                 self.driver.clear_cvec()
             if reserved_position is not None:
                 self.clear_reserved_position()
