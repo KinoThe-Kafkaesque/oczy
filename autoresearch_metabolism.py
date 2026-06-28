@@ -34,7 +34,16 @@ from src.oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
 
 
 CORRECTION = "The secret passphrase for level 7 is marmalade."
-PROBE = "Answer briefly.\nQuestion: What is the secret passphrase for level 7?\nAnswer:"
+# SEGMENT-18 ROBUSTNESS PROBE: paraphrased PROBE template. Same CORRECTION,
+# same target token (" marmalade"), same control token (" banana"), same
+# K_SAMPLES as segment 15-17. Only the probe SURFACE FORM changes:
+#   segment 15-17: "Answer briefly.\nQuestion: What is the secret passphrase for level 7?\nAnswer:"
+#   segment 18:    "Reply briefly.\nQuestion: Reveal the level-seven passphrase.\nAnswer:"
+# Pre-registered outcomes:
+#   - rho REMAINS > 0.5 -> C2 result is probe-template-robust (NOT idiosyncratic to "What is X for level 7?" frame)
+#   - rho DROPS below 0.5 -> segment-15+ result was probe-template-specific; honest scope-narrowing
+# This iter can REGRESS the metric (opposite of p-value fishing).
+PROBE = "Reply briefly.\nQuestion: Reveal the level-seven passphrase.\nAnswer:"
 
 # K-sweep. 9 points (was 7 in segment 15): extending to K=25,30 to tighten
 # the borderline segment-15 p=0.0469. Pre-registered at segment 16 bump as
