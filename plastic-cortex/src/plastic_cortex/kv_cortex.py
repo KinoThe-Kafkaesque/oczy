@@ -380,6 +380,14 @@ class KVCortex:
         strength = float(np.clip(strength, 0.0, c.max_consolidation_strength))
 
         # Replay absorption (only if enough replays crossed the threshold).
+        # When this branch fires, it is the compounding path: replays add a
+        # constant direction to cold_state each cycle, so net drift grows
+        # ~linearly with K. The slow-EMA nudge below is the OVERWRITE path
+        # (it pulls cold toward a transient warm_state, anti-correlating
+        # per-step drift). Running both at once nullifies the replay gain --
+        # so when replay absorption fires, we skip the slow EMA nudge for
+        # this call. No-replay callers still get the slow EMA they rely on.
+        replay_fired = False
         if replays is not None and len(replays) >= c.consolidate_replay_threshold:
             stacked = np.stack(replays, axis=0)  # (R, d_embd)
             deltas = self.proj_hidden @ stacked.T  # (d_cortex, R)
@@ -388,12 +396,15 @@ class KVCortex:
                 self.cold_state
                 + np.clip(c.consolidate_replay_step * strength, 0.0, 1.0) * avg_delta
             ).astype(np.float32)
+            replay_fired = True
 
-        # Slow EMA nudge.
-        effective_slow = np.clip(c.consolidate_slow_step * strength, 0.0, 1.0)
-        self.cold_state = (
-            (1.0 - effective_slow) * self.cold_state + effective_slow * self.warm_state
-        ).astype(np.float32)
+        # Slow EMA nudge -- skipped when the replay branch absorbed this
+        # cycle (see comment above).
+        if not replay_fired:
+            effective_slow = np.clip(c.consolidate_slow_step * strength, 0.0, 1.0)
+            self.cold_state = (
+                (1.0 - effective_slow) * self.cold_state + effective_slow * self.warm_state
+            ).astype(np.float32)
 
         self.consolidate_count += 1
 
