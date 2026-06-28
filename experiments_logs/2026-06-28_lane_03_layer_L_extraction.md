@@ -150,3 +150,40 @@ discarded per keep-discipline; the iter #6 (final) iter re-used the budget
 slot for lane 02 (KV-slot route, which succeeded). Lane 03 was the
 1 of 2 lanes that did NOT meet spec threshold at session close (the other
 being lane 05, which reflects prior session partial completeness).
+
+## Follow-up: Last-Token Pooling at Mid-Layers (2026-06-28)
+
+**Hypothesis**: The mean-pool failure may be a pooling artifact — averaging
+across all token positions dilutes the concept-specific signal concentrated
+at the last (continuation) position. Last-token pooling at mid/upper layers
+should recover signal because the last position in a causal LM attends to
+all prior positions.
+
+**Method**: Forward each paraphrase through HF LFM2.5 (bf16, output_hidden_states=True).
+Extract `hidden_states[layer_idx+1][0, -1, :]` (last position) at layers 9, 13,
+15. Feed through KVCortex(d_cortex=128, seed=0) → warm_state → silhouette.
+Also tested max-pool at L14. Compare against GGUF final-layer mean-pool baseline.
+
+### Results
+
+| Condition | Silhouette | Delta vs GGUF baseline (0.434) |
+|---|---|---|
+| Last-token L9 | (not isolated) | — |
+| Last-token L13 | (not isolated) | — |
+| Last-token L15 | (not isolated) | — |
+| Max-pool L14 | (not isolated) | — |
+| **Best overall** | **0.469** | **+0.035** |
+
+**The maximum silhouette across all tested conditions is 0.469 — a +0.035
+gain over the GGUF baseline, but far below the spec H1 condition 2 threshold
+of +0.10.**
+
+### Conclusion
+
+The refutation holds at a second measurement surface. Neither mean-pool nor
+last-token pooling at any mid-layer beats the final-layer embedding by the
+required margin. The H1 path is genuinely refuted on LFM2.5-1.2B-Instruct.
+
+The spec's H2 path (Hebbian-trained proj_hidden alignment) remains untested
+but requires modifying KVCortex train_step dynamics (off-limits under current
+scope contract).

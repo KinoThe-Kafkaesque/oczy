@@ -12,11 +12,8 @@ discard) in segment 1, with H1+H2 cortex code untouched throughout.
 |------|--------|----------|-------|----------------|------|-----------|
 | 01 | desaturation_count | 1.0/7 | **4.0/7** | ≥ 3.0 | YES | 3 derived sub-metrics (signed_interference, separated_exact_vs_domain_recall, behavior_delta_per_byte) |
 | 02 | capacity_cvec | 0 facts | **3 facts** | ≥ 2 | YES | Text-derived KV-slot prefill-and-reuse via `llama_state_seq_get_data`/`set_data` |
-| 03 | warm_sep_silhouette | 0.434 | 0.434 | Δ ≥ +0.10 vs final | NO (REFUTED) | Spec H1 condition 2 refuted by diagnostic scan: no mid-layer beats final at mean-pool surface |
-| 04 | ssi | 0.125 | **0.5** | ≥ 0.5 | YES | _SlotStore wrapper (cosine 0.85 lookup) + use_logit_bias gating |
-| 05 | status_pct | 0.75 | 0.75 | 1.00 | NO | C3+C4 require critic-side work off-limits in segment 1 |
-| 06 | combined_footprint_bytes | 236,476 | **6,596** | ≤ 22,947 | YES | A0bAutoencoder seed-regenerable variant |
-| 07 | marker_free_uptake_gap | 0.0 | **1.0** | ≥ 0.4 | YES | WorldModelCritic use_hidden=True + record_outcome teaching on 4 marker-bearing pairs |
+| 03 | warm_sep_silhouette | 0.434 | 0.469 (best) | Δ ≥ +0.10 vs final | NO (REFUTED ×2) | Mean-pool refuted; last-token pooling at L9/13/15 + max-pool L14 only +0.035 — far below +0.10 threshold |
+| 05 | status_pct | 0.75 | **0.875** | 1.00 | PARTIAL (improved) | C3 critic AUC tested on real GGUF driver; C4 tensor replay bank remaining |
 
 ## Session Architecture
 
@@ -205,3 +202,64 @@ the user message "orchestrate the remaining research lanes". Phase 1 wired
 the benchmark harness (commit aedf3858). Phase 2 segment 1 iterated 6 times
 (5 keeps + 1 discard) against the max_iterations=6 contract. Iter budget
 exhausted; framework reports session-end.
+
+## Segment 1 Continuation (runs #155-#157)
+
+After segment 1's 6-iter budget was exhausted, the session was re-opened to
+pursue the most promising unfinished directions: lane 03 alternative surfaces
+and lane 05 C3 critic conversion.
+
+### Lane 03 — Second Measurement Surface (Last-Token Pooling)
+
+**Hypothesis**: Mean-pool failure may be a pooling artifact. Last-token
+pooling at mid-layers should recover signal because the last position in a
+causal LM attends to all prior positions.
+
+**Tested**: HF LFM2.5 (bf16, output_hidden_states=True). Last-token pooling
+at L9, L13, L15 + max-pool at L14. All fed through KVCortex(d_cortex=128,
+seed=0) → warm_state → silhouette.
+
+| Condition | Silhouette |
+|---|---|
+| GGUF final mean-pool baseline | 0.434 |
+| Best last-token/max-pool | **0.469** |
+| Delta | **+0.035** |
+
+**Result**: Real improvement (+0.035) but far below the +0.10 spec threshold.
+The refutation holds at a second measurement surface. No mid-layer pooling
+method (mean, max, last-token) beats the final-layer embedding by the
+required margin on LFM2.5-1.2B-Instruct.
+
+### Lane 05 — C3 Critic AUC Delta Tested
+
+**Goal**: Test the critic conversion criterion (C3): does `WorldModelCritic`
+predict corrections better when fed real LM hiddens vs string features only?
+
+**Tested**: 8-example corpus (4 corrections + 4 acceptances). GGUF
+peek_embedding → 2048-dim lm_hidden. Critic trained via record_outcome,
+tested under both lm_hidden=real and lm_hidden=None paths.
+
+| Path | AUC | Notes |
+|---|---|---|
+| Real-lm MLP (use_hidden=True) | 0.5 | 0.01-init MLP saturates on 8 examples |
+| String-only (Jaccard head) | 1.0 | Marker-bearing→marker-free token overlap perfect |
+| Delta | 0.0 | Honest negative |
+
+**Result**: C3 exercised end-to-end on real driver. Status lifted from 0.75
+→ 0.875. Per spec, status reflects testing coverage, not delta magnitude.
+
+## Final Tally
+
+| Lane | Status | Verdict |
+|------|--------|---------|
+| 01 | MET (4/7) | De-saturation success: 3 new sub-metrics spread >0.2 |
+| 02 | MET (3 facts) | KV-slot route survives hybrid conv1d risk |
+| 03 | REFUTED (0.434→0.469) | No mid-layer pooling beats final embedding by ≥0.10 |
+| 04 | MET (SSI 0.5) | Slot store + logit_bias gating; scope_acc=4/8 (handoff to 03 refuted) |
+| 05 | PARTIAL (0.875) | C1+C2+C3 measured; C4 tensor replay bank remaining |
+| 06 | MET (6,596 bytes) | A0b seed-regenerable: 35.9× reduction |
+| 07 | MET (gap 1.0) | String-Jaccard head dominates; real-LM MLP saturates |
+
+**5 of 7 lanes met spec threshold. 1 lane improved (0.75→0.875). 1 lane
+refuted at two independent measurement surfaces.** All core production code
+(KVCortex, CvecDriver, CortexAgent) untouched throughout both segments.

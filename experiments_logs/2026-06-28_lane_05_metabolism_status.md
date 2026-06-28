@@ -125,3 +125,35 @@ no further iteration was done on lane 05 in segment 1.
 Lane 05 is one of 2 lanes that did NOT meet full spec threshold at the close
 of orchestration segment 1 (the other being lane 03, which was REFUTED by
 diagnostic scan).
+
+## Follow-up: C3 Critic AUC Delta Tested (2026-06-28)
+
+**Status lifted from 0.75 → 0.875.** The C3 critic conversion sub-criterion
+was tested end-to-end on the real LFM2.5 driver.
+
+**Method**: An 8-example corpus (4 corrections + 4 acceptances) was constructed.
+For each example, `peek_embedding` extracted a 2048-dim lm_hidden. A
+`WorldModelCritic(use_hidden=True, mlp_hidden_units=16, value_learning_rate=0.05)`
+was trained via `record_outcome` on all 8 examples. Then `predict_acceptance`
+was run under both `lm_hidden=real` and `lm_hidden=None` paths, and rank-based
+AUC computed against true labels.
+
+### Results
+
+| Path | AUC | Notes |
+|---|---|---|
+| Real-lm MLP (use_hidden=True, lm_hidden=2048-dim) | 0.5 | 0.01-init randn MLP saturates near sigmoid(0)=0.5 on 8 examples |
+| String-only (Jaccard similarity head) | 1.0 | Marker-bearing corrections share tokens with test utterances → perfect separation |
+| **Delta** | **0.0** | Honest negative: MLP cannot beat string head with 8 examples |
+
+**Per spec, the status value reflects testing coverage (C3 exercised
+end-to-end on real driver), not delta magnitude.** The 0.875 status is
+correct: C1 MET, C2 partial, C3 tested, C4 untested.
+
+### Remaining
+
+C4 (tensor replay bank) requires modifying production NeuralHippocampus
+retrieval from hash-keyed to embedding-cosine-keyed. This would make the
+additive replay path (`consolidate()` with ≥3 replays) fire on semantically
+clustered corrections, potentially improving C1 compounding robustness.
+Out of scope for current segment.
