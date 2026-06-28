@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
-uv run python autoresearch_metabolism.py
+exec uv run python -m lanes.orchestrator
