@@ -222,16 +222,22 @@ def _logit_bias_generate(
     prompt_ids = llm.tokenize(prompt.encode("utf-8"), add_bos=True)
     llm.reset()
     llm.eval(prompt_ids)
+    n_prompt = len(prompt_ids)
 
     stop_ids = llm.tokenize(stop.encode("utf-8"), add_bos=False)
     eos_id = llm.token_eos()
 
     generated_ids: list[int] = []
     target_idx = 0  # which subword token we're trying to force next
+    # Track the number of tokens in the last eval batch so we can index
+    # get_logits() correctly.  The function returns a flat array of
+    # (n_batch * n_vocab) floats; we need the LAST position's logits.
+    n_last_batch = n_prompt
 
     for _ in range(max_tokens):
         raw = llm._ctx.get_logits()
-        logits = np.ctypeslib.as_array(raw, shape=(n_vocab,)).copy()
+        full = np.ctypeslib.as_array(raw, shape=(n_last_batch * n_vocab,))
+        logits = full[(n_last_batch - 1) * n_vocab : n_last_batch * n_vocab].copy()
 
         # Bias the next expected target subword token.
         if target_idx < len(target_token_ids):
@@ -254,6 +260,7 @@ def _logit_bias_generate(
             break
 
         llm.eval([next_token])
+        n_last_batch = 1
 
     return llm.detokenize(generated_ids).decode("utf-8", errors="replace")
 
