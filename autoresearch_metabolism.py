@@ -31,11 +31,13 @@ import numpy as np
 from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
 
 
-K_CYCLES = 40  # segment 7: longer-horizon probe (was 20 in segments 1-6)
-                 # random-walk null at K=40 is 1/sqrt(40) = 0.158 vs 0.22 at K=20,
-                 # so the test is more rigorous AND tests whether segment 6's
-                 # marginal-above-target (+1.3%) at production scale was a
-                 # startup-transient artifact or sustained compounding.
+K_CYCLES = 80  # segment 9: even-longer-horizon at production-config
+                 # (was 40 in segments 7-8). Random-walk null at K=80 is
+                 # 1/sqrt(80) = 0.112 vs 0.158 at K=40, so the test is much
+                 # more rigorous AND tests whether segment 8's +2.8% above
+                 # target at production-config (d_cortex=128 d_embd=2048)
+                 # has true staying power, or whether it was K=40 startup
+                 # decorrelation artifact (the symptom segment 7 showed).
 N_CORRECTION_HIDDENS = 128  # segment 8: bumped from 16 to 128
                  # because init_proj_c_from_svd requires N >= d_cortex, and
                  # segment 8 also bumps d_cortex from 8 to 128 (the
