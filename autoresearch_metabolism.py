@@ -38,9 +38,19 @@ K_CYCLES = 80  # segment 9: even-longer-horizon at production-config
                  # target at production-config (d_cortex=128 d_embd=2048)
                  # has true staying power, or whether it was K=40 startup
                  # decorrelation artifact (the symptom segment 7 showed).
-N_CORRECTION_HIDDENS = 16  # segment 10: reverted from 128 (segment 8/9) back
-                 # to 16 (segment 1-7 value) so the segment-10 control
-                 # matches segment 7 exactly on every dim except K (40 -> 80).
+N_CORRECTION_HIDDENS = 128  # segment 11: confound-control.
+                 # Segments 7/10 used N=16 (only valid at d_cortex=8 since
+                 # init_proj_c_from_svd requires N>=d_cortex); segments 8/9
+                 # bumped N to 128 because d_cortex=128 needs N>=128.
+                 # So the segment 7->8 transition (0.596 -> 0.617) differs on
+                 # TWO variables: d_cortex AND N.
+                 # This segment matches segment 10 (d_cortex=8, K=80) but
+                 # bumps N 16 -> 128 to hold N constant with segment 8/9.
+                 # Pre-registered: matches segment 10 0.596 -> the d_cortex
+                 # change is the operative variable in segment 8's recovery;
+                 # moves toward 0.617 -> N was the confound.
+                 # At d_cortex=8, N=128 is oversized (16 would suffice),
+                 # so this runs cleanly with no API violation.
 CONSOLIDATE_STRENGTH = 10.0  # hit the max_consolidation_strength cap
 
 
