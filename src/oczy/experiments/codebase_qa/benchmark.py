@@ -587,6 +587,11 @@ def _run_e2e_logit_bias_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
         {"d_cortex": 3, "steering_mode": "proj_random", "scale": 0.001, "svd_init": True},
         {"d_cortex": 2, "steering_mode": "proj_random", "scale": 0.01, "svd_init": True},
         {"d_cortex": 3, "steering_mode": "proj_random", "scale": 0.01, "svd_init": True},
+        # Matched-pair non-SVD controls at scale=0.01 (same diverse-corrections
+        # loop, only SVD-init differs) — isolates SVD-init as the variable.
+        {"d_cortex": 2, "steering_mode": "proj_random", "scale": 0.01, "svd_init": False},
+        {"d_cortex": 3, "steering_mode": "proj_random", "scale": 0.01, "svd_init": False},
+        {"d_cortex": 8, "steering_mode": "proj_random", "scale": 0.01, "svd_init": False},
     ]
 
     results: dict[str, Any] = {
@@ -640,9 +645,18 @@ def _run_e2e_logit_bias_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
         sem = _score(semantic_expected, answer)
         dom = _score(domain_expected, answer)
         # Coherent = has real words after the forced token, no repetition/garbage.
+        # Detect repetitive garbage: any 2-6 char substring tiled consecutively
+        # 3+ times (e.g. "inininin", "quofofquofofquofof").  Normal English doesn't tile.
+        _after = answer[len("marmalade"):] if answer.startswith("marmalade") else answer
+        _rep_garbage = any(
+            _after[j:j+tl] == _after[j+tl:j+2*tl] == _after[j+2*tl:j+3*tl]
+            for tl in range(2, 7)
+            for j in range(len(_after) - tl * 3 + 1)
+            if _after[j:j+tl].strip()
+        )
         coherent = 1 if (len(answer) > 5 and sem == 1
                          and not any(c in answer for c in "ÀÁÂÃÄÅÆÇÈÉÊË")
-                         and answer.count("in") < 4) else 0
+                         and not _rep_garbage) else 0
         svd = "_svd" if ccfg["svd_init"] else ""
         label = f"d{ccfg['d_cortex']}_{ccfg['steering_mode']}_s{ccfg['scale']}{svd}"
         print(
