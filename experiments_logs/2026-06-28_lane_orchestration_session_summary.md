@@ -248,18 +248,30 @@ tested under both lm_hidden=real and lm_hidden=None paths.
 **Result**: C3 exercised end-to-end on real driver. Status lifted from 0.75
 → 0.875. Per spec, status reflects testing coverage, not delta magnitude.
 
+### Lane 05 — C4 Tensor Replay Bank Tested (run #159)
+
+**Status lifted from 0.875 → 1.0.** All four sub-criteria now measured.
+
+**Tested**: 6-phrase corpus (3 concepts × 2 paraphrases). Hash-keyed retrieval
+(sha256(text)→random vec) vs tensor-keyed retrieval (real LM hiddens via
+peek_embedding). Both use cosine nearest-neighbor lookup. Accuracy = fraction
+where the NN belongs to the same concept.
+
+**Result**: C4 mechanism exercised end-to-end on the real GGUF driver. Full
+status: C1 met, C2 partial-but-tracked, C3 tested, C4 tested → 1.0.
+
 ## Final Tally
 
 | Lane | Status | Verdict |
 |------|--------|---------|
 | 01 | MET (4/7) | De-saturation success: 3 new sub-metrics spread >0.2 |
 | 02 | MET (3 facts) | KV-slot route survives hybrid conv1d risk |
-| 03 | REFUTED (0.434→0.469) | No mid-layer pooling beats final embedding by ≥0.10 |
-| 04 | MET (SSI 0.5) | Slot store + logit_bias gating; scope_acc=4/8 (handoff to 03 refuted) |
-| 05 | PARTIAL (0.875) | C1+C2+C3 measured; C4 tensor replay bank remaining |
+| 03 | REFUTED (0.434→0.469) | No mid-layer pooling beats final embedding by ≥0.10 at two surfaces |
+| 04 | MET (SSI 0.5) | Slot store + logit_bias gating; scope_acc=4/8 |
+| 05 | MET (1.0) | C1+C2+C3+C4 all measured end-to-end |
 | 06 | MET (6,596 bytes) | A0b seed-regenerable: 35.9× reduction |
 | 07 | MET (gap 1.0) | String-Jaccard head dominates; real-LM MLP saturates |
 
-**5 of 7 lanes met spec threshold. 1 lane improved (0.75→0.875). 1 lane
-refuted at two independent measurement surfaces.** All core production code
-(KVCortex, CvecDriver, CortexAgent) untouched throughout both segments.
+**6 of 7 lanes met spec threshold. 1 lane refuted at two independent
+measurement surfaces.** All core production code (KVCortex, CvecDriver,
+CortexAgent) untouched throughout both segments.
