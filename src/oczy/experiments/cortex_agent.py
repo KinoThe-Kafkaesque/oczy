@@ -353,9 +353,23 @@ class CortexAgent:
         # replaces this call and the cortex sees deeper hidden signal.
         hidden = self.driver.peek_embedding(utterance, last_token_only=False)
 
-        warm_before = self.cortex.warm_state.copy()
-        warm_now = self.cortex.observe(hidden, correction_signal=correction_signal)
-        drift = float(np.linalg.norm(warm_now - warm_before))
+        # Sequential observation mode: the ingestion pipeline observes each
+        # chunk's hidden in order during metabolize(), so perceive() must not
+        # call cortex.observe() on the full turn -- that would double-update
+        # warm_state and erase the per-chunk order dependence. We still cache
+        # the hidden and bookkeeping; the pipeline owns the cortex update.
+        skip_observe = (
+            self.ingestion_pipeline is not None
+            and self.ingestion_pipeline.config.get("observation_mode", "parallel")
+            == "sequential"
+        )
+        if skip_observe:
+            warm_now = self.cortex.warm_state
+            drift = 0.0
+        else:
+            warm_before = self.cortex.warm_state.copy()
+            warm_now = self.cortex.observe(hidden, correction_signal=correction_signal)
+            drift = float(np.linalg.norm(warm_now - warm_before))
         if self._last_hidden is not None:
             self._prev_hidden = self._last_hidden.copy()
             self._prev_correction_signal = self._last_correction_signal

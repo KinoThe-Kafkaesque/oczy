@@ -737,21 +737,17 @@ def _run_e2e_logit_bias_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
 
 
 def _run_order_shuffle_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
-    """Order-shuffle stressor: does fact order change cvec continuation quality?
+    """Order-shuffle stressor: does fact order change cvec continuation?
 
-    Logit biasing forces the exact token ("marmalade") regardless of cortex
-    state, so exact recall is not order-sensitive.  But the cvec shapes the
-    CONTINUATION after the forced token.  Hypothesis: in sequential mode,
-    target-last produces better continuation (warm_state encodes later facts
-    more strongly → higher-quality cvec) than target-first (overwritten by
-    later distractors).  In parallel mode, all positions should be equal.
+    Presents 3 facts in a SHORT turn (no filler haystack) so peek_embedding
+    is dominated by the facts.  Logit biasing forces "marmalade"; the
+    continuation text is the order-sensitive signal.  Uses text similarity
+    (not just coherence) to detect order effects.
 
-    K=3 facts (2 distractors + 1 target) in a single long turn, target at
-    3 positions.  Logit biasing forces "marmalade"; coherence of the
-    continuation is the order-sensitive signal.
+    Tests both observation_mode=parallel (cortex sees full turn once) and
+    sequential (cortex observes per-chunk, warm_state is order-dependent).
+    Hypothesis: sequential mode is more order-sensitive than parallel.
     """
-    import random
-
     probe = "What is the secret passphrase for level 7?"
     domain_expected = ["secret", "passphrase", "marmalade", "level"]
     target_fact = "The secret passphrase for level 7 is marmalade."
@@ -761,26 +757,16 @@ def _run_order_shuffle_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
     ]
     prompt = _build_prompt(probe)
 
-    def _make_multi_fact_turn(
-        facts_in_order: list[str],
-        total_length_tokens: int = 1024,
-    ) -> str:
-        random.seed(42)
-        filler_words = ["neutral"] * 200 + ["context"] * 100 + ["data"] * 100
-        random.shuffle(filler_words)
-        tokens: list[str] = []
-        while len(tokens) < total_length_tokens:
-            tokens.append(random.choice(filler_words))
-        n_facts = len(facts_in_order)
+    def _make_short_turn(facts_in_order: list[str]) -> str:
+        """Fixed template — only fact order varies, no filler confound."""
+        parts = ["Here is some information."]
         for i, fact in enumerate(facts_in_order):
-            pos = (i + 1) * len(tokens) // (n_facts + 1)
-            tokens.insert(pos, fact)
-        return " ".join(tokens)
+            prefix = "First," if i == 0 else "Next," if i == 1 else "Finally,"
+            parts.append(f"{prefix} {fact}")
+        return " ".join(parts)
 
     def _is_coherent(answer: str) -> int:
-        if len(answer) <= 5:
-            return 0
-        if not answer.lower().startswith("marmalade"):
+        if len(answer) <= 5 or not answer.lower().startswith("marmalade"):
             return 0
         if any(c in answer for c in "ÀÁÂÃÄÅÆÇÈÉÊË"):
             return 0
@@ -803,10 +789,11 @@ def _run_order_shuffle_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
     results: dict[str, Any] = {}
 
     for obs_mode in ("parallel", "sequential"):
+        mode_answers: list[str] = []
         mode_coh: list[int] = []
         for oi, ordering in enumerate(orderings):
             driver.clear_cvec()
-            turn = _make_multi_fact_turn(ordering)
+            turn = _make_short_turn(ordering)
             cfg = CortexAgentConfig(
                 cortex=KVCortexConfig(d_cortex=8, steering_mode="proj_random"),
                 articulate_scale=0.001,
@@ -817,8 +804,8 @@ def _run_order_shuffle_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
                 logit_bias_strength=20.0,
                 ingestion={
                     "chunker": "fixed-window",
-                    "chunker_window_tokens": 64,
-                    "chunker_overlap_tokens": 8,
+                    "chunker_window_tokens": 32,
+                    "chunker_overlap_tokens": 4,
                     "salience": "lexical-novelty",
                     "embedder": "same-lm",
                     "aggregator": "stats",
@@ -828,7 +815,7 @@ def _run_order_shuffle_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
             agent = CortexAgent(config=cfg, knowledge_store=None, driver=driver)
             agent.boot()
             driver.clear_cvec()
-            agent.perceive(turn)
+            agent.perceive(turn, correction_signal=1.0)
             agent.metabolize(turn)
             if not agent.should_consolidate():
                 agent.consolidate()
@@ -841,6 +828,7 @@ def _run_order_shuffle_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
             ).strip()
             dom = _score(domain_expected, answer)
             coh = _is_coherent(answer)
+            mode_answers.append(answer)
             mode_coh.append(coh)
             label = ordering_labels[oi]
             print(
@@ -851,23 +839,28 @@ def _run_order_shuffle_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
             results[f"{obs_mode}_{label}_coherent"] = float(coh)
             results[f"{obs_mode}_{label}_answer"] = answer
             driver.clear_cvec()
-        sensitivity = len(set(mode_coh)) - 1
-        results[f"{obs_mode}_order_sensitivity"] = float(sensitivity)
+        # Sensitivity = number of distinct answers across orderings.
+        # Text-level, not just coherence — coherent answers can still differ.
+        distinct_answers = len(set(mode_answers))
+        coh_sensitivity = len(set(mode_coh)) - 1
+        results[f"{obs_mode}_answer_sensitivity"] = float(distinct_answers - 1)
+        results[f"{obs_mode}_coherence_sensitivity"] = float(coh_sensitivity)
         results[f"{obs_mode}_mean_coherent"] = float(sum(mode_coh) / len(mode_coh))
         print(
-            f"  order_shuffle {obs_mode}: sensitivity={sensitivity} "
+            f"  order_shuffle {obs_mode}: answer_sensitivity={distinct_answers - 1} "
+            f"coh_sensitivity={coh_sensitivity} "
             f"mean_coh={results[f'{obs_mode}_mean_coherent']:.2f}"
         )
 
-    par_sens = results["parallel_order_sensitivity"]
-    seq_sens = results["sequential_order_sensitivity"]
+    par_sens = results["parallel_answer_sensitivity"]
+    seq_sens = results["sequential_answer_sensitivity"]
     results["sequential_more_sensitive"] = float(seq_sens > par_sens)
     results["delta_sensitivity"] = float(seq_sens - par_sens)
 
     print(
         f"Order shuffle probe:\n"
-        f"  parallel sensitivity:   {par_sens}\n"
-        f"  sequential sensitivity: {seq_sens}\n"
+        f"  parallel answer sensitivity:   {par_sens}\n"
+        f"  sequential answer sensitivity: {seq_sens}\n"
         f"  sequential more sensitive: {results['sequential_more_sensitive']}"
     )
 
@@ -1000,8 +993,8 @@ def main() -> int:
     print(f"METRIC e2e_logit_bias_delta={e2e_res['delta']:.4f}")
     print("Running order-shuffle stressor (sequential vs parallel)...")
     os_res = _run_order_shuffle_probe(driver)
-    print(f"METRIC order_shuffle_parallel_sensitivity={os_res['parallel_order_sensitivity']:.4f}")
-    print(f"METRIC order_shuffle_sequential_sensitivity={os_res['sequential_order_sensitivity']:.4f}")
+    print(f"METRIC order_shuffle_parallel_sensitivity={os_res['parallel_answer_sensitivity']:.4f}")
+    print(f"METRIC order_shuffle_sequential_sensitivity={os_res['sequential_answer_sensitivity']:.4f}")
     print(f"METRIC order_shuffle_sequential_more_sensitive={os_res['sequential_more_sensitive']:.4f}")
     print(f"METRIC order_shuffle_delta_sensitivity={os_res['delta_sensitivity']:.4f}")
     return 0

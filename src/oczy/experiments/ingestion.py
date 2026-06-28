@@ -726,10 +726,39 @@ class IngestionPipeline:
 
         markers = [m.lower() for m in self.config.get("correction_markers", self.DEFAULT_MARKERS)]
 
+        mode = self.config.get("observation_mode", "parallel")
+        # Sequential mode: observe each survived chunk's hidden in order so
+        # warm_state genuinely depends on chunk order. perceive() skips its
+        # full-turn observe in this mode, so the pipeline owns the cortex
+        # update. The drift for each chunk is the norm of
+        # (new_warm - warm_before_this_chunk), tracking the incremental
+        # warm_state rather than a single frozen snapshot.
+        seq_drifts: list[float | None] = [None] * len(survived)
+        if mode == "sequential":
+            cortex = ctx_state.get("cortex")
+            if cortex is not None and hasattr(cortex, "warm_state"):
+                for i, hidden in enumerate(embeddings):
+                    if hidden is None:
+                        continue
+                    warm_before = cortex.warm_state
+                    if not isinstance(warm_before, np.ndarray):
+                        continue
+                    warm_before = warm_before.copy()
+                    try:
+                        new_warm = cortex.observe(hidden, correction_signal=correction_signal)
+                    except Exception:
+                        continue
+                    new_warm = np.asarray(new_warm, dtype=np.float32)
+                    denom = max(float(np.linalg.norm(warm_before)), 1.0)
+                    seq_drifts[i] = float(np.linalg.norm(new_warm - warm_before)) / denom
+
         signals: list[ChunkSignal] = []
-        for chunk, hidden in zip(survived, embeddings, strict=True):
+        for idx, (chunk, hidden) in enumerate(zip(survived, embeddings, strict=True)):
             salience = salience_map[id(chunk)]
-            drift = self._compute_drift(hidden, ctx_state)
+            if mode == "sequential":
+                drift = seq_drifts[idx]
+            else:
+                drift = self._compute_drift(hidden, ctx_state)
             is_correction = (
                 correction_signal > 0.0
                 or any(m in chunk.text.lower() for m in markers)
