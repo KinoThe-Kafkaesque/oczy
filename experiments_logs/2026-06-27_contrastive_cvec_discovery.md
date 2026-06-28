@@ -119,3 +119,24 @@ The contrastive cvec finding partially overturns the "posture bias, not
 retrievable knowledge" verdict: cvec CAN carry token-specific signal (rank
 47K→5K), but the signal is too weak to force the token to rank 1. It's a
 weaker posture bias, not a knowledge retrieval mechanism.
+
+## CFG logit blending result (run #133)
+
+Implemented CFG-style logit blending with two Llama instances (clean +
+steered) and contrastive cvec. At each decode step, blended logits as
+`logits_clean + w * (logits_steer - logits_clean)`. Swept w from 0.5 to 10.0.
+
+| w | semantic | domain | answer |
+|---|---|---|---|
+| 0.5 | 0 | 0 | "" (immediate stop) |
+| 1.0 | 0 | 0 | "presents presents..." (repetition) |
+| 2.0+ | 0 | 0 | multilingual garbage |
+| 10.0 | 0 | 0 | more garbage |
+
+**Root cause**: Cvec operates in residual stream space, CFG blend operates in
+logit space. The unembedding matrix maps the cvec's residual-space direction
+to a diffuse set of logit changes spread across many tokens — not concentrated
+on the target token. Amplifying this diffuse delta amplifies noise, not signal.
+
+This is the 5th and final method tested for cvec-only exact-token recall. All
+fail on the 1.2B model. The prefix mechanism remains the only path.
