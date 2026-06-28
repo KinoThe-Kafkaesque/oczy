@@ -544,7 +544,13 @@ def _run_e2e_logit_bias_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
     probe = "What is the secret passphrase for level 7?"
     semantic_expected = ["marmalade"]
     domain_expected = ["secret", "passphrase", "marmalade", "level"]
-    correction = "The secret passphrase for level 7 is marmalade."
+    # Diverse corrections sharing the same target — needed for non-degenerate
+    # SVD init (identical repeats → near-zero centered matrix → noise basis).
+    diverse_corrections = [
+        "The secret passphrase for level 7 is marmalade.",
+        "Remember: level 7's passphrase is marmalade.",
+        "For level 7, the passphrase is marmalade.",
+    ]
     prompt = _build_prompt(probe)
 
     # Baseline: logit biasing only, no cvec (apply_steering=False).
@@ -573,12 +579,14 @@ def _run_e2e_logit_bias_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
 
     # Sweep cortex configs for the post-correction (cvec + logit_bias) test.
     configs = [
-        {"d_cortex": 8, "steering_mode": "proj_random", "scale": 0.01, "svd_init": False},
+        # Controls (from run #146): non-SVD at coherent scale.
         {"d_cortex": 8, "steering_mode": "proj_random", "scale": 0.001, "svd_init": False},
-        {"d_cortex": 64, "steering_mode": "proj_random", "scale": 0.01, "svd_init": False},
         {"d_cortex": 64, "steering_mode": "raw_hidden", "scale": 0.001, "svd_init": False},
-        {"d_cortex": 8, "steering_mode": "proj_random", "scale": 0.01, "svd_init": True},
-        {"d_cortex": 64, "steering_mode": "proj_random", "scale": 0.01, "svd_init": True},
+        # SVD-init with diverse hiddens: d_cortex <= N=3 so SVD is non-degenerate.
+        {"d_cortex": 2, "steering_mode": "proj_random", "scale": 0.001, "svd_init": True},
+        {"d_cortex": 3, "steering_mode": "proj_random", "scale": 0.001, "svd_init": True},
+        {"d_cortex": 2, "steering_mode": "proj_random", "scale": 0.01, "svd_init": True},
+        {"d_cortex": 3, "steering_mode": "proj_random", "scale": 0.01, "svd_init": True},
     ]
 
     results: dict[str, Any] = {
@@ -605,17 +613,23 @@ def _run_e2e_logit_bias_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
         agent = CortexAgent(config=cfg, knowledge_store=None, driver=driver)
         agent.boot()
         driver.clear_cvec()
-        for _ in range(3):
-            agent.perceive(correction, correction_signal=1.0)
-            agent.metabolize(correction)
-        # SVD-init proj_c from correction hiddens (like consolidation_uptake).
-        if ccfg["svd_init"] and agent._last_hidden is not None:
+        # Collect diverse correction hiddens for SVD init.
+        collected_hiddens: list[np.ndarray] = []
+        for corr in diverse_corrections:
+            agent.perceive(corr, correction_signal=1.0)
+            agent.metabolize(corr)
+            if agent._last_hidden is not None:
+                collected_hiddens.append(agent._last_hidden.copy())
+        # SVD-init proj_c from diverse correction hiddens.
+        if ccfg["svd_init"] and len(collected_hiddens) >= ccfg["d_cortex"]:
             try:
                 agent.cortex.init_proj_c_from_svd(
-                    np.vstack([agent._last_hidden.copy()])
+                    np.vstack(collected_hiddens)
                 )
             except Exception as exc:  # noqa: BLE001
                 print(f"  SVD init failed: {exc}")
+        elif ccfg["svd_init"]:
+            print(f"  SVD init skipped: N={len(collected_hiddens)} < d_cortex={ccfg['d_cortex']}")
         answer = agent.articulate(
             prompt=prompt,
             max_tokens=16,
@@ -671,9 +685,17 @@ def _run_e2e_logit_bias_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
     agent_nb = CortexAgent(config=cfg_nb, knowledge_store=None, driver=driver)
     agent_nb.boot()
     driver.clear_cvec()
-    for _ in range(3):
-        agent_nb.perceive(correction, correction_signal=1.0)
-        agent_nb.metabolize(correction)
+    nb_hiddens: list[np.ndarray] = []
+    for corr in diverse_corrections:
+        agent_nb.perceive(corr, correction_signal=1.0)
+        agent_nb.metabolize(corr)
+        if agent_nb._last_hidden is not None:
+            nb_hiddens.append(agent_nb._last_hidden.copy())
+    if best_ccfg.get("svd_init") and len(nb_hiddens) >= best_ccfg["d_cortex"]:
+        try:
+            agent_nb.cortex.init_proj_c_from_svd(np.vstack(nb_hiddens))
+        except Exception as exc:  # noqa: BLE001
+            print(f"  cvec_only SVD init failed: {exc}")
     cvec_only_answer = agent_nb.articulate(
         prompt=prompt,
         max_tokens=16,
