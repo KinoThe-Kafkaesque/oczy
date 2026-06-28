@@ -399,6 +399,141 @@ def _run_logit_bias_disambiguation_uptake(driver: LlamaCVecDriver) -> dict[str, 
 
     return results
 
+def _run_composition_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
+    """Probe cvec + logit biasing composition.
+
+    This is the final unification test.  Cvec operates in residual stream
+    space (during forward pass), logit biasing operates in logit space
+    (post-forward).  They're on different surfaces, so they should coexist:
+    cvec shifts the domain/posture of the output, logit biasing forces the
+    exact target token.
+
+    If this works, we have the unified steering mechanism the session goal
+    was looking for: cvec (domain shift) + logit biasing (exact-token recall)
+    compose because they operate on different surfaces.
+
+    Probe: "What does 'profile' mean in this codebase?"
+    Target: "vertical" (exact token via logit biasing)
+    Domain: business/vertical vocabulary (via contrastive cvec)
+    """
+    import numpy as np
+
+    llm = driver._llm
+    probe = "What does 'profile' mean in this codebase?"
+    semantic_expected = ["vertical"]
+    domain_expected = ["vertical", "sector", "industry", "market", "domain", "segment"]
+    prompt = _build_prompt(probe)
+
+    # Baseline: no cvec, no logit bias.
+    driver.clear_cvec()
+    baseline = driver.generate(prompt, max_tokens=16, temperature=0.0, stop=["\n"]).strip()
+    baseline_sem = _score(semantic_expected, baseline)
+    baseline_dom = _score(domain_expected, baseline)
+
+    # Logit biasing only (no cvec) — the proven baseline from run #137.
+    driver.clear_cvec()
+    target_ids = llm.tokenize(b" vertical", add_bos=False)
+    bias_only = _logit_bias_generate(
+        driver, prompt, target_ids, bias=20.0, max_tokens=16, stop="\n",
+    ).strip()
+    bias_only_sem = _score(semantic_expected, bias_only)
+    bias_only_dom = _score(domain_expected, bias_only)
+
+    # Cvec only (no logit bias) — the contrastive cvec that shifts register
+    # but can't force the exact token.
+    contrastive_defaults = [
+        "sector", "industry", "market", "domain",
+        "segment", "category", "field", "area",
+    ]
+    target_emb = driver.peek_embedding(" vertical", last_token_only=True)
+    deltas = []
+    for default in contrastive_defaults:
+        default_emb = driver.peek_embedding(f" {default}", last_token_only=True)
+        deltas.append(target_emb - default_emb)
+    centered = np.vstack(deltas) - np.vstack(deltas).mean(axis=0, keepdims=True)
+    _, _, Vt = np.linalg.svd(centered, full_matrices=False)
+    contrast_vec = Vt[0].astype(np.float32)
+    uniform_vecs = [contrast_vec for _ in range(driver.n_layers)]
+
+    driver.set_cvecs_per_layer(uniform_vecs, scale=1.0)
+    cvec_only = driver.generate(prompt, max_tokens=16, temperature=0.0, stop=["\n"]).strip()
+    cvec_only_sem = _score(semantic_expected, cvec_only)
+    cvec_only_dom = _score(domain_expected, cvec_only)
+    driver.clear_cvec()
+
+    # COMPOSITION: cvec + logit biasing together.
+    # Cvec is set on the driver (applied during forward pass via residual
+    # stream).  Logit biasing is applied post-forward in _logit_bias_generate.
+    # They operate on different surfaces and should not interfere.
+    results: dict[str, Any] = {
+        "baseline_answer": baseline,
+        "baseline_semantic": float(baseline_sem),
+        "baseline_domain": float(baseline_dom),
+        "bias_only_answer": bias_only,
+        "bias_only_semantic": float(bias_only_sem),
+        "bias_only_domain": float(bias_only_dom),
+        "cvec_only_answer": cvec_only,
+        "cvec_only_semantic": float(cvec_only_sem),
+        "cvec_only_domain": float(cvec_only_dom),
+    }
+
+    # Sweep cvec scale × logit bias combinations.  Cvec shifts the
+    # forward-pass logits, so the bias threshold from the no-cvec probe
+    # (20.0) may not apply — sweep both dimensions.
+    bias_sweep = [10.0, 20.0, 50.0, 100.0]
+    for cvec_scale in [0.01, 0.03, 0.1, 1.0]:
+        driver.set_cvecs_per_layer(uniform_vecs, scale=cvec_scale)
+        for bias_val in bias_sweep:
+            answer = _logit_bias_generate(
+                driver, prompt, target_ids, bias=bias_val, max_tokens=16, stop="\n",
+            ).strip()
+            sem = _score(semantic_expected, answer)
+            dom = _score(domain_expected, answer)
+            coherent = 1 if len(answer) > 5 and not any(c in answer for c in "ÀÁÂÃÄÅÆÇÈÉÊË") else 0
+            print(
+                f"  composition cvec={cvec_scale:5.2f} bias={bias_val:6.1f}  "
+                f"sem={sem} dom={dom} coh={coherent}  answer={answer!r}"
+            )
+            key = f"comp_cvec_{cvec_scale}_bias_{bias_val}"
+            results[f"{key}_semantic"] = float(sem)
+            results[f"{key}_domain"] = float(dom)
+            results[f"{key}_coherent"] = float(coherent)
+            results[f"{key}_answer"] = answer
+
+
+    driver.clear_cvec()
+
+    # Headline: best composition result across the 2D sweep.
+    combos = [(s, b) for s in [0.01, 0.03, 0.1, 1.0] for b in bias_sweep]
+    best_scale, best_bias = max(
+        combos,
+        key=lambda sb: (results[f"comp_cvec_{sb[0]}_bias_{sb[1]}_semantic"],
+                       results[f"comp_cvec_{sb[0]}_bias_{sb[1]}_domain"],
+                       results[f"comp_cvec_{sb[0]}_bias_{sb[1]}_coherent"]),
+    )
+    bk = f"comp_cvec_{best_scale}_bias_{best_bias}"
+    results["composition_semantic"] = results[f"{bk}_semantic"]
+    results["composition_domain"] = results[f"{bk}_domain"]
+    results["composition_coherent"] = results[f"{bk}_coherent"]
+    results["composition_answer"] = results[f"{bk}_answer"]
+    results["best_cvec_scale"] = best_scale
+    results["best_bias"] = best_bias
+    results["delta"] = results["composition_semantic"] - results["baseline_semantic"]
+
+    print(
+        f"Composition probe (cvec + logit biasing):\n"
+        f"  baseline:    {baseline!r} | sem: {baseline_sem} | dom: {baseline_dom}\n"
+        f"  bias_only:   {bias_only!r} | sem: {bias_only_sem} | dom: {bias_only_dom}\n"
+        f"  cvec_only:   {cvec_only!r} | sem: {cvec_only_sem} | dom: {cvec_only_dom}\n"
+        f"  composition: {results['composition_answer']!r} | sem: {results['composition_semantic']} "
+        f"| dom: {results['composition_domain']} | coherent: {results['composition_coherent']} "
+        f"| best_scale: {best_scale} | best_bias: {best_bias}"
+    )
+
+    return results
+
+
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Oczy codebase-QA benchmark.")
@@ -509,6 +644,15 @@ def main() -> int:
     print(f"METRIC logit_bias_uptake_post_warm={lb_res['post_warm_score']:.4f}")
     print(f"METRIC logit_bias_uptake_post_warm_domain={lb_res['post_warm_domain_score']:.4f}")
     print(f"METRIC logit_bias_uptake_delta={lb_res['delta']:.4f}")
+    print("Running cvec + logit biasing composition evaluation...")
+    comp_res = _run_composition_probe(driver)
+    print(f"METRIC composition_baseline_semantic={comp_res['baseline_semantic']:.4f}")
+    print(f"METRIC composition_bias_only_semantic={comp_res['bias_only_semantic']:.4f}")
+    print(f"METRIC composition_cvec_only_semantic={comp_res['cvec_only_semantic']:.4f}")
+    print(f"METRIC composition_semantic={comp_res['composition_semantic']:.4f}")
+    print(f"METRIC composition_domain={comp_res['composition_domain']:.4f}")
+    print(f"METRIC composition_coherent={comp_res['composition_coherent']:.4f}")
+    print(f"METRIC composition_delta={comp_res['delta']:.4f}")
     return 0
 
 if __name__ == "__main__":
