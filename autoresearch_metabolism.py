@@ -31,7 +31,11 @@ import numpy as np
 from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
 
 
-K_CYCLES = 20
+K_CYCLES = 40  # segment 7: longer-horizon probe (was 20 in segments 1-6)
+                 # random-walk null at K=40 is 1/sqrt(40) = 0.158 vs 0.22 at K=20,
+                 # so the test is more rigorous AND tests whether segment 6's
+                 # marginal-above-target (+1.3%) at production scale was a
+                 # startup-transient artifact or sustained compounding.
 N_CORRECTION_HIDDENS = 16  # for SVD-init; must be >= d_cortex
 CONSOLIDATE_STRENGTH = 10.0  # hit the max_consolidation_strength cap
 
