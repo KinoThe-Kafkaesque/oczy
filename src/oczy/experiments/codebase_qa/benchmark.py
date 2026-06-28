@@ -535,17 +535,11 @@ def _run_composition_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
 def _run_e2e_logit_bias_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
     """End-to-end test of logit biasing through CortexAgent on the real model.
 
-    The mock tests (test_logit_bias_steering_surface) prove the routing is
-    correct.  This probe verifies the actual mechanism works when called
-    through the full agent loop: perceive → metabolize → articulate with
-    use_logit_bias=True.  It tests cvec from cortex (trained on correction
-    turns) + logit biasing from driver, composed through the agent.
-
-    Probe: "What is the secret passphrase for level 7?"
-    Target: "marmalade" (3 BPE subwords, exact-token recall via logit bias)
-    The agent is corrected toward this answer, building a cvec.  Then
-    articulate() with use_logit_bias=True should force the exact token
-    while the cvec provides domain context.
+    Sweeps cortex configurations to find which produces coherent continuation
+    when composed with logit biasing.  The 8D proj_random cortex (run #144)
+    produced garbage continuation ("marmaladeiinininin...").  This sweep tests
+    larger d_cortex and different steering_modes to see if the cvec can
+    produce useful domain shift without degrading coherence.
     """
     probe = "What is the secret passphrase for level 7?"
     semantic_expected = ["marmalade"]
@@ -553,95 +547,150 @@ def _run_e2e_logit_bias_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
     correction = "The secret passphrase for level 7 is marmalade."
     prompt = _build_prompt(probe)
 
-    # Build agent with logit biasing enabled.
-    cfg = CortexAgentConfig(
+    # Baseline: logit biasing only, no cvec (apply_steering=False).
+    # This is config-independent — same for all cortex configs.
+    driver.clear_cvec()
+    cfg_base = CortexAgentConfig(
         cortex=KVCortexConfig(d_cortex=8, steering_mode="proj_random"),
         articulate_scale=0.01,
-        auto_consolidate=True,
         use_logit_bias=True,
         logit_bias_strength=20.0,
         use_hippocampus_prefix=False,
         use_ingestion_pipeline=False,
     )
-    agent = CortexAgent(config=cfg, knowledge_store=None, driver=driver)
-    agent.boot()
-
-    # Baseline: no corrections, no cvec, just logit biasing on a fresh agent.
+    agent_base = CortexAgent(config=cfg_base, knowledge_store=None, driver=driver)
+    agent_base.boot()
     driver.clear_cvec()
-    pre_answer = agent.articulate(
+    pre_answer = agent_base.articulate(
         prompt=prompt,
         max_tokens=16,
         temperature=0.0,
-        apply_steering=True,
+        apply_steering=False,
         prefix_targets=["marmalade"],
     ).strip()
     pre_score = _score(semantic_expected, pre_answer)
     pre_domain = _score(domain_expected, pre_answer)
 
-    # Perceive correction turns to build cvec (domain shift).
-    for _ in range(3):
-        agent.perceive(correction, correction_signal=1.0)
-        agent.metabolize(correction)
+    # Sweep cortex configs for the post-correction (cvec + logit_bias) test.
+    configs = [
+        {"d_cortex": 8, "steering_mode": "proj_random", "scale": 0.01, "svd_init": False},
+        {"d_cortex": 8, "steering_mode": "proj_random", "scale": 0.001, "svd_init": False},
+        {"d_cortex": 64, "steering_mode": "proj_random", "scale": 0.01, "svd_init": False},
+        {"d_cortex": 64, "steering_mode": "raw_hidden", "scale": 0.001, "svd_init": False},
+        {"d_cortex": 8, "steering_mode": "proj_random", "scale": 0.01, "svd_init": True},
+        {"d_cortex": 64, "steering_mode": "proj_random", "scale": 0.01, "svd_init": True},
+    ]
 
-    # Post-correction: cvec from cortex + logit biasing from driver.
-    post_answer = agent.articulate(
-        prompt=prompt,
-        max_tokens=16,
-        temperature=0.0,
-        apply_steering=True,
-        prefix_targets=["marmalade"],
-    ).strip()
-    post_score = _score(semantic_expected, post_answer)
-    post_domain = _score(domain_expected, post_answer)
-    output_shift = 1 if post_answer.lower() != pre_answer.lower() else 0
+    results: dict[str, Any] = {
+        "pre_score": float(pre_score),
+        "pre_domain": float(pre_domain),
+        "pre_answer": pre_answer,
+    }
 
-    # Also test without logit biasing (cvec only) for comparison.
-    # Clear cvec from the logit_bias agent before running the cvec-only
-    # agent — both share one driver instance, so cvec state persists.
+    import numpy as np
+
+    for i, ccfg in enumerate(configs):
+        driver.clear_cvec()
+        cfg = CortexAgentConfig(
+            cortex=KVCortexConfig(
+                d_cortex=ccfg["d_cortex"],
+                steering_mode=ccfg["steering_mode"],
+            ),
+            articulate_scale=ccfg["scale"],
+            use_logit_bias=True,
+            logit_bias_strength=20.0,
+            use_hippocampus_prefix=False,
+            use_ingestion_pipeline=False,
+        )
+        agent = CortexAgent(config=cfg, knowledge_store=None, driver=driver)
+        agent.boot()
+        driver.clear_cvec()
+        for _ in range(3):
+            agent.perceive(correction, correction_signal=1.0)
+            agent.metabolize(correction)
+        # SVD-init proj_c from correction hiddens (like consolidation_uptake).
+        if ccfg["svd_init"] and agent._last_hidden is not None:
+            try:
+                agent.cortex.init_proj_c_from_svd(
+                    np.vstack([agent._last_hidden.copy()])
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"  SVD init failed: {exc}")
+        answer = agent.articulate(
+            prompt=prompt,
+            max_tokens=16,
+            temperature=0.0,
+            apply_steering=True,
+            prefix_targets=["marmalade"],
+        ).strip()
+        sem = _score(semantic_expected, answer)
+        dom = _score(domain_expected, answer)
+        # Coherent = has real words after the forced token, no repetition/garbage.
+        coherent = 1 if (len(answer) > 5 and sem == 1
+                         and not any(c in answer for c in "ÀÁÂÃÄÅÆÇÈÉÊË")
+                         and answer.count("in") < 4) else 0
+        svd = "_svd" if ccfg["svd_init"] else ""
+        label = f"d{ccfg['d_cortex']}_{ccfg['steering_mode']}_s{ccfg['scale']}{svd}"
+        print(
+            f"  e2e config {label:40s}  sem={sem} dom={dom} coh={coherent}  "
+            f"answer={answer!r}"
+        )
+        results[f"config_{i}_label"] = label
+        results[f"config_{i}_semantic"] = float(sem)
+        results[f"config_{i}_domain"] = float(dom)
+        results[f"config_{i}_coherent"] = float(coherent)
+        results[f"config_{i}_answer"] = answer
+        driver.clear_cvec()
+
+    # Headline: best config (highest semantic + coherent).
+    best_i = max(
+        range(len(configs)),
+        key=lambda i: (results[f"config_{i}_semantic"],
+                       results[f"config_{i}_coherent"],
+                       results[f"config_{i}_domain"]),
+    )
+    results["post_score"] = results[f"config_{best_i}_semantic"]
+    results["post_domain"] = results[f"config_{best_i}_domain"]
+    results["post_answer"] = results[f"config_{best_i}_answer"]
+    results["best_config"] = results[f"config_{best_i}_label"]
+    results["delta"] = results["post_score"] - results["pre_score"]
+
+    # Cvec-only (no logit bias) with the best config, for comparison.
+    best_ccfg = configs[best_i]
     driver.clear_cvec()
-    cfg_no_bias = CortexAgentConfig(
-        cortex=KVCortexConfig(d_cortex=8, steering_mode="proj_random"),
-        articulate_scale=0.01,
-        auto_consolidate=True,
+    cfg_nb = CortexAgentConfig(
+        cortex=KVCortexConfig(
+            d_cortex=best_ccfg["d_cortex"],
+            steering_mode=best_ccfg["steering_mode"],
+        ),
+        articulate_scale=best_ccfg["scale"],
         use_logit_bias=False,
         use_hippocampus_prefix=False,
         use_ingestion_pipeline=False,
     )
-    agent_no_bias = CortexAgent(config=cfg_no_bias, knowledge_store=None, driver=driver)
-    agent_no_bias.boot()
+    agent_nb = CortexAgent(config=cfg_nb, knowledge_store=None, driver=driver)
+    agent_nb.boot()
     driver.clear_cvec()
     for _ in range(3):
-        agent_no_bias.perceive(correction, correction_signal=1.0)
-        agent_no_bias.metabolize(correction)
-    cvec_only_answer = agent_no_bias.articulate(
+        agent_nb.perceive(correction, correction_signal=1.0)
+        agent_nb.metabolize(correction)
+    cvec_only_answer = agent_nb.articulate(
         prompt=prompt,
         max_tokens=16,
         temperature=0.0,
         apply_steering=True,
     ).strip()
-    cvec_only_score = _score(semantic_expected, cvec_only_answer)
-    cvec_only_domain = _score(domain_expected, cvec_only_answer)
+    results["cvec_only_score"] = float(_score(semantic_expected, cvec_only_answer))
+    results["cvec_only_domain"] = float(_score(domain_expected, cvec_only_answer))
+    results["cvec_only_answer"] = cvec_only_answer
     driver.clear_cvec()
-
-    results = {
-        "pre_score": float(pre_score),
-        "pre_domain": float(pre_domain),
-        "pre_answer": pre_answer,
-        "post_score": float(post_score),
-        "post_domain": float(post_domain),
-        "post_answer": post_answer,
-        "output_shift": float(output_shift),
-        "delta": float(post_score - pre_score),
-        "cvec_only_score": float(cvec_only_score),
-        "cvec_only_domain": float(cvec_only_domain),
-        "cvec_only_answer": cvec_only_answer,
-    }
 
     print(
         f"E2E logit bias probe (through CortexAgent):\n"
         f"  pre (logit_bias, no cvec):  {pre_answer!r} | sem: {pre_score} | dom: {pre_domain}\n"
-        f"  post (logit_bias + cvec):    {post_answer!r} | sem: {post_score} | dom: {post_domain} | shift: {output_shift}\n"
-        f"  cvec_only (no logit_bias):   {cvec_only_answer!r} | sem: {cvec_only_score} | dom: {cvec_only_domain}"
+        f"  best config: {results['best_config']}\n"
+        f"  post (logit_bias + cvec):    {results['post_answer']!r} | sem: {results['post_score']} | dom: {results['post_domain']}\n"
+        f"  cvec_only (no logit_bias):   {cvec_only_answer!r} | sem: {results['cvec_only_score']} | dom: {results['cvec_only_domain']}"
     )
 
     return results
