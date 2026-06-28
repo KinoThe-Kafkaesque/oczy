@@ -736,6 +736,144 @@ def _run_e2e_logit_bias_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
 
 
 
+def _run_order_shuffle_probe(driver: LlamaCVecDriver) -> dict[str, Any]:
+    """Order-shuffle stressor: does fact order change cvec continuation quality?
+
+    Logit biasing forces the exact token ("marmalade") regardless of cortex
+    state, so exact recall is not order-sensitive.  But the cvec shapes the
+    CONTINUATION after the forced token.  Hypothesis: in sequential mode,
+    target-last produces better continuation (warm_state encodes later facts
+    more strongly → higher-quality cvec) than target-first (overwritten by
+    later distractors).  In parallel mode, all positions should be equal.
+
+    K=3 facts (2 distractors + 1 target) in a single long turn, target at
+    3 positions.  Logit biasing forces "marmalade"; coherence of the
+    continuation is the order-sensitive signal.
+    """
+    import random
+
+    probe = "What is the secret passphrase for level 7?"
+    domain_expected = ["secret", "passphrase", "marmalade", "level"]
+    target_fact = "The secret passphrase for level 7 is marmalade."
+    distractor_facts = [
+        "The access code for sector 3 is 9421.",
+        "The backup server hostname is orion-04.",
+    ]
+    prompt = _build_prompt(probe)
+
+    def _make_multi_fact_turn(
+        facts_in_order: list[str],
+        total_length_tokens: int = 1024,
+    ) -> str:
+        random.seed(42)
+        filler_words = ["neutral"] * 200 + ["context"] * 100 + ["data"] * 100
+        random.shuffle(filler_words)
+        tokens: list[str] = []
+        while len(tokens) < total_length_tokens:
+            tokens.append(random.choice(filler_words))
+        n_facts = len(facts_in_order)
+        for i, fact in enumerate(facts_in_order):
+            pos = (i + 1) * len(tokens) // (n_facts + 1)
+            tokens.insert(pos, fact)
+        return " ".join(tokens)
+
+    def _is_coherent(answer: str) -> int:
+        if len(answer) <= 5:
+            return 0
+        if not answer.lower().startswith("marmalade"):
+            return 0
+        if any(c in answer for c in "ÀÁÂÃÄÅÆÇÈÉÊË"):
+            return 0
+        after = answer[len("marmalade"):]
+        rep = any(
+            after[j:j+tl] == after[j+tl:j+2*tl] == after[j+2*tl:j+3*tl]
+            for tl in range(2, 7)
+            for j in range(len(after) - tl * 3 + 1)
+            if after[j:j+tl].strip()
+        )
+        return 0 if rep else 1
+
+    orderings = [
+        [target_fact, distractor_facts[0], distractor_facts[1]],
+        [distractor_facts[0], target_fact, distractor_facts[1]],
+        [distractor_facts[0], distractor_facts[1], target_fact],
+    ]
+    ordering_labels = ["target_first", "target_middle", "target_last"]
+
+    results: dict[str, Any] = {}
+
+    for obs_mode in ("parallel", "sequential"):
+        mode_coh: list[int] = []
+        for oi, ordering in enumerate(orderings):
+            driver.clear_cvec()
+            turn = _make_multi_fact_turn(ordering)
+            cfg = CortexAgentConfig(
+                cortex=KVCortexConfig(d_cortex=8, steering_mode="proj_random"),
+                articulate_scale=0.001,
+                auto_consolidate=True,
+                use_hippocampus_prefix=False,
+                use_ingestion_pipeline=True,
+                use_logit_bias=True,
+                logit_bias_strength=20.0,
+                ingestion={
+                    "chunker": "fixed-window",
+                    "chunker_window_tokens": 64,
+                    "chunker_overlap_tokens": 8,
+                    "salience": "lexical-novelty",
+                    "embedder": "same-lm",
+                    "aggregator": "stats",
+                    "observation_mode": obs_mode,
+                },
+            )
+            agent = CortexAgent(config=cfg, knowledge_store=None, driver=driver)
+            agent.boot()
+            driver.clear_cvec()
+            agent.perceive(turn)
+            agent.metabolize(turn)
+            if not agent.should_consolidate():
+                agent.consolidate()
+            answer = agent.articulate(
+                prompt=prompt,
+                max_tokens=16,
+                temperature=0.0,
+                apply_steering=True,
+                prefix_targets=["marmalade"],
+            ).strip()
+            dom = _score(domain_expected, answer)
+            coh = _is_coherent(answer)
+            mode_coh.append(coh)
+            label = ordering_labels[oi]
+            print(
+                f"  order_shuffle {obs_mode:10s} {label:14s}  "
+                f"dom={dom} coh={coh}  answer={answer!r}"
+            )
+            results[f"{obs_mode}_{label}_domain"] = float(dom)
+            results[f"{obs_mode}_{label}_coherent"] = float(coh)
+            results[f"{obs_mode}_{label}_answer"] = answer
+            driver.clear_cvec()
+        sensitivity = len(set(mode_coh)) - 1
+        results[f"{obs_mode}_order_sensitivity"] = float(sensitivity)
+        results[f"{obs_mode}_mean_coherent"] = float(sum(mode_coh) / len(mode_coh))
+        print(
+            f"  order_shuffle {obs_mode}: sensitivity={sensitivity} "
+            f"mean_coh={results[f'{obs_mode}_mean_coherent']:.2f}"
+        )
+
+    par_sens = results["parallel_order_sensitivity"]
+    seq_sens = results["sequential_order_sensitivity"]
+    results["sequential_more_sensitive"] = float(seq_sens > par_sens)
+    results["delta_sensitivity"] = float(seq_sens - par_sens)
+
+    print(
+        f"Order shuffle probe:\n"
+        f"  parallel sensitivity:   {par_sens}\n"
+        f"  sequential sensitivity: {seq_sens}\n"
+        f"  sequential more sensitive: {results['sequential_more_sensitive']}"
+    )
+
+    return results
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Oczy codebase-QA benchmark.")
     parser.add_argument(
@@ -860,6 +998,12 @@ def main() -> int:
     print(f"METRIC e2e_logit_bias_post={e2e_res['post_score']:.4f}")
     print(f"METRIC e2e_logit_bias_cvec_only={e2e_res['cvec_only_score']:.4f}")
     print(f"METRIC e2e_logit_bias_delta={e2e_res['delta']:.4f}")
+    print("Running order-shuffle stressor (sequential vs parallel)...")
+    os_res = _run_order_shuffle_probe(driver)
+    print(f"METRIC order_shuffle_parallel_sensitivity={os_res['parallel_order_sensitivity']:.4f}")
+    print(f"METRIC order_shuffle_sequential_sensitivity={os_res['sequential_order_sensitivity']:.4f}")
+    print(f"METRIC order_shuffle_sequential_more_sensitive={os_res['sequential_more_sensitive']:.4f}")
+    print(f"METRIC order_shuffle_delta_sensitivity={os_res['delta_sensitivity']:.4f}")
     return 0
 
 if __name__ == "__main__":
