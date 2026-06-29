@@ -21,6 +21,16 @@ import numpy as np
 
 _PROBE = "'Profile' here means business _______."
 _CORRECTION = "No, 'profile' here means business vertical, not user profile."
+_DIVERSE_CORRECTIONS: tuple[str, ...] = (
+    _CORRECTION,
+    "Remember: in this context, 'profile' refers to a business vertical, not a user profile.",
+    "For this task, 'profile' should be understood as business vertical, not personal profile.",
+    "The intended meaning of 'profile' here is business vertical, not user profile.",
+    "Clarification: 'profile' in this scenario denotes a business vertical, not a social profile.",
+    "Update your understanding: here, 'profile' indicates a business vertical, not a user profile.",
+    "Use the term 'profile' here as a synonym for business vertical, not personal profile.",
+    "When you see 'profile' in this request, interpret it as business vertical.",
+)
 _DOMAIN_WORDS = ["commercial", "economic", "business", "strategy", "market", "vertical"]
 
 
@@ -67,7 +77,7 @@ def _build_real_agent() -> Any:
             n_layers=16,
             steering_mode="proj_random",
         ),
-        articulate_scale=0.03,
+        articulate_scale=0.01,
         auto_consolidate=False,
     )
     agent = CortexAgent(config=cfg, driver=driver)
@@ -100,7 +110,7 @@ def _build_mock_agent() -> Any:
             n_layers=2,
             steering_mode="proj_random",
         ),
-        articulate_scale=0.03,
+        articulate_scale=0.01,
         auto_consolidate=False,
     )
     agent = CortexAgent(config=cfg, driver=driver)
@@ -109,30 +119,42 @@ def _build_mock_agent() -> Any:
 
 
 # ---------------------------------------------------------------------------
+# SVD warm-up
+# ---------------------------------------------------------------------------
+
+
+def _svd_warmup(agent: Any, phrases: list[str]) -> None:
+    """Collect hidden states from diverse correction phrases and SVD-init proj_c.
+
+    Perceive-only (no consolidate) so cold_state stays near zero while the
+    projector learns a correction-aligned basis from diverse semantics.
+    """
+    hiddens: list[np.ndarray] = []
+    for phrase in phrases:
+        agent.perceive(phrase, correction_signal=1.0)
+        hidden = agent._last_hidden
+        if hidden is not None:
+            hiddens.append(hidden.copy())
+    d_cortex = agent.cortex.config.d_cortex
+    if len(hiddens) >= d_cortex:
+        try:
+            agent.cortex.init_proj_c_from_svd(np.vstack(hiddens))
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Core loop
 # ---------------------------------------------------------------------------
 
 
 def _compounding_loop(agent: Any, correction: str, k: int) -> dict[str, Any]:
-    """Run K corrections, consolidating after each, and record trajectories."""
+    """Run K identical corrections, consolidating after each, and record trajectories."""
     cold_states: list[np.ndarray] = [agent.cortex.cold_state.copy()]
     cold_drifts: list[float] = []
-    hiddens: list[np.ndarray] = []
 
-    d_cortex = agent.cortex.config.d_cortex
-    did_svd = False
     for _i in range(k):
         agent.turn(correction, correction_signal=1.0, max_tokens=4, temperature=0.0)
-        hidden = agent._last_hidden
-        if hidden is not None:
-            hiddens.append(hidden.copy())
-        # SVD-init proj_c once we have enough diverse correction hiddens.
-        if not did_svd and len(hiddens) >= d_cortex:
-            try:
-                agent.cortex.init_proj_c_from_svd(np.vstack(hiddens[:d_cortex]))
-            except Exception:
-                pass
-            did_svd = True
         summary = agent.consolidate(strength=agent.config.cortex.max_consolidation_strength)
         cold_drifts.append(summary.get("cold_drift", 0.0))
         cold_states.append(agent.cortex.cold_state.copy())
@@ -157,6 +179,33 @@ def _domain_probe(agent: Any) -> float:
     return _domain_uptake(answer)
 
 
+def _logit_domain_shift(agent: Any) -> float:
+    """Mean next-token logit of domain word token ids at the probe blank.
+
+    Reads the underlying Llama model logits directly. The shift is read as
+    the mean logit over the first token id of each domain word.
+    """
+    from numpy import ctypeslib
+
+    llm = agent.driver._llm
+    n_vocab = llm.n_vocab()
+    text_bytes = _PROBE.encode("utf-8")
+    ids = llm.tokenize(text_bytes, add_bos=True)
+    llm.eval(ids)
+    raw = llm._ctx.get_logits()
+    logits = ctypeslib.as_array(raw, shape=(len(ids) * n_vocab,))
+    last = logits[(len(ids) - 1) * n_vocab : len(ids) * n_vocab].copy()
+
+    token_ids: list[int] = []
+    for word in _DOMAIN_WORDS:
+        word_ids = llm.tokenize(word.encode("utf-8"), add_bos=False)
+        if word_ids:
+            token_ids.append(int(word_ids[0]))
+    if not token_ids:
+        return 0.0
+    return float(np.mean(last[token_ids]))
+
+
 # ---------------------------------------------------------------------------
 # Main entrypoints
 # ---------------------------------------------------------------------------
@@ -164,17 +213,22 @@ def _domain_probe(agent: Any) -> float:
 
 def _run_real_driver(k: int = 20) -> dict[str, float] | None:
     agent = _build_real_agent()
+    _svd_warmup(agent, list(_DIVERSE_CORRECTIONS))
     comp = _compounding_loop(agent, _CORRECTION, k)
+    drift_logits = _logit_domain_shift(agent)
     drift_uptake = _domain_probe(agent)
 
     zero_agent = _build_real_agent()
+    zero_logits = _logit_domain_shift(zero_agent)
     zero_uptake = _domain_probe(zero_agent)
 
     return {
-        "metabolism_drift_delta": drift_uptake - zero_uptake,
+        "metabolism_drift_delta": drift_logits - zero_logits,
         "compounding_index": comp["compounding_index"],
         "final_cold_norm": comp["cold_norms"][-1],
         "mean_cold_drift": float(np.mean(comp["cold_drifts"])) if comp["cold_drifts"] else 0.0,
+        "zero_baseline_logit": zero_logits,
+        "drift_logit": drift_logits,
         "zero_baseline_uptake": zero_uptake,
         "drift_uptake": drift_uptake,
     }
@@ -182,6 +236,7 @@ def _run_real_driver(k: int = 20) -> dict[str, float] | None:
 
 def _run_mock_driver(k: int = 4) -> dict[str, float]:
     agent = _build_mock_agent()
+    _svd_warmup(agent, list(_DIVERSE_CORRECTIONS))
     comp = _compounding_loop(agent, _CORRECTION, k)
     drift_uptake = _domain_probe(agent)
 
