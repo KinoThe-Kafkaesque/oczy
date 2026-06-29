@@ -187,3 +187,11 @@ required margin. The H1 path is genuinely refuted on LFM2.5-1.2B-Instruct.
 The spec's H2 path (Hebbian-trained proj_hidden alignment) remains untested
 but requires modifying KVCortex train_step dynamics (off-limits under current
 scope contract).
+
+## Note (2026-06-28 session extension)
+
+The last-token pooling implementation was re-implemented and **kept** in the
+final lane_03.py. The improvement (0.434→0.469, +0.035) is real and preserved,
+even though it falls short of the spec's +0.10 threshold. The lane metric
+now reflects the best measurement surface (last-token/max-pool at mid-layers
+via HF LFM2.5) rather than the GGUF-only baseline.
