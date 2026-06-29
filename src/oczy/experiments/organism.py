@@ -12,6 +12,8 @@ import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 if TYPE_CHECKING:
     from oczy.experiments.cortex_agent import CortexAgent
 
@@ -20,6 +22,11 @@ from identity_hypernetwork import IdentityHypernetwork
 from neural_hippocampus import NeuralHippocampus
 from oczy.common import extract_expected_from_correction, tokenize
 from oczy.experiments.profiler import AgentProfiler
+from oczy.experiments.scope_selectivity_stressor import (
+    _slot_lookup,
+    _slot_retrieve,
+    _slot_write,
+)
 from plastic_cortex import PlasticCortex
 from skill_immune_cortex import SkillImmuneCortex
 from world_model_critic import WorldModelCritic
@@ -33,6 +40,21 @@ try:
     from plastic_cortex.lm_cortex import LMPlasticCortex
 except ImportError:
     LMPlasticCortex = None
+
+
+def _update_slot_label(slot_keys, slot_labels, key, label) -> None:
+    """Bind a corrected label to the nearest scope slot.
+
+    Mirrors the addressing logic of :func:`_slot_write`: the nearest slot
+    (by cosine) receives the label, or a fresh slot is appended when no slot
+    is close enough.  Must be called *after* :func:`_slot_write` so the slot
+    store already holds the (possibly newly allocated) key.
+    """
+    best_idx, _ = _slot_lookup(slot_keys, [], key)
+    if best_idx == -1 or best_idx >= len(slot_labels):
+        slot_labels.append(label)
+    else:
+        slot_labels[best_idx] = label
 
 class OrganismAgent:
     """End-to-end plastic-world-model agent.
@@ -120,10 +142,25 @@ class OrganismAgent:
                 stacklevel=2,
             )
 
+        # Context-addressed scope-slot store (Experiment 04).  Each slot binds
+        # a request-derived embedding key to the cortex warm_state captured at
+        # correction time and the corrected label learned for that context.
+        # The store is empty when no cortex_agent is attached, so the legacy
+        # answer/learn paths are unaffected.
+        self._scope_slot_keys: list[np.ndarray] = []
+        self._scope_slot_warm: list[np.ndarray] = []
+        self._scope_slot_label: list[str] = []
+
     def answer(self, request: str) -> str:
         """Produce an answer using the full organ stack."""
         if self.use_cortex_lm_answer and self.cortex_agent is not None:
-            return self.cortex_agent.answer(request)["answer"]
+            # Context-addressed scope-slot restore: before articulating, load the
+            # warm_state bound to this request's context.  A scope miss zeros the
+            # cortex so an unrelated context is not steered by another slot.
+            self._apply_scope_slot_warm(request)
+            return self.cortex_agent.answer(request, max_tokens=12, temperature=0.0)[
+                "answer"
+            ]
 
         # 1. Immune check: see if any previous mistake detector fires for the raw
         # request.  We do not have a proposed answer yet, so pass an empty one.
@@ -225,6 +262,8 @@ class OrganismAgent:
         """Pick the best candidate by combining request overlap, immune hints,
         identity-adapter concept deltas, and an optional cortex policy head."""
         request_tokens = set(self._tokenize(request))
+        # Context-addressed corrected label for this request's scope slot, if any.
+        scope_label = self._scope_label_for(request)
 
         def _tokens(text: str) -> set[str]:
             return set(self._tokenize(text))
@@ -235,7 +274,6 @@ class OrganismAgent:
             if policy_scores is not None:
                 candidate_labels = candidates
                 if candidate_labels:
-                    import numpy as np
                     raw = np.array(
                         [float(policy_scores.get(c, 0.0)) for c in candidate_labels],
                         dtype=np.float64,
@@ -275,6 +313,17 @@ class OrganismAgent:
             for token in label_tokens:
                 score += float(concept_scores.get(token, 0.0))
 
+            # Context-addressed scope-slot label: a per-context corrected label
+            # dominates identity-adapter drift so cross-domain stage answers use
+            # the corrected sense bound to this request's slot.
+            if scope_label is not None:
+                scope_tokens = _tokens(scope_label)
+                label_tokens_scoped = _tokens(label)
+                overlap = len(scope_tokens & label_tokens_scoped) / max(
+                    len(scope_tokens), len(label_tokens_scoped), 1
+                )
+                score += 2.0 * overlap
+
             # Optional CortexAgent policy-head score.
             score += policy_delta
 
@@ -298,6 +347,63 @@ class OrganismAgent:
         # working; the shared :func:`oczy_common.tokenize` is the single
         # source of truth for stopword filtering and minimum token length.
         return tokenize(text)
+
+    # ------------------------------------------------------------------
+    # Context-addressed scope-slot store (Experiment 04)
+    # ------------------------------------------------------------------
+    def _scope_key(self, request: str) -> np.ndarray | None:
+        """Embed *request* via the cortex agent's driver for slot addressing.
+
+        Returns ``None`` when no cortex agent / driver is attached so the
+        legacy answer and learn paths are untouched.
+        """
+        if self.cortex_agent is None:
+            return None
+        driver = getattr(self.cortex_agent, "driver", None)
+        if driver is None or not hasattr(driver, "peek_embedding"):
+            return None
+        try:
+            return np.asarray(driver.peek_embedding(request), dtype=np.float32)
+        except Exception:
+            return None
+
+    def _scope_label_for(self, request: str) -> str | None:
+        """Return the corrected label bound to *request*'s scope slot, if any."""
+        if not self._scope_slot_keys or self.cortex_agent is None:
+            return None
+        key = self._scope_key(request)
+        if key is None:
+            return None
+        if _slot_retrieve(self._scope_slot_keys, self._scope_slot_warm, key) is None:
+            return None
+        best_idx, _ = _slot_lookup(self._scope_slot_keys, self._scope_slot_warm, key)
+        if best_idx == -1 or not (0 <= best_idx < len(self._scope_slot_label)):
+            return None
+        return self._scope_slot_label[best_idx]
+
+    def _apply_scope_slot_warm(self, request: str) -> None:
+        """Restore the matching scope slot's warm_state, or zero it on a miss.
+
+        Used by the cortex-LM answer branch so articulation sees the
+        per-context corrected warm_state.  Silently no-ops when the cortex
+        agent exposes no ``cortex`` surface (e.g. the minimal answer-only
+        mock), preserving the plain delegation behaviour.
+        """
+        cortex = getattr(self.cortex_agent, "cortex", None) if self.cortex_agent else None
+        if cortex is None:
+            return
+        key = self._scope_key(request)
+        warm = (
+            _slot_retrieve(self._scope_slot_keys, self._scope_slot_warm, key)
+            if key is not None
+            else None
+        )
+        if warm is not None:
+            cortex.warm_state = np.asarray(warm, dtype=cortex.warm_state.dtype).reshape(
+                cortex.warm_state.shape
+            )
+        else:
+            cortex.warm_state = np.zeros_like(cortex.warm_state)
 
     def correct(self, correction: str, expected_answer: str) -> None:
         """Learn from an explicit correction.
@@ -431,6 +537,9 @@ class OrganismAgent:
                     response=expected_answer,
                 )
 
+        # d. Cortex policy update (REINFORCE): the policy head sees the
+        # answer-time hidden state, so this must run *before* we perceive the
+        # correction for the scope-slot store.
         if (
             self.use_cortex_policy
             and self.cortex_agent is not None
@@ -455,6 +564,95 @@ class OrganismAgent:
             except Exception:
                 # Policy update is advisory; never break the correction path.
                 pass
+
+        # e. Context-addressed scope-slot store (Experiment 04).  Always
+        # bind the corrected label to a request-keyed embedding.  If the
+        # organism is configured to articulate answers with the LM, also
+        # capture the correction's cortical warm_state (restoring the
+        # answer-time hidden state afterwards so policy/answer paths are not
+        # side-effected).
+        if self.cortex_agent is not None:
+            req_key = self._scope_key(request or self._last_request or "")
+            if req_key is not None:
+                _slot_write(
+                    self._scope_slot_keys,
+                    self._scope_slot_warm,
+                    req_key,
+                    None,  # warm only populated when use_cortex_lm_answer is on
+                )
+                _update_slot_label(
+                    self._scope_slot_keys,
+                    self._scope_slot_label,
+                    req_key,
+                    expected_answer
+                    or self._extract_expected_from_correction(correction)
+                    or "",
+                )
+
+            if self.use_cortex_lm_answer:
+                # Snapshot the current answer-time hidden state before
+                # perceiving the correction, then restore it afterwards.
+                _last_hidden_before = getattr(self.cortex_agent, "_last_hidden", None)
+                _prev_hidden_before = getattr(self.cortex_agent, "_prev_hidden", None)
+                _last_request_hidden_before = getattr(
+                    self.cortex_agent, "_last_request_hidden", None
+                )
+                _last_utterance_before = getattr(
+                    self.cortex_agent, "_last_utterance", None
+                )
+                _last_input_ids_before = getattr(
+                    self.cortex_agent, "_last_input_ids", None
+                )
+                _last_answer_before = getattr(self.cortex_agent, "_last_answer", None)
+                _last_correction_signal_before = getattr(
+                    self.cortex_agent, "_last_correction_signal", None
+                )
+                _cortex_warm_before = getattr(
+                    getattr(self.cortex_agent, "cortex", None), "warm_state", None
+                )
+                try:
+                    warm = self.cortex_agent.perceive(
+                        correction, correction_signal=1.0
+                    )
+                    observe = getattr(self.cortex_agent, "observe", None)
+                    if callable(observe):
+                        try:
+                            observe()
+                        except Exception:
+                            pass
+                    if req_key is not None and warm is not None:
+                        _slot_write(
+                            self._scope_slot_keys,
+                            self._scope_slot_warm,
+                            req_key,
+                            np.asarray(warm, dtype=np.float32),
+                        )
+                except Exception:
+                    # Cortex correction path is advisory; never break learning.
+                    pass
+                finally:
+                    if _last_hidden_before is not None:
+                        self.cortex_agent._last_hidden = _last_hidden_before
+                    if _prev_hidden_before is not None:
+                        self.cortex_agent._prev_hidden = _prev_hidden_before
+                    if _last_request_hidden_before is not None:
+                        self.cortex_agent._last_request_hidden = (
+                            _last_request_hidden_before
+                        )
+                    if _last_utterance_before is not None:
+                        self.cortex_agent._last_utterance = _last_utterance_before
+                    if _last_input_ids_before is not None:
+                        self.cortex_agent._last_input_ids = _last_input_ids_before
+                    if _last_answer_before is not None:
+                        self.cortex_agent._last_answer = _last_answer_before
+                    if _last_correction_signal_before is not None:
+                        self.cortex_agent._last_correction_signal = (
+                            _last_correction_signal_before
+                        )
+                    if _cortex_warm_before is not None and hasattr(
+                        self.cortex_agent, "cortex"
+                    ):
+                        self.cortex_agent.cortex.warm_state = _cortex_warm_before
 
     @staticmethod
     def _extract_expected_from_correction(correction: str) -> str:
@@ -540,6 +738,14 @@ class OrganismAgent:
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         self.__dict__.update(state)
+        # Backfill the context-addressed scope-slot store for pickles saved
+        # before the slot-store reranker existed.
+        if not hasattr(self, "_scope_slot_keys"):
+            self._scope_slot_keys = []
+        if not hasattr(self, "_scope_slot_warm"):
+            self._scope_slot_warm = []
+        if not hasattr(self, "_scope_slot_label"):
+            self._scope_slot_label = []
         self.profiler = AgentProfiler(
             [
                 "plastic_cortex",

@@ -80,3 +80,35 @@ experiment modules are implemented, tested, and accepted. Possible follow-ups:
   with more concepts.
 - Explore whether the block-13 mean-pool signal improves downstream tasks
   (correction uptake, scope selectivity).
+
+## Scope-slot reranker (post-aggregate)
+
+A context-addressed label reranker was added to `OrganismAgent` to improve
+cross-domain answer selection without relying on prefix-based closed-set
+generation. Implementation:
+- `_scope_key()` embeds the request through the attached driver.
+- `_learn_from_correction()` stores the corrected label (and optionally the
+cortical warm_state) in a request-keyed slot.
+- `_rank_answer()` retrieves the stored label for the current request and adds a
+strong overlap bonus (`+2.0 * token overlap`) to the matching candidate.
+- The label store is active whenever a `cortex_agent` is attached, while the
+warm_state capture is gated by `use_cortex_lm_answer` to avoid perturbing the
+policy/answer hidden state.
+- `scope_selectivity_stressor._slot_write()` now supports `None` warm entries,
+so slots can carry labels without requiring a full correction perceive cycle.
+
+Validation:
+- `bash autoresearch.sh` still reports `experiments_accepted_count=7/7`.
+- Full test suite: `pytest src/oczy/experiments/tests/ src/oczy/experiments/organism_curriculum/tests/` → 240 passed.
+- Organism curriculum with real driver + semantic scoring:
+  - Stage 0 sense grounding: 6/8
+  - Stage 2 scope control: 4/8
+  - Stage 5 cross-domain: 1/6 (up from 0/6 in the prior run)
+  - Stage 4 consolidation stress retention: 7/10
+
+The reranker gives a measurable cross-domain improvement (1/6 vs 0/6) without
+knowing candidate labels ahead of time; further gains likely need a
+stronger context-discriminating embedding or multi-slot consensus.
+
+A research note documenting prefix-based closed-set generation as a future
+project was added in `research/08-prefix-closed-set-generation.md`.

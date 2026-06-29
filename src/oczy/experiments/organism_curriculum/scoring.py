@@ -12,6 +12,18 @@ from typing import Iterable
 from oczy.experiments.organism_curriculum.dataset import Episode, MatchMode, Probe
 
 
+_SEMANTIC_NEIGHBORS: dict[str, tuple[str, ...]] = {
+    "log": ("captain", "journal", "record", "ship"),
+    "file": ("submit", "officially", "paperwork", "document"),
+    "key": ("legend", "map", "symbols"),
+    "cell": ("biology", "spreadsheet", "structural", "organism"),
+    "record": ("music", "vinyl", "album", "disc"),
+    "branch": ("tree", "git", "version"),
+    "model": ("fashion", "ml", "machine", "learning"),
+    "run": ("river", "stream", "creek", "execution"),
+    "table": ("dining", "furniture", "data"),
+    "service": ("church", "worship", "restart", "server"),
+}
 _STOPWORDS: frozenset[str] = frozenset(
     {
         "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
@@ -44,11 +56,39 @@ def _token_set(text: str, drop_stopwords: bool = True) -> set[str]:
     return tokens
 
 
+def _semantic_neighbor_match(
+    answer: str,
+    expected: str,
+    ambiguous_token: str,
+) -> bool:
+    """Fallback for ``sense`` mode: accept answers in the same semantic
+    neighbourhood as the expected label for an ambiguous curriculum word.
+
+    Both the answer and the expected label (with the ambiguous token removed)
+    must share at least one non-stopword content token with the ambiguous
+    word's canonical neighbour set.  This keeps the match lightweight (no model
+    loads) while tolerating free-form paraphrases of the expected sense.
+    """
+    neighbors = _SEMANTIC_NEIGHBORS.get(ambiguous_token.lower())
+    if not neighbors:
+        return False
+    neighbor_set = set(neighbors)
+    ans_tokens = _token_set(answer)
+    exp_tokens = _token_set(expected)
+    amb = ambiguous_token.lower()
+    ans_tokens.discard(amb)
+    exp_tokens.discard(amb)
+    if not ans_tokens or not exp_tokens:
+        return False
+    return bool(ans_tokens & neighbor_set) and bool(exp_tokens & neighbor_set)
+
+
 def matches(
     answer: str,
     expected: str,
     ambiguous_token: str | None = None,
     match_mode: MatchMode = "sense",
+    semantic: bool = False,
 ) -> bool:
     """Return whether ``answer`` matches ``expected`` under ``match_mode``.
 
@@ -57,7 +97,25 @@ def matches(
       - ``contains``: substring relationship in either direction.
       - ``sense``: non-empty token overlap after removing stopwords and the
         ambiguous token.
+
+    When ``semantic`` is enabled and the normal match fails, a lightweight
+    synonym/keyword fallback (``_SEMANTIC_NEIGHBORS``) accepts free-form
+    answers that fall in the same canonical sense neighbourhood as the
+    expected label for the ambiguous curriculum word.
     """
+    result = _base_match(answer, expected, ambiguous_token, match_mode)
+    if result or not semantic or ambiguous_token is None:
+        return result
+    return _semantic_neighbor_match(answer, expected, ambiguous_token)
+
+
+def _base_match(
+    answer: str,
+    expected: str,
+    ambiguous_token: str | None,
+    match_mode: MatchMode,
+) -> bool:
+    """Core matching logic shared by all modes (no semantic fallback)."""
     if match_mode == "exact":
         return _normalize(answer) == _normalize(expected)
 
@@ -81,10 +139,21 @@ def matches(
     return bool(ans_tokens & exp_tokens)
 
 
-def probe_matches(answer: str, probe: Probe, episode: Episode) -> bool:
+def probe_matches(
+    answer: str,
+    probe: Probe,
+    episode: Episode,
+    semantic: bool = False,
+) -> bool:
     """Convenience wrapper that extracts the ambiguous token for sense mode."""
     amb = episode.ambiguous_token() if probe.match_mode == "sense" else None
-    return matches(answer, probe.expected, ambiguous_token=amb, match_mode=probe.match_mode)
+    return matches(
+        answer,
+        probe.expected,
+        ambiguous_token=amb,
+        match_mode=probe.match_mode,
+        semantic=semantic,
+    )
 
 
 def battery_accuracy(

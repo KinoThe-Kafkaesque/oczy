@@ -45,26 +45,31 @@ def _slot_lookup(slot_keys, slot_warm, key):
 
 def _slot_write(slot_keys, slot_warm, key, warm_state):
     best_idx, best_sim = _slot_lookup(slot_keys, slot_warm, key)
+    warm_to_store = warm_state.copy() if warm_state is not None else None
     if best_idx == -1 or best_sim < _ALLOC_THRESHOLD:
         if len(slot_keys) < _MAX_SLOTS:
             slot_keys.append(key.copy())
-            slot_warm.append(warm_state.copy())
+            slot_warm.append(warm_to_store)
             return
         if best_idx == -1:
             return
     slot_keys[best_idx] = (0.5 * slot_keys[best_idx] + 0.5 * key).astype(
         slot_keys[best_idx].dtype
     )
-    slot_warm[best_idx] = (0.5 * slot_warm[best_idx] + 0.5 * warm_state).astype(
-        slot_warm[best_idx].dtype
-    )
+    if slot_warm[best_idx] is not None and warm_state is not None:
+        slot_warm[best_idx] = (
+            0.5 * slot_warm[best_idx] + 0.5 * warm_state
+        ).astype(slot_warm[best_idx].dtype)
+    else:
+        slot_warm[best_idx] = warm_to_store
 
 
 def _slot_retrieve(slot_keys, slot_warm, key):
     best_idx, best_sim = _slot_lookup(slot_keys, slot_warm, key)
     if best_idx == -1 or best_sim < _ALLOC_THRESHOLD:
         return None
-    return slot_warm[best_idx].copy()
+    warm = slot_warm[best_idx]
+    return warm.copy() if warm is not None else None
 
 
 # Scope-sense teaching utterances keyed by episode id.

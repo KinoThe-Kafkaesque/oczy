@@ -216,6 +216,7 @@ def run_battery(
     agent: Any,
     stage: Stage,
     episodes: tuple[Episode, ...] | None,
+    semantic: bool = False,
 ) -> list[tuple[Any, str, bool]]:
     """Run all probes from ``stage`` against ``agent``.
 
@@ -229,7 +230,7 @@ def run_battery(
             continue
         for probe in ep.probes:
             answer = agent.answer(probe.request)
-            ok = probe_matches(answer, probe, ep)
+            ok = probe_matches(answer, probe, ep, semantic=semantic)
             results.append((probe, answer, ok))
     return results
 
@@ -244,13 +245,14 @@ def run_stage(
     stage: Stage,
     adapter: Any | None,
     instrument_policy: bool = False,
+    semantic: bool = False,
 ) -> StageResult:
     """Present every episode in ``stage`` to ``agent`` and return metrics."""
     result = StageResult(name=stage.name, description=stage.description)
     result.memory_bytes_before = _agent_memory_bytes(agent)
 
     # Pre-test probes *before* this stage's acquisition episodes.
-    result.pre_probe_results = run_battery(agent, stage, stage.episodes)
+    result.pre_probe_results = run_battery(agent, stage, stage.episodes, semantic=semantic)
 
     for ep in stage.episodes:
         first_answer = agent.answer(ep.initial_request)
@@ -278,12 +280,19 @@ def run_stage(
 
         second_answer = agent.answer(ep.initial_request)
         if instrument_policy and _can_instrument_policy(agent):
-            policy_after = _record_policy_scores(agent, candidates)
+            # The agent may have learned new labels during the episode, so the
+            # post-update score set includes any newly registered candidates in
+            # addition to the original ones.
+            after_candidates = list(
+                set(candidates)
+                | set(getattr(agent.plastic_cortex, "labels", []))
+            )
+            policy_after = _record_policy_scores(agent, after_candidates)
 
         retention_probe = Probe(
             ep.initial_request, ep.corrected_response, "retention", "sense"
         )
-        fixed = probe_matches(second_answer, retention_probe, ep)
+        fixed = probe_matches(second_answer, retention_probe, ep, semantic=semantic)
 
         result.episode_results.append(
             EpisodeResult(
@@ -454,6 +463,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--use-real-driver",
         action="store_true",
         help="Attach a CortexAgent backed by the real LFM2.5 GGUF model.",
+    )
+    p.add_argument(
+        "--semantic",
+        action="store_true",
+        help="Use semantic neighbour fallback when scoring sense-mode probes.",
     )
     p.add_argument(
         "--stages",
@@ -688,6 +702,7 @@ def main(argv: list[str] | None = None) -> int:
                 stage,
                 adapter,
                 instrument_policy=(args.policy_log is not None),
+                semantic=args.semantic,
             )
         )
         if stage.consolidate_after:
