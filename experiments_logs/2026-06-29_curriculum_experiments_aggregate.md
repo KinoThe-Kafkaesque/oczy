@@ -98,7 +98,8 @@ policy/answer hidden state.
 so slots can carry labels without requiring a full correction perceive cycle.
 
 Validation:
-- `bash autoresearch.sh` still reports `experiments_accepted_count=7/7`.
+- `bash autoresearch.sh` reports `experiments_accepted_count=7/7` (latest
+  verification run after raising per-experiment timeout from 300 s to 600 s).
 - Full test suite: `pytest src/oczy/experiments/tests/ src/oczy/experiments/organism_curriculum/tests/` → 240 passed.
 - Organism curriculum with real driver + semantic scoring:
   - Stage 0 sense grounding: 6/8
@@ -112,3 +113,28 @@ stronger context-discriminating embedding or multi-slot consensus.
 
 A research note documenting prefix-based closed-set generation as a future
 project was added in `research/08-prefix-closed-set-generation.md`.
+
+## Verification rerun (after fix)
+
+A dedicated verification pass was run to confirm the scope-slot reranker does
+not regress the curriculum aggregate or the test suite:
+- `bash autoresearch.sh` → `experiments_accepted_count=7/7`
+  - Exp01: `v2_desaturation_count=5.0`
+  - Exp02: `kv_slot_rank1_count=3.0`
+  - Exp03: `layer_l_silhouette_gap=0.116`
+  - Exp04: `scope_selectivity_index=0.625`
+  - Exp05: `metabolism_drift_delta=0.102`
+  - Exp06: `bounded_growth_m1_ratio=0.072706`
+  - Exp07: `marker_free_uptake_gap=1.0`
+- `pytest src/oczy/experiments/tests/ src/oczy/experiments/organism_curriculum/tests/`
+  → `240 passed, 6 warnings`
+- Organism curriculum (real driver, `--semantic`):
+  - Stage 0: 7/8; Stage 1: 1/8; Stage 2: 3/8; Stage 3: 1/4;
+  - Stage 4 retention: 7/10; Stage 5 cross-domain: 1/6 with `scope=0.17`
+    versus baseline `0/6, scope=0.00`.
+
+One earlier aggregate attempt under heavy load returned `3/7` with `nan` metrics
+because the real-driver model load exceeded the previous 300 s per-experiment
+timeout. The per-experiment timeout in
+`src/oczy/experiments/experiment_orchestrator.py` was raised to 600 s so the
+orchestrator remains reliable when the system is loaded.

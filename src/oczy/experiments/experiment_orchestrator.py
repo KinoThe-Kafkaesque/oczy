@@ -94,7 +94,7 @@ def _run_experiment(exp: Experiment) -> float:
             cmd,
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=600,
             check=False,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError):
