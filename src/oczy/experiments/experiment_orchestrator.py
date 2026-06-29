@@ -49,7 +49,7 @@ _EXPERIMENTS: tuple[Experiment, ...] = (
         "oczy.experiments.layer_l_probe",
         "real",
         "layer_l_silhouette_gap",
-        lambda v: v >= 0.0,
+        lambda v: v >= 0.10,
     ),
     Experiment(
         "exp04_scope",

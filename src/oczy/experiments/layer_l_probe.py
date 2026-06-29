@@ -2,8 +2,8 @@
 
 Measures whether feeding ``KVCortex.observe()`` real residuals at mid/upper
 layers produces more semantically separable ``warm_state`` vectors than the
-current final-layer mean-pool.  Follows the Experiment 03 spec and reuses the
-silhouette algorithm from ``lanes/lane_03.py``.
+current final-layer mean-pool.  Follows the Experiment 03 spec and aligns
+with ``lanes/lane_03.py`` for layer indices and pooling conditions.
 
 Modes:
   - ``--driver mock``: fast, deterministic, semantics-free floor using
@@ -49,6 +49,7 @@ _CONCEPTS: dict[str, list[str]] = {
 
 _D_EMBD = 2048
 _N_LAYERS = 16
+_N_HIDDEN_STATES = _N_LAYERS + 1  # embedding + one per block
 
 
 # ---------------------------------------------------------------------------
@@ -96,8 +97,6 @@ def _mock_hidden_vectors(
     if rng is None:
         rng = np.random.RandomState(0)
     vec = rng.standard_normal(_D_EMBD).astype(np.float32)
-    # Norm-match to roughly unit vectors; slight per-layer scaling so mock
-    # conditions are not identical.
     target_norm = 1.0 + 0.05 * layer_idx
     vec /= np.linalg.norm(vec)
     return (vec * target_norm).astype(np.float32)
@@ -109,12 +108,9 @@ def _mock_probe() -> dict[str, float]:
 
     all_phrases = [p for ps in _CONCEPTS.values() for p in ps]
     rng = np.random.RandomState(0)
-    phrase_vectors: dict[str, list[np.ndarray]] = {}
-    for layer_idx in (0, 9, 13):
-        per_layer: list[np.ndarray] = []
-        for _ in all_phrases:
-            per_layer.append(_mock_hidden_vectors(layer_idx, rng=rng))
-        phrase_vectors[layer_idx] = per_layer
+
+    def _hidden_for(layer_idx: int) -> list[np.ndarray]:
+        return [_mock_hidden_vectors(layer_idx, rng=rng) for _ in all_phrases]
 
     def _sil_for(layer_idx: int) -> float | None:
         warm_by_concept: dict[str, list[np.ndarray]] = {}
@@ -128,19 +124,20 @@ def _mock_probe() -> dict[str, float]:
                 )
             )
             cortex.reset_warm_to_zeros()
-            phrase_iter = iter(phrase_vectors[layer_idx])
             states: list[np.ndarray] = []
-            for _ in phrases:
-                states.append(cortex.observe(next(phrase_iter), correction_signal=0.0))
+            phrase_vectors = _hidden_for(layer_idx)
+            for i in range(len(phrases)):
+                states.append(cortex.observe(phrase_vectors[i], correction_signal=0.0))
             warm_by_concept[concept] = states
         return _silhouette(warm_by_concept)
 
     silhouettes: dict[str, float] = {
         "R_random": 0.0,
-        "L0_last": _sil_for(0) or 0.0,
-        "L9_last": _sil_for(9) or 0.0,
-        "L13_last": _sil_for(13) or 0.0,
-        "L9_meanpool": 0.0,
+        "last_L9": _sil_for(9) or 0.0,
+        "last_L13": _sil_for(13) or 0.0,
+        "last_L15": _sil_for(15) or 0.0,
+        "maxpool_L14": _sil_for(14) or 0.0,
+        "mean_L14": _sil_for(14) or 0.0,
     }
     return silhouettes
 
@@ -173,7 +170,7 @@ def _hf_probe() -> dict[str, float] | None:
             enc = tokenizer(phrase, return_tensors="pt")
             out = model(**enc)
             hs = out.hidden_states
-            if hs is None or len(hs) != _N_LAYERS + 1:
+            if hs is None or len(hs) != _N_HIDDEN_STATES:
                 return None
             phrase_hiddens[phrase] = [
                 h[0].to(torch.float32).numpy() for h in hs
@@ -185,14 +182,21 @@ def _hf_probe() -> dict[str, float] | None:
     def _mean_pool(seq_arr: np.ndarray) -> np.ndarray:
         return seq_arr.mean(axis=0)
 
-    silhouettes: dict[str, float] = {}
+    def _max_pool(seq_arr: np.ndarray) -> np.ndarray:
+        return seq_arr.max(axis=0)
+
+    # Align with lanes/lane_03.py: hidden_states tuple index = layer+1.
     conditions = [
-        ("L0_last", 0, _last_token),
-        ("L9_last", 9, _last_token),
-        ("L13_last", 13, _last_token),
-        ("L9_meanpool", 9, _mean_pool),
+        ("last_L9", 10, _last_token),
+        ("last_L13", 14, _last_token),
+        ("last_L15", 16, _last_token),
+        ("maxpool_L14", 15, _max_pool),
+        ("mean_L14", 14, _mean_pool),
     ]
 
+    silhouettes: dict[str, float] = {
+        "R_random": 0.0,
+    }
     for label, idx, pool in conditions:
         warm_by_concept: dict[str, list[np.ndarray]] = {}
         for concept, phrases in _CONCEPTS.items():
@@ -284,11 +288,7 @@ def _compute_gap(silhouettes: dict[str, float]) -> dict[str, Any]:
     ]
     mid_values = [silhouettes[k] for k in mid_layer_labels]
     max_mid = max(mid_values) if mid_values else 0.0
-    gap = (
-        (max_mid - final)
-        if final is not None
-        else 0.0
-    )
+    gap = (max_mid - final) if final is not None else 0.0
     return {
         "gap": gap,
         "max_mid": max_mid,

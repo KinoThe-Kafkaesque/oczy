@@ -101,7 +101,9 @@ def test_mock_driver_runs_and_prints_metric(capsys) -> None:
 
 def test_run_mock_returns_silhouettes() -> None:
     sils = layer_l_probe._mock_probe()
-    assert set(sils).issuperset({"R_random", "L0_last", "L9_last", "L13_last", "L9_meanpool"})
+    assert set(sils).issuperset(
+        {"R_random", "last_L9", "last_L13", "last_L15", "maxpool_L14", "mean_L14"}
+    )
 
 
 def test_real_driver_falls_back_gracefully(monkeypatch, capsys) -> None:
