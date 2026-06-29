@@ -35,6 +35,11 @@ class EvalResult:
     raw_trace_size: int
     consolidated_size: int
     sense_match: bool = False
+    # Full snapshots are included so downstream V2 scorers can recompute
+    # exact/domain accuracies on the raw answer texts.
+    pre_test: Any = None
+    post_test: Any = None
+    consolidation_test: Any = None
 
     def scorecard_json(self) -> dict[str, Any]:
         """Return a JSON-serializable scorecard dictionary."""
@@ -434,6 +439,9 @@ class EvalSuite:
             raw_trace_size=raw_trace_size,
             consolidated_size=consolidated_size,
             sense_match=self.sense_match,
+            pre_test=pre,
+            post_test=post,
+            consolidation_test=consolidation,
         )
 
     def run(self, agent: Any) -> EvalResult:
