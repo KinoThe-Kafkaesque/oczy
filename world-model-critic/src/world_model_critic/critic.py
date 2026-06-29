@@ -101,7 +101,12 @@ class WorldModelCritic:
 
         # Learning hyperparameters.
         self.learning_rate = float(cfg.get("learning_rate", 1.0))
+        # Smaller step size for the MLP gradient path (the string-logistic
+        # path keeps `learning_rate`); 1.0 is far too large for the MLP update.
+        self.mlp_learning_rate = float(cfg.get("mlp_learning_rate", 0.1))
         self.similarity_threshold = float(cfg.get("similarity_threshold", 0.25))
+        # Deterministic seed for lazy MLP / value-head initialization.
+        self.seed = int(cfg.get("seed", 0))
         # Hidden-vector MLP configuration.
         self.d_hidden = int(cfg.get("d_hidden", 0))
         self.mlp_hidden_units = int(cfg.get("mlp_hidden_units", 16))
@@ -150,6 +155,13 @@ class WorldModelCritic:
     def __setstate__(self, state: dict) -> None:
         """Restore a pickled critic; inject defaults added after v1."""
         self.__dict__.update(state)
+        # Inject every field added after v1 so old pickles do not raise
+        # AttributeError.  Defaults mirror `__init__`.
+        self.config = getattr(self, "config", {})
+        self.learning_rate = float(getattr(self, "learning_rate", 1.0))
+        self.mlp_learning_rate = float(getattr(self, "mlp_learning_rate", 0.1))
+        self.similarity_threshold = float(getattr(self, "similarity_threshold", 0.25))
+        self.seed = int(getattr(self, "seed", 0))
         self.d_hidden = int(getattr(self, "d_hidden", 0))
         self.mlp_hidden_units = int(getattr(self, "mlp_hidden_units", 16))
         self.use_hidden = bool(getattr(self, "use_hidden", False))
@@ -164,6 +176,14 @@ class WorldModelCritic:
         self.bv = float(getattr(self, "bv", 0.0))
         self._last_value = getattr(self, "_last_value", None)
         self._last_td_error = getattr(self, "_last_td_error", None)
+        self.max_records = int(getattr(self, "max_records", 10_000))
+        self.record_decay_fraction = float(getattr(self, "record_decay_fraction", 0.25))
+        self.records_pruned = int(getattr(self, "records_pruned", 0))
+        self.ambiguous_words = getattr(self, "ambiguous_words", AMBIGUOUS_WORDS)
+        self.weights = getattr(self, "weights", [-0.2, 2.0, -0.1, 0.0])
+        self._learnable = getattr(self, "_learnable", (3,))
+        self.records = getattr(self, "records", [])
+        self._last_correction_prob = getattr(self, "_last_correction_prob", None)
 
     # ------------------------------------------------------------------
     # Public API
@@ -230,6 +250,8 @@ class WorldModelCritic:
         next_lm_hidden: np.ndarray | None = None,
         value_lm_hidden: np.ndarray | None = None,
         next_value_lm_hidden: np.ndarray | None = None,
+        next_query: str | None = None,
+        next_proposed_answer: str | None = None,
     ) -> None:
         """Record what actually happened and perform one online update.
 
@@ -284,12 +306,12 @@ class WorldModelCritic:
             error = target - prob_post
             x_input, z1, h, _ = cache
             # Gradient of MSE/cross-entropy error w.r.t. weights.
-            self.W2 = self.W2 + self.learning_rate * error * h
-            self.b2 += self.learning_rate * error
+            self.W2 = self.W2 + self.mlp_learning_rate * error * h
+            self.b2 += self.mlp_learning_rate * error
             grad_h = error * self.W2
             grad_z1 = grad_h * (1.0 - h * h)
-            self.W1 = self.W1 + self.learning_rate * np.outer(grad_z1, x_input)
-            self.b1 = self.b1 + self.learning_rate * grad_z1
+            self.W1 = self.W1 + self.mlp_learning_rate * np.outer(grad_z1, x_input)
+            self.b1 = self.b1 + self.mlp_learning_rate * grad_z1
 
         # String-logistic model update (always kept live as a fallback).
         prob_post = self._predict_correction_prob(x_post)
@@ -318,7 +340,11 @@ class WorldModelCritic:
             v_s = float(self.Wv @ h + self.bv)
             reward = -1.0 if actual_correction else 1.0
             v_next = (
-                self.predict_value(query, proposed_answer, v_next_hidden)
+                self.predict_value(
+                    next_query if next_query is not None else query,
+                    next_proposed_answer if next_proposed_answer is not None else proposed_answer,
+                    v_next_hidden,
+                )
                 if v_next_hidden is not None
                 else 0.0
             )
@@ -408,7 +434,7 @@ class WorldModelCritic:
             and self.W2.shape == (self.mlp_hidden_units,)
         ):
             return
-        rng = np.random.RandomState((id(self) & 0xFFFFFFFF) ^ d_hidden)
+        rng = np.random.RandomState(self.seed ^ d_hidden)
         self.W1 = rng.randn(self.mlp_hidden_units, input_dim) * 0.01
         self.b1 = rng.randn(self.mlp_hidden_units) * 0.01
         self.W2 = rng.randn(self.mlp_hidden_units) * 0.01
@@ -418,7 +444,7 @@ class WorldModelCritic:
         """Lazy-initialize the linear value head on the MLP hidden state."""
         if self.Wv is not None and self.Wv.shape == (self.mlp_hidden_units,):
             return
-        rng = np.random.RandomState((id(self) & 0xFFFFFFFF) ^ self.mlp_hidden_units)
+        rng = np.random.RandomState(self.seed ^ self.mlp_hidden_units)
         self.Wv = rng.randn(self.mlp_hidden_units) * 0.01
         self.bv = 0.0
 
@@ -432,6 +458,10 @@ class WorldModelCritic:
         Returns the scalar correction probability and a cache of intermediate
         activations needed for the online gradient update.
         """
+        lm_hidden = np.asarray(lm_hidden, dtype=float)
+        norm = np.linalg.norm(lm_hidden)
+        if norm > 1e-8:
+            lm_hidden = lm_hidden / norm
         x_input = np.concatenate([np.asarray(x_str, dtype=float), lm_hidden])
         z1 = self.W1 @ x_input + self.b1
         h = np.tanh(z1)

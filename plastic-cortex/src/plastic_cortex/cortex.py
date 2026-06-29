@@ -17,7 +17,7 @@ import random
 import re
 
 from .fast_weight import FastWeightLayer
-from .state import TokenRNN
+from .state import TokenRNN, _stable_hash_int
 
 
 class PlasticCortex:
@@ -91,7 +91,7 @@ class PlasticCortex:
             for row in self.baseline.values():
                 row.setdefault(label, 0.0)
             self._recurrent_gate[label] = [
-                (random.Random(hash(label) + i).random() * 2.0 - 1.0) * math.sqrt(1.0 / self.hidden_dim)
+                (random.Random(_stable_hash_int(label) + i).random() * 2.0 - 1.0) * math.sqrt(1.0 / self.hidden_dim)
                 for i in range(self.hidden_dim)
             ]
         return label

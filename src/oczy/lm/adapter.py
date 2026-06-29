@@ -297,8 +297,14 @@ class LanguageAdapter:
         self.load()
         self.n_parse_calls += 1
 
-        raw = self._chat(_PARSE_SYSTEM_PROMPT, text,
-                         self.config.max_tokens_parse)
+        try:
+            raw = self._chat(_PARSE_SYSTEM_PROMPT, text,
+                             self.config.max_tokens_parse)
+        except Exception as e:
+            self.n_parse_failures += 1
+            log.warning("LM chat failure on %r: %s; falling back to "
+                        "raw-NL-as-query", text[:60], e)
+            return _minimal_episode(text)
         cleaned = _strip_code_fence(raw)
 
         try:
@@ -385,8 +391,14 @@ class LanguageAdapter:
                      if k in episode and k not in ("id", "replay_count")}
         body = json.dumps(canonical, indent=2, default=str)
 
-        raw = self._chat(_RENDER_SYSTEM_PROMPT, body,
-                         self.config.max_tokens_render)
+        try:
+            raw = self._chat(_RENDER_SYSTEM_PROMPT, body,
+                             self.config.max_tokens_render)
+        except Exception as e:
+            self.n_render_fallbacks += 1
+            log.warning("LM render failure: %s; falling back to "
+                        "deterministic render", e)
+            return _deterministic_render(canonical)
         rendered = raw.strip()
         if not rendered or rendered.startswith("{"):
             # LM returned empty or echoed our JSON -- fall back.

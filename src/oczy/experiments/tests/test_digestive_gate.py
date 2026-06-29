@@ -9,27 +9,49 @@ from oczy.experiments.digestive_gate import DigestiveGate, DigestiveGateConfig
 
 def test_low_drift_low_correction():
     gate = DigestiveGate()
-    result = gate.ingest(drift=0.1, correction_signal=0.0, novelty=0.1)
+    cfg = gate.config
+    drift, correction, novelty = 0.1, 0.0, 0.1
+    result = gate.ingest(drift=drift, correction_signal=correction, novelty=novelty)
+
+    # critic_correction_prob is None and the critic path is enabled, so the
+    # gate falls back to raw drift as the effective novelty signal.
+    effective_novelty = drift
+    effective_correction = correction * cfg.correction_boost
+    consolidation_input = max(effective_novelty, effective_correction)
+    ema = cfg.ema_decay * 0.0 + (1.0 - cfg.ema_decay) * consolidation_input
+    expected_ae = min(1.0, cfg.autoencoder_min_weight + max(effective_novelty, correction))
+    expected_pressure = min(ema, cfg.consolidation_pressure_threshold)
 
     assert result["critic_weight"] == pytest.approx(1.0)
     assert result["hippocampus_weight"] == 0.0
     assert result["identity_weight"] == 0.0
     assert result["immune_weight"] == 0.0
-    assert result["autoencoder_weight"] == pytest.approx(0.2)
-    assert result["consolidation_pressure"] == pytest.approx(0.01)
+    assert result["autoencoder_weight"] == pytest.approx(expected_ae)
+    assert result["consolidation_pressure"] == pytest.approx(expected_pressure)
     assert gate.should_consolidate() is False
 
 
 def test_high_drift_and_novelty():
     gate = DigestiveGate()
-    result = gate.ingest(drift=0.8, correction_signal=0.0, novelty=0.8)
+    cfg = gate.config
+    drift, correction, novelty = 0.8, 0.0, 0.8
+    result = gate.ingest(drift=drift, correction_signal=correction, novelty=novelty)
+
+    # critic_correction_prob is None and the critic path is enabled, so the
+    # gate falls back to raw drift as the effective novelty signal.
+    effective_novelty = drift
+    effective_correction = correction * cfg.correction_boost
+    consolidation_input = max(effective_novelty, effective_correction)
+    ema = cfg.ema_decay * 0.0 + (1.0 - cfg.ema_decay) * consolidation_input
+    expected_ae = min(1.0, cfg.autoencoder_min_weight + max(effective_novelty, correction))
+    expected_pressure = min(ema, cfg.consolidation_pressure_threshold)
 
     assert result["critic_weight"] == pytest.approx(1.0)
     assert result["hippocampus_weight"] == 1.0
     assert result["identity_weight"] == 0.0
     assert result["immune_weight"] == 0.0
-    assert result["autoencoder_weight"] == pytest.approx(0.9)
-    assert result["consolidation_pressure"] == pytest.approx(0.08)
+    assert result["autoencoder_weight"] == pytest.approx(expected_ae)
+    assert result["consolidation_pressure"] == pytest.approx(expected_pressure)
     assert gate.should_consolidate() is False
 
 
@@ -87,22 +109,35 @@ def test_immune_suppression_disabled():
 
 def test_consolidation_pressure_accumulates():
     gate = DigestiveGate()
+    cfg = gate.config
 
-    gate.ingest(drift=1.0, correction_signal=0.0)
-    assert gate._pressure == pytest.approx(0.1)
+    # Each step: critic_correction_prob is None so effective_novelty = drift,
+    # consolidation_input = max(drift, 0) = drift, and the EMA accumulates with
+    # ema_decay while pressure saturates at consolidation_pressure_threshold.
+    drift, correction = 1.0, 0.0
+    effective_novelty = drift
+    consolidation_input = max(effective_novelty, correction * cfg.correction_boost)
+    ema = 0.0
+
+    gate.ingest(drift=drift, correction_signal=correction)
+    ema = cfg.ema_decay * ema + (1.0 - cfg.ema_decay) * consolidation_input
+    assert gate._pressure == pytest.approx(min(ema, cfg.consolidation_pressure_threshold))
     assert gate.should_consolidate() is False
 
-    gate.ingest(drift=1.0, correction_signal=0.0)
-    assert gate._pressure == pytest.approx(0.19)
+    gate.ingest(drift=drift, correction_signal=correction)
+    ema = cfg.ema_decay * ema + (1.0 - cfg.ema_decay) * consolidation_input
+    assert gate._pressure == pytest.approx(min(ema, cfg.consolidation_pressure_threshold))
     assert gate.should_consolidate() is False
 
-    gate.ingest(drift=1.0, correction_signal=0.0)
-    assert gate._pressure == pytest.approx(0.25)
+    gate.ingest(drift=drift, correction_signal=correction)
+    ema = cfg.ema_decay * ema + (1.0 - cfg.ema_decay) * consolidation_input
+    assert gate._pressure == pytest.approx(min(ema, cfg.consolidation_pressure_threshold))
     assert gate.should_consolidate() is True
 
     # Further high-drift steps saturate at the threshold.
-    gate.ingest(drift=1.0, correction_signal=0.0)
-    assert gate._pressure == pytest.approx(0.25)
+    gate.ingest(drift=drift, correction_signal=correction)
+    ema = cfg.ema_decay * ema + (1.0 - cfg.ema_decay) * consolidation_input
+    assert gate._pressure == pytest.approx(min(ema, cfg.consolidation_pressure_threshold))
     assert gate.should_consolidate() is True
 
 
@@ -130,13 +165,23 @@ def test_gate_resets_pressure():
 
 def test_critic_correction_prob_increases_hippocampus_weight():
     gate = DigestiveGate()
+    cfg = gate.config
+    drift, correction, novelty = 0.2, 0.0, 1.0
+    critic_correction_prob = 0.9
     result = gate.ingest(
-        drift=0.2,
-        correction_signal=0.0,
-        novelty=1.0,
-        critic_correction_prob=0.9,
+        drift=drift,
+        correction_signal=correction,
+        novelty=novelty,
+        critic_correction_prob=critic_correction_prob,
     )
 
+    # With the critic path enabled and a non-None prob, effective novelty is
+    # the weighted blend of drift and the critic correction probability; the
+    # hippocampus fires only when that blend clears novelty_threshold.
+    critic_signal = critic_correction_prob
+    effective_novelty = cfg.critic_drift_weight * drift + cfg.critic_correction_weight * critic_signal
+
+    assert effective_novelty > cfg.novelty_threshold
     assert result["hippocampus_weight"] == pytest.approx(1.0)
     assert result["critic_correction_prob"] == pytest.approx(0.9)
 
@@ -159,15 +204,26 @@ def test_critic_correction_prob_ignored_when_disabled():
 
 def test_critic_none_uses_drift_fallback():
     gate = DigestiveGate()
+    cfg = gate.config
+    drift, correction, novelty = 0.1, 0.0, 0.1
     result = gate.ingest(
-        drift=0.1,
-        correction_signal=0.0,
-        novelty=0.1,
+        drift=drift,
+        correction_signal=correction,
+        novelty=novelty,
     )
 
+    # critic_correction_prob is None and the critic path is enabled, so the
+    # gate falls back to raw drift as the effective novelty signal.
+    effective_novelty = drift
+    effective_correction = correction * cfg.correction_boost
+    consolidation_input = max(effective_novelty, effective_correction)
+    ema = cfg.ema_decay * 0.0 + (1.0 - cfg.ema_decay) * consolidation_input
+    expected_ae = min(1.0, cfg.autoencoder_min_weight + max(effective_novelty, correction))
+    expected_pressure = min(ema, cfg.consolidation_pressure_threshold)
+
     assert result["hippocampus_weight"] == 0.0
-    assert result["autoencoder_weight"] == pytest.approx(0.2)
-    assert result["consolidation_pressure"] == pytest.approx(0.01)
+    assert result["autoencoder_weight"] == pytest.approx(expected_ae)
+    assert result["consolidation_pressure"] == pytest.approx(expected_pressure)
     assert result["critic_correction_prob"] is None
 
 

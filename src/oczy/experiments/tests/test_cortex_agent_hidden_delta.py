@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 
 from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
@@ -16,7 +18,7 @@ class _MockDriver:
         self.n_layers = n_layers
 
     def peek_embedding(self, text: str, last_token_only: bool = True) -> np.ndarray:
-        seed = hash(text) & 0xFFFFFFFF
+        seed = int.from_bytes(hashlib.sha256(text.encode("utf-8")).digest()[:4], "big")
         rng = np.random.default_rng(seed)
         return rng.normal(0.0, 1.0, size=self.n_embd).astype(np.float32)
 

@@ -24,15 +24,16 @@ Baseline: a stateless LM that answers each probe with a cold KV cache (no
 fact prefix, no slot store, no autoencoder, no critic). Its persistent
 memory is 0 bytes by construction.
 
-On any error (GGUF missing, load fail, crash), returns 0.0.
+On any error (GGUF missing, load fail, crash), returns float(nan) on failure.
 """
 
 from __future__ import annotations
 
 import pickle
-from typing import Any
 
 import numpy as np
+
+from lanes._common import cosine, lane_measure
 
 # -- Curriculum: 4 episodes (2 corrections + 2 scope tests) -------------------
 # Each episode: (fact_text, probe_query, expected_target, is_scope_test)
@@ -71,18 +72,13 @@ _MAX_SLOTS = 16
 _ALLOC_THRESHOLD = 0.85
 
 
-def _cosine(a: np.ndarray, b: np.ndarray) -> float:
-    na, nb = float(np.linalg.norm(a)), float(np.linalg.norm(b))
-    if na < 1e-12 or nb < 1e-12:
-        return 0.0
-    return float(np.dot(a, b) / (na * nb))
 
 
 def _slot_write(keys: list, warm: list, key: np.ndarray, state: np.ndarray) -> None:
     """Cosine >= threshold -> EMA-update; else allocate a new slot."""
     best_idx, best_sim = -1, -1.0
     for i, k in enumerate(keys):
-        s = _cosine(k, key)
+        s = cosine(k, key)
         if s > best_sim:
             best_idx, best_sim = i, s
     if best_idx >= 0 and best_sim >= _ALLOC_THRESHOLD:
@@ -99,7 +95,7 @@ def _slot_retrieve(keys: list, warm: list, key: np.ndarray):
         return None
     best_idx, best_sim = -1, -1.0
     for i, k in enumerate(keys):
-        s = _cosine(k, key)
+        s = cosine(k, key)
         if s > best_sim:
             best_idx, best_sim = i, s
     if best_idx >= 0 and best_sim >= _ALLOC_THRESHOLD:
@@ -123,6 +119,7 @@ def _embed(llm, text: str) -> np.ndarray:
 def _kv_slot_recall(llm, ctx_p, n_vocab, fact: str, query: str, target: str) -> bool:
     """Lane 02 mechanism: snapshot KV state after fact prefill, restore, probe."""
     import ctypes
+
     import llama_cpp
 
     llm.reset()
@@ -175,117 +172,113 @@ def _baseline_recall(llm, n_vocab, query: str, target: str) -> bool:
     return int(np.argmax(last)) == target_id
 
 
+@lane_measure
 def measure() -> float:
-    try:
-        import ctypes
-        import llama_cpp
-        from llama_cpp import Llama
+    from llama_cpp import Llama
 
-        from src.oczy.experiments.multi_fact_stressor import _resolve_gguf_path
-        from lanes.lane_06 import A0bAutoencoder
-        from world_model_critic import WorldModelCritic
+    from lanes.lane_06 import A0bAutoencoder
+    from src.oczy.experiments.multi_fact_stressor import _resolve_gguf_path
+    from world_model_critic import WorldModelCritic
 
-        resolved = _resolve_gguf_path()
-        if resolved is None:
-            return 0.0
+    resolved = _resolve_gguf_path()
+    if resolved is None:
+        return float("nan")
 
-        llm = Llama(
-            model_path=str(resolved),
-            n_ctx=512,
-            n_threads=4,
-            embedding=True,
-            verbose=False,
+    llm = Llama(
+        model_path=str(resolved),
+        n_ctx=512,
+        n_threads=4,
+        embedding=True,
+        verbose=False,
+    )
+    ctx_p = llm._ctx.ctx
+    n_vocab = llm.n_vocab()
+
+    # --- Lane 07: train the WorldModelCritic on marker-bearing pairs ---
+    critic = WorldModelCritic(
+        {"use_hidden": True, "use_value_head": True,
+         "mlp_hidden_units": 16, "value_learning_rate": 0.05}
+    )
+    for teach in _CRITIC_TEACH:
+        critic.record_outcome(query=teach, proposed_answer="", correction=teach)
+
+    # --- Lane 06: A0b autoencoder for compact episode persistence ---
+    autoenc = A0bAutoencoder(seed=42)
+
+    # --- Lane 04: slot store (context-addressed) ---
+    slot_keys: list[np.ndarray] = []
+    slot_warm: list[np.ndarray] = []
+
+    composed_correct = 0
+    baseline_correct = 0
+
+    for fact, query, target, is_scope in _EPISODES:
+        # Lane 07: critic detects whether the fact is a correction.
+        # (Here every fact IS a correction; we exercise the detector.)
+        crit_result = critic.predict_acceptance(
+            query=fact, proposed_answer="", lm_hidden=None
         )
-        ctx_p = llm._ctx.ctx
-        n_vocab = llm.n_vocab()
-
-        # --- Lane 07: train the WorldModelCritic on marker-bearing pairs ---
-        critic = WorldModelCritic(
-            {"use_hidden": True, "use_value_head": True,
-             "mlp_hidden_units": 16, "value_learning_rate": 0.05}
+        is_correction = (
+            float(crit_result.get("correction_likelihood", 0.0)) > 0.5
         )
-        for teach in _CRITIC_TEACH:
-            critic.record_outcome(query=teach, proposed_answer="", correction=teach)
 
-        # --- Lane 06: A0b autoencoder for compact episode persistence ---
-        autoenc = A0bAutoencoder(seed=42)
+        # Lane 04: write a slot keyed by the probe embedding, storing
+        # a compact warm_state derived from the fact embedding (proxy
+        # for cortex warm_state; keeps the slot-store mechanism real).
+        probe_key = _embed(llm, query)
+        fact_key = _embed(llm, fact)
+        warm_state = (fact_key[:8].copy() if len(fact_key) >= 8
+                      else np.zeros(8, dtype=float))
+        _slot_write(slot_keys, slot_warm, probe_key, warm_state)
 
-        # --- Lane 04: slot store (context-addressed) ---
-        slot_keys: list[np.ndarray] = []
-        slot_warm: list[np.ndarray] = []
+        # Lane 06: encode the episode into the autoencoder (compact
+        # persistence). The latent is the persistent representation.
+        autoenc.encode({
+            "situation": query, "model_answer": "",
+            "correction": fact, "revised_answer": target,
+            "outcome": "corrected" if is_correction else "unknown",
+        })
 
-        composed_correct = 0
-        baseline_correct = 0
-
-        for fact, query, target, is_scope in _EPISODES:
-            # Lane 07: critic detects whether the fact is a correction.
-            # (Here every fact IS a correction; we exercise the detector.)
-            crit_result = critic.predict_acceptance(
-                query=fact, proposed_answer="", lm_hidden=None
+        if is_scope:
+            # Scope test: slot store should NOT retrieve the technical
+            # fact slot for the common-sense probe (different key).
+            # The agent answers via natural prior (no KV-slot prefill).
+            scope_key = _embed(llm, query)
+            retrieved = _slot_retrieve(slot_keys, slot_warm, scope_key)
+            # If the slot store correctly gates (no match for a
+            # common-sense probe keyed differently), the LM uses its
+            # natural prior. We check the natural-prior answer.
+            composed_ok = _baseline_recall(llm, n_vocab, query, target)
+            baseline_ok = _baseline_recall(llm, n_vocab, query, target)
+        else:
+            # Correction test: Lane 02 KV-slot prefill for exact recall.
+            composed_ok = _kv_slot_recall(
+                llm, ctx_p, n_vocab, fact, query, target
             )
-            is_correction = (
-                float(crit_result.get("correction_likelihood", 0.0)) > 0.5
-            )
+            baseline_ok = _baseline_recall(llm, n_vocab, query, target)
 
-            # Lane 04: write a slot keyed by the probe embedding, storing
-            # a compact warm_state derived from the fact embedding (proxy
-            # for cortex warm_state; keeps the slot-store mechanism real).
-            probe_key = _embed(llm, query)
-            fact_key = _embed(llm, fact)
-            warm_state = (fact_key[:8].copy() if len(fact_key) >= 8
-                          else np.zeros(8, dtype=float))
-            _slot_write(slot_keys, slot_warm, probe_key, warm_state)
+        if composed_ok:
+            composed_correct += 1
+        if baseline_ok:
+            baseline_correct += 1
 
-            # Lane 06: encode the episode into the autoencoder (compact
-            # persistence). The latent is the persistent representation.
-            autoenc.encode({
-                "situation": query, "model_answer": "",
-                "correction": fact, "revised_answer": target,
-                "outcome": "corrected" if is_correction else "unknown",
-            })
+    # --- Persistent memory footprint (pickle) ---
+    composed_state = {
+        "slot_keys": slot_keys,
+        "slot_warm": slot_warm,
+        "autoencoder": autoenc,
+        "critic": critic,
+    }
+    composed_bytes = len(
+        pickle.dumps(composed_state, protocol=pickle.HIGHEST_PROTOCOL)
+    )
+    baseline_bytes = 0  # stateless baseline
 
-            if is_scope:
-                # Scope test: slot store should NOT retrieve the technical
-                # fact slot for the common-sense probe (different key).
-                # The agent answers via natural prior (no KV-slot prefill).
-                scope_key = _embed(llm, query)
-                retrieved = _slot_retrieve(slot_keys, slot_warm, scope_key)
-                # If the slot store correctly gates (no match for a
-                # common-sense probe keyed differently), the LM uses its
-                # natural prior. We check the natural-prior answer.
-                composed_ok = _baseline_recall(llm, n_vocab, query, target)
-                baseline_ok = _baseline_recall(llm, n_vocab, query, target)
-            else:
-                # Correction test: Lane 02 KV-slot prefill for exact recall.
-                composed_ok = _kv_slot_recall(
-                    llm, ctx_p, n_vocab, fact, query, target
-                )
-                baseline_ok = _baseline_recall(llm, n_vocab, query, target)
+    behavior_delta = composed_correct - baseline_correct
+    delta_bytes = max(1, composed_bytes - baseline_bytes)
+    metric = float(behavior_delta) / float(delta_bytes)
 
-            if composed_ok:
-                composed_correct += 1
-            if baseline_ok:
-                baseline_correct += 1
-
-        # --- Persistent memory footprint (pickle) ---
-        composed_state = {
-            "slot_keys": slot_keys,
-            "slot_warm": slot_warm,
-            "autoencoder": autoenc,
-            "critic": critic,
-        }
-        composed_bytes = len(
-            pickle.dumps(composed_state, protocol=pickle.HIGHEST_PROTOCOL)
-        )
-        baseline_bytes = 0  # stateless baseline
-
-        behavior_delta = composed_correct - baseline_correct
-        delta_bytes = max(1, composed_bytes - baseline_bytes)
-        metric = float(behavior_delta) / float(delta_bytes)
-
-        # Guard: a non-positive delta means the composition didn't help.
-        if behavior_delta <= 0:
-            return 0.0
-        return metric
-    except Exception:
+    # Guard: a non-positive delta means the composition didn't help.
+    if behavior_delta <= 0:
         return 0.0
+    return metric

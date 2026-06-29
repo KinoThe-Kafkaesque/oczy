@@ -14,6 +14,8 @@ from typing import Any
 
 import numpy as np
 
+from lanes._common import lane_measure
+
 _LATENT_DIM, _OUTCOME_DIM, _NUM_SOURCES, _MAX_VOCAB = 32, 4, 4, 256
 _RESIDUAL_DIM = _LATENT_DIM - _OUTCOME_DIM
 _OUTCOME_LABELS = ["accepted", "corrected", "failed", "unknown"]
@@ -277,66 +279,64 @@ def name() -> str:
     return "lane_06_combined_footprint_bytes"
 
 
+@lane_measure
 def measure() -> float:
-    try:
-        from identity_hypernetwork import IdentityHypernetwork
-        hn = IdentityHypernetwork()  # default latent_dim=8, seed=0
-        # 12-episode synthetic correction corpus (8 train + 4 held-out)
-        corpus = [
-            ("what color is the sky on a clear day", "green", "no the sky is blue not green", "blue"),
-            ("capital of france", "lyon", "incorrect the capital is paris", "paris"),
-            ("two plus two", "five", "wrong two plus two is four", "four"),
-            ("largest planet", "mars", "no jupiter is the largest planet", "jupiter"),
-            ("speed of light", "slow", "light travels very fast actually", "fast"),
-            ("boiling point of water", "50", "water boils at 100 degrees celsius", "100"),
-            ("first president of the us", "lincoln", "washington was the first president", "washington"),
-            ("chemical symbol for gold", "go", "the symbol for gold is au", "au"),
-            ("how many continents", "4", "there are seven continents", "seven"),
-            ("tallest mountain", "k2", "everest is the tallest mountain", "everest"),
-            ("opposite of hot", "warm", "the opposite of hot is cold", "cold"),
-            ("primary color", "green", "red is a primary color", "red"),
-        ]
-        train_eps = corpus[:8]
-        held_out = corpus[8:]
-        # --- A0b baseline (random projection, seed-regenerable) ---
-        ae0 = A0bAutoencoder(seed=42)
-        # --- A1 trained low-rank autoencoder ---
-        ae1 = A1Autoencoder(seed=42, rank=3)
-        # --- A0b-equiv: same A1 architecture but encoder frozen (random) ---
-        ae0b = A1Autoencoder(seed=99, rank=3)  # different seed → different random enc
-        # Pre-fill vocab and corr_tokens on all with training episodes
-        # so held-out measurement uses consistent token mappings
-        train_data = []
-        for situ, wrong, corr, right in train_eps:
-            ep = {"situation": situ, "model_answer": wrong, "correction": corr,
-                  "revised_answer": right, "outcome": "corrected"}
-            train_data.append(ep)
-            ae0.encode(ep)
-            ae0._build_target(ep)
-            ae1.encode(ep)
-            ae1._build_target(ep)
-            ae0b.encode(ep)
-            ae0b._build_target(ep)
-            hn.update_identity({"source": "user_correction",
-                                "correct_label": right, "token": right})
-        a0b_bytes = int(ae0.status(include_size=True).get("serialized_bytes", 0))
-        # Train A1 (encoder + decoder) and A0b-equiv (decoder only) for 100 epochs
-        for _epoch in range(100):
-            for ep in train_data:
-                ae1.train_step(ep, lr=0.05, train_encoder=True)
-                ae0b.train_step(ep, lr=0.05, train_encoder=False)
-        a1_bytes = int(ae1.status(include_size=True).get("serialized_bytes", 0))
-        held_out_eps = [{"situation": s, "model_answer": w, "correction": c,
-                         "revised_answer": r, "outcome": "corrected"}
-                        for s, w, c, r in held_out]
-        a0b_recon = float(np.mean([ae0.reconstruction_error(ep) for ep in held_out_eps]))
-        a0b_equiv_recon = float(np.mean([ae0b.reconstruction_error(ep) for ep in held_out_eps]))
-        a1_recon = float(np.mean([ae1.reconstruction_error(ep) for ep in held_out_eps]))
-        hn_bytes = int(hn.status(include_size=True).get("serialized_bytes", 0))
-        # A1 trained encoder should beat A0b-equiv random encoder (same decode path)
-        _ = (a0b_bytes, a0b_recon, a0b_equiv_recon, a1_recon,
-             a1_recon < a0b_equiv_recon)
-        # Primary metric: A1 combined footprint (must stay < 22947)
-        return float(a1_bytes + hn_bytes)
-    except Exception:
-        return float("nan")
+    from identity_hypernetwork import IdentityHypernetwork
+    hn = IdentityHypernetwork()  # default latent_dim=8, seed=0
+    # 12-episode synthetic correction corpus (8 train + 4 held-out)
+    corpus = [
+        ("what color is the sky on a clear day", "green", "no the sky is blue not green", "blue"),
+        ("capital of france", "lyon", "incorrect the capital is paris", "paris"),
+        ("two plus two", "five", "wrong two plus two is four", "four"),
+        ("largest planet", "mars", "no jupiter is the largest planet", "jupiter"),
+        ("speed of light", "slow", "light travels very fast actually", "fast"),
+        ("boiling point of water", "50", "water boils at 100 degrees celsius", "100"),
+        ("first president of the us", "lincoln", "washington was the first president", "washington"),
+        ("chemical symbol for gold", "go", "the symbol for gold is au", "au"),
+        ("how many continents", "4", "there are seven continents", "seven"),
+        ("tallest mountain", "k2", "everest is the tallest mountain", "everest"),
+        ("opposite of hot", "warm", "the opposite of hot is cold", "cold"),
+        ("primary color", "green", "red is a primary color", "red"),
+    ]
+    train_eps = corpus[:8]
+    held_out = corpus[8:]
+    # --- A0b baseline (random projection, seed-regenerable) ---
+    ae0 = A0bAutoencoder(seed=42)
+    # --- A1 trained low-rank autoencoder ---
+    ae1 = A1Autoencoder(seed=42, rank=3)
+    # --- A0b-equiv: same A1 architecture but encoder frozen (random) ---
+    ae0b = A1Autoencoder(seed=99, rank=3)  # different seed → different random enc
+    # Pre-fill vocab and corr_tokens on all with training episodes
+    # so held-out measurement uses consistent token mappings
+    train_data = []
+    for situ, wrong, corr, right in train_eps:
+        ep = {"situation": situ, "model_answer": wrong, "correction": corr,
+              "revised_answer": right, "outcome": "corrected"}
+        train_data.append(ep)
+        ae0.encode(ep)
+        ae0._build_target(ep)
+        ae1.encode(ep)
+        ae1._build_target(ep)
+        ae0b.encode(ep)
+        ae0b._build_target(ep)
+        hn.update_identity({"source": "user_correction",
+                            "correct_label": right, "token": right})
+    a0b_bytes = int(ae0.status(include_size=True).get("serialized_bytes", 0))
+    # Train A1 (encoder + decoder) and A0b-equiv (decoder only) for 100 epochs
+    for _epoch in range(100):
+        for ep in train_data:
+            ae1.train_step(ep, lr=0.05, train_encoder=True)
+            ae0b.train_step(ep, lr=0.05, train_encoder=False)
+    a1_bytes = int(ae1.status(include_size=True).get("serialized_bytes", 0))
+    held_out_eps = [{"situation": s, "model_answer": w, "correction": c,
+                     "revised_answer": r, "outcome": "corrected"}
+                    for s, w, c, r in held_out]
+    a0b_recon = float(np.mean([ae0.reconstruction_error(ep) for ep in held_out_eps]))
+    a0b_equiv_recon = float(np.mean([ae0b.reconstruction_error(ep) for ep in held_out_eps]))
+    a1_recon = float(np.mean([ae1.reconstruction_error(ep) for ep in held_out_eps]))
+    hn_bytes = int(hn.status(include_size=True).get("serialized_bytes", 0))
+    # A1 trained encoder should beat A0b-equiv random encoder (same decode path)
+    _ = (a0b_bytes, a0b_recon, a0b_equiv_recon, a1_recon,
+         a1_recon < a0b_equiv_recon)
+    # Primary metric: A1 combined footprint (must stay < 22947)
+    return float(a1_bytes + hn_bytes)

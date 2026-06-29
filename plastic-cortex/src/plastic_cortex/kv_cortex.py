@@ -313,7 +313,7 @@ class KVCortex:
         if self.proj_c_shared is not None:
             vec = (self.proj_c_shared @ intent).astype(np.float32)
             shared_payload = np.ascontiguousarray(vec)
-            self._cvec_payloads = [shared_payload for _ in range(self.config.n_layers)]
+            self._cvec_payloads = [shared_payload.copy() for _ in range(self.config.n_layers)]
             self._cvec_payloads_flat = shared_payload
             self._dirty = False
             return
@@ -324,7 +324,7 @@ class KVCortex:
             # strength, while keeping the cvec's DIRECTION equal to a real
             # LM hidden -- so amplitude-varied steering lands in the
             # request-aligned residual basin rather than a random one.
-            amp = float(np.linalg.norm(self.warm_state))
+            amp = float(np.linalg.norm(intent))
             unit_h = self.last_correction_hidden / max(
                 float(np.linalg.norm(self.last_correction_hidden)), 1e-6
             )

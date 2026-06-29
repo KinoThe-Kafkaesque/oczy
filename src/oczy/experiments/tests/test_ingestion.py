@@ -482,51 +482,72 @@ def test_cortex_agent_without_pipeline_unchanged() -> None:
 
 
 def test_hybrid_consolidation_boosts_strength() -> None:
-    """When use_hybrid_consolidation is enabled, turn() scales consolidation strength by drift_max."""
-    driver = _FakeDriver(n_embd=8, n_layers=4)
-    cfg = CortexAgentConfig(
-        cortex=KVCortexConfig(d_cortex=8),
-        use_ingestion_pipeline=True,
-        auto_consolidate=True,
-        digestive_gate=DigestiveGateConfig(
-            consolidation_pressure_threshold=0.1,
-            use_ingestion_pipeline=True,
-            use_hybrid_consolidation=True,
-        ),
-        ingestion={"embedder": "same-lm"},
-    )
-    agent = CortexAgent(cfg, driver=driver)
-    agent.boot()
+    """When use_hybrid_consolidation is enabled, turn() scales consolidation strength by drift_max.
 
-    # Long correction turn to produce chunked signals and a non-zero TurnDigest.
-    agent.perceive(
+    The hybrid path multiplies the base consolidation strength by (1 + drift_max),
+    so for a correction turn with non-zero drift the hybrid agent must consolidate
+    at a strictly higher strength than an identical non-hybrid agent. Comparing
+    hybrid vs non-hybrid gives a refutable ordering, rather than re-deriving the
+    exact strength from the same internal ``_pressure`` the agent itself reads.
+    """
+    correction_turn = (
         "No, that is wrong. Actually, 'profile' here means business vertical. "
-        "It is not about user profile. It is about the market segment.",
-        correction_signal=1.0,
+        "It is not about user profile. It is about the market segment."
     )
-    agent.metabolize()
-    assert agent._last_digest is not None
-    assert agent._last_digest.drift_max >= 0.0
 
-    captured: dict[str, Any] = {}
+    def build_agent(*, use_hybrid_consolidation: bool) -> CortexAgent:
+        driver = _FakeDriver(n_embd=8, n_layers=4)
+        cfg = CortexAgentConfig(
+            cortex=KVCortexConfig(d_cortex=8),
+            use_ingestion_pipeline=True,
+            auto_consolidate=True,
+            digestive_gate=DigestiveGateConfig(
+                use_ingestion_pipeline=True,
+                use_hybrid_consolidation=use_hybrid_consolidation,
+            ),
+            ingestion={"embedder": "same-lm"},
+        )
+        agent = CortexAgent(cfg, driver=driver)
+        agent.boot()
+        return agent
 
-    def fake_consolidate(*, strength: float = 1.0) -> dict[str, Any]:
-        captured["strength"] = strength
-        return {"mock": True}
+    def run_and_capture(agent: CortexAgent) -> float:
+        captured: dict[str, Any] = {}
 
-    agent.consolidate = fake_consolidate  # type: ignore[method-assign]
-    agent.should_consolidate = lambda: True  # type: ignore[method-assign]
-    agent.articulate = lambda **_: ""  # type: ignore[method-assign]
+        def fake_consolidate(*, strength: float = 1.0) -> dict[str, Any]:
+            captured["strength"] = strength
+            return {"mock": True}
 
-    pressure = agent.digestive_gate._pressure
-    threshold = agent.digestive_gate.config.consolidation_pressure_threshold
-    baseline = 1.0 + (pressure / threshold) * 9.0 if threshold > 0 else 1.0
+        agent.consolidate = fake_consolidate  # type: ignore[method-assign]
+        agent.should_consolidate = lambda: True  # type: ignore[method-assign]
+        agent.articulate = lambda **_: ""  # type: ignore[method-assign]
 
-    result = agent.turn("ok")
+        # turn() perceives the correction turn, metabolizes it (producing the
+        # TurnDigest whose drift_max drives the hybrid boost), then consolidates.
+        result = agent.turn(correction_turn, correction_signal=1.0)
+        assert result["consolidated"] is True
+        assert "consolidation_strength" in result["consolidation_summary"]
+        return captured["strength"]
 
-    assert result["consolidated"] is True
-    assert "consolidation_strength" in result["consolidation_summary"]
-    assert captured["strength"] > baseline
-    assert captured["strength"] == pytest.approx(
-        min(baseline * (1.0 + agent._last_digest.drift_max), 10.0)
-    )
+    non_hybrid_agent = build_agent(use_hybrid_consolidation=False)
+    hybrid_agent = build_agent(use_hybrid_consolidation=True)
+
+    non_hybrid_strength = run_and_capture(non_hybrid_agent)
+    hybrid_strength = run_and_capture(hybrid_agent)
+
+    # Both agents processed the same correction turn, so both must have observed
+    # non-zero drift -- the precondition for the hybrid boost to do anything.
+    assert non_hybrid_agent._last_digest is not None
+    assert hybrid_agent._last_digest is not None
+    assert non_hybrid_agent._last_digest.drift_max > 0.0
+    assert hybrid_agent._last_digest.drift_max > 0.0
+
+    # Baseline consolidation strength is always >= 1.0.
+    assert non_hybrid_strength > 1.0
+    assert hybrid_strength > 1.0
+
+    # The hybrid boost multiplies the base by (1 + drift_max) > 1, so the hybrid
+    # agent must consolidate at a strictly higher strength than the non-hybrid
+    # agent. This is refutable: if the boost were ever dropped or applied to both
+    # paths, the two strengths would be equal.
+    assert hybrid_strength > non_hybrid_strength

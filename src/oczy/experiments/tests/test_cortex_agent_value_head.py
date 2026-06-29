@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import numpy as np
@@ -19,7 +20,7 @@ class _MockDriver:
         self._cvec_active = False
 
     def peek_embedding(self, text: str, last_token_only: bool = True) -> np.ndarray:
-        rng = np.random.RandomState(hash(text) & 0xFFFFFFFF)
+        rng = np.random.RandomState(int.from_bytes(hashlib.sha256(text.encode("utf-8")).digest()[:4], "big"))
         return rng.randn(self.n_embd).astype(np.float32)
 
     def set_reserved_position(self, position: Any) -> None:

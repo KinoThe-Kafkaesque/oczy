@@ -22,6 +22,7 @@ Never raises; deterministic (fixed seed + fixed phrase order).
 
 from __future__ import annotations
 
+from lanes._common import cosine, lane_measure
 
 _CONCEPTS: dict[str, list[str]] = {
     "paris": [
@@ -42,14 +43,6 @@ _CONCEPTS: dict[str, list[str]] = {
 }
 
 
-def _cosine(a, b) -> float:
-    import numpy as np
-
-    na = float(np.linalg.norm(a))
-    nb = float(np.linalg.norm(b))
-    if na == 0.0 or nb == 0.0:
-        return 0.0
-    return float(np.dot(a, b) / (na * nb))
 
 
 def _silhouette(warm_by_concept: dict[str, list]) -> float | None:
@@ -66,12 +59,12 @@ def _silhouette(warm_by_concept: dict[str, list]) -> float | None:
         si = warm_by_concept[ci]
         for a in range(len(si)):
             for b in range(a + 1, len(si)):
-                intra.append(_cosine(si[a], si[b]))
+                intra.append(cosine(si[a], si[b]))
         for cj in concepts[i + 1:]:
             sj = warm_by_concept[cj]
             for a in range(len(si)):
                 for b in range(len(sj)):
-                    inter.append(_cosine(si[a], sj[b]))
+                    inter.append(cosine(si[a], sj[b]))
     if not intra or not inter:
         return None
     return float(np.mean(intra) - np.mean(inter))
@@ -81,135 +74,134 @@ def name() -> str:
     return "lane_03_warm_sep_silhouette"
 
 
+@lane_measure
 def measure() -> float:
-    try:
-        import numpy as np
-        import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        # --- HF load (no device_map: accelerate is not available) ---
-        model_name = "LiquidAI/LFM2.5-1.2B-Instruct"
-        tok = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=torch.bfloat16,
-            output_hidden_states=True,
-        )
-        model.eval()
+    from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
 
-        D_EMBD = 2048
-        N_LAYERS = 16  # LFM2.5-1.2B has 16 transformer layers.
+    # --- HF load (no device_map: accelerate is not available) ---
+    model_name = "LiquidAI/LFM2.5-1.2B-Instruct"
+    tok = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        torch_dtype=torch.bfloat16,
+        output_hidden_states=True,
+    )
+    model.eval()
 
-        # --- cache per-phrase hidden states: one HF forward per phrase ---
-        all_phrases = [p for ps in _CONCEPTS.values() for p in ps]
-        phrase_hiddens: dict[str, list] = {}
-        with torch.no_grad():
-            for phrase in all_phrases:
-                enc = tok(phrase, return_tensors="pt")
-                out = model(**enc)
-                hs = out.hidden_states  # tuple of (N_LAYERS+1) tensors (1, seq, d_embd)
-                if hs is None or len(hs) != N_LAYERS + 1:
-                    return float("nan")
-                # Store each layer's (seq, d_embd) slice as float32 numpy.
-                phrase_hiddens[phrase] = [
-                    h[0].to(torch.float32).numpy() for h in hs
-                ]
+    D_EMBD = 2048
+    N_LAYERS = 16  # LFM2.5-1.2B has 16 transformer layers.
 
-        # --- pooling pickers per condition ---
-        def last_token(seq_arr):
-            return seq_arr[-1, :]
+    # --- cache per-phrase hidden states: one HF forward per phrase ---
+    all_phrases = [p for ps in _CONCEPTS.values() for p in ps]
+    phrase_hiddens: dict[str, list] = {}
+    with torch.no_grad():
+        for phrase in all_phrases:
+            enc = tok(phrase, return_tensors="pt")
+            out = model(**enc)
+            hs = out.hidden_states  # tuple of (N_LAYERS+1) tensors (1, seq, d_embd)
+            if hs is None or len(hs) != N_LAYERS + 1:
+                return float("nan")
+            # Store each layer's (seq, d_embd) slice as float32 numpy.
+            phrase_hiddens[phrase] = [
+                h[0].to(torch.float32).numpy() for h in hs
+            ]
 
-        def max_pool(seq_arr):
-            return seq_arr.max(axis=0)
+    # --- pooling pickers per condition ---
+    def last_token(seq_arr):
+        return seq_arr[-1, :]
 
-        # (label, hidden_states index, pool_fn)
-        conditions = [
-            ("last_L9", 10, last_token),
-            ("last_L13", 14, last_token),
-            ("last_L15", 16, last_token),
-            ("maxpool_L14", 15, max_pool),
-        ]
+    def max_pool(seq_arr):
+        return seq_arr.max(axis=0)
 
-        def silhouette_for(idx: int, pool) -> float | None:
-            warm_by_concept: dict[str, list] = {}
-            for concept, phrases in _CONCEPTS.items():
-                cortex = KVCortex(
-                    KVCortexConfig(
-                        d_cortex=128,
-                        d_embd=D_EMBD,
-                        n_layers=N_LAYERS,
-                        seed=0,
-                    )
+    # (label, hidden_states index, pool_fn)
+    conditions = [
+        ("last_L9", 10, last_token),
+        ("last_L13", 14, last_token),
+        ("last_L15", 16, last_token),
+        ("maxpool_L14", 15, max_pool),
+    ]
+
+    def silhouette_for(idx: int, pool) -> float | None:
+        warm_by_concept: dict[str, list] = {}
+        for concept, phrases in _CONCEPTS.items():
+            cortex = KVCortex(
+                KVCortexConfig(
+                    d_cortex=128,
+                    d_embd=D_EMBD,
+                    n_layers=N_LAYERS,
+                    seed=0,
                 )
-                cortex.reset_warm_to_zeros()
-                states = []
-                for phrase in phrases:
-                    vec = pool(phrase_hiddens[phrase][idx])
-                    if vec.shape[0] != D_EMBD:
-                        return None
-                    state = cortex.observe(vec, correction_signal=0.0)
-                    states.append(state)
-                warm_by_concept[concept] = states
-            return _silhouette(warm_by_concept)
+            )
+            cortex.reset_warm_to_zeros()
+            states = []
+            for phrase in phrases:
+                vec = pool(phrase_hiddens[phrase][idx])
+                if vec.shape[0] != D_EMBD:
+                    return None
+                state = cortex.observe(vec, correction_signal=0.0)
+                states.append(state)
+            warm_by_concept[concept] = states
+        return _silhouette(warm_by_concept)
 
-        silhouettes: list[float] = []
-        for _label, idx, pool in conditions:
-            try:
-                s = silhouette_for(idx, pool)
-                if s is not None:
-                    silhouettes.append(s)
-            except Exception:
-                continue
-
-        # --- GGUF final-layer mean-pool baseline (best-effort) ---
+    silhouettes: list[float] = []
+    for _label, idx, pool in conditions:
         try:
-            from src.oczy.experiments.multi_fact_stressor import _resolve_gguf_path
-            from src.oczy.lm.cvec_driver import LlamaCVecDriver
-            from llama_cpp import Llama
-
-            resolved = _resolve_gguf_path()
-            if resolved is not None:
-                llm = Llama(
-                    model_path=str(resolved),
-                    n_ctx=512,
-                    n_threads=4,
-                    embedding=True,
-                    verbose=False,
-                )
-                driver = LlamaCVecDriver(llm)
-                if driver.n_embd == D_EMBD:
-                    gguf_warm: dict[str, list] = {}
-                    ok = True
-                    for concept, phrases in _CONCEPTS.items():
-                        cortex = KVCortex(
-                            KVCortexConfig(
-                                d_cortex=128,
-                                d_embd=driver.n_embd,
-                                n_layers=N_LAYERS,
-                                seed=0,
-                            )
-                        )
-                        cortex.reset_warm_to_zeros()
-                        states = []
-                        for phrase in phrases:
-                            emb = driver.peek_embedding(phrase, last_token_only=False)
-                            if emb.shape[0] != driver.n_embd:
-                                ok = False
-                                break
-                            states.append(cortex.observe(emb, correction_signal=0.0))
-                        if not ok:
-                            break
-                        gguf_warm[concept] = states
-                    if ok:
-                        s = _silhouette(gguf_warm)
-                        if s is not None:
-                            silhouettes.append(s)
+            s = silhouette_for(idx, pool)
+            if s is not None:
+                silhouettes.append(s)
         except Exception:
-            pass
+            continue
 
-        if not silhouettes:
-            return float("nan")
-        return float(max(silhouettes))
+    # --- GGUF final-layer mean-pool baseline (best-effort) ---
+    try:
+        from llama_cpp import Llama
+
+        from src.oczy.experiments.multi_fact_stressor import _resolve_gguf_path
+        from src.oczy.lm.cvec_driver import LlamaCVecDriver
+
+        resolved = _resolve_gguf_path()
+        if resolved is not None:
+            llm = Llama(
+                model_path=str(resolved),
+                n_ctx=512,
+                n_threads=4,
+                embedding=True,
+                verbose=False,
+            )
+            driver = LlamaCVecDriver(llm)
+            if driver.n_embd == D_EMBD:
+                gguf_warm: dict[str, list] = {}
+                ok = True
+                for concept, phrases in _CONCEPTS.items():
+                    cortex = KVCortex(
+                        KVCortexConfig(
+                            d_cortex=128,
+                            d_embd=driver.n_embd,
+                            n_layers=N_LAYERS,
+                            seed=0,
+                        )
+                    )
+                    cortex.reset_warm_to_zeros()
+                    states = []
+                    for phrase in phrases:
+                        emb = driver.peek_embedding(phrase, last_token_only=False)
+                        if emb.shape[0] != driver.n_embd:
+                            ok = False
+                            break
+                        states.append(cortex.observe(emb, correction_signal=0.0))
+                    if not ok:
+                        break
+                    gguf_warm[concept] = states
+                if ok:
+                    s = _silhouette(gguf_warm)
+                    if s is not None:
+                        silhouettes.append(s)
     except Exception:
+        pass
+
+    if not silhouettes:
         return float("nan")
+    return float(max(silhouettes))

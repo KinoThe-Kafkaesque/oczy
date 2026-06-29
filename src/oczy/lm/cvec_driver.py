@@ -28,6 +28,22 @@ import llama_cpp
 import numpy as np
 from llama_cpp import Llama
 
+_LLAMA_CPP_MIN_VERSION = (0, 3, 31)
+_llama_cpp_version = (
+    tuple(int(x) for x in llama_cpp.__version__.split(".")[:3])
+    if hasattr(llama_cpp, "__version__")
+    else (0, 0, 0)
+)
+if _llama_cpp_version < _LLAMA_CPP_MIN_VERSION:
+    import warnings
+
+    warnings.warn(
+        f"llama-cpp-python {_llama_cpp_version} is older than the pinned minimum "
+        f"{_LLAMA_CPP_MIN_VERSION}; private attribute access may break.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+
 
 @dataclass
 class CVecDriverConfig:
@@ -140,7 +156,7 @@ class LlamaCVecDriver:
         self.config = config or CVecDriverConfig()
         self._llm = llm
         self._ctx_obj = llm._ctx  # LlamaContext wrapper
-        self._ctx_p = self._ctx_obj.ctx  # raw llama_context_p pointer (int)
+        self._ctx_p = self._ctx_ptr()  # raw llama_context_p pointer (int)
         self.n_embd: int = int(llm.n_embd())
         self.n_vocab: int = int(llm.n_vocab())
         self.n_layers: int = self._probe_n_layers()
@@ -413,11 +429,17 @@ class LlamaCVecDriver:
             prefix = self._reserved_position.text
             if not effective_prompt.startswith(prefix):
                 effective_prompt = prefix + effective_prompt
+        if stop is None:
+            stop_list = None
+        elif isinstance(stop, str):
+            stop_list = [stop]
+        else:
+            stop_list = list(stop)
         result = self._llm.create_completion(
             effective_prompt,
             max_tokens=max_tokens,
             temperature=temperature,
-            stop=list(stop) if stop else None,
+            stop=stop_list,
         )
         return result["choices"][0]["text"]
 
@@ -490,6 +512,9 @@ class LlamaCVecDriver:
 
             if target_idx < len(target_token_ids):
                 tid = target_token_ids[target_idx]
+                if not (0 <= tid < n_vocab):
+                    target_idx = len(target_token_ids)
+                    continue
                 logits[tid] += bias
 
             next_token = int(np.argmax(logits))
@@ -592,8 +617,42 @@ class LlamaCVecDriver:
         }
 
     # ------------------------------------------------------------------
+    # Lifecycle / cleanup
+    # ------------------------------------------------------------------
+    def close(self) -> None:
+        """Release the LM and clear caches."""
+        self._embedding_cache.clear()
+        if self._llm is not None:
+            del self._llm
+            self._llm = None
+        self._loaded = False
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def __enter__(self) -> "LlamaCVecDriver":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+    def _ctx_ptr(self) -> int:
+        """Return the raw llama_context_p, with a clear error on binding drift."""
+        try:
+            return self._llm._ctx.ctx
+        except AttributeError as e:
+            raise RuntimeError(
+                "llama-cpp-python private attribute _ctx.ctx is missing; "
+                "the binding has changed. Pin llama-cpp-python>=%s."
+                % ".".join(str(x) for x in _LLAMA_CPP_MIN_VERSION)
+            ) from e
+
     def _probe_n_layers(self) -> int:
         """Read the model's layer count via the low-level ``llama_n_layer``.
 

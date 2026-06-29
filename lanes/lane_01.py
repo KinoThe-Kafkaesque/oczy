@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from lanes._common import lane_measure
 
 _BASE_SUB_METRICS = (
     "correction_uptake_latency",
@@ -69,6 +70,7 @@ def name() -> str:
     return "lane_01_desaturation_count"
 
 
+@lane_measure
 def measure() -> float:
     try:
         from src.oczy.experiments.baselines import (
@@ -87,88 +89,85 @@ def measure() -> float:
     except Exception:
         return float("nan")
 
-    try:
-        full = build_curriculum(seed=0)
-        if not full.levels():
-            return float("nan")
-        suite = EvalSuite(_SubsetCurriculum(full, n=1))
-        tprobes = tuple(getattr(suite, "_transfer_probes", ()))
-        n_probes = len(tprobes)
-
-        def _exact(a: str, e: str) -> bool:
-            return _normalize(a) == _normalize(e)
-
-        def _domain(a: str, e: str) -> bool:
-            """Substring match OR >=50% shared non-stopword overlap."""
-            a_n, e_n = _normalize(a), _normalize(e)
-            if not a_n or not e_n:
-                return False
-            if e_n in a_n:
-                return True
-            at, et = _token_set(a), _token_set(e)
-            return bool(et) and len(at & et) / len(et) >= 0.5
-
-        def _shift_dir(pre: str, post: str, expected: str) -> int:
-            pre_o = len(_token_set(pre) & _token_set(expected))
-            post_o = len(_token_set(post) & _token_set(expected))
-            return 1 if post_o > pre_o else (-1 if post_o < pre_o else 0)
-
-        cards: list[dict[str, Any]] = []
-        for factory in (ZeroMemoryAgent, ContextOnlyAgent, FastOnlyAgent):
-            try:
-                agent = factory()
-                pre_ans = [_respond(agent, p.request) for p in tprobes]
-                pre_bytes = _memory_bytes(agent)
-                result = suite.run(agent)
-                post_ans = [_respond(agent, p.request) for p in tprobes]
-                delta_bytes = max(1, int(result.consolidated_size) - pre_bytes)
-                card = dict(result.final_card)
-
-                # 1. signed_interference_forgetting: signed transfer shift.
-                shifts = []
-                for pre, post, p in zip(pre_ans, post_ans, tprobes):
-                    if _normalize(pre) == _normalize(post):
-                        shifts.append(0.0)
-                    else:
-                        shifts.append(float(_shift_dir(pre, post, p.expected)))
-                card["signed_interference_forgetting"] = (
-                    sum(shifts) / n_probes if n_probes else 0.0
-                )
-
-                # 2. separated_exact_vs_domain_recall: |exact - domain| gap.
-                if n_probes:
-                    exact_recall = sum(
-                        _exact(a, p.expected) for a, p in zip(post_ans, tprobes)
-                    ) / n_probes
-                    domain_recall = sum(
-                        _domain(a, p.expected) for a, p in zip(post_ans, tprobes)
-                    ) / n_probes
-                    pre_domain_recall = sum(
-                        _domain(a, p.expected) for a, p in zip(pre_ans, tprobes)
-                    ) / n_probes
-                else:
-                    exact_recall = domain_recall = pre_domain_recall = 0.0
-                card["separated_exact_vs_domain_recall"] = abs(
-                    exact_recall - domain_recall
-                )
-
-                # 3. behavior_delta_per_byte: un-inverted north star.
-                behavior_delta = domain_recall - pre_domain_recall
-                card["behavior_delta_per_byte"] = behavior_delta / delta_bytes
-
-                cards.append(card)
-            except Exception:
-                continue
-        if len(cards) < 2:
-            return float("nan")
-        count = 0
-        for metric in _BASE_SUB_METRICS + _NEW_SUB_METRICS:
-            try:
-                values = [float(c.get(metric, 0.0)) for c in cards]
-            except (TypeError, ValueError):
-                continue
-            if values and (max(values) - min(values)) > 0.2:
-                count += 1
-        return float(count)
-    except Exception:
+    full = build_curriculum(seed=0)
+    if not full.levels():
         return float("nan")
+    suite = EvalSuite(_SubsetCurriculum(full, n=1))
+    tprobes = tuple(getattr(suite, "_transfer_probes", ()))
+    n_probes = len(tprobes)
+
+    def _exact(a: str, e: str) -> bool:
+        return _normalize(a) == _normalize(e)
+
+    def _domain(a: str, e: str) -> bool:
+        """Substring match OR >=50% shared non-stopword overlap."""
+        a_n, e_n = _normalize(a), _normalize(e)
+        if not a_n or not e_n:
+            return False
+        if e_n in a_n:
+            return True
+        at, et = _token_set(a), _token_set(e)
+        return bool(et) and len(at & et) / len(et) >= 0.5
+
+    def _shift_dir(pre: str, post: str, expected: str) -> int:
+        pre_o = len(_token_set(pre) & _token_set(expected))
+        post_o = len(_token_set(post) & _token_set(expected))
+        return 1 if post_o > pre_o else (-1 if post_o < pre_o else 0)
+
+    cards: list[dict[str, Any]] = []
+    for factory in (ZeroMemoryAgent, ContextOnlyAgent, FastOnlyAgent):
+        try:
+            agent = factory()
+            pre_ans = [_respond(agent, p.request) for p in tprobes]
+            pre_bytes = _memory_bytes(agent)
+            result = suite.run(agent)
+            post_ans = [_respond(agent, p.request) for p in tprobes]
+            delta_bytes = max(1, int(result.consolidated_size) - pre_bytes)
+            card = dict(result.final_card)
+
+            # 1. signed_interference_forgetting: signed transfer shift.
+            shifts = []
+            for pre, post, p in zip(pre_ans, post_ans, tprobes):
+                if _normalize(pre) == _normalize(post):
+                    shifts.append(0.0)
+                else:
+                    shifts.append(float(_shift_dir(pre, post, p.expected)))
+            card["signed_interference_forgetting"] = (
+                sum(shifts) / n_probes if n_probes else 0.0
+            )
+
+            # 2. separated_exact_vs_domain_recall: |exact - domain| gap.
+            if n_probes:
+                exact_recall = sum(
+                    _exact(a, p.expected) for a, p in zip(post_ans, tprobes)
+                ) / n_probes
+                domain_recall = sum(
+                    _domain(a, p.expected) for a, p in zip(post_ans, tprobes)
+                ) / n_probes
+                pre_domain_recall = sum(
+                    _domain(a, p.expected) for a, p in zip(pre_ans, tprobes)
+                ) / n_probes
+            else:
+                exact_recall = domain_recall = pre_domain_recall = 0.0
+            card["separated_exact_vs_domain_recall"] = abs(
+                exact_recall - domain_recall
+            )
+
+            # 3. behavior_delta_per_byte: un-inverted north star.
+            behavior_delta = domain_recall - pre_domain_recall
+            card["behavior_delta_per_byte"] = behavior_delta / delta_bytes
+
+            cards.append(card)
+        except Exception:
+            continue
+    if len(cards) < 2:
+        return float("nan")
+    count = 0
+    for metric in _BASE_SUB_METRICS + _NEW_SUB_METRICS:
+        try:
+            values = [float(c.get(metric, 0.0)) for c in cards]
+        except (TypeError, ValueError):
+            continue
+        if values and (max(values) - min(values)) > 0.2:
+            count += 1
+    return float(count)

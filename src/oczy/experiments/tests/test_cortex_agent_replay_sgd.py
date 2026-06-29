@@ -125,10 +125,18 @@ def test_consolidate_uses_negative_sign_for_neutral_summary() -> None:
     ]
     agent.neural_hippocampus = _MockHippocampus(summaries)
 
-    # We cannot assert exact sign from outside, but we can assert the method
-    # ran and reported a loss. The spy in test_cortex_agent_critic_hidden is
-    # not reused here to keep this test self-contained.
+    captured_signs: list[float] = []
+    original_replay = agent.cortex.replay_train_step
+
+    def spy_replay(lm_hidden, target_response_sign, lr=None):
+        captured_signs.append(target_response_sign)
+        return original_replay(lm_hidden, target_response_sign, lr)
+
+    agent.cortex.replay_train_step = spy_replay  # type: ignore[method-assign]
+
     result = agent.consolidate()
 
     assert result["replay_sgd_updated"] == 1
     assert result["summary_count"] == 1
+    assert len(captured_signs) == 1
+    assert captured_signs[0] == -1.0, "neutral summary must use negative sign"

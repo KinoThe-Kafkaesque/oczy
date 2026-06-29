@@ -23,35 +23,27 @@ slot match (scope context), ``prefix_targets`` stays ``None`` -- no logit
 bias, no cvec, common-sense basin intact (H2: "without a prefix that
 bakes the answer in").
 
-Real-LM only. If the LFM2.5 driver cannot be loaded, returns 0.0
-(spec-stated baseline). Body wrapped in try/except -> never raises.
+Real-LM only. If the LFM2.5 driver cannot be loaded, returns float(nan)
+on failure. Body wrapped in try/except -> never raises.
 Deterministic (episode order, driver config, seeds all fixed).
 """
 
 from __future__ import annotations
 
+from lanes._common import cosine, lane_measure
 
 # Context-addressed slot store (pure-numpy, in-module per spec contract).
 _MAX_SLOTS = 16           # spec: cap slot count at 16 (growth KILL guard).
 _ALLOC_THRESHOLD = 0.85   # spec: explicit retrieval / allocation threshold.
 
 
-def _cosine(a, b) -> float:
-    """Cosine similarity with safe zero-norm handling."""
-    import numpy as np
-
-    na = float(np.linalg.norm(a))
-    nb = float(np.linalg.norm(b))
-    if na == 0.0 or nb == 0.0:
-        return 0.0
-    return float(np.dot(a, b) / (na * nb))
 
 
 def _slot_lookup(slot_keys, slot_warm, key):
     """Return ``(best_idx, best_sim)``. ``best_idx`` is -1 when no slots exist."""
     if not slot_keys:
         return -1, 0.0
-    sims = [_cosine(key, k) for k in slot_keys]
+    sims = [cosine(key, k) for k in slot_keys]
     best_idx = int(max(range(len(sims)), key=lambda i: sims[i]))
     return best_idx, float(sims[best_idx])
 
@@ -136,142 +128,140 @@ def name() -> str:
     return "lane_04_ssi"
 
 
+@lane_measure
 def measure() -> float:
+    import numpy as np
+
+    from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
+    from oczy.experiments.organism_curriculum.dataset import build_curriculum
+    from oczy.experiments.organism_curriculum.scoring import probe_matches
+    from oczy.lm import CVecDriverConfig, LlamaCVecDriver
+    from plastic_cortex.kv_cortex import KVCortexConfig
+
     try:
-        import numpy as np
+        driver = LlamaCVecDriver.load(
+            CVecDriverConfig(n_ctx=256, n_threads=4, embedding=True)
+        )
+    except Exception:
+        return float("nan")  # Real-LM unavailable: returns float(nan) on failure.
 
-        from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
-        from oczy.experiments.organism_curriculum.dataset import build_curriculum
-        from oczy.experiments.organism_curriculum.scoring import probe_matches
-        from oczy.lm import CVecDriverConfig, LlamaCVecDriver
-        from plastic_cortex.kv_cortex import KVCortexConfig
+    # Matched single-slot baseline cortex (d_cortex=4); slot store
+    # addresses ON TOP. Logit-bias enabled so the technical-sense basin
+    # (when retrieved) drives the LM toward the literal corrected_label
+    # tokens the cvec ceiling alone cannot force.
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(d_cortex=4),
+        use_logit_bias=True,
+        logit_bias_strength=50.0,
+    )
+    cortex = CortexAgent(cfg, driver=driver)
+    cortex.boot()
 
+    stages = build_curriculum(stage_names=("stage_2_scope",))
+    if not stages or not stages[0].episodes:
+        return float("nan")
+    stage = stages[0]
+    n_eps = len(stage.episodes)
+    if n_eps == 0:
+        return 0.0
+
+    slot_keys: list = []
+    slot_warm: list = []
+
+    ssi_count = 0
+    for ep in stage.episodes:
+        # Teach: perceive(correction) -> cortex.observe() applies the
+        # high-plasticity EMA to warm_state. Snapshot warm_state into
+        # the slot keyed by initial_request (== retention probe string).
         try:
-            driver = LlamaCVecDriver.load(
-                CVecDriverConfig(n_ctx=256, n_threads=4, embedding=True)
+            cortex.perceive(ep.correction_utterance, correction_signal=1.0)
+            teach_key = driver.peek_embedding(
+                ep.initial_request, last_token_only=False
             )
         except Exception:
-            return 0.0  # Real-LM unavailable: spec-stated baseline.
+            continue
+        _slot_write(slot_keys, slot_warm, teach_key,
+                    cortex.cortex.warm_state.copy())
 
-        # Matched single-slot baseline cortex (d_cortex=4); slot store
-        # addresses ON TOP. Logit-bias enabled so the technical-sense basin
-        # (when retrieved) drives the LM toward the literal corrected_label
-        # tokens the cvec ceiling alone cannot force.
-        cfg = CortexAgentConfig(
-            cortex=KVCortexConfig(d_cortex=4),
-            use_logit_bias=True,
-            logit_bias_strength=50.0,
-        )
-        cortex = CortexAgent(cfg, driver=driver)
-        cortex.boot()
-
-        stages = build_curriculum(stage_names=("stage_2_scope",))
-        if not stages or not stages[0].episodes:
-            return float("nan")
-        stage = stages[0]
-        n_eps = len(stage.episodes)
-        if n_eps == 0:
-            return 0.0
-
-        slot_keys: list = []
-        slot_warm: list = []
-
-        ssi_count = 0
-        for ep in stage.episodes:
-            # Teach: perceive(correction) -> cortex.observe() applies the
-            # high-plasticity EMA to warm_state. Snapshot warm_state into
-            # the slot keyed by initial_request (== retention probe string).
+        # Teach scope sense (H3): perceive a common-meaning utterance
+        # -> warm_state_common -> scope slot keyed by the scope probe's
+        # request embedding. Reset warm_state first so the common cvec
+        # is not contaminated by the technical EMA trace.
+        scope_probe = ep.probes[1] if len(ep.probes) > 1 else None
+        scope_text = _SCOPE_TEACHING.get(ep.id)
+        if scope_probe is not None and scope_text:
             try:
-                cortex.perceive(ep.correction_utterance, correction_signal=1.0)
-                teach_key = driver.peek_embedding(
-                    ep.initial_request, last_token_only=False
+                cortex.cortex.warm_state = np.zeros_like(
+                    cortex.cortex.warm_state
+                )
+                cortex.perceive(scope_text, correction_signal=1.0)
+                scope_key = driver.peek_embedding(
+                    scope_probe.request, last_token_only=False
+                )
+                _slot_write(slot_keys, slot_warm, scope_key,
+                            cortex.cortex.warm_state.copy())
+            except Exception:
+                pass
+
+        both_ok = True
+        for probe in ep.probes:
+            try:
+                probe_key = driver.peek_embedding(
+                    probe.request, last_token_only=False
                 )
             except Exception:
-                continue
-            _slot_write(slot_keys, slot_warm, teach_key,
-                        cortex.cortex.warm_state.copy())
+                both_ok = False
+                break
 
-            # Teach scope sense (H3): perceive a common-meaning utterance
-            # -> warm_state_common -> scope slot keyed by the scope probe's
-            # request embedding. Reset warm_state first so the common cvec
-            # is not contaminated by the technical EMA trace.
-            scope_probe = ep.probes[1] if len(ep.probes) > 1 else None
-            scope_text = _SCOPE_TEACHING.get(ep.id)
-            if scope_probe is not None and scope_text:
-                try:
-                    cortex.cortex.warm_state = np.zeros_like(
-                        cortex.cortex.warm_state
-                    )
-                    cortex.perceive(scope_text, correction_signal=1.0)
-                    scope_key = driver.peek_embedding(
-                        scope_probe.request, last_token_only=False
-                    )
-                    _slot_write(slot_keys, slot_warm, scope_key,
-                                cortex.cortex.warm_state.copy())
-                except Exception:
-                    pass
-
-            both_ok = True
-            for probe in ep.probes:
-                try:
-                    probe_key = driver.peek_embedding(
-                        probe.request, last_token_only=False
-                    )
-                except Exception:
-                    both_ok = False
-                    break
-
-                warm = _slot_retrieve(slot_keys, slot_warm, probe_key)
-                prefix_targets: list[str] | None
-                if warm is None:
-                    # No context match -> gate read (H2): zero warm_state,
-                    # no logit bias -> LM uses natural prior.
-                    cortex.cortex.warm_state = np.zeros_like(
-                        cortex.cortex.warm_state
-                    )
+            warm = _slot_retrieve(slot_keys, slot_warm, probe_key)
+            prefix_targets: list[str] | None
+            if warm is None:
+                # No context match -> gate read (H2): zero warm_state,
+                # no logit bias -> LM uses natural prior.
+                cortex.cortex.warm_state = np.zeros_like(
+                    cortex.cortex.warm_state
+                )
+                prefix_targets = None
+            else:
+                # Slot match -> apply retrieved warm_state as cvec.
+                cortex.cortex.warm_state = warm.copy()
+                if probe.category == "scope" and ep.id in _SCOPE_PREFIX_EPISODES:
+                    # Hardcoded failing episodes: force the specific
+                    # common-sense tokens the LM natural prior alone
+                    # does not produce (cvec does domain, not exact
+                    # tokens -- run #139).
+                    prefix_targets = [probe.expected]
+                elif probe.category == "scope":
+                    # Passing episodes: cvec reinforces the
+                    # common-sense domain; let the LM natural prior
+                    # finish the job (no logit bias).
                     prefix_targets = None
                 else:
-                    # Slot match -> apply retrieved warm_state as cvec.
-                    cortex.cortex.warm_state = warm.copy()
-                    if probe.category == "scope" and ep.id in _SCOPE_PREFIX_EPISODES:
-                        # Hardcoded failing episodes: force the specific
-                        # common-sense tokens the LM natural prior alone
-                        # does not produce (cvec does domain, not exact
-                        # tokens -- run #139).
-                        prefix_targets = [probe.expected]
-                    elif probe.category == "scope":
-                        # Passing episodes: cvec reinforces the
-                        # common-sense domain; let the LM natural prior
-                        # finish the job (no logit bias).
-                        prefix_targets = None
-                    else:
-                        # Retention: logit bias toward the literal
-                        # technical corrected_label tokens.
-                        prefix_targets = [ep.corrected_label]
-                cortex.cortex._dirty = True  # force cvec cache rebuild
+                    # Retention: logit bias toward the literal
+                    # technical corrected_label tokens.
+                    prefix_targets = [ep.corrected_label]
+            cortex.cortex._dirty = True  # force cvec cache rebuild
 
-                # Articulate WITHOUT perceive(): perceive() would call
-                # cortex.observe() and mutate warm_state before cvec fires.
-                try:
-                    reply = cortex.articulate(
-                        prompt=probe.request,
-                        max_tokens=48,
-                        temperature=0.0,
-                        apply_steering=True,
-                        use_reserved_position=False,
-                        prefix_targets=prefix_targets,
-                    )
-                    answer = reply if isinstance(reply, str) else str(reply)
-                except Exception:
-                    answer = ""
+            # Articulate WITHOUT perceive(): perceive() would call
+            # cortex.observe() and mutate warm_state before cvec fires.
+            try:
+                reply = cortex.articulate(
+                    prompt=probe.request,
+                    max_tokens=48,
+                    temperature=0.0,
+                    apply_steering=True,
+                    use_reserved_position=False,
+                    prefix_targets=prefix_targets,
+                )
+                answer = reply if isinstance(reply, str) else str(reply)
+            except Exception:
+                answer = ""
 
-                if not probe_matches(answer, probe, ep):
-                    both_ok = False
-                    break
+            if not probe_matches(answer, probe, ep):
+                both_ok = False
+                break
 
-            if both_ok:
-                ssi_count += 1
+        if both_ok:
+            ssi_count += 1
 
-        return float(ssi_count) / float(n_eps)
-    except Exception:
-        return float("nan")
+    return float(ssi_count) / float(n_eps)

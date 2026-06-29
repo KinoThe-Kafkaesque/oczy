@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import ctypes
 
+from lanes._common import lane_measure
 
 _PROBE_SIZE = 3  # skylark / rook / marmalade probe set
 
@@ -60,97 +61,95 @@ def name() -> str:
     return "lane_02_capacity_cvec"
 
 
+@lane_measure
 def measure() -> float:
-    try:
-        import numpy as np
-        import llama_cpp
-        from llama_cpp import Llama
+    import llama_cpp
+    import numpy as np
+    from llama_cpp import Llama
 
-        from src.oczy.experiments.multi_fact_stressor import (
-            FACTS,
-            QUERIES,
-            TARGETS,
-            _resolve_gguf_path,
-        )
+    from src.oczy.experiments.multi_fact_stressor import (
+        FACTS,
+        QUERIES,
+        TARGETS,
+        _resolve_gguf_path,
+    )
 
-        facts = list(FACTS[:_PROBE_SIZE])
-        queries = list(QUERIES[:_PROBE_SIZE])
-        targets = list(TARGETS[:_PROBE_SIZE])
-        if not facts or not (len(facts) == len(queries) == len(targets)):
-            return float("nan")
-
-        resolved = _resolve_gguf_path()
-        if resolved is None:
-            return float("nan")
-
-        llm = Llama(
-            model_path=str(resolved),
-            n_ctx=512,
-            n_threads=4,
-            embedding=True,
-            verbose=False,
-        )
-        ctx_p = llm._ctx.ctx
-        n_vocab = llm.n_vocab()
-
-        reached = 0
-        for fact, query, target in zip(facts, queries, targets, strict=True):
-            # 1. Forward-pass the fact on seq 0 to populate KV (hybrid:
-            #    conv1d recurrence state is written alongside attention KV).
-            llm.reset()
-            fact_ids = llm.tokenize(fact.encode("utf-8"), add_bos=True)
-            llm.eval(fact_ids)
-
-            # 2. Snapshot per-seq state bytes. The size is queried first
-            #    so the buffer is sized exactly; mismatched sizes fail
-            #    the round-trip on the C side.
-            size = llama_cpp.llama_state_seq_get_size(ctx_p, 0)
-            if size <= 0:
-                continue
-            buf = (ctypes.c_uint8 * size)()
-            got = llama_cpp.llama_state_seq_get_data(ctx_p, buf, size, 0)
-            if got != size:
-                continue
-
-            # 3. Restore snapshot into the live prefix sequence BEFORE the
-            #    probe is forward-passed. reset() clears the KV+conv1d
-            #    state; set_data rewrites it from the snapshot bytes.
-            llm.reset()
-            ret = llama_cpp.llama_state_seq_set_data(ctx_p, buf, size, 0)
-            if ret != size:
-                continue
-            # The high-level Llama wrapper tracks prompt n_tokens; re-align
-            # so the next eval() extends from the restored position rather
-            # than overwriting position 0.
-            llm.n_tokens = len(fact_ids)
-
-            # 4. Decode the probe on top of the restored KV state. The
-            #    probe tokens append at positions [len(fact_ids), ...).
-            probe = _PROBE_TEMPLATE.format(query)
-            probe_ids = llm.tokenize(probe.encode("utf-8"), add_bos=False)
-            if not probe_ids:
-                continue
-            llm.eval(probe_ids)
-
-            # 5. Last-position logits — check if target token is rank 1.
-            #    Target is tokenized as " <target>" to match the natural
-            #    preceding-space continuation token, same convention as
-            #    the cvec baseline.
-            target_ids = llm.tokenize(
-                (" " + target).encode("utf-8"), add_bos=False
-            )
-            if not target_ids:
-                continue
-            target_id = int(target_ids[0])
-            raw = llm._ctx.get_logits()
-            total = len(probe_ids) * n_vocab
-            logits = np.ctypeslib.as_array(raw, shape=(total,))
-            last = logits[
-                (len(probe_ids) - 1) * n_vocab : len(probe_ids) * n_vocab
-            ]
-            if int(np.argmax(last)) == target_id:
-                reached += 1
-
-        return float(reached)
-    except Exception:
+    facts = list(FACTS[:_PROBE_SIZE])
+    queries = list(QUERIES[:_PROBE_SIZE])
+    targets = list(TARGETS[:_PROBE_SIZE])
+    if not facts or not (len(facts) == len(queries) == len(targets)):
         return float("nan")
+
+    resolved = _resolve_gguf_path()
+    if resolved is None:
+        return float("nan")
+
+    llm = Llama(
+        model_path=str(resolved),
+        n_ctx=512,
+        n_threads=4,
+        embedding=True,
+        verbose=False,
+    )
+    ctx_p = llm._ctx.ctx
+    n_vocab = llm.n_vocab()
+
+    reached = 0
+    for fact, query, target in zip(facts, queries, targets, strict=True):
+        # 1. Forward-pass the fact on seq 0 to populate KV (hybrid:
+        #    conv1d recurrence state is written alongside attention KV).
+        llm.reset()
+        fact_ids = llm.tokenize(fact.encode("utf-8"), add_bos=True)
+        llm.eval(fact_ids)
+
+        # 2. Snapshot per-seq state bytes. The size is queried first
+        #    so the buffer is sized exactly; mismatched sizes fail
+        #    the round-trip on the C side.
+        size = llama_cpp.llama_state_seq_get_size(ctx_p, 0)
+        if size <= 0:
+            continue
+        buf = (ctypes.c_uint8 * size)()
+        got = llama_cpp.llama_state_seq_get_data(ctx_p, buf, size, 0)
+        if got != size:
+            continue
+
+        # 3. Restore snapshot into the live prefix sequence BEFORE the
+        #    probe is forward-passed. reset() clears the KV+conv1d
+        #    state; set_data rewrites it from the snapshot bytes.
+        llm.reset()
+        ret = llama_cpp.llama_state_seq_set_data(ctx_p, buf, size, 0)
+        if ret != size:
+            continue
+        # The high-level Llama wrapper tracks prompt n_tokens; re-align
+        # so the next eval() extends from the restored position rather
+        # than overwriting position 0.
+        llm.n_tokens = len(fact_ids)
+
+        # 4. Decode the probe on top of the restored KV state. The
+        #    probe tokens append at positions [len(fact_ids), ...).
+        probe = _PROBE_TEMPLATE.format(query)
+        probe_ids = llm.tokenize(probe.encode("utf-8"), add_bos=False)
+        if not probe_ids:
+            continue
+        llm.eval(probe_ids)
+
+        # 5. Last-position logits — check if target token is rank 1.
+        #    Target is tokenized as " <target>" to match the natural
+        #    preceding-space continuation token, same convention as
+        #    the cvec baseline.
+        target_ids = llm.tokenize(
+            (" " + target).encode("utf-8"), add_bos=False
+        )
+        if not target_ids:
+            continue
+        target_id = int(target_ids[0])
+        raw = llm._ctx.get_logits()
+        total = len(probe_ids) * n_vocab
+        logits = np.ctypeslib.as_array(raw, shape=(total,))
+        last = logits[
+            (len(probe_ids) - 1) * n_vocab : len(probe_ids) * n_vocab
+        ]
+        if int(np.argmax(last)) == target_id:
+            reached += 1
+
+    return float(reached)

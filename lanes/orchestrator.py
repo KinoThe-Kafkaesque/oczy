@@ -13,6 +13,8 @@ import math
 import sys
 import traceback
 
+SPEC_THRESHOLD = 0.75
+
 
 def _run_lane(module_name: str) -> tuple[str, float]:
     """Import lanes.<module_name>, call name() and measure(). Return (name, value).
@@ -51,6 +53,10 @@ def main() -> int:
     # Primary metric: count of lanes with finite, non-NaN signal.
     lanes_with_signal = sum(1 for _, v in results if not math.isnan(v))
     print(f"METRIC lanes_with_signal={lanes_with_signal}")
+
+    # Spec-threshold metric: count of lanes at or above the spec threshold.
+    lanes_above_spec = sum(1 for _, v in results if not math.isnan(v) and v >= SPEC_THRESHOLD)
+    print(f"METRIC lanes_above_spec={lanes_above_spec}")
 
     # Secondary metrics: each lane's own value (or nan).
     for name, value in results:

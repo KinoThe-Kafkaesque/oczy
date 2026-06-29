@@ -89,7 +89,10 @@ def test_multi_fact_stressor_can_recall_both_facts() -> None:
     for mode in ("scalar", "hybrid"):
         lines = _capture_output(["--mode", mode, "--length", "256"])
         metric = _parse_metric(lines)
-        assert metric["co_recall"] in {"0", "1"}
+        # The mock driver returns 'mock' for all generation calls, so exact
+        # co-recall is always 0 under this harness. Real-LM co-recall is tested
+        # by the --requires-model probe, not here.
+        assert metric["co_recall"] == "0"
         assert int(metric["traces"]) > 0
         assert any(line.startswith("ASI") for line in lines)
 
