@@ -384,6 +384,89 @@ def ci_disjoint(a: tuple[float, float, float], b: tuple[float, float, float]) ->
 
 
 # ---------------------------------------------------------------------------
+# Real-driver steering conditions (Experiment 01 discrimination branch)
+# ---------------------------------------------------------------------------
+
+
+def _load_real_cortex_agent(condition: str) -> Any:
+    """Build a fresh CortexAgent configured for one steering condition.
+
+    Heavy imports are deferred to this call so the mock path never pays the
+    cost of loading llama-cpp / the GGUF.  The shared LlamaCVecDriver is
+    obtained via ``multi_fact_stressor._load_real_driver`` which caches the
+    Llama instance across calls; each agent clears its cvec in
+    ``articulate()``'s finally block so sequential reuse is safe.
+    """
+    from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
+    from oczy.experiments.multi_fact_stressor import (
+        _load_real_driver,
+        _resolve_gguf_path,
+    )
+    from oczy.lm import CVecDriverConfig
+    from plastic_cortex.kv_cortex import KVCortexConfig
+
+    if _resolve_gguf_path() is None:
+        raise FileNotFoundError("GGUF model not found")
+    driver = _load_real_driver(n_ctx=4096)
+
+    kwargs: dict[str, Any] = dict(
+        cortex=KVCortexConfig(d_cortex=8),
+        driver=CVecDriverConfig(n_ctx=4096, n_threads=4, embedding=True),
+        articulate_scale=0.001,
+        auto_consolidate=False,
+    )
+    if condition == "C1":
+        kwargs["use_hippocampus_prefix"] = True
+    elif condition == "C2":
+        kwargs["use_logit_bias"] = True
+        kwargs["logit_bias_strength"] = 50.0
+    # C3: default cvec-only (no prefix, no logit bias)
+
+    cfg = CortexAgentConfig(**kwargs)
+    agent = CortexAgent(cfg, driver=driver)
+    agent.boot()
+    return agent
+
+
+def _run_steering_conditions() -> dict[str, float] | None:
+    """Run C1/C2/C3 steering conditions and return per-condition exact_recall.
+
+    Returns ``None`` when the GGUF is unavailable.  Each condition builds a
+    fresh agent, pre-teaches the first three facts with
+    ``perceive(fact, correction_signal=1.0)`` followed by ``metabolize()``
+    (so hippocampal traces exist for the C1 prefix path), then probes with
+    the matching query.  exact_recall per condition is the fraction of
+    probes whose answer contains the target string (case-insensitive).
+    """
+    from oczy.experiments.multi_fact_stressor import (
+        FACTS,
+        QUERIES,
+        TARGETS,
+        _resolve_gguf_path,
+    )
+
+    if _resolve_gguf_path() is None:
+        return None
+
+    facts = FACTS[:3]
+    queries = QUERIES[:3]
+    targets = TARGETS[:3]
+    conditions = ["C1", "C2", "C3"]
+    recalls: dict[str, float] = {}
+    for cond in conditions:
+        agent = _load_real_cortex_agent(cond)
+        hits = 0
+        for fact, query, target in zip(facts, queries, targets, strict=True):
+            agent.perceive(fact, correction_signal=1.0)
+            agent.metabolize(fact)
+            prompt = f"Answer briefly.\nQuestion: {query}\nAnswer:"
+            prefix_targets = [target] if cond == "C2" else None
+            answer = agent.articulate(prompt=prompt, prefix_targets=prefix_targets)
+            if target.lower() in answer.lower():
+                hits += 1
+        recalls[cond] = hits / len(facts)
+    return recalls
+# ---------------------------------------------------------------------------
 # Main / CLI
 # ---------------------------------------------------------------------------
 
@@ -424,9 +507,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.driver == "real":
-        print("ASI real_driver=not_yet_implemented_for_v2")
-        return 0
+    # The mock baseline always runs (both mock and real modes).  When
+    # --driver real, the real steering conditions run afterwards and
+    # override v2_discrimination with the real-driver measurement.
 
     full = build_curriculum(seed=0)
     if args.levels <= 0 or not full.levels():
@@ -457,7 +540,26 @@ def main(argv: list[str] | None = None) -> int:
     behavior_delta_mock = scores[2].behavior_delta_per_byte
 
     print(f"METRIC v2_desaturation_count={desaturation_count}")
-    print("METRIC v2_discrimination=0")
+
+    if args.driver == "real":
+        try:
+            recalls = _run_steering_conditions()
+        except Exception:
+            recalls = None
+        if recalls is None:
+            print("METRIC v2_discrimination=0")
+            print("ASI real_driver=failed")
+        else:
+            c1 = recalls["C1"]
+            c2 = recalls["C2"]
+            c3 = recalls["C3"]
+            discrimination = 1 if (c1 > c3 or c2 > c3) else 0
+            print(f"METRIC v2_discrimination={discrimination}")
+            for cond, recall in recalls.items():
+                print(f"ASI exact_recall_{cond}={recall}")
+    else:
+        print("METRIC v2_discrimination=0")
+
     print(f"METRIC v2_behavior_delta_mock={behavior_delta_mock}")
 
     for field, spread in spreads.items():
