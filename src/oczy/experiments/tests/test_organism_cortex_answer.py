@@ -246,3 +246,155 @@ def test_organism_pickle_roundtrip_preserves_scope_slots() -> None:
     np.testing.assert_allclose(
         restored._scope_slot_warm[0], np.ones(4, dtype=np.float32)
     )
+
+
+# ---------------------------------------------------------------------------
+# Configurable scope-slot reranker: top-k, sense-split, multi-label
+# ---------------------------------------------------------------------------
+
+
+def test_scope_label_for_returns_list_of_tuples() -> None:
+    """_scope_label_for now returns list[(label, sim)] instead of a bare str."""
+    mock = _ScopeMockCortexAgent()
+    organism = OrganismAgent({"cortex_agent": mock})
+    organism.learn("open the file", "No, here 'file' means a disk file.")
+    result = organism._scope_label_for("open the file")
+    assert result is not None
+    assert isinstance(result, list)
+    assert len(result) == 1  # default topk=1
+    label, sim = result[0]
+    assert label == "a disk file"
+    assert sim == pytest.approx(1.0)
+
+
+def test_scope_label_for_topk_retrieval() -> None:
+    """topk>1 returns up to k (label, similarity) pairs from the slot store."""
+    mock = _ScopeMockCortexAgent()
+    organism = OrganismAgent(
+        {"cortex_agent": mock, "scope_rerank_topk": 3}
+    )
+    key = organism._scope_key("open the file")
+    # Directly populate three slots with identical keys so all pass the
+    # cosine threshold; distinct labels verify each slot is returned.
+    organism._scope_slot_keys = [key, key.copy(), key.copy()]
+    organism._scope_slot_label = ["label alpha", "label beta", "label gamma"]
+    result = organism._scope_label_for("open the file")
+    assert result is not None
+    assert len(result) == 3
+    labels = [r[0] for r in result]
+    assert set(labels) == {"label alpha", "label beta", "label gamma"}
+    for _, sim in result:
+        assert sim == pytest.approx(1.0)
+
+
+def test_scope_rerank_sense_split_excludes_shared_tokens() -> None:
+    """sense_split removes the ambiguous word from the overlap computation so
+    only the disambiguating token drives the scope boost.
+
+    Without sense_split the shared word 'file' inflates the overlap for
+    'tool file', tying it with 'disk document' and letting fast_answer win.
+    With sense_split 'file' is excluded, 'tool file' gets zero scope boost,
+    and 'disk document' wins outright.
+    """
+    mock = _ScopeMockCortexAgent()
+    key = mock.driver.peek_embedding("open the file")
+
+    # Default (sense_split=False): ambiguous word 'file' inflates overlap for
+    # 'tool file' (0.5) to tie with 'disk document' (0.5 from 'disk') ->
+    # fast_answer 'tool file' wins the tie.
+    organism_a = OrganismAgent({"cortex_agent": mock})
+    organism_a._scope_slot_keys = [np.asarray(key, dtype=np.float32)]
+    organism_a._scope_slot_label = ["disk file"]
+    result_a = organism_a._rank_answer(
+        request="open the file",
+        candidates=["tool file", "disk document"],
+        fast_answer="tool file",
+        replay_hint=None,
+        concept_scores={},
+        policy_scores=None,
+    )
+    assert result_a == "tool file"
+
+    # sense_split=True: 'file' excluded -> 'tool file' gets 0 boost (no sense
+    # tokens match), 'disk document' gets boost from 'disk' -> wins.
+    organism_b = OrganismAgent(
+        {
+            "cortex_agent": mock,
+            "scope_rerank_sense_split": True,
+            "scope_rerank_weight": 3.0,
+        }
+    )
+    organism_b._scope_slot_keys = [np.asarray(key, dtype=np.float32)]
+    organism_b._scope_slot_label = ["disk file"]
+    result_b = organism_b._rank_answer(
+        request="open the file",
+        candidates=["tool file", "disk document"],
+        fast_answer="tool file",
+        replay_hint=None,
+        concept_scores={},
+        policy_scores=None,
+    )
+    assert result_b == "disk document"
+
+
+def test_scope_rerank_multi_label_appends_to_slot() -> None:
+    """multi_label=True appends corrected labels to the same slot instead of
+    overwriting, producing a ' | '-joined label string."""
+    mock = _ScopeMockCortexAgent()
+    organism = OrganismAgent(
+        {
+            "cortex_agent": mock,
+            "scope_rerank_multi_label": True,
+            "scope_rerank_topk": 2,
+        }
+    )
+    organism.learn("open the file", "No, here 'file' means a disk file.")
+    organism.learn("open the file", "No, here 'file' means a paper file.")
+    # Same slot reused (same request embedding).
+    assert len(organism._scope_slot_keys) == 1
+    assert organism._scope_slot_label[0] == "a disk file | a paper file"
+    # _scope_label_for splits the multi-label on ' | ' into separate entries.
+    labels = organism._scope_label_for("open the file")
+    assert labels is not None
+    label_texts = [t for t, _ in labels]
+    assert "a disk file" in label_texts
+    assert "a paper file" in label_texts
+
+
+def test_scope_rerank_defaults_preserve_original_behaviour() -> None:
+    """At default config (weight=2.0, topk=1, sense_split=False, multi_label=False)
+    the reranker behaves identically to the original single-slot implementation."""
+    mock = _ScopeMockCortexAgent()
+    organism = OrganismAgent({"cortex_agent": mock})
+    assert organism.scope_rerank_weight == 2.0
+    assert organism.scope_rerank_topk == 1
+    assert organism.scope_rerank_sense_split is False
+    assert organism.scope_rerank_multi_label is False
+    organism.learn("open the file", "No, here 'file' means a disk file.")
+    # Single slot, single label, no ' | ' joining.
+    assert len(organism._scope_slot_keys) == 1
+    assert organism._scope_slot_label[0] == "a disk file"
+
+
+def test_setstate_backfills_reranker_config_attrs() -> None:
+    """Unpickling an organism saved before the reranker config existed
+    backfills the four new attributes with defaults."""
+    import pickle
+
+    mock = _ScopeMockCortexAgent()
+    organism = OrganismAgent({"cortex_agent": mock})
+    organism.learn("open the file", "No, here 'file' means a disk file.")
+    # Simulate a pre-reranker pickle by deleting the attrs before pickling.
+    for attr in (
+        "scope_rerank_weight",
+        "scope_rerank_topk",
+        "scope_rerank_sense_split",
+        "scope_rerank_multi_label",
+    ):
+        delattr(organism, attr)
+    blob = pickle.dumps(organism)
+    restored = pickle.loads(blob)
+    assert restored.scope_rerank_weight == 2.0
+    assert restored.scope_rerank_topk == 1
+    assert restored.scope_rerank_sense_split is False
+    assert restored.scope_rerank_multi_label is False

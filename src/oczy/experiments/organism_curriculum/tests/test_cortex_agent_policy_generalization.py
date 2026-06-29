@@ -75,6 +75,7 @@ def test_policy_head_generalizes_to_transfer_probes() -> None:
         "use_cortex_policy": True,
         "use_value_baseline": True,
         "use_acceptance_policy_reward": False,
+        "scope_rerank_weight": 0.0,
     }
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)

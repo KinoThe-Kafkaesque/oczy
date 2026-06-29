@@ -32,6 +32,10 @@ def test_cortex_agent_policy_margin_delta_positive() -> None:
         # correction policy signal; otherwise the first (wrong) answer is
         # reinforced before the correction can penalise it.
         "use_acceptance_policy_reward": False,
+        # Disable the scope-slot reranker so the policy head's margin is
+        # measured in isolation, not confounded by context-addressed label
+        # boosts from the slot store.
+        "scope_rerank_weight": 0.0,
     }
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)

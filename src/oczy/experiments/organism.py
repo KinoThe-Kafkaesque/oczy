@@ -23,6 +23,8 @@ from neural_hippocampus import NeuralHippocampus
 from oczy.common import extract_expected_from_correction, tokenize
 from oczy.experiments.profiler import AgentProfiler
 from oczy.experiments.scope_selectivity_stressor import (
+    _ALLOC_THRESHOLD,
+    _cosine,
     _slot_lookup,
     _slot_retrieve,
     _slot_write,
@@ -41,18 +43,25 @@ try:
 except ImportError:
     LMPlasticCortex = None
 
-
-def _update_slot_label(slot_keys, slot_labels, key, label) -> None:
+def _update_slot_label(slot_keys, slot_labels, key, label, multi_label=False) -> None:
     """Bind a corrected label to the nearest scope slot.
 
     Mirrors the addressing logic of :func:`_slot_write`: the nearest slot
     (by cosine) receives the label, or a fresh slot is appended when no slot
     is close enough.  Must be called *after* :func:`_slot_write` so the slot
     store already holds the (possibly newly allocated) key.
+
+    When *multi_label* is True, a new label is appended to the existing
+    slot's label string (joined by ``" | "``) instead of overwriting it,
+    so a single context slot can accumulate multiple corrected senses.
     """
     best_idx, _ = _slot_lookup(slot_keys, [], key)
     if best_idx == -1 or best_idx >= len(slot_labels):
         slot_labels.append(label)
+    elif multi_label and label:
+        existing = slot_labels[best_idx]
+        if label not in existing.split(" | "):
+            slot_labels[best_idx] = existing + " | " + label
     else:
         slot_labels[best_idx] = label
 
@@ -150,6 +159,12 @@ class OrganismAgent:
         self._scope_slot_keys: list[np.ndarray] = []
         self._scope_slot_warm: list[np.ndarray] = []
         self._scope_slot_label: list[str] = []
+        # Configurable scope-slot reranker improvements (A/B test knobs).
+        # Defaults preserve the original single-slot, flat-weight behaviour.
+        self.scope_rerank_weight = float(config.get("scope_rerank_weight", 2.0))
+        self.scope_rerank_topk = int(config.get("scope_rerank_topk", 1))
+        self.scope_rerank_sense_split = bool(config.get("scope_rerank_sense_split", False))
+        self.scope_rerank_multi_label = bool(config.get("scope_rerank_multi_label", False))
 
     def answer(self, request: str) -> str:
         """Produce an answer using the full organ stack."""
@@ -262,8 +277,8 @@ class OrganismAgent:
         """Pick the best candidate by combining request overlap, immune hints,
         identity-adapter concept deltas, and an optional cortex policy head."""
         request_tokens = set(self._tokenize(request))
-        # Context-addressed corrected label for this request's scope slot, if any.
-        scope_label = self._scope_label_for(request)
+        # Context-addressed corrected labels (top-k) for this request's scope slots.
+        scope_labels = self._scope_label_for(request)
 
         def _tokens(text: str) -> set[str]:
             return set(self._tokenize(text))
@@ -313,16 +328,27 @@ class OrganismAgent:
             for token in label_tokens:
                 score += float(concept_scores.get(token, 0.0))
 
-            # Context-addressed scope-slot label: a per-context corrected label
-            # dominates identity-adapter drift so cross-domain stage answers use
-            # the corrected sense bound to this request's slot.
-            if scope_label is not None:
-                scope_tokens = _tokens(scope_label)
-                label_tokens_scoped = _tokens(label)
-                overlap = len(scope_tokens & label_tokens_scoped) / max(
-                    len(scope_tokens), len(label_tokens_scoped), 1
-                )
-                score += 2.0 * overlap
+            # Context-addressed scope-slot labels: per-context corrected labels
+            # dominate identity-adapter drift so cross-domain stage answers use
+            # the corrected sense bound to this request's slot.  Each of the
+            # top-k labels contributes a similarity-weighted token-overlap boost.
+            if scope_labels is not None:
+                for scope_label_text, scope_sim in scope_labels:
+                    scope_tokens = _tokens(scope_label_text)
+                    label_tokens_scoped = _tokens(label)
+                    if self.scope_rerank_sense_split:
+                        # Exclude tokens shared between request and all candidates
+                        # (the ambiguous word) from the overlap computation.
+                        shared = request_tokens & label_tokens_scoped
+                        scope_tokens = scope_tokens - shared
+                        label_tokens_scoped = label_tokens_scoped - shared
+                    if scope_tokens and label_tokens_scoped:
+                        overlap = len(scope_tokens & label_tokens_scoped) / max(
+                            len(scope_tokens), len(label_tokens_scoped), 1
+                        )
+                    else:
+                        overlap = 0.0
+                    score += self.scope_rerank_weight * scope_sim * overlap
 
             # Optional CortexAgent policy-head score.
             score += policy_delta
@@ -367,19 +393,33 @@ class OrganismAgent:
         except Exception:
             return None
 
-    def _scope_label_for(self, request: str) -> str | None:
-        """Return the corrected label bound to *request*'s scope slot, if any."""
+    def _scope_label_for(self, request: str) -> list[tuple[str, float]] | None:
+        """Return top-k (label, cosine_similarity) pairs for this request's scope slots.
+
+        Each stored slot label may itself be a multi-label string joined by
+        ``" | "``; the individual parts are emitted as separate entries so the
+        reranker can score each corrected sense independently.
+        """
         if not self._scope_slot_keys or self.cortex_agent is None:
             return None
         key = self._scope_key(request)
         if key is None:
             return None
-        if _slot_retrieve(self._scope_slot_keys, self._scope_slot_warm, key) is None:
+        k = max(self.scope_rerank_topk, 1)
+        sims: list[tuple[str, float]] = []
+        for i, slot_key in enumerate(self._scope_slot_keys):
+            sim = _cosine(key, slot_key)
+            if sim >= _ALLOC_THRESHOLD and i < len(self._scope_slot_label):
+                label = self._scope_slot_label[i]
+                if label:  # skip empty labels
+                    for label_part in label.split(" | "):
+                        label_part = label_part.strip()
+                        if label_part:
+                            sims.append((label_part, float(sim)))
+        if not sims:
             return None
-        best_idx, _ = _slot_lookup(self._scope_slot_keys, self._scope_slot_warm, key)
-        if best_idx == -1 or not (0 <= best_idx < len(self._scope_slot_label)):
-            return None
-        return self._scope_slot_label[best_idx]
+        sims.sort(key=lambda x: x[1], reverse=True)
+        return sims[:k]
 
     def _apply_scope_slot_warm(self, request: str) -> None:
         """Restore the matching scope slot's warm_state, or zero it on a miss.
@@ -587,6 +627,7 @@ class OrganismAgent:
                     expected_answer
                     or self._extract_expected_from_correction(correction)
                     or "",
+                    multi_label=self.scope_rerank_multi_label,
                 )
 
             if self.use_cortex_lm_answer:
@@ -746,6 +787,14 @@ class OrganismAgent:
             self._scope_slot_warm = []
         if not hasattr(self, "_scope_slot_label"):
             self._scope_slot_label = []
+        if not hasattr(self, "scope_rerank_weight"):
+            self.scope_rerank_weight = 2.0
+        if not hasattr(self, "scope_rerank_topk"):
+            self.scope_rerank_topk = 1
+        if not hasattr(self, "scope_rerank_sense_split"):
+            self.scope_rerank_sense_split = False
+        if not hasattr(self, "scope_rerank_multi_label"):
+            self.scope_rerank_multi_label = False
         self.profiler = AgentProfiler(
             [
                 "plastic_cortex",
