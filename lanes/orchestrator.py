@@ -41,6 +41,7 @@ def main() -> int:
         "lane_05",
         "lane_06",
         "lane_07",
+        "lane_08",
     ]
 
     results: list[tuple[str, float]] = []
