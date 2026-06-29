@@ -160,7 +160,7 @@ def measure() -> float:
         cfg = CortexAgentConfig(
             cortex=KVCortexConfig(d_cortex=4),
             use_logit_bias=True,
-            logit_bias_strength=20.0,
+            logit_bias_strength=50.0,
         )
         cortex = CortexAgent(cfg, driver=driver)
         cortex.boot()
