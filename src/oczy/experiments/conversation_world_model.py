@@ -218,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
             results = None
         if results is None:
             print("ASI real_driver=failed")
-            print("METRIC critic_auc_delta=nan")
+            print("METRIC marker_free_uptake_gap=nan")
             return 0
     else:
         results = _run_mock_driver()
@@ -227,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"ASI critic_auc_delta={results['critic_auc_delta']}")
     print(f"ASI accept_pred_auc_hidden={results['accept_pred_auc_hidden']}")
     print(f"ASI accept_pred_auc_string={results['accept_pred_auc_string']}")
+    print(f"ASI marker_free_uptake_gap={results['marker_free_uptake_gap']}")
     return 0
 
 

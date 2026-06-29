@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sys
-
 import numpy as np
 import pytest
 
@@ -12,7 +10,23 @@ import src.oczy.experiments.metabolism_loop as ml
 
 def test_module_imports_without_llama() -> None:
     """Importing the module should not pull llama_cpp."""
-    assert sys.modules.get("llama_cpp") is None
+    import subprocess
+
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "python",
+            "-c",
+            "import sys; import src.oczy.experiments.metabolism_loop; "
+            "print('llama_cpp' in sys.modules)",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0
+    assert "False" in result.stdout
 
 
 def test_domain_uptake_range() -> None:

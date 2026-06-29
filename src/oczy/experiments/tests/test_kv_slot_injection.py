@@ -2,15 +2,28 @@
 
 from __future__ import annotations
 
-import sys
-
 import src.oczy.experiments.kv_slot_injection as kvi
 
 
 def test_module_imports_without_llama() -> None:
     """Importing the module should not pull llama_cpp."""
-    result = sys.modules.get("llama_cpp")
-    assert result is None or not result
+    import subprocess
+
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "python",
+            "-c",
+            "import sys; import src.oczy.experiments.kv_slot_injection; "
+            "print('llama_cpp' in sys.modules)",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0
+    assert "False" in result.stdout
 
 
 def test_facts_queries_targets_aligned() -> None:

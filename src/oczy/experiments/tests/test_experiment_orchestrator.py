@@ -6,13 +6,29 @@ experiments are launched.
 
 from __future__ import annotations
 
-import sys
-
 import src.oczy.experiments.experiment_orchestrator as eo
 
 
 def test_module_imports_without_heavy_deps() -> None:
-    assert sys.modules.get("llama_cpp") is None
+    """Importing the module should not pull llama_cpp."""
+    import subprocess
+
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "python",
+            "-c",
+            "import sys; import src.oczy.experiments.experiment_orchestrator; "
+            "print('llama_cpp' in sys.modules)",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0
+    assert "False" in result.stdout
+
 
 
 def test_acceptance_predicates() -> None:

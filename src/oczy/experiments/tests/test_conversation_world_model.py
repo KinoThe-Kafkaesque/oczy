@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sys
-
 import numpy as np
 import pytest
 
@@ -12,7 +10,26 @@ import src.oczy.experiments.conversation_world_model as cwm
 
 def test_module_imports_without_llama() -> None:
     """Importing the module should not pull llama_cpp."""
-    assert sys.modules.get("llama_cpp") is None
+    # Test ordering makes this fragile; official check is a subprocess import.
+    import subprocess
+
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "python",
+            "-c",
+            "import sys; import src.oczy.experiments.conversation_world_model; "
+            "print('llama_cpp' in sys.modules)",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0
+    assert "False" in result.stdout
+
+
 
 
 def test_auc_perfect_separation() -> None:
@@ -26,7 +43,8 @@ def test_auc_chance_when_no_separation() -> None:
 def test_mock_driver_runs_and_emits_metric(capsys) -> None:
     assert cwm.main(["--driver", "mock"]) == 0
     out = capsys.readouterr().out
-    assert "METRIC critic_auc_delta=" in out
+    assert "METRIC marker_free_uptake_gap=" in out
+    assert "ASI critic_auc_delta=" in out
     assert "ASI accept_pred_auc_hidden=" in out
     assert "ASI marker_free_uptake_gap=" in out
 
@@ -34,7 +52,7 @@ def test_mock_driver_runs_and_emits_metric(capsys) -> None:
 def test_default_driver_is_mock(capsys) -> None:
     assert cwm.main([]) == 0
     out = capsys.readouterr().out
-    assert "METRIC critic_auc_delta=" in out
+    assert "METRIC marker_free_uptake_gap=" in out
 
 
 def test_marker_free_uptake_gap_non_negative() -> None:
@@ -57,7 +75,7 @@ def test_real_driver_graceful_failure(monkeypatch, capsys) -> None:
     assert cwm.main(["--driver", "real"]) == 0
     out = capsys.readouterr().out
     assert "ASI real_driver=failed" in out
-    assert "METRIC critic_auc_delta=nan" in out
+    assert "METRIC marker_free_uptake_gap=nan" in out
 
 
 def test_real_driver_graceful_none(monkeypatch, capsys) -> None:
@@ -65,4 +83,4 @@ def test_real_driver_graceful_none(monkeypatch, capsys) -> None:
     assert cwm.main(["--driver", "real"]) == 0
     out = capsys.readouterr().out
     assert "ASI real_driver=failed" in out
-    assert "METRIC critic_auc_delta=nan" in out
+    assert "METRIC marker_free_uptake_gap=nan" in out
