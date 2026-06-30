@@ -64,8 +64,21 @@ Since "captain", "journal", "submit", "officially", "map", "legend" are not in `
 2. **Semantic concept matching**: Instead of exact token match, use embedding similarity between label tokens and concept names.
 3. **Concept-to-label projection**: Add a matrix that maps concept scores to label-space scores, learned during corrections.
 
+## Update: _extract_all_concepts fix
+
+After implementing `_extract_all_concepts` (registers ALL valid tokens from the label as concepts, not just the first), the concept scores now match multi-word labels:
+
+| Metric | Before fix | After fix |
+|--------|-----------|-----------|
+| Stage 1 transfer | 0.12 | 0.25 |
+| Stage 2 scope | 0.00 | 0.12 |
+| Stage 5 scope | 0.00 | 0.00 |
+| Stage 5 retention | 0.17 | 0.17 |
+
+Stage 2 scope improved from 0.0 to 0.12 — the concept scores are now influencing label ranking for multi-word labels. Stage 5 scope remains 0.0, indicating the cross-domain disambiguation bottleneck is deeper than concept vocabulary mismatch.
+
 ## Conclusion
 
-The 1M-param sensing matrix now flows into the identity hypernetwork's concept-scoring path — the wiring is complete. The residual shapes concept scores, and the Hebbian learning trains the sensing matrix. However, the concept scores don't influence the final answer because the concept vocabulary doesn't match the curriculum's label vocabulary. This is an architectural limitation in `_rank_answer`'s token-overlap concept boost, not in the residual-to-identity wiring itself.
+The 1M-param sensing matrix now flows into the identity hypernetwork's concept-scoring path — the wiring is complete. The residual shapes concept scores, the Hebbian learning trains the sensing matrix, and `_extract_all_concepts` ensures all label tokens are registered as concepts. Stage 2 scope improved from 0.0 to 0.12, confirming the concept scores now influence multi-word label ranking. Stage 5 scope remains 0.0, indicating the cross-domain disambiguation bottleneck requires deeper architectural changes (sense-specific concepts, semantic matching, or a concept-to-label projection matrix).
 
-**Status**: Wiring complete, 7/7 preserved, scope improvement blocked by concept vocabulary mismatch.
+**Status**: Wiring complete, 7/7 preserved, Stage 2 scope improved 0.0→0.12, Stage 5 scope still 0.0.
