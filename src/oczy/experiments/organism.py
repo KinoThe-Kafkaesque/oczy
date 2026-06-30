@@ -609,6 +609,10 @@ class OrganismAgent:
                 episode["hidden_delta"] = self._last_request_hidden_state
             with self.profiler.profile("experience_autoencoder"):
                 delta_z = self.experience_autoencoder.encode(episode)
+                # Train the sensing matrix so future residuals preserve
+                # discriminative structure.  Without this, _A_hidden stays
+                # at its random init and residuals are random projections.
+                self.experience_autoencoder.train_step(episode)
             # Extract the residual and pass it to the identity hypernetwork
             # so the 1M-param sensing matrix shapes which concepts get
             # boosted.  Only pass the residual when we have contextualized
@@ -1035,6 +1039,7 @@ class LMBackendAgent:
             }
             with self.profiler.profile("experience_autoencoder"):
                 delta_z = self.experience_autoencoder.encode(episode)
+                self.experience_autoencoder.train_step(episode)
             _residual = delta_z[OUTCOME_DIM:]
             # LMBackendAgent doesn't have contextualized hidden states, so
             # don't pass the residual to avoid adding bag-of-words noise.
