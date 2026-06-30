@@ -103,7 +103,7 @@ class OrganismAgent:
         # LM hidden states (when available from the cortex agent) instead of
         # bag-of-words features.  Falls back to text path when no hidden_delta
         # is provided in the episode.
-        self.experience_autoencoder.config.setdefault("use_hidden_delta", True)
+        self.experience_autoencoder.config["use_hidden_delta"] = True
         self._last_request_hidden_state: np.ndarray | None = None
         self.profiler = AgentProfiler(
             [
@@ -224,17 +224,31 @@ class OrganismAgent:
                         candidate_answers.append(corrected)
                         break
 
+        # Capture contextualized hidden state from the cortex agent for the
+        # hidden-delta autoencoder path.  This runs whenever a cortex agent
+        # is attached, regardless of whether the policy head is enabled.
+        if self.cortex_agent is not None:
+            try:
+                # Perceive the request to update _last_hidden, but only if
+                # the cortex agent supports it (the shim doesn't).
+                _last_utt = getattr(self.cortex_agent, "_last_utterance", None)
+                if _last_utt != request and hasattr(self.cortex_agent, "perceive"):
+                    self.cortex_agent.perceive(request)
+                _h = getattr(self.cortex_agent, "_last_hidden", None)
+                if _h is not None:
+                    _h_arr = np.asarray(_h, dtype=np.float64)
+                    # Only use hidden states from a real LM (dimension >= 64).
+                    # The cortex shim's tiny random vectors (n_embd=8) add
+                    # noise, not signal.
+                    if _h_arr.shape[0] >= 64:
+                        self._last_request_hidden_state = _h_arr
+            except Exception:
+                pass
+
         # 4. Optional CortexAgent policy-head scoring of candidates.
         policy_scores: dict[str, float] | None = None
         if self.use_cortex_policy and self.cortex_agent is not None:
             try:
-                if self.cortex_agent._last_utterance != request:
-                    self.cortex_agent.perceive(request)
-                # Capture the contextualized hidden state for the
-                # hidden-delta autoencoder path.
-                _h = getattr(self.cortex_agent, "_last_hidden", None)
-                if _h is not None:
-                    self._last_request_hidden_state = np.asarray(_h, dtype=np.float64)
                 raw_scores = self.cortex_agent.policy_score(candidate_answers)
                 policy_scores = {
                     cand: float(raw_scores[i])
@@ -252,14 +266,20 @@ class OrganismAgent:
             # remind me of?"  Pass it to generate_adapters so the
             # residual-to-concept projection can bias concept scores.
             _req_residual = None
-            try:
-                _req_episode = {"situation": request, "outcome": "unknown"}
-                if self._last_request_hidden_state is not None:
-                    _req_episode["hidden_delta"] = self._last_request_hidden_state
-                _req_dz = self.experience_autoencoder.encode(_req_episode)
-                _req_residual = _req_dz[OUTCOME_DIM:]
-            except Exception:
-                pass
+            # Only use the residual-to-concept projection when we have
+            # contextualized hidden states.  Bag-of-words residuals don't
+            # carry sense-discriminating signal and add noise.
+            if self._last_request_hidden_state is not None:
+                try:
+                    _req_episode = {
+                        "situation": request,
+                        "outcome": "unknown",
+                        "hidden_delta": self._last_request_hidden_state,
+                    }
+                    _req_dz = self.experience_autoencoder.encode(_req_episode)
+                    _req_residual = _req_dz[OUTCOME_DIM:]
+                except Exception:
+                    pass
             adapters = self.identity_hypernetwork.generate_adapters(
                 residual=_req_residual
             )
@@ -589,10 +609,12 @@ class OrganismAgent:
                 episode["hidden_delta"] = self._last_request_hidden_state
             with self.profiler.profile("experience_autoencoder"):
                 delta_z = self.experience_autoencoder.encode(episode)
-            # Extract the residual (everything after the outcome vector) and
-            # pass it to the identity hypernetwork so the 1M-param sensing
-            # matrix actually shapes which concepts get boosted.
+            # Extract the residual and pass it to the identity hypernetwork
+            # so the 1M-param sensing matrix shapes which concepts get
+            # boosted.  Only pass the residual when we have contextualized
+            # hidden states — bag-of-words residuals add noise.
             _residual = delta_z[OUTCOME_DIM:]
+            _ih_residual = _residual if self._last_request_hidden_state is not None else None
 
             with self.profiler.profile("identity_hypernetwork"):
                 self.identity_hypernetwork.update_identity(
@@ -601,7 +623,7 @@ class OrganismAgent:
                         "correct_label": expected_answer,
                         "token": expected_answer,
                     },
-                    residual=_residual,
+                    residual=_ih_residual,
                 )
 
             with self.profiler.profile("skill_immune_cortex"):
@@ -924,7 +946,7 @@ class LMBackendAgent:
         self.experience_autoencoder = ExperienceAutoencoder(
             self.config.get("experience_autoencoder")
         )
-        self.experience_autoencoder.config.setdefault("use_hidden_delta", True)
+        self.experience_autoencoder.config["use_hidden_delta"] = True
         self.profiler = AgentProfiler(
             [
                 "plastic_cortex",
@@ -1014,6 +1036,8 @@ class LMBackendAgent:
             with self.profiler.profile("experience_autoencoder"):
                 delta_z = self.experience_autoencoder.encode(episode)
             _residual = delta_z[OUTCOME_DIM:]
+            # LMBackendAgent doesn't have contextualized hidden states, so
+            # don't pass the residual to avoid adding bag-of-words noise.
             with self.profiler.profile("identity_hypernetwork"):
                 self.identity_hypernetwork.update_identity(
                     {
@@ -1021,7 +1045,7 @@ class LMBackendAgent:
                         "correct_label": expected_answer,
                         "token": expected_answer,
                     },
-                    residual=_residual,
+                    residual=None,
                 )
             with self.profiler.profile("skill_immune_cortex"):
                 self.skill_immune_cortex.add_detector(
