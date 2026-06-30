@@ -111,6 +111,7 @@ class IdentityHypernetwork:
         self._W_residual: np.ndarray | None = None
         self._residual_dim: int | None = None
         self._residual_lr = float(cfg.get("residual_lr", 0.1))
+        self._residual_scale = float(cfg.get("residual_scale", 0.1))
 
     def generate_adapters(
         self, residual: np.ndarray | None = None
@@ -131,7 +132,7 @@ class IdentityHypernetwork:
         if residual is not None and self._W_residual is not None:
             residual = np.asarray(residual, dtype=float).reshape(-1)
             if residual.shape[0] == self._W_residual.shape[1]:
-                scores = scores + self._W_residual @ residual
+                scores = scores + self._residual_scale * (self._W_residual @ residual)
         return {"concept_scores": {concept: float(scores[i]) for i, concept in enumerate(self.concepts)}}
 
     def _ensure_state_initialized(self, state_dim: int) -> None:
@@ -451,6 +452,7 @@ class IdentityHypernetwork:
         state.setdefault("_W_residual", None)
         state.setdefault("_residual_dim", None)
         state.setdefault("_residual_lr", 0.1)
+        state.setdefault("_residual_scale", 0.1)
         self.__dict__.update(state)
 
 
