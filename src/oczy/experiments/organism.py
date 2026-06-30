@@ -436,7 +436,14 @@ class OrganismAgent:
         if driver is None or not hasattr(driver, "peek_embedding"):
             return None
         try:
-            return np.asarray(driver.peek_embedding(request), dtype=np.float32)
+            # Use last_token_only=False so the embedding represents the
+            # whole request (mean-pooled), not just the last token (which
+            # is always "." for curriculum requests and collapses all
+            # slots into one).
+            return np.asarray(
+                driver.peek_embedding(request, last_token_only=False),
+                dtype=np.float32,
+            )
         except Exception:
             return None
 
