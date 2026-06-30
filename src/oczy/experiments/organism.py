@@ -178,6 +178,28 @@ class OrganismAgent:
         self.scope_rerank_sense_split = bool(config.get("scope_rerank_sense_split", False))
         self.scope_rerank_multi_label = bool(config.get("scope_rerank_multi_label", False))
 
+        # Differentiable Fact Index (DSI-style F matrix + LoRA adapter).
+        # Replaces the scope-slot reranker's cosine lookup with a learned
+        # embedding matrix where each fact gets a row in F, and the LoRA
+        # adapter ΔW = A·B accumulates experiential modulation from
+        # corrections.  Retrieval is a single inner product, fully
+        # differentiable and more robust than token-overlap heuristics.
+        d_model = 2048  # matches LFM2.5-1.2B hidden dim
+        # Use a smaller dimension when cortex_agent is absent (shim path).
+        if self.cortex_agent is not None:
+            driver = getattr(self.cortex_agent, "driver", None)
+            if driver is not None:
+                d_model = getattr(driver, "n_embd", d_model)
+        from oczy.experiments.differentiable_fact_index import (
+            DifferentiableFactIndex,
+        )
+
+        self.diff_fact_index = DifferentiableFactIndex(
+            n_facts=64,
+            d_model=d_model,
+            lora_rank=8,
+        )
+
     def answer(self, request: str) -> str:
         """Produce an answer using the full organ stack."""
         if self.use_cortex_lm_answer and self.cortex_agent is not None:
@@ -408,6 +430,24 @@ class OrganismAgent:
                     else:
                         overlap = 0.0
                     score += self.scope_rerank_weight * scope_sim * overlap
+
+            # Differentiable Fact Index (DSI-style F + LoRA): boost labels
+            # that match facts retrieved from the learned embedding matrix.
+            # The index uses inner-product retrieval, making it more robust
+            # than token-overlap heuristics for cross-domain disambiguation.
+            try:
+                req_key = self._scope_key(request)
+                if req_key is not None:
+                    dfi_hits = self.diff_fact_index.retrieve(
+                        req_key, k=3, use_lora=True
+                    )
+                    for dfi_label, dfi_score in dfi_hits:
+                        if dfi_label == label or (
+                            _tokens(dfi_label) & label_tokens
+                        ):
+                            score += 1.5 * float(dfi_score)
+            except Exception:
+                pass
 
             # Optional CortexAgent policy-head score.
             score += policy_delta
@@ -747,6 +787,16 @@ class OrganismAgent:
                         req_key,
                         np.asarray(warm, dtype=np.float32),
                     )
+                    # Store correction in differentiable fact index.
+                    # is_correction=True triggers LoRA ΔW update.
+                    expected = (
+                        expected_answer
+                        or self._extract_expected_from_correction(correction)
+                    )
+                    if expected and req_key is not None:
+                        self.diff_fact_index.store(
+                            req_key, expected, is_correction=True
+                        )
             except Exception:
                 # Cortex correction path is advisory; never break learning.
                 pass
@@ -832,6 +882,10 @@ class OrganismAgent:
                     scope_key,
                     scope_label,
                     multi_label=self.scope_rerank_multi_label,
+                )
+                # Store in the differentiable fact index as baseline.
+                self.diff_fact_index.store(
+                    scope_key, scope_label, is_correction=False
                 )
         except Exception:
             pass
@@ -943,6 +997,19 @@ class OrganismAgent:
             self.scope_rerank_sense_split = False
         if not hasattr(self, "scope_rerank_multi_label"):
             self.scope_rerank_multi_label = False
+        if not hasattr(self, "diff_fact_index"):
+            from oczy.experiments.differentiable_fact_index import (
+                DifferentiableFactIndex,
+            )
+
+            d_model = 2048
+            if self.cortex_agent is not None:
+                driver = getattr(self.cortex_agent, "driver", None)
+                if driver is not None:
+                    d_model = getattr(driver, "n_embd", d_model)
+            self.diff_fact_index = DifferentiableFactIndex(
+                n_facts=64, d_model=d_model, lora_rank=8
+            )
         self.profiler = AgentProfiler(
             [
                 "plastic_cortex",
