@@ -123,3 +123,24 @@ The remaining Stage 5 scope gap (0.50 vs 1.0) is the genuine residual architectu
 The detailed fix report, including the per-bug diagnosis and commit references, is in `2026-06-30_scope_slot_reranker_fix.md`.
 
 **Status (2026-06-30)**: Wiring complete and downstream reranker fixed, 7/7 preserved, 441 tests pass, Stage 2 scope 0.12→1.00, Stage 5 scope 0.0→0.50, Stage 5 retention 0.17→1.00.
+
+
+## Update: bilinear policy head fix (2026-06-30)
+
+The cortex dimension benchmark revealed that `d_cortex` had no effect on
+curriculum performance because the warm_state was architecturally
+disconnected from candidate discrimination. Four disconnections were
+fixed (commit `76c6105`): scope-slot warm_state restoration before
+policy scoring, L2-normalization of policy features, a bilinear
+interaction term (`warm @ W_bilinear @ hidden_i`) replacing the
+non-discriminating linear warm portion, and always-on warm_state
+capture (previously gated behind `use_cortex_lm_answer`).
+
+Unit tests confirm the bilinear term discriminates candidates and varies
+with d_cortex. However, curriculum results are unchanged (Stage 5
+scope=0.50) because the policy head is advisory — `policy_delta`
+(softmax × weight=1.0) is dominated by the scope-rerank boost
+(weight=2.0). The concept representation remains the bottleneck for
+Stage 5 scope, not the policy head architecture.
+
+Full details: `2026-06-30_cortex_dim_benchmark.md` (Update section).

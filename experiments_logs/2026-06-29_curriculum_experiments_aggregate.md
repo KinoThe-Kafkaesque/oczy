@@ -193,3 +193,44 @@ stage versus the stale numbers in the sections above:
 
 The full bug-by-bug diagnosis, fix rationale, and per-stage evidence are
 documented in `2026-06-30_scope_slot_reranker_fix.md`.
+
+
+## Bilinear policy head fix (2026-06-30)
+
+The cortex dimension benchmark revealed that `d_cortex` had no effect on
+curriculum performance because the warm_state was architecturally
+disconnected from candidate discrimination in the policy head. Four
+disconnections were identified and fixed:
+
+1. **Scope-slot warm_state not restored before policy scoring** —
+   `perceive(request)` overwrote the correction's warm_state. Fixed by
+   restoring scope-slot warm_state before policy scoring in the
+   label-based path.
+2. **Policy features not L2-normalized** — the 2048-dim LM hidden
+   drowned the d_cortex-dim warm_state. Fixed by per-block normalization.
+3. **Linear policy head cannot discriminate with warm_state** — warm is
+   repeated across all candidates, contributing a constant bias. Fixed
+   by adding a bilinear interaction term: `warm @ W_bilinear @ hidden_i`,
+   with REINFORCE gradient `advantage * outer(warm, hidden_chosen -
+   probs @ hiddens)`.
+4. **Warm_state not captured when `use_cortex_lm_answer=False`** — all
+   32 scope slots had `None` warm_state. Fixed by always capturing
+   warm_state when cortex_agent is attached.
+
+### Verification
+
+- **7 / 7 experiments accepted** (preserved throughout the fix).
+- **227 experiment tests pass** (including slow tests), 4 new bilinear
+  tests added.
+- All ASI metrics stable: `scope_selectivity_index=0.625`,
+  `bounded_growth_m1_ratio=0.002079`, `layer_l_silhouette_gap=0.116`,
+  `metabolism_drift_delta=0.102`, `marker_free_uptake_gap=1.0`.
+- Unit tests prove bilinear scores vary across candidates and across
+  d_cortex values (d=2→512 produce different argmax patterns).
+- Curriculum results unchanged (avg post=0.86, Stage 5 scope=0.50)
+  because `policy_delta` (softmax × weight=1.0) is dominated by
+  scope-rerank boost (weight=2.0). The policy head is advisory, not
+  authoritative.
+
+Full details: `2026-06-30_cortex_dim_benchmark.md` (Update section).
+Commit: `76c6105`.

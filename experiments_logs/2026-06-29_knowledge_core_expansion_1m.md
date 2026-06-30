@@ -132,3 +132,26 @@ The 1M param core itself still has no direct behavioral effect — the analysis 
 - `scope_selectivity_index=0.625`, `bounded_growth_m1_ratio=0.002079`, `metabolism_drift_delta=0.1016`, `layer_l_silhouette_gap=0.116`, `marker_free_uptake_gap=1.0`.
 
 See `2026-06-30_scope_slot_reranker_fix.md` for the detailed fix report.
+
+
+## Update: bilinear policy head fix (2026-06-30)
+
+The cortex dimension benchmark (extended to d_cortex ∈ {2,...,512})
+revealed that `d_cortex` had no effect on curriculum performance because
+the warm_state was architecturally disconnected from candidate
+discrimination in the policy head. Four disconnections were fixed
+(commit `76c6105`):
+
+1. Scope-slot warm_state not restored before policy scoring.
+2. Policy features not L2-normalized (2048-dim hidden drowned d_cortex-dim warm).
+3. Linear policy head cannot discriminate — warm is constant across candidates. Fixed with bilinear term: `warm @ W_bilinear @ hidden_i`.
+4. Warm_state not captured when `use_cortex_lm_answer=False` — all slots were None.
+
+Unit tests confirm the bilinear term discriminates candidates and varies
+with d_cortex. The 1M param core's residual still has no direct
+behavioral effect — the policy head's bilinear term uses the cortex
+warm_state (d_cortex dims), not the autoencoder residual. Curriculum
+results unchanged because `policy_delta` (weight=1.0) is dominated by
+scope-rerank boost (weight=2.0).
+
+Full details: `2026-06-30_cortex_dim_benchmark.md` (Update section).
