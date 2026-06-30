@@ -1,0 +1,43 @@
+%% DSI → Oczy Architecture Mapping
+%% Three differentiable retrieval papers mapped to Oczy's knowledge/experience organs
+
+flowchart TB
+    subgraph Papers["Three Papers: Differentiable Retrieval"]
+        DSI["<b>DSI</b> (Tay et al. 2022)<br/>Transformer Memory as<br/>Differentiable Search Index<br/><br/>• Model IS the index<br/>• Learned doc embeddings<br/>• Multi-task co-training<br/>• Scaling laws favor DSI"]
+        IncDSI["<b>IncDSI</b> (Kishore et al. 2023)<br/>Incrementally Updatable<br/>Document Retrieval<br/><br/>• Constrained optimization<br/>• Anti-forgetting constraints<br/>• ~50ms per document<br/>• Holds encoder frozen"]
+        TSGen["<b>TSGen</b> (Zhang et al. 2024)<br/>Term Set Generation<br/>for Generative Retrieval<br/><br/>• Permutation-invariant<br/>• Learned term weights<br/>• Error-resilient decoding<br/>• Inverted-index efficient"]
+    end
+
+    subgraph Oczy["Oczy Differentiable Knowledge Network"]
+        direction TB
+        KS["<b>KnowledgeStore</b><br/>TF-IDF keyword index<br/>↓<br/>DifferentiableFactIndex"]
+        NH["<b>NeuralHippocampus</b><br/>Text-similarity replay<br/>↓<br/>Learned episode embeddings"]
+        KV["<b>KVCortex.proj_c</b><br/>SVD-init cvec projector<br/>(steering, not retrieval)"]
+        DG["<b>DigestiveGate</b><br/>Scalar metabolic gate<br/>↓<br/>Learned term salience"]
+        AE["<b>ExperienceAutoencoder</b><br/>Raw trace → latent Δz<br/>(compression)"]
+        IH["<b>IdentityHypernetwork</b><br/>Latent → adapter deltas<br/>(personalization)"]
+    end
+
+    subgraph Contrib["Concrete Contributions"]
+        C1["<b>① DifferentiableFactIndex</b><br/>DSI-style learned fact<br/>embedding matrix<br/>Contrastive loss training"]
+        C2["<b>② IncDSI Fact Addition</b><br/>Constrained optimization<br/>Anti-forgetting guarantees<br/>~50ms per new fact"]
+        C3["<b>③ Term-Set Retrieval</b><br/>Permutation-invariant<br/>Error-resilient recall<br/>Inverted index per term"]
+        C4["<b>④ Co-trained perceive + articulate</b><br/>Joint multi-task<br/>storage + retrieval<br/>Not sequential phases"]
+        C5["<b>⑤ Learned Term Salience</b><br/>BERT+MLP term weights<br/>Replace LexicalNoveltyFilter<br/>Contrastive training"]
+    end
+
+    DSI --> C1
+    DSI --> C4
+    IncDSI --> C2
+    TSGen --> C3
+    TSGen --> C5
+
+    C1 --> KS
+    C2 --> NH
+    C2 --> KS
+    C3 --> NH
+    C4 --> KV
+    C5 --> DG
+
+    C1 -.-> AE
+    C2 -.-> IH

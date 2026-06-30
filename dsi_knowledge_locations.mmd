@@ -1,0 +1,53 @@
+%% Knowledge Location Tradeoffs for Oczy
+%% Current (external F matrix) vs Proposed (LoRA adapter on LM head)
+%% Comparison of where differentiable knowledge lives
+
+flowchart TB
+    subgraph Current["Current: External Fact Matrix (DSI-style F)"]
+        direction TB
+        C_Q["Query text"]
+        C_LM["Frozen LFM 1.2B<br/>encoder forward pass"]
+        C_H["hidden state h<br/>shape: (d_model,)"]
+        C_F["External Fact Matrix F<br/>shape: (n_facts × d_model)<br/>~few KB<br/>Each row = one learned fact"]
+        C_S["scores = h @ Fᵀ<br/>softmax → relevance"]
+        C_R["Ranked facts<br/>+ gradient path to F"]
+        C_Q --> C_LM --> C_H --> C_F --> C_S --> C_R
+    end
+
+    subgraph Proposed["Proposed: LoRA Knowledge Adapter (closer to DSI)"]
+        direction TB
+        P_Q["Query text"]
+        P_LM["Frozen LFM 1.2B<br/>all transformer layers frozen"]
+        P_H["hidden state h<br/>shape: (d_model,)"]
+        P_LORA["<b>LoRA Adapter on Output Head</b><br/>W_out + ΔW<br/>ΔW = A · B<br/>A: (d_model × rank)<br/>B: (rank × n_docids)<br/>rank 8-64 → ~few MB<br/>Only A, B trained"]
+        P_S["logits over docid vocabulary<br/>directly from LM + adapter<br/>No external index needed"]
+        P_R["Ranked facts<br/>+ gradient path to A, B"]
+        P_Q --> P_LM --> P_H --> P_LORA --> P_S --> P_R
+    end
+
+    subgraph Full["Full LM Fine-Tune (DSI/TSGen paper approach)"]
+        direction TB
+        F_Q["Query text"]
+        F_LM["Fine-Tuned T5/BERT<br/>ALL weights trained<br/>on indexing + retrieval<br/>Knowledge IS the model"]
+        F_S["logits directly over<br/>docid vocabulary"]
+        F_R["Ranked facts"]
+        F_Q --> F_LM --> F_S --> F_R
+    end
+
+    subgraph Legend["Tradeoff Summary"]
+        direction LR
+        L1["<b>TF-IDF</b><br/>~100B/fact<br/>Not diff'able<br/>No forgetting risk"]
+        L2["<b>External F</b><br/>~d×4B/fact<br/>Fully diff'able<br/>No forgetting risk<br/>(rows isolated)"]
+        L3["<b>LoRA Adapter</b><br/>~rank×2d×4B total<br/>Fully diff'able<br/>Medium forgetting risk<br/>(shared low-rank space)"]
+        L4["<b>Full Fine-Tune</b><br/>Model-wide<br/>Fully diff'able<br/>High forgetting risk<br/>(BLOCKED: Q4_K_M)"]
+    end
+
+    Current -.-> Legend
+    Proposed -.-> Legend
+    Full -.-> Legend
+
+    subgraph Key["Key Insight"]
+        K1["DSI puts knowledge IN the model weights.<br/>External F matrix is a step toward that.<br/>LoRA adapter is a middle ground —<br/>model-hosted, but gated and low-rank.<br/>Both are trainable at Oczy's scale<br/>without touching the 1.2B frozen core."]
+    end
+
+    Legend --> Key

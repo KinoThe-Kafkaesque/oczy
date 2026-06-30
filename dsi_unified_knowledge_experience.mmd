@@ -1,0 +1,68 @@
+%% Unified Differentiable Knowledge + Experience Index for Oczy
+%% DSI external F matrix holds static facts
+%% LoRA adapter on LM head accumulates experience modulation
+%% Query retrieves through BOTH simultaneously
+
+flowchart TB
+    subgraph Query["Query Processing"]
+        Q["Query text<br/>'What metric measures<br/>memory efficiency?'"]
+    end
+
+    subgraph LM["Frozen LFM 1.2B (untouched)"]
+        ENC["Transformer encoder<br/>all layers frozen"]
+        H["hidden state h<br/>shape: (d_model,)"]
+        Q --> ENC --> H
+    end
+
+    subgraph Knowledge["Knowledge Path (DSI F matrix)"]
+        direction TB
+        K_F["<b>Static Fact Matrix F</b><br/>shape: (n_facts × d_model)<br/>Each row = one immutable fact<br/>e.g. 'north star metric',<br/>     'workspace packages',<br/>     'KVCortex dimensions'<br/><br/>Trained once on corpus<br/>Rows are frozen facts"]
+        K_S["<b>knowledge_scores</b><br/>= h @ Fᵀ<br/>shape: (n_facts,)"]
+    end
+
+    subgraph Experience["Experience Path (LoRA Adapter)"]
+        direction TB
+        E_LORA["<b>LoRA Adapter ΔW</b><br/>ΔW = A · B<br/>A: (d_model × rank)<br/>B: (rank × n_facts)<br/><br/>Rank 8-64 → ~few MB<br/>Updated by:<br/>• corrections (cortex)<br/>• surprises (critic)<br/>• replays (hippocampus)<br/>• consolidation waves"]
+        E_S["<b>experience_scores</b><br/>= h @ (F + ΔW)ᵀ<br/>shape: (n_facts,)<br/><br/>ΔW biases retrieval toward<br/>facts that past experiences<br/>say are relevant in this context"]
+    end
+
+    subgraph Combine["Combined Retrieval"]
+        C_COMBO["<b>final_scores</b><br/>= α · knowledge_scores<br/>+ (1-α) · experience_scores<br/><br/>α balances static truth<br/>vs experiential context"]
+        C_RANK["Top-k ranked facts<br/>→ injected into prompt<br/>→ LM generates answer"]
+    end
+
+    H --> K_F --> K_S --> C_COMBO
+    H --> E_LORA --> E_S --> C_COMBO
+    C_COMBO --> C_RANK
+
+    subgraph Update["Experience Update Loop"]
+        direction LR
+        U_CORR["Correction arrives<br/>'No, the metric is<br/>behavior_delta_per_byte'"]
+        U_CRITIC["WorldModelCritic<br/>detects surprise<br/>high prediction error"]
+        U_HIPPO["NeuralHippocampus<br/>stores episode<br/>(query, correction, hidden)"]
+        U_LORA["<b>LoRA ΔW update</b><br/>Gradient from contrastive loss<br/>on (query_hidden, correct_fact_idx)<br/><br/>ΔW shifts to make similar<br/>future queries retrieve<br/>the corrected fact"]
+        U_CORR --> U_CRITIC --> U_HIPPO --> U_LORA
+    end
+
+    Update --> E_LORA
+
+    subgraph Consolidation["Slow Consolidation"]
+        direction LR
+        CON_1["Periodically (digestive gate<br/>consolidation pressure<br/>crosses threshold)"]
+        CON_2["Strong LoRA ΔW patterns<br/>→ permanently folded into<br/>F matrix (new row or<br/>updated row)"]
+        CON_3["LoRA ΔW reset<br/>Ready for next wave<br/>of experience"]
+        CON_1 --> CON_2 --> CON_3
+    end
+
+    Consolidation --> K_F
+    Consolidation --> E_LORA
+
+    subgraph Arch["Architecture Summary"]
+        direction LR
+        A1["<b>F matrix</b> = what is<br/>true (knowledge)"]
+        A2["<b>LoRA ΔW</b> = what has<br/>been experienced"]
+        A3["<b>α blend</b> = how much<br/>to trust experience<br/>over ground truth"]
+        A4["<b>Consolidation</b> = when<br/>experience becomes<br/>knowledge"]
+    end
+
+    Combine --> Arch

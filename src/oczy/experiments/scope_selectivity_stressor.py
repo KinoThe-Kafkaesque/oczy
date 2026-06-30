@@ -111,6 +111,30 @@ _SCOPE_TEACHING: dict[str, str] = {
         "In everyday language, a model is a fashion model or "
         "person who poses."
     ),
+    "s5_log_context": (
+        "In computing, a log is a system error log or record of "
+        "server events and crashes."
+    ),
+    "s5_file_context": (
+        "In computing, a file is a computer file saved to disk, "
+        "like a source code file or document."
+    ),
+    "s5_model_context": (
+        "In machine learning, a model is an ML model trained on "
+        "datasets to make predictions."
+    ),
+    "s5_run_context": (
+        "In computing, a run is an ML experiment run or training "
+        "run that executes a model pipeline."
+    ),
+    "s5_key_context": (
+        "In computing, a key is a keyboard key like the escape key "
+        "or enter key."
+    ),
+    "s5_cell_context": (
+        "In spreadsheets, a cell is a spreadsheet cell in a column "
+        "that holds data like numbers or text."
+    ),
 }
 
 _SCOPE_PREFIX_EPISODES = frozenset({"s2_file", "s2_cell", "s2_branch", "s2_run"})

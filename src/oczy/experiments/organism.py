@@ -774,6 +774,75 @@ class OrganismAgent:
                 ):
                     self.cortex_agent.cortex.warm_state = _cortex_warm_before
 
+    def teach_scope_sense(
+        self, teaching_text: str, scope_request: str, scope_label: str
+    ) -> None:
+        """Teach the DEFAULT/alternate sense of an ambiguous word.
+
+        Stores a scope-slot entry keyed by *scope_request* so that future
+        scope probes (which use the ambiguous word in its default domain
+        context) retrieve the correct default-sense label instead of the
+        corrected technical sense.
+
+        This mirrors the two-slot pattern from
+        :func:`scope_selectivity_stressor._measure_ssi`, extended to
+        Stage 5 cross-domain disambiguation.
+        """
+        if self.cortex_agent is None:
+            return
+        scope_key = self._scope_key(scope_request)
+        if scope_key is None:
+            return
+
+        # Register the scope label so it is available as a candidate
+        # during ranking.  _ensure_label initialises all internal
+        # structures (fast weights, recurrent gate, baseline) the
+        # plastic cortex needs to score the label.
+        if scope_label:
+            self.plastic_cortex._ensure_label(scope_label)
+
+        # Snapshot current cortex state so we can restore it.
+        cortex = getattr(self.cortex_agent, "cortex", None)
+        _warm_before = getattr(cortex, "warm_state", None) if cortex else None
+        _last_hidden_before = getattr(self.cortex_agent, "_last_hidden", None)
+        _last_utt_before = getattr(self.cortex_agent, "_last_utterance", None)
+
+        try:
+            # Perceive the teaching text with a correction signal so the
+            # cortex absorbs it into warm_state.
+            warm = self.cortex_agent.perceive(
+                teaching_text, correction_signal=1.0
+            )
+            observe = getattr(self.cortex_agent, "observe", None)
+            if callable(observe):
+                try:
+                    observe()
+                except Exception:
+                    pass
+            if warm is not None:
+                _slot_write(
+                    self._scope_slot_keys,
+                    self._scope_slot_warm,
+                    scope_key,
+                    np.asarray(warm, dtype=np.float32),
+                )
+                _update_slot_label(
+                    self._scope_slot_keys,
+                    self._scope_slot_label,
+                    scope_key,
+                    scope_label,
+                    multi_label=self.scope_rerank_multi_label,
+                )
+        except Exception:
+            pass
+        finally:
+            if cortex is not None and _warm_before is not None:
+                cortex.warm_state = _warm_before
+            if _last_hidden_before is not None:
+                self.cortex_agent._last_hidden = _last_hidden_before
+            if _last_utt_before is not None:
+                self.cortex_agent._last_utterance = _last_utt_before
+
     @staticmethod
     def _extract_expected_from_correction(correction: str) -> str:
         """Pull the corrected label out of a free-text correction.
