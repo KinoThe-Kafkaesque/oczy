@@ -99,6 +99,12 @@ class OrganismAgent:
         self.experience_autoencoder = ExperienceAutoencoder(
             config.get("experience_autoencoder")
         )
+        # Enable hidden-delta encoding so the autoencoder uses contextualized
+        # LM hidden states (when available from the cortex agent) instead of
+        # bag-of-words features.  Falls back to text path when no hidden_delta
+        # is provided in the episode.
+        self.experience_autoencoder.config.setdefault("use_hidden_delta", True)
+        self._last_request_hidden_state: np.ndarray | None = None
         self.profiler = AgentProfiler(
             [
                 "plastic_cortex",
@@ -224,6 +230,11 @@ class OrganismAgent:
             try:
                 if self.cortex_agent._last_utterance != request:
                     self.cortex_agent.perceive(request)
+                # Capture the contextualized hidden state for the
+                # hidden-delta autoencoder path.
+                _h = getattr(self.cortex_agent, "_last_hidden", None)
+                if _h is not None:
+                    self._last_request_hidden_state = np.asarray(_h, dtype=np.float64)
                 raw_scores = self.cortex_agent.policy_score(candidate_answers)
                 policy_scores = {
                     cand: float(raw_scores[i])
@@ -242,9 +253,10 @@ class OrganismAgent:
             # residual-to-concept projection can bias concept scores.
             _req_residual = None
             try:
-                _req_dz = self.experience_autoencoder.encode(
-                    {"situation": request, "outcome": "unknown"}
-                )
+                _req_episode = {"situation": request, "outcome": "unknown"}
+                if self._last_request_hidden_state is not None:
+                    _req_episode["hidden_delta"] = self._last_request_hidden_state
+                _req_dz = self.experience_autoencoder.encode(_req_episode)
                 _req_residual = _req_dz[OUTCOME_DIM:]
             except Exception:
                 pass
@@ -573,6 +585,8 @@ class OrganismAgent:
                 "source": "user_correction",
                 "corrected_answer": expected_answer,
             }
+            if self._last_request_hidden_state is not None:
+                episode["hidden_delta"] = self._last_request_hidden_state
             with self.profiler.profile("experience_autoencoder"):
                 delta_z = self.experience_autoencoder.encode(episode)
             # Extract the residual (everything after the outcome vector) and
@@ -910,6 +924,7 @@ class LMBackendAgent:
         self.experience_autoencoder = ExperienceAutoencoder(
             self.config.get("experience_autoencoder")
         )
+        self.experience_autoencoder.config.setdefault("use_hidden_delta", True)
         self.profiler = AgentProfiler(
             [
                 "plastic_cortex",
