@@ -222,49 +222,63 @@ class IdentityHypernetwork:
         label_text = str(lesson.get("correct_label", lesson.get("token", ""))).lower()
 
         z_field = self._resolve_source(source)
-        target_concept = self._extract_first_concept(label_text)
-        if target_concept is None or z_field is None:
+        target_concepts = self._extract_all_concepts(label_text)
+        if not target_concepts or z_field is None:
             return
 
-        target_idx = self.concept_index[target_concept]
-        # Gradient of score[target_idx] with respect to the full identity vector
-        # is W[target_idx].  Moving the relevant slice in that direction raises the
-        # target score.
-        direction = self.W[target_idx]
-        start, end = self._field_slice(z_field)
-        slice_dir = direction[start:end]
-        norm = float(np.linalg.norm(slice_dir))
-        if norm == 0:
-            return
-        # Normalised step keeps updates stable regardless of the random matrix.
-        step = self.lr * slice_dir / norm
-        updated = getattr(self.latents, z_field).copy()
-        updated += step
-        setattr(self.latents, z_field, updated)
+        # Apply the learning signal to every concept token found in the
+        # label.  This ensures that multi-word labels like "the captain's
+        # journal" register both "captain" and "journal" as concepts, so
+        # the concept-score boost can match any token in the label at
+        # answer-ranking time.
+        for target_concept in target_concepts:
+            target_idx = self.concept_index[target_concept]
+            # Gradient of score[target_idx] with respect to the full identity
+            # vector is W[target_idx].  Moving the relevant slice in that
+            # direction raises the target score.
+            direction = self.W[target_idx]
+            start, end = self._field_slice(z_field)
+            slice_dir = direction[start:end]
+            norm = float(np.linalg.norm(slice_dir))
+            if norm == 0:
+                continue
+            # Normalised step keeps updates stable regardless of the random
+            # matrix.
+            step = self.lr * slice_dir / norm
+            updated = getattr(self.latents, z_field).copy()
+            updated += step
+            setattr(self.latents, z_field, updated)
 
-        # Optional state-space adapter update.
-        if self.state_dim is not None:
-            self._ensure_state_initialized(self.state_dim)
-            full_delta = np.zeros(self.input_dim, dtype=np.float64)
-            full_delta[start:end] = step
-            state_delta = self.W_state @ full_delta
-            current = self.state_adapters[target_concept]
-            current += self.state_learning_rate * (state_delta - current)
+        # Optional state-space adapter and residual-to-concept updates:
+        # apply to every concept token found in the label.
+        for target_concept in target_concepts:
+            target_idx = self.concept_index[target_concept]
 
-        # Residual-to-concept Hebbian update: strengthen the mapping from
-        # this episode's residual to the target concept so future requests
-        # with similar residuals boost the same concept.
-        if residual is not None:
-            residual = np.asarray(residual, dtype=float).reshape(-1)
-            self._ensure_residual_initialized(residual.shape[0])
-            # Move W_residual[target_idx] toward the residual direction so
-            # similar residuals produce higher scores for this concept.
-            row = self._W_residual[target_idx]
-            row_norm = float(np.linalg.norm(row))
-            if row_norm > 0:
-                row += self._residual_lr * residual / (row_norm + 1e-8)
-            else:
-                row += self._residual_lr * residual
+            # State-space adapter update.
+            if self.state_dim is not None:
+                self._ensure_state_initialized(self.state_dim)
+                direction = self.W[target_idx]
+                start, end = self._field_slice(z_field)
+                full_delta = np.zeros(self.input_dim, dtype=np.float64)
+                full_delta[start:end] = self.lr * direction[start:end] / (
+                    float(np.linalg.norm(direction[start:end])) + 1e-12
+                )
+                state_delta = self.W_state @ full_delta
+                current = self.state_adapters[target_concept]
+                current += self.state_learning_rate * (state_delta - current)
+
+            # Residual-to-concept Hebbian update: strengthen the mapping
+            # from this episode's residual to the target concept so future
+            # requests with similar residuals boost the same concept.
+            if residual is not None:
+                residual_arr = np.asarray(residual, dtype=float).reshape(-1)
+                self._ensure_residual_initialized(residual_arr.shape[0])
+                row = self._W_residual[target_idx]
+                row_norm = float(np.linalg.norm(row))
+                if row_norm > 0:
+                    row += self._residual_lr * residual_arr / (row_norm + 1e-8)
+                else:
+                    row += self._residual_lr * residual_arr
 
     def status(self, include_size: bool = False) -> dict:
         """Return a serialisable status snapshot."""
@@ -390,6 +404,29 @@ class IdentityHypernetwork:
                 self.grow_vocab([clean])
                 return clean
         return None
+
+    def _extract_all_concepts(self, text: str) -> list[str]:
+        """Extract and register all valid concept tokens from *text*.
+
+        Unlike :meth:`_extract_first_concept` which returns the first match,
+        this method scans every word, registers unknown tokens as new
+        concepts (subject to the same alnum/length/stopword filter), and
+        returns the full list of matched or newly-registered concepts.
+        This ensures multi-word labels like "the captain's journal"
+        register both "captain" and "journal".
+        """
+        found: list[str] = []
+        for word in text.split():
+            clean = "".join(ch for ch in word if ch.isalnum()).lower()
+            if not clean:
+                continue
+            if clean in self.concept_index:
+                found.append(clean)
+            elif len(clean) >= 3 and clean not in _AUTO_GROW_STOPWORDS:
+                self.grow_vocab([clean])
+                if clean in self.concept_index:
+                    found.append(clean)
+        return found
 
     def grow(self, new_latent_dim: int) -> IdentityHypernetwork:
         """Return a larger-capacity hypernetwork preserving learned latents.
