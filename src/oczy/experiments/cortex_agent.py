@@ -264,7 +264,14 @@ class CortexAgent:
         self._last_drift: float = 0.0
 
         # Lazy-initialized response-policy head weights.
+        # _policy_W: linear weights over [warm ; hidden] features.
+        # _policy_W_bilinear: (d_cortex, hidden_dim) bilinear interaction
+        #   matrix.  Lets warm_state modulate which candidate-hidden
+        #   features matter: score += warm @ W_bilinear @ hidden_i.
+        #   Without this, warm_state is repeated across all candidates
+        #   and can only add a constant bias — it cannot discriminate.
         self._policy_W: np.ndarray | None = None
+        self._policy_W_bilinear: np.ndarray | None = None
         self._policy_b: float = 0.0
         self._last_request_hidden: np.ndarray | None = None
 
@@ -908,8 +915,24 @@ class CortexAgent:
     # Response policy head (Phase 2 REINFORCE policy)
     # ------------------------------------------------------------------
     def _ensure_policy_head(self, candidate_hidden_dim: int) -> None:
-        """Lazy-initialize the linear policy head weights."""
+        """Lazy-initialize the policy head weights.
+
+        Creates both the linear weights (_policy_W) over concatenated
+        [warm ; hidden] features and the bilinear interaction matrix
+        (_policy_W_bilinear) of shape (d_cortex, hidden_dim) that lets
+        warm_state modulate which candidate-hidden features matter.
+        """
+        # Backward compat: old pickles may have _policy_W but not
+        # _policy_W_bilinear.  Create the bilinear matrix if missing.
         if self._policy_W is not None:
+            if self._policy_W_bilinear is None:
+                rng_bc = np.random.default_rng(id(self) + 1)
+                self._policy_W_bilinear = (
+                    rng_bc.normal(
+                        0.0, 1.0 / np.sqrt(candidate_hidden_dim),
+                        size=(self.cortex.config.d_cortex, candidate_hidden_dim),
+                    ).astype(np.float64)
+                )
             return
         dim = self.cortex.config.d_cortex + candidate_hidden_dim
         if self.config.use_policy_request_context:
@@ -918,9 +941,22 @@ class CortexAgent:
         self._policy_W = rng.normal(0.0, 0.01, size=(dim,)).astype(
             np.float64
         )
+        # Bilinear interaction: warm (d_cortex) @ W_bilinear @ hidden (hidden_dim).
+        # Scaled by 1/sqrt(hidden_dim) so the bilinear score is comparable
+        # to the linear score at initialization.
+        self._policy_W_bilinear = (
+            rng.normal(0.0, 1.0 / np.sqrt(candidate_hidden_dim), size=(self.cortex.config.d_cortex, candidate_hidden_dim))
+            .astype(np.float64)
+        )
 
     def _policy_features(self, candidates: list[str]) -> np.ndarray:
-        """Build feature matrix [warm_state ; candidate_hidden] for each candidate."""
+        """Build feature matrix [warm_state ; candidate_hidden] for each candidate.
+
+        Each block (warm_state, request hidden, candidate hidden) is
+        L2-normalized to unit length before concatenation so the
+        d_cortex-dimensional warm_state is not drowned by the 2048-dim
+        LM hidden.
+        """
         hiddens: list[np.ndarray] = []
         hidden_dim = 0
         for text in candidates:
@@ -932,19 +968,60 @@ class CortexAgent:
 
         self._ensure_policy_head(hidden_dim)
 
+        def _l2_normalize(mat: np.ndarray) -> np.ndarray:
+            """L2-normalize each row to unit length; zero rows stay zero."""
+            norms = np.linalg.norm(mat, axis=1, keepdims=True)
+            norms = np.where(norms > 0, norms, 1.0)
+            return mat / norms
+
         warm = self.cortex.warm_state.reshape(1, -1)
         hidden_matrix = np.asarray(hiddens, dtype=np.float64)
         warm_matrix = np.repeat(warm, hidden_matrix.shape[0], axis=0)
+        # Normalize each block to unit length so warm_state (d_cortex)
+        # and hidden (2048) contribute equally per-block to the dot
+        # product with policy_W.
+        warm_matrix = _l2_normalize(warm_matrix)
+        hidden_matrix = _l2_normalize(hidden_matrix)
         if self.config.use_policy_request_context and self._last_request_hidden is not None:
             req = self._last_request_hidden.reshape(1, -1)
             req_matrix = np.repeat(req, hidden_matrix.shape[0], axis=0)
+            req_matrix = _l2_normalize(req_matrix)
             return np.hstack([warm_matrix, req_matrix, hidden_matrix])
         return np.hstack([warm_matrix, hidden_matrix])
+
+    def _policy_bilinear_score(self, candidates: list[str]) -> np.ndarray:
+        """Compute the bilinear interaction score for each candidate.
+
+        Returns ``warm @ W_bilinear @ hidden_i`` for each candidate — a
+        (N,) array.  This is the term that lets warm_state DISCRIMINATE
+        between candidates: different warm_states prefer different
+        candidate-hidden directions.  Without this term, warm_state is
+        repeated across all candidates and can only add a constant bias.
+        """
+        assert self._policy_W_bilinear is not None
+        warm = self.cortex.warm_state.astype(np.float64).reshape(-1)
+        hiddens: list[np.ndarray] = []
+        for text in candidates:
+            hidden = self.driver.peek_embedding(text, last_token_only=False)
+            hiddens.append(hidden)
+        hidden_matrix = np.asarray(hiddens, dtype=np.float64)  # (N, hidden_dim)
+        # L2-normalize for stable scale
+        warm_norm = np.linalg.norm(warm)
+        if warm_norm > 0:
+            warm = warm / warm_norm
+        hidden_norms = np.linalg.norm(hidden_matrix, axis=1, keepdims=True)
+        hidden_norms = np.where(hidden_norms > 0, hidden_norms, 1.0)
+        hidden_matrix = hidden_matrix / hidden_norms
+        # Bilinear: (warm @ W_bilinear) @ hidden^T -> (N,)
+        return (self._policy_W_bilinear.T @ warm) @ hidden_matrix.T
 
     def policy_score(self, candidates: list[str]) -> np.ndarray:
         """Score a list of candidate responses with the policy head.
 
         Returns a 1-D float64 array of scores, one per candidate.
+        The score combines:
+        - Linear: [warm ; hidden] @ W + b (candidate-specific via hidden)
+        - Bilinear: warm @ W_bilinear @ hidden_i (warm modulates hidden)
         """
         if not self.config.use_policy_head:
             raise RuntimeError("policy head is not enabled")
@@ -953,7 +1030,9 @@ class CortexAgent:
 
         X = self._policy_features(candidates)
         assert self._policy_W is not None
-        return X @ self._policy_W + self._policy_b
+        linear_score = X @ self._policy_W + self._policy_b
+        bilinear_score = self._policy_bilinear_score(candidates)
+        return linear_score + bilinear_score
 
     def policy_select(
         self, candidates: list[str], temperature: float = 0.0
@@ -980,7 +1059,14 @@ class CortexAgent:
         reward: float,
         baseline: float = 0.0,
     ) -> None:
-        """REINFORCE update of the policy head toward the chosen candidate."""
+        """REINFORCE update of the policy head toward the chosen candidate.
+
+        Updates both the linear weights (_policy_W) and the bilinear
+        interaction matrix (_policy_W_bilinear).  The bilinear gradient
+        is: d(score_i)/d(W_bilinear) = outer(warm, hidden_i), so the
+        REINFORCE gradient is advantage * (outer(warm, hidden_chosen) -
+        sum_i probs_i * outer(warm, hidden_i)).
+        """
         scores = self.policy_score(candidates)
         X = self._policy_features(candidates)
         probs = _softmax(scores)
@@ -996,6 +1082,34 @@ class CortexAgent:
         if norm > 10.0:
             self._policy_W *= 10.0 / norm
 
+        # Bilinear REINFORCE update.
+        # d(score_i)/d(W_bilinear) = outer(warm, hidden_i)
+        # grad = advantage * (outer(warm, hidden_chosen) - sum_i probs_i * outer(warm, hidden_i))
+        #      = advantage * outer(warm, hidden_chosen - probs @ hiddens)
+        if self._policy_W_bilinear is not None:
+            hiddens = np.stack([
+                self.driver.peek_embedding(t, last_token_only=False)
+                for t in candidates
+            ], axis=0).astype(np.float64)  # (N, hidden_dim)
+            # Normalize hiddens (same as in _policy_bilinear_score)
+            h_norms = np.linalg.norm(hiddens, axis=1, keepdims=True)
+            h_norms = np.where(h_norms > 0, h_norms, 1.0)
+            hiddens_n = hiddens / h_norms
+            warm = self.cortex.warm_state.astype(np.float64).reshape(-1)
+            w_norm = np.linalg.norm(warm)
+            if w_norm > 0:
+                warm = warm / w_norm
+            # weighted average hidden: probs @ hiddens_n -> (hidden_dim,)
+            grad_bilinear = advantage * np.outer(
+                warm, hiddens_n[chosen_idx] - probs @ hiddens_n
+            )
+            self._policy_W_bilinear += (
+                self.config.policy_learning_rate * grad_bilinear
+            )
+            # Renormalize to prevent unbounded growth.
+            bnorm = float(np.linalg.norm(self._policy_W_bilinear))
+            if bnorm > 10.0:
+                self._policy_W_bilinear *= 10.0 / bnorm
 
 
     # ------------------------------------------------------------------

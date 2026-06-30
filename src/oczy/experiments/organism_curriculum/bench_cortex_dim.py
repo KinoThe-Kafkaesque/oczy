@@ -30,7 +30,7 @@ from oczy.experiments.organism_curriculum.scoring import categorize_results
 # ---------------------------------------------------------------------------
 # Cortex dimension sweep
 # ---------------------------------------------------------------------------
-D_CORTEX_VALUES = [2, 4, 8, 16, 32, 64, 128]
+D_CORTEX_VALUES = [2, 4, 8, 16, 32, 64, 128, 256, 512]
 
 
 def _load_driver():

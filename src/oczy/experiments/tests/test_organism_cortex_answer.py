@@ -201,19 +201,18 @@ def test_scope_key_returns_none_without_driver() -> None:
 
 def test_cortex_correction_path_runs_when_agent_present() -> None:
     """A cortex_agent attached always populates the scope-slot store,
-    without requiring use_cortex_lm_answer.  The label is bound via the
-    driver embedding, so no perceive() call is needed unless LM articulation
-    is enabled.
+    without requiring use_cortex_lm_answer.  The warm_state is now always
+    captured (via perceive) because the policy head's bilinear term needs
+    it to discriminate candidates, even when LM articulation is off.
     """
     mock = _ScopeMockCortexAgent()
     organism = OrganismAgent({"cortex_agent": mock})
     assert not organism.use_cortex_lm_answer
     organism.learn("open the file", "No, here 'file' means a disk file.")
-    assert mock.perceive_calls == []
+    assert len(mock.perceive_calls) == 1
     assert organism._scope_slot_keys
-    assert organism._scope_slot_label
+    assert organism._scope_slot_warm[0] is not None
     assert organism._scope_slot_label[0] == "a disk file"
-
 
 def test_cortex_lm_answer_flag_perceives_correction() -> None:
     """When use_cortex_lm_answer=True, perceiving the correction captures

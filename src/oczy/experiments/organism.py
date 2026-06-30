@@ -249,6 +249,13 @@ class OrganismAgent:
                         self._last_request_hidden_state = _h_arr
             except Exception:
                 pass
+        # Restore the per-context corrected warm_state from the scope-slot
+        # store BEFORE policy scoring.  The perceive(request) above updated
+        # warm_state with the request's hidden; we want the correction's
+        # warm_state (stored during learn_from_correction) so the policy head
+        # sees the context-bound steering vector, not the request's.
+        if self.cortex_agent is not None and not self.use_cortex_lm_answer:
+            self._apply_scope_slot_warm(request)
 
         # 4. Optional CortexAgent policy-head scoring of candidates.
         policy_scores: dict[str, float] | None = None
@@ -678,11 +685,12 @@ class OrganismAgent:
                 pass
 
         # e. Context-addressed scope-slot store (Experiment 04).  Always
-        # bind the corrected label to a request-keyed embedding.  If the
-        # organism is configured to articulate answers with the LM, also
+        # bind the corrected label to a request-keyed embedding.  Always
         # capture the correction's cortical warm_state (restoring the
         # answer-time hidden state afterwards so policy/answer paths are not
-        # side-effected).
+        # side-effected) — the policy head's bilinear term needs the
+        # warm_state to discriminate candidates, even when the LM
+        # articulation path (use_cortex_lm_answer) is off.
         if self.cortex_agent is not None:
             req_key = self._scope_key(request or self._last_request or "")
             if req_key is not None:
@@ -690,7 +698,7 @@ class OrganismAgent:
                     self._scope_slot_keys,
                     self._scope_slot_warm,
                     req_key,
-                    None,  # warm only populated when use_cortex_lm_answer is on
+                    None,  # overwritten below after perceive()
                 )
                 _update_slot_label(
                     self._scope_slot_keys,
@@ -702,70 +710,69 @@ class OrganismAgent:
                     multi_label=self.scope_rerank_multi_label,
                 )
 
-            if self.use_cortex_lm_answer:
-                # Snapshot the current answer-time hidden state before
-                # perceiving the correction, then restore it afterwards.
-                _last_hidden_before = getattr(self.cortex_agent, "_last_hidden", None)
-                _prev_hidden_before = getattr(self.cortex_agent, "_prev_hidden", None)
-                _last_request_hidden_before = getattr(
-                    self.cortex_agent, "_last_request_hidden", None
+            # Snapshot the current answer-time hidden state before
+            # perceiving the correction, then restore it afterwards.
+            _last_hidden_before = getattr(self.cortex_agent, "_last_hidden", None)
+            _prev_hidden_before = getattr(self.cortex_agent, "_prev_hidden", None)
+            _last_request_hidden_before = getattr(
+                self.cortex_agent, "_last_request_hidden", None
+            )
+            _last_utterance_before = getattr(
+                self.cortex_agent, "_last_utterance", None
+            )
+            _last_input_ids_before = getattr(
+                self.cortex_agent, "_last_input_ids", None
+            )
+            _last_answer_before = getattr(self.cortex_agent, "_last_answer", None)
+            _last_correction_signal_before = getattr(
+                self.cortex_agent, "_last_correction_signal", None
+            )
+            _cortex_warm_before = getattr(
+                getattr(self.cortex_agent, "cortex", None), "warm_state", None
+            )
+            try:
+                warm = self.cortex_agent.perceive(
+                    correction, correction_signal=1.0
                 )
-                _last_utterance_before = getattr(
-                    self.cortex_agent, "_last_utterance", None
-                )
-                _last_input_ids_before = getattr(
-                    self.cortex_agent, "_last_input_ids", None
-                )
-                _last_answer_before = getattr(self.cortex_agent, "_last_answer", None)
-                _last_correction_signal_before = getattr(
-                    self.cortex_agent, "_last_correction_signal", None
-                )
-                _cortex_warm_before = getattr(
-                    getattr(self.cortex_agent, "cortex", None), "warm_state", None
-                )
-                try:
-                    warm = self.cortex_agent.perceive(
-                        correction, correction_signal=1.0
+                observe = getattr(self.cortex_agent, "observe", None)
+                if callable(observe):
+                    try:
+                        observe()
+                    except Exception:
+                        pass
+                if req_key is not None and warm is not None:
+                    _slot_write(
+                        self._scope_slot_keys,
+                        self._scope_slot_warm,
+                        req_key,
+                        np.asarray(warm, dtype=np.float32),
                     )
-                    observe = getattr(self.cortex_agent, "observe", None)
-                    if callable(observe):
-                        try:
-                            observe()
-                        except Exception:
-                            pass
-                    if req_key is not None and warm is not None:
-                        _slot_write(
-                            self._scope_slot_keys,
-                            self._scope_slot_warm,
-                            req_key,
-                            np.asarray(warm, dtype=np.float32),
-                        )
-                except Exception:
-                    # Cortex correction path is advisory; never break learning.
-                    pass
-                finally:
-                    if _last_hidden_before is not None:
-                        self.cortex_agent._last_hidden = _last_hidden_before
-                    if _prev_hidden_before is not None:
-                        self.cortex_agent._prev_hidden = _prev_hidden_before
-                    if _last_request_hidden_before is not None:
-                        self.cortex_agent._last_request_hidden = (
-                            _last_request_hidden_before
-                        )
-                    if _last_utterance_before is not None:
-                        self.cortex_agent._last_utterance = _last_utterance_before
-                    if _last_input_ids_before is not None:
-                        self.cortex_agent._last_input_ids = _last_input_ids_before
-                    if _last_answer_before is not None:
-                        self.cortex_agent._last_answer = _last_answer_before
-                    if _last_correction_signal_before is not None:
-                        self.cortex_agent._last_correction_signal = (
-                            _last_correction_signal_before
-                        )
-                    if _cortex_warm_before is not None and hasattr(
-                        self.cortex_agent, "cortex"
-                    ):
-                        self.cortex_agent.cortex.warm_state = _cortex_warm_before
+            except Exception:
+                # Cortex correction path is advisory; never break learning.
+                pass
+            finally:
+                if _last_hidden_before is not None:
+                    self.cortex_agent._last_hidden = _last_hidden_before
+                if _prev_hidden_before is not None:
+                    self.cortex_agent._prev_hidden = _prev_hidden_before
+                if _last_request_hidden_before is not None:
+                    self.cortex_agent._last_request_hidden = (
+                        _last_request_hidden_before
+                    )
+                if _last_utterance_before is not None:
+                    self.cortex_agent._last_utterance = _last_utterance_before
+                if _last_input_ids_before is not None:
+                    self.cortex_agent._last_input_ids = _last_input_ids_before
+                if _last_answer_before is not None:
+                    self.cortex_agent._last_answer = _last_answer_before
+                if _last_correction_signal_before is not None:
+                    self.cortex_agent._last_correction_signal = (
+                        _last_correction_signal_before
+                    )
+                if _cortex_warm_before is not None and hasattr(
+                    self.cortex_agent, "cortex"
+                ):
+                    self.cortex_agent.cortex.warm_state = _cortex_warm_before
 
     @staticmethod
     def _extract_expected_from_correction(correction: str) -> str:
