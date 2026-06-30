@@ -91,3 +91,44 @@ To improve `scope`, the architecture needs to change, not just the capacity:
 - `autoresearch.sh`: 7/7 experiments accepted
 - `bounded_growth_m1_ratio`: 0.073 → 0.002 (still accepted; larger baseline makes relative growth smaller)
 - Curriculum: all stages pass, Stage 5 = 6/6, scope = 0.0
+
+## Update: scope-slot fix resolves architectural bottleneck (2026-06-30)
+
+The report's central conclusion — that the bottleneck is architectural, not capacity — was correct. The 36× core expansion produced zero behavioral change because the downstream organs don't consume the autoencoder's residual. But the specific architectural bottleneck behind the `scope=0.0` gap has now been identified and fixed, and it was not where this report looked.
+
+### The real bottleneck: three bugs in the scope-slot reranker
+
+The scope-slot reranker (which uses LFM2.5 embeddings, as point 2 of the analysis correctly noted) was silently non-functional due to three compounding bugs:
+
+1. **`_scope_key` used `last_token_only=True`** (commit `43cfc9f`): `peek_embedding()` with the default `last_token_only=True` embeds only the last token. All curriculum requests end with `.`, so every request got identical embeddings (cosine sim=1.0) and all 44+ episodes collapsed into a single slot. Fix: `last_token_only=False` for mean-pooled whole-request embeddings.
+
+2. **`_MAX_SLOTS=16` too small** (commit `091046c`): the slot store filled after Stage 1 (8+8=16), so Stage 2 corrections overwrote Stage 0/1 labels. Fix: `_MAX_SLOTS=64`.
+
+3. **`_ALLOC_THRESHOLD=0.85` used for label retrieval** (commit `091046c`): mean-pooled embeddings of related-but-different requests have cosine sim ~0.3–0.65, well below 0.85. No labels were ever returned, so the reranker never fired. Fix: a separate `_RETRIEVE_THRESHOLD=0.3` for label retrieval.
+
+A fourth change (commit `e316cb1`) raised `scope_rerank_topk` from 1 to 3, giving the correct technical sense a chance against the single most-similar (often wrong) label.
+
+### Updated curriculum results (real LFM2.5-1.2B Q4 driver, semantic scoring, topk=3)
+
+| Stage | 1M core (2026-06-29) | 1M core + scope fix (2026-06-30) | Change |
+|-------|---------------------|----------------------------------|--------|
+| Stage 0 (8) | 8/8, retention=0.0 | 8/8, retention=0.88 | +0.88 |
+| Stage 1 (8) | 8/8, transfer=0.25 | 7/8, transfer=0.75 | +0.50 |
+| Stage 2 (8) | 8/8, scope=0.0, retention=0.0 | 8/8, scope=1.00, retention=0.88 | scope +1.00 |
+| Stage 3 (4) | 4/4, scope=0.0 | 4/4, scope=1.00, transfer=0.25 | scope +1.00 |
+| Stage 4 (10) | 10/10, retention=0.0 | 10/10, retention=1.00 | +1.00 |
+| Stage 5 (6) | 6/6, scope=0.0, retention=0.0 | 6/6, scope=0.50, retention=1.00 | scope +0.50, retention +1.00 |
+
+The `scope=0.0` gap that motivated the "What would actually help" list is gone: Stage 2 scope 0.0→1.00, Stage 3 scope 0.0→1.00, Stage 5 scope 0.0→0.50. Retention metrics that were flat at 0.0 are now 0.88–1.00 across stages.
+
+### What this means for the 1M param core
+
+The 1M param core itself still has no direct behavioral effect — the analysis above holds. But the downstream reranker that consumes LFM2.5 embeddings (not the autoencoder residual) now works correctly, and the curriculum metrics it influences have moved dramatically. The capacity expansion and the reranker fix are orthogonal: the core's residual remains a side channel for memory tracking, while the reranker's embedding-based scope slots are what drive cross-domain disambiguation.
+
+### Verification
+
+- 441 tests pass (up from 261).
+- 7/7 experiments accepted (preserved).
+- `scope_selectivity_index=0.625`, `bounded_growth_m1_ratio=0.002079`, `metabolism_drift_delta=0.1016`, `layer_l_silhouette_gap=0.116`, `marker_free_uptake_gap=1.0`.
+
+See `2026-06-30_scope_slot_reranker_fix.md` for the detailed fix report.

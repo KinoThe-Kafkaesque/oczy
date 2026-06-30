@@ -138,3 +138,58 @@ because the real-driver model load exceeded the previous 300 s per-experiment
 timeout. The per-experiment timeout in
 `src/oczy/experiments/experiment_orchestrator.py` was raised to 600 s so the
 orchestrator remains reliable when the system is loaded.
+
+
+## Scope-slot reranker fix (2026-06-30)
+
+After the post-aggregate and verification-run sections above were written,
+three compounding bugs were found in the scope-slot reranker that had been
+silently preventing it from ever firing correctly. All three were fixed on
+2026-06-30 (commits `43cfc9f`, `091046c`, `e316cb1`, `9e8eef4`):
+
+1. **`_scope_key` used `last_token_only=True`** (`43cfc9f`). `peek_embedding()`
+   with the default `last_token_only=True` embeds only the last token, and
+   every curriculum request ends with `.`, so every request got an identical
+   embedding (cosine sim = 1.0). All 44+ episodes collapsed into a single
+   slot. Fix: `last_token_only=False` for mean-pooled whole-request embeddings.
+2. **`_MAX_SLOTS=16` was too small** (`091046c`). The slot store filled after
+   Stage 1 (8 + 8 = 16), so Stage 2 corrections overwrote Stage 0/1 labels.
+   Fix: `_MAX_SLOTS=64`.
+3. **`_ALLOC_THRESHOLD=0.85` was used for label retrieval** (`091046c`).
+   Mean-pooled embeddings of related-but-different requests have cosine sim
+   ~0.3–0.65, well below 0.85, so no labels were ever returned and the
+   reranker never fired. Fix: a separate `_RETRIEVE_THRESHOLD=0.3` for label
+   retrieval.
+4. **`scope_rerank_topk=1`** (`e316cb1`) returned only the single most-similar
+   label, which was often the wrong sense. `topk=3` gives the correct
+   technical sense a chance.
+
+### Dramatic curriculum improvements
+
+With all four fixes applied (real LFM2.5-1.2B Q4 driver, semantic scoring,
+`topk=3`, `sense_split=False`), the organism curriculum improved across every
+stage versus the stale numbers in the sections above:
+
+| Stage | Before fix (verification rerun) | After fix (2026-06-30) |
+|---|---|---|
+| Stage 0 sense grounding | 7/8, retention=0.12 | **8/8, retention=0.88** |
+| Stage 1 transfer | 1/8, transfer=0.25 | **7/8, transfer=0.75** |
+| Stage 2 scope control | 3/8, scope=0.12, retention=0.25 | **8/8, scope=1.00, retention=0.88** |
+| Stage 3 scope+transfer | 1/4, scope=0.00 | **4/4, scope=1.00, transfer=0.25** |
+| Stage 4 consolidation retention | 7/10, retention=0.10 | **10/10, retention=1.00** |
+| Stage 5 cross-domain | 1/6, scope=0.00, retention=0.17 | **6/6, scope=0.50, retention=1.00** |
+
+### Aggregate and test status
+
+- **7 / 7 experiments accepted** (preserved throughout the fix).
+- **441 tests pass** (up from the 220 reported in the Summary above and the
+  240 in the verification rerun).
+- `bounded_growth_m1_ratio=0.002079` (was `0.072706` in the verification
+  rerun; the lower ratio reflects tighter bounded-growth behavior after the
+  reranker stopped overwriting earlier slots).
+- Unchanged metrics: `scope_selectivity_index=0.625`,
+  `metabolism_drift_delta=0.1016`, `layer_l_silhouette_gap=0.116`,
+  `marker_free_uptake_gap=1.0`.
+
+The full bug-by-bug diagnosis, fix rationale, and per-stage evidence are
+documented in `2026-06-30_scope_slot_reranker_fix.md`.

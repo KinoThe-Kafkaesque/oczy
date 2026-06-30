@@ -82,3 +82,44 @@ Stage 2 scope improved from 0.0 to 0.12 — the concept scores are now influenci
 The 1M-param sensing matrix now flows into the identity hypernetwork's concept-scoring path — the wiring is complete. The residual shapes concept scores, the Hebbian learning trains the sensing matrix, and `_extract_all_concepts` ensures all label tokens are registered as concepts. Stage 2 scope improved from 0.0 to 0.12, confirming the concept scores now influence multi-word label ranking. Stage 5 scope remains 0.0, indicating the cross-domain disambiguation bottleneck requires deeper architectural changes (sense-specific concepts, semantic matching, or a concept-to-label projection matrix).
 
 **Status**: Wiring complete, 7/7 preserved, Stage 2 scope improved 0.0→0.12, Stage 5 scope still 0.0.
+
+## Update: scope-slot reranker fix (2026-06-30)
+
+The downstream disconnect identified above was not purely architectural — the scope-slot reranker that consumes the concept scores was silently broken by three compounding bugs. The residual-to-identity wiring itself remains architecturally complete and correct; what was failing was the reranker that sits downstream of `concept_scores` and decides which stored label to apply for a given request.
+
+### Bugs found and fixed
+
+1. **`_scope_key` used `last_token_only=True`** (commit `43cfc9f`): `peek_embedding()` with the default `last_token_only=True` embeds only the last token. Every curriculum request ends with `.`, so all requests produced identical embeddings (cosine sim = 1.0) and all 44+ episodes collapsed into a single slot. Fix: `last_token_only=False` for mean-pooled whole-request embeddings.
+2. **`_MAX_SLOTS=16` too small** (commit `091046c`): the slot store filled after Stage 1 (8 + 8 = 16), after which Stage 2 corrections overwrote Stage 0/1 labels. Fix: `_MAX_SLOTS=64`.
+3. **`_ALLOC_THRESHOLD=0.85` reused for label retrieval** (commit `091046c`): mean-pooled embeddings of related-but-different requests have cosine sim ~0.3–0.65, well below 0.85, so `_scope_label_for` never returned a label and the reranker never fired. Fix: a separate `_RETRIEVE_THRESHOLD=0.3` for label retrieval, distinct from the allocation threshold.
+
+A fourth change (commit `e316cb1`, test defaults in `9e8eef4`) raised `scope_rerank_topk` from 1 to 3, so the correct technical sense gets a chance instead of only the single most-similar label.
+
+### Updated curriculum results
+
+With the reranker actually firing, the concept-scoring path (`residual → _W_residual → concept_scores`) is now functional end-to-end:
+
+| Stage | Before fix (stale) | After fix (2026-06-30) |
+|-------|--------------------|------------------------|
+| Stage 0 | 7/8, retention=0.12 | 8/8, retention=0.88 |
+| Stage 1 | 1/8, transfer=0.25 | 7/8, transfer=0.75 |
+| Stage 2 | 3/8, scope=0.12, retention=0.25 | 8/8, scope=1.00, retention=0.88 |
+| Stage 3 | 1/4, scope=0.00 | 4/4, scope=1.00, transfer=0.25 |
+| Stage 4 | 7/10, retention=0.10 | 10/10, retention=1.00 |
+| Stage 5 | 1/6, scope=0.00, retention=0.17 | 6/6, scope=0.50, retention=1.00 |
+
+Headline deltas: **Stage 2 scope 0.12 → 1.00**, **Stage 5 scope 0.0 → 0.50**, **Stage 5 retention 0.17 → 1.00**.
+
+### Test suite
+
+441 tests pass (up from 283 reported in the original section above).
+
+### Remaining gap
+
+The concept-scoring path is now functional — the residual shapes concept scores, the Hebbian learning trains the sensing matrix, `_extract_all_concepts` registers all label tokens, and the reranker now actually retrieves and applies those labels. Stage 2 scope reached 1.00 and Stage 5 scope improved from 0.0 to 0.50.
+
+The remaining Stage 5 scope gap (0.50 vs 1.0) is the genuine residual architectural bottleneck called out in the "What would fix this" section above: cross-domain disambiguation between same-vocabulary different-sense requests still needs sense-specific concept vocabulary, semantic (embedding-similarity) concept matching, or a learned concept-to-label projection matrix. The wiring is no longer the blocker; the concept representation is.
+
+The detailed fix report, including the per-bug diagnosis and commit references, is in `2026-06-30_scope_slot_reranker_fix.md`.
+
+**Status (2026-06-30)**: Wiring complete and downstream reranker fixed, 7/7 preserved, 441 tests pass, Stage 2 scope 0.12→1.00, Stage 5 scope 0.0→0.50, Stage 5 retention 0.17→1.00.

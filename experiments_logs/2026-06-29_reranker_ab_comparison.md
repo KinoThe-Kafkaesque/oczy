@@ -114,3 +114,107 @@ Stage 5, but doesn't retain cross-domain knowledge from earlier stages. This is
 the next improvement target: enabling the scope-slot reranker to proactively
 select the correct sense based on context alone, without needing a correction
 first.
+
+## Update: bug fix changes conclusions (2026-06-30)
+
+The A/B test above was run on code with **three compounding bugs** in the
+scope-slot reranker. The conclusions drawn from it are now known to be wrong
+in several respects. The historical results are preserved above as a session
+log; this section documents the corrected picture.
+
+### The three bugs
+
+1. **`_scope_key` used `last_token_only=True`** (commit `43cfc9f`):
+   `peek_embedding()` with the default `last_token_only=True` embeds only the
+   last token. Every curriculum request ends with `.`, so every request got an
+   identical embedding (cosine sim = 1.0). All 44+ episodes collapsed into a
+   single slot. Fix: `last_token_only=False` for mean-pooled whole-request
+   embeddings.
+
+2. **`_MAX_SLOTS=16` too small** (commit `091046c`): The slot store filled
+   after Stage 1 (8 + 8 = 16), so Stage 2 corrections overwrote the Stage 0/1
+   labels. Fix: `_MAX_SLOTS=64`.
+
+3. **`_ALLOC_THRESHOLD=0.85` used for label retrieval** (commit `091046c`):
+   Mean-pooled embeddings of related-but-different requests have cosine sim
+   ~0.3–0.65, well below 0.85. No labels were ever returned, so the reranker
+   never fired. Fix: a separate `_RETRIEVE_THRESHOLD=0.3` for label retrieval.
+
+A fourth change (commit `e316cb1`) set `scope_rerank_topk=3` as the new
+default, and commit `9e8eef4` updated the test defaults to match.
+
+### Why "topk=3 is neutral" was wrong
+
+The original analysis observed that topk=3 produced identical results to the
+baseline (topk=1) and concluded topk=3 was neutral. This was an **artifact of
+the bugs**: with all slots collapsed into one (bug #1), topk=3 degenerated to
+topk=1 because there was only ever one slot to retrieve from. The original
+report even noted this degeneration ("only one slot passes the
+`_ALLOC_THRESHOLD`") but misattributed it to the curriculum having one slot
+per request rather than to the embedding collapse.
+
+With the slots correctly separated (`last_token_only=False`,
+`_MAX_SLOTS=64`), topk=3 returns the correct technical-sense label that
+topk=1 misses. topk=1 only returns the single most-similar label, which is
+often the wrong sense. topk=3 gives the correct sense a chance to be
+retrieved and boosted. This is why `scope_rerank_topk=3` is now the default.
+
+### Why "scope=0.0" was wrong
+
+The `scope=0.0` result across all configs was also a **bug artifact**: the
+reranker never fired because no labels passed the 0.85 retrieval threshold
+(bug #3). The "Remaining gap: scope=0.0" section above is therefore
+**partially resolved** — the gap was not fundamental, it was a retrieval
+threshold bug. With `_RETRIEVE_THRESHOLD=0.3`, the reranker fires and
+proactive cross-domain disambiguation works.
+
+### New recommended config
+
+```text
+scope_rerank_weight=2.0
+scope_rerank_topk=3
+scope_rerank_sense_split=False
+scope_rerank_multi_label=False
+```
+
+The only change from the old recommendation is `scope_rerank_topk`: `1 → 3`.
+`scope_rerank_weight=2.0`, `sense_split=False`, and `multi_label=False` are
+unchanged.
+
+### New curriculum results (with the fix)
+
+Real LFM2.5-1.2B Q4 driver, semantic scoring, topk=3, sense_split=False:
+
+| Stage | Fixed | Scope | Retention / Transfer |
+|-------|-------|-------|----------------------|
+| Stage 0 (8) | 8/8 | — | retention=0.88 |
+| Stage 1 (8) | 7/8 | — | transfer=0.75 |
+| Stage 2 (8) | 8/8 | scope=1.00 | retention=0.88 |
+| Stage 3 (4) | 4/4 | scope=1.00 | transfer=0.25 |
+| Stage 4 (10) | 10/10 | — | retention=1.00 |
+| Stage 5 (6) | 6/6 | scope=0.50 | retention=1.00 |
+
+Stage 5 scope improved **0.00 → 0.50** (3/6 proactive correct), Stage 2
+scope improved **0.12 → 1.00**, and Stage 4 retention improved
+**0.10 → 1.00**.
+
+### What still holds from the original report
+
+The **multi_label catastrophe** conclusion still holds and was **not** caused
+by the three bugs. multi_label stores multiple labels per slot (joined by
+`" | "`), creating a "super-slot" that matches too broadly and boosts the
+most-recently stored label regardless of context. This breaks the
+context-addressed retrieval that makes the reranker work, and it degrades
+every stage, not just Stage 5. `scope_rerank_multi_label=False` remains
+correct.
+
+The **sense_split slightly hurts** observation is also unaffected by the bug
+fixes in its reasoning (excluding the ambiguous word from overlap removes
+useful disambiguating signal), though its magnitude should be re-measured on
+the fixed code.
+
+### Reference
+
+The detailed fix report, including the per-commit diagnosis and the full
+post-fix curriculum numbers, is in
+`2026-06-30_scope_slot_reranker_fix.md`.
