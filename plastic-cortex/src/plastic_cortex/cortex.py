@@ -52,7 +52,7 @@ class PlasticCortex:
         self.labels = list(self.LABELS)
         self.baseline = {token: dict(scores) for token, scores in self.BASELINE.items()}
 
-        self.hidden_dim = self.config.get("hidden_dim", 8)
+        self.hidden_dim = self.config.get("hidden_dim", 64)
         self.alpha_normal = self.config.get("alpha_normal", 0.02)
         self.alpha_correction = self.config.get("alpha_correction", 5.0)
         self.recurrent_gain = self.config.get("recurrent_gain", 0.05)

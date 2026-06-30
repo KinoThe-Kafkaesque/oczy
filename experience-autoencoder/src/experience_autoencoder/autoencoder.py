@@ -18,15 +18,15 @@ from typing import Any
 
 import numpy as np
 
-HEBBIAN_LR = 0.01
+HEBBIAN_LR = 0.05
 
 
-LATENT_DIM = 32
+LATENT_DIM = 132
 OUTCOME_DIM = 4
 RESIDUAL_DIM = LATENT_DIM - OUTCOME_DIM
 NUM_SOURCES = 4
-MAX_VOCAB = 256
-DECODE_SPARSITY = 10
+MAX_VOCAB = 2048
+DECODE_SPARSITY = 30
 HIDDEN_DELTA_SCALE = 1.0
 
 _OUTCOME_LABELS = ["accepted", "corrected", "failed", "unknown"]

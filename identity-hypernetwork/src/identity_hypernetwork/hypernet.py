@@ -56,7 +56,7 @@ class IdentityHypernetwork:
 
     def __init__(
         self,
-        latent_dim: int = 8,
+        latent_dim: int = 32,
         seed: int = 0,
         learning_rate: float = 0.1,
         state_dim: int | None = None,
