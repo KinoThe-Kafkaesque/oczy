@@ -24,7 +24,7 @@ from neural_hippocampus import NeuralHippocampus
 from oczy.common import extract_expected_from_correction, tokenize
 from oczy.experiments.profiler import AgentProfiler
 from oczy.experiments.scope_selectivity_stressor import (
-    _ALLOC_THRESHOLD,
+    _RETRIEVE_THRESHOLD,
     _cosine,
     _slot_lookup,
     _slot_retrieve,
@@ -463,7 +463,7 @@ class OrganismAgent:
         sims: list[tuple[str, float]] = []
         for i, slot_key in enumerate(self._scope_slot_keys):
             sim = _cosine(key, slot_key)
-            if sim >= _ALLOC_THRESHOLD and i < len(self._scope_slot_label):
+            if sim >= _RETRIEVE_THRESHOLD and i < len(self._scope_slot_label):
                 label = self._scope_slot_label[i]
                 if label:  # skip empty labels
                     for label_part in label.split(" | "):

@@ -21,8 +21,14 @@ from typing import Any
 
 
 # Context-addressed slot store parameters.
-_MAX_SLOTS = 16
+_MAX_SLOTS = 64
 _ALLOC_THRESHOLD = 0.85
+# Label retrieval uses a lower threshold: mean-pooled embeddings of
+# related-but-different requests (e.g. "Log the server crash in the
+# system." vs "Log the runtime error.") have cosine sim ~0.3-0.65,
+# well below the allocation threshold.  The top-k limit and the
+# similarity-weighted boost in the reranker handle noise.
+_RETRIEVE_THRESHOLD = 0.3
 
 
 def _cosine(a, b) -> float:
