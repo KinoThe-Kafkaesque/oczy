@@ -104,14 +104,34 @@ class IdentityHypernetwork:
         self._concept_age_counter = 0
         self._concept_ages = [0] * self.output_dim
 
-    def generate_adapters(self) -> dict[str, dict[str, float]]:
+        # Residual-to-concept projection: maps the experience autoencoder's
+        # residual vector into concept-score space so compressed experience
+        # actually shapes which concepts get boosted.  Lazily initialised
+        # when the first residual is seen (see _ensure_residual_initialized).
+        self._W_residual: np.ndarray | None = None
+        self._residual_dim: int | None = None
+        self._residual_lr = float(cfg.get("residual_lr", 0.1))
+
+    def generate_adapters(
+        self, residual: np.ndarray | None = None
+    ) -> dict[str, dict[str, float]]:
         """Return adapter score deltas derived from the current identity latent.
+
+        When *residual* is provided (the experience autoencoder's residual
+        vector for the current request), it is projected through
+        ``_W_residual`` and added to the concept scores.  This lets the
+        compressed experience signal shape which concepts get boosted at
+        answer time.
 
         Returns a dictionary with a single key ``concept_scores`` mapping each
         known concept to a scalar delta.
         """
         z = self.latents.to_array()
         scores = self.W @ z
+        if residual is not None and self._W_residual is not None:
+            residual = np.asarray(residual, dtype=float).reshape(-1)
+            if residual.shape[0] == self._W_residual.shape[1]:
+                scores = scores + self._W_residual @ residual
         return {"concept_scores": {concept: float(scores[i]) for i, concept in enumerate(self.concepts)}}
 
     def _ensure_state_initialized(self, state_dim: int) -> None:
@@ -162,7 +182,24 @@ class IdentityHypernetwork:
             adapter = adapter / norm
         return adapter
 
-    def update_identity(self, lesson: dict) -> None:
+    def _ensure_residual_initialized(self, residual_dim: int) -> None:
+        """Lazy-initialize the residual-to-concept projection matrix."""
+        if self._W_residual is not None:
+            if self._residual_dim != residual_dim:
+                raise ValueError(
+                    f"residual_dim mismatch: already initialised with "
+                    f"{self._residual_dim}, got {residual_dim}"
+                )
+            return
+        self._residual_dim = residual_dim
+        scale = 1.0 / np.sqrt(residual_dim)
+        self._W_residual = self.rng.standard_normal(
+            (self.output_dim, residual_dim)
+        ) * scale
+
+    def update_identity(
+        self, lesson: dict, residual: np.ndarray | None = None
+    ) -> None:
         """Apply a learning signal to the relevant identity component.
 
         ``lesson`` must contain at least:
@@ -174,6 +211,11 @@ class IdentityHypernetwork:
         - ``correct_label`` (or ``token``): text from which the target concept is
           extracted.  The first known concept found in ``correct_label`` (or
           ``token``) is the one whose score will be increased.
+
+        When *residual* is provided (the experience autoencoder's residual
+        vector for this episode), the residual-to-concept projection
+        ``_W_residual`` is updated via a Hebbian rule so future requests with
+        similar residuals boost the same concept.
         """
         source = str(lesson.get("source", "user_correction")).lower()
         label_text = str(lesson.get("correct_label", lesson.get("token", ""))).lower()
@@ -207,6 +249,21 @@ class IdentityHypernetwork:
             state_delta = self.W_state @ full_delta
             current = self.state_adapters[target_concept]
             current += self.state_learning_rate * (state_delta - current)
+
+        # Residual-to-concept Hebbian update: strengthen the mapping from
+        # this episode's residual to the target concept so future requests
+        # with similar residuals boost the same concept.
+        if residual is not None:
+            residual = np.asarray(residual, dtype=float).reshape(-1)
+            self._ensure_residual_initialized(residual.shape[0])
+            # Move W_residual[target_idx] toward the residual direction so
+            # similar residuals produce higher scores for this concept.
+            row = self._W_residual[target_idx]
+            row_norm = float(np.linalg.norm(row))
+            if row_norm > 0:
+                row += self._residual_lr * residual / (row_norm + 1e-8)
+            else:
+                row += self._residual_lr * residual
 
     def status(self, include_size: bool = False) -> dict:
         """Return a serialisable status snapshot."""
@@ -258,6 +315,11 @@ class IdentityHypernetwork:
                 continue
             new_row = self.rng.standard_normal((1, self.input_dim)) * scale
             self.W = np.concatenate([self.W, new_row], axis=0)
+            # Keep _W_residual in lockstep with W when initialised.
+            if self._W_residual is not None:
+                r_scale = 1.0 / np.sqrt(self._residual_dim)
+                new_r = self.rng.standard_normal((1, self._residual_dim)) * r_scale
+                self._W_residual = np.concatenate([self._W_residual, new_r], axis=0)
             self.concept_index[clean] = self.output_dim
             self.concepts.append(clean)
             self._concept_ages.append(self._concept_age_counter)
@@ -277,6 +339,8 @@ class IdentityHypernetwork:
             keep_indices = [i for i in range(n) if i not in remove_indices]
 
             self.W = self.W[keep_indices, :]
+            if self._W_residual is not None:
+                self._W_residual = self._W_residual[keep_indices, :]
             keep_concepts = [self.concepts[i] for i in keep_indices]
             removed = {self.concepts[i] for i in remove_indices}
             self.concepts = keep_concepts
@@ -384,6 +448,9 @@ class IdentityHypernetwork:
         state.setdefault("state_learning_rate", 0.1)
         state.setdefault("W_state", None)
         state.setdefault("state_adapters", {})
+        state.setdefault("_W_residual", None)
+        state.setdefault("_residual_dim", None)
+        state.setdefault("_residual_lr", 0.1)
         self.__dict__.update(state)
 
 

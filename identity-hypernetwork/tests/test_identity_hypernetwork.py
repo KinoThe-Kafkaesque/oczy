@@ -13,7 +13,7 @@ def test_instantiation_and_status():
     status = agent.status(include_size=True)
     assert status["project"] == "identity_hypernetwork"
     assert status["ready"] is True
-    assert status["latent_dim"] == 8
+    assert status["latent_dim"] == 32
     assert status["num_concepts"] == 14
 
 

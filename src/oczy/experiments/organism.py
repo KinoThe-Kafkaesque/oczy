@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from oczy.experiments.cortex_agent import CortexAgent
 
 from experience_autoencoder import ExperienceAutoencoder
+from experience_autoencoder.autoencoder import OUTCOME_DIM
 from identity_hypernetwork import IdentityHypernetwork
 from neural_hippocampus import NeuralHippocampus
 from oczy.common import extract_expected_from_correction, tokenize
@@ -235,7 +236,21 @@ class OrganismAgent:
         # 5. Apply identity-hypernetwork concept-score deltas to rank the
         # candidate labels.
         with self.profiler.profile("identity_hypernetwork"):
-            adapters = self.identity_hypernetwork.generate_adapters()
+            # Encode the current request as a partial episode to get a
+            # residual that represents "what experience does this request
+            # remind me of?"  Pass it to generate_adapters so the
+            # residual-to-concept projection can bias concept scores.
+            _req_residual = None
+            try:
+                _req_dz = self.experience_autoencoder.encode(
+                    {"situation": request, "outcome": "unknown"}
+                )
+                _req_residual = _req_dz[OUTCOME_DIM:]
+            except Exception:
+                pass
+            adapters = self.identity_hypernetwork.generate_adapters(
+                residual=_req_residual
+            )
         concept_scores = adapters.get("concept_scores", {})
         final_answer = self._rank_answer(
             request=request,
@@ -559,7 +574,11 @@ class OrganismAgent:
                 "corrected_answer": expected_answer,
             }
             with self.profiler.profile("experience_autoencoder"):
-                self.experience_autoencoder.encode(episode)
+                delta_z = self.experience_autoencoder.encode(episode)
+            # Extract the residual (everything after the outcome vector) and
+            # pass it to the identity hypernetwork so the 1M-param sensing
+            # matrix actually shapes which concepts get boosted.
+            _residual = delta_z[OUTCOME_DIM:]
 
             with self.profiler.profile("identity_hypernetwork"):
                 self.identity_hypernetwork.update_identity(
@@ -567,7 +586,8 @@ class OrganismAgent:
                         "source": "user_correction",
                         "correct_label": expected_answer,
                         "token": expected_answer,
-                    }
+                    },
+                    residual=_residual,
                 )
 
             with self.profiler.profile("skill_immune_cortex"):
@@ -977,14 +997,16 @@ class LMBackendAgent:
                 "corrected_answer": expected_answer,
             }
             with self.profiler.profile("experience_autoencoder"):
-                self.experience_autoencoder.encode(episode)
+                delta_z = self.experience_autoencoder.encode(episode)
+            _residual = delta_z[OUTCOME_DIM:]
             with self.profiler.profile("identity_hypernetwork"):
                 self.identity_hypernetwork.update_identity(
                     {
                         "source": "user_correction",
                         "correct_label": expected_answer,
                         "token": expected_answer,
-                    }
+                    },
+                    residual=_residual,
                 )
             with self.profiler.profile("skill_immune_cortex"):
                 self.skill_immune_cortex.add_detector(
