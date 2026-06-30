@@ -167,9 +167,14 @@ class OrganismAgent:
         self._scope_slot_warm: list[np.ndarray] = []
         self._scope_slot_label: list[str] = []
         # Configurable scope-slot reranker improvements (A/B test knobs).
-        # Defaults preserve the original single-slot, flat-weight behaviour.
+        # Configurable scope-slot reranker improvements.
+        # topk=3 returns multiple candidate scope labels so the correct
+        # technical sense can be found even when a different slot is
+        # cosinely closer.  sense_split excludes the ambiguous word
+        # (shared between request and candidate) from the overlap
+        # computation, preventing cross-sense contamination.
         self.scope_rerank_weight = float(config.get("scope_rerank_weight", 2.0))
-        self.scope_rerank_topk = int(config.get("scope_rerank_topk", 1))
+        self.scope_rerank_topk = int(config.get("scope_rerank_topk", 3))
         self.scope_rerank_sense_split = bool(config.get("scope_rerank_sense_split", False))
         self.scope_rerank_multi_label = bool(config.get("scope_rerank_multi_label", False))
 
@@ -857,7 +862,7 @@ class OrganismAgent:
         if not hasattr(self, "scope_rerank_weight"):
             self.scope_rerank_weight = 2.0
         if not hasattr(self, "scope_rerank_topk"):
-            self.scope_rerank_topk = 1
+            self.scope_rerank_topk = 3
         if not hasattr(self, "scope_rerank_sense_split"):
             self.scope_rerank_sense_split = False
         if not hasattr(self, "scope_rerank_multi_label"):
