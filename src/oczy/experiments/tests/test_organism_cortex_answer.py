@@ -362,12 +362,12 @@ def test_scope_rerank_multi_label_appends_to_slot() -> None:
 
 
 def test_scope_rerank_defaults_preserve_original_behaviour() -> None:
-    """At default config (weight=2.0, topk=1, sense_split=False, multi_label=False)
-    the reranker behaves identically to the original single-slot implementation."""
+    """At default config (weight=2.0, topk=3, sense_split=False, multi_label=False)
+    the reranker uses the improved top-k multi-label retrieval."""
     mock = _ScopeMockCortexAgent()
     organism = OrganismAgent({"cortex_agent": mock})
     assert organism.scope_rerank_weight == 2.0
-    assert organism.scope_rerank_topk == 1
+    assert organism.scope_rerank_topk == 3
     assert organism.scope_rerank_sense_split is False
     assert organism.scope_rerank_multi_label is False
     organism.learn("open the file", "No, here 'file' means a disk file.")
@@ -395,6 +395,6 @@ def test_setstate_backfills_reranker_config_attrs() -> None:
     blob = pickle.dumps(organism)
     restored = pickle.loads(blob)
     assert restored.scope_rerank_weight == 2.0
-    assert restored.scope_rerank_topk == 1
+    assert restored.scope_rerank_topk == 3
     assert restored.scope_rerank_sense_split is False
     assert restored.scope_rerank_multi_label is False
