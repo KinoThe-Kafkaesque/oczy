@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import src.oczy.experiments.kv_slot_injection as kvi
+import oczy.experiments.kv_slot_injection as kvi
 
 
 def test_module_imports_without_llama() -> None:
@@ -15,7 +15,7 @@ def test_module_imports_without_llama() -> None:
             "run",
             "python",
             "-c",
-            "import sys; import src.oczy.experiments.kv_slot_injection; "
+            "import sys; import oczy.experiments.kv_slot_injection; "
             "print('llama_cpp' in sys.modules)",
         ],
         capture_output=True,

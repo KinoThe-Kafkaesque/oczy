@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import src.oczy.experiments.metabolism_loop as ml
+import oczy.experiments.metabolism_loop as ml
 
 
 def test_module_imports_without_llama() -> None:
@@ -18,7 +18,7 @@ def test_module_imports_without_llama() -> None:
             "run",
             "python",
             "-c",
-            "import sys; import src.oczy.experiments.metabolism_loop; "
+            "import sys; import oczy.experiments.metabolism_loop; "
             "print('llama_cpp' in sys.modules)",
         ],
         capture_output=True,

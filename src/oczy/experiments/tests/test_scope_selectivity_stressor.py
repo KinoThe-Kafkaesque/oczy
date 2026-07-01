@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-import src.oczy.experiments.scope_selectivity_stressor as sss
+import oczy.experiments.scope_selectivity_stressor as sss
 
 
 def test_module_imports_without_llama() -> None:
@@ -17,7 +17,7 @@ def test_module_imports_without_llama() -> None:
             "run",
             "python",
             "-c",
-            "import sys; import src.oczy.experiments.scope_selectivity_stressor; "
+            "import sys; import oczy.experiments.scope_selectivity_stressor; "
             "print('llama_cpp' in sys.modules)",
         ],
         capture_output=True,

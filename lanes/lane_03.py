@@ -159,8 +159,8 @@ def measure() -> float:
     try:
         from llama_cpp import Llama
 
-        from src.oczy.experiments.multi_fact_stressor import _resolve_gguf_path
-        from src.oczy.lm.cvec_driver import LlamaCVecDriver
+        from oczy.experiments.multi_fact_stressor import _resolve_gguf_path
+        from oczy.lm.cvec_driver import LlamaCVecDriver
 
         resolved = _resolve_gguf_path()
         if resolved is not None:

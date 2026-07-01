@@ -86,11 +86,15 @@ def test_policy_head_generalizes_to_transfer_probes() -> None:
         cortex=KVCortexConfig(d_cortex=4),
         use_policy_head=True,
         policy_learning_rate=0.001,
+        policy_seed=42,
     )
     cortex = CortexAgent(cfg, driver=driver)
     cortex.boot()
     # Zero-initialize policy weights for deterministic, monotonic learning.
+    # Zero-initialize the policy head so updates consistently increase the
+    # corrected-vs-wrong margin without random-initialization noise.
     cortex._policy_W = np.zeros(cfg.cortex.d_cortex + driver.n_embd, dtype=np.float64)
+    cortex._policy_W_bilinear = np.zeros((cfg.cortex.d_cortex, driver.n_embd), dtype=np.float64)
     cortex._policy_b = 0.0
     agent.cortex_agent = cortex
 

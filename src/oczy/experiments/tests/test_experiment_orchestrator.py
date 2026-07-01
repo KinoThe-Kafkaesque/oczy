@@ -6,7 +6,7 @@ experiments are launched.
 
 from __future__ import annotations
 
-import src.oczy.experiments.experiment_orchestrator as eo
+import oczy.experiments.experiment_orchestrator as eo
 
 
 def test_module_imports_without_heavy_deps() -> None:
@@ -19,7 +19,7 @@ def test_module_imports_without_heavy_deps() -> None:
             "run",
             "python",
             "-c",
-            "import sys; import src.oczy.experiments.experiment_orchestrator; "
+            "import sys; import oczy.experiments.experiment_orchestrator; "
             "print('llama_cpp' in sys.modules)",
         ],
         capture_output=True,
