@@ -23,7 +23,7 @@ from typing import Any
 
 from plastic_cortex.cortex import PlasticCortex
 
-from oczy.experiments.organism_curriculum.dataset import Episode, Stage, build_curriculum
+from oczy.experiments.organism_curriculum.dataset import Episode, Stage, build_curriculum, split_probes
 
 
 def _baseline_tokens() -> set[str]:
@@ -136,6 +136,27 @@ def validate_curriculum(stages: tuple[Stage, ...]) -> ValidationReport:
                 )
             else:
                 seen_ids[ep.id] = stage.name
+    return report
+
+def validate_split(
+    stages: tuple[Stage, ...],
+    fraction: float = 0.3,
+    salt: str = "v2",
+) -> ValidationReport:
+    """Validate the held-out split across all stages.
+
+    Rules:
+    - Every stage with >0 probes must have at least 1 holdout probe.
+    - Every stage with >0 probes must have at least 1 dev probe (warning).
+    """
+    report = ValidationReport()
+    for stage in stages:
+        dev, holdout = split_probes(stage, fraction=fraction, salt=salt)
+        total = len(dev) + len(holdout)
+        if total > 0 and len(holdout) == 0:
+            report.add_error(f"{stage.name}: holdout split is empty ({total} probes)")
+        if total > 0 and len(dev) == 0:
+            report.add_warning(f"{stage.name}: dev split is empty ({total} probes)")
     return report
 
 

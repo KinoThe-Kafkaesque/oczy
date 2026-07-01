@@ -253,3 +253,43 @@ class IdentityOnlyAgent:
 
     def profile_summary(self) -> dict[str, Any]:
         return self.profiler.summary()
+
+
+class VanillaAgent:
+    """Always answers with the backend's uncorrected behavior. Never learns.
+
+    In raw mode (default), uses ``PlasticCortex`` BASELINE priors.
+    In LM mode (``use_lm=True`` in config), uses ``LMPlasticCortex`` answers
+    without any learning — the pure uncorrected LM behavior.
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        config = config or {}
+        self._use_lm: bool = bool(config.get("use_lm", False))
+        if self._use_lm:
+            from plastic_cortex.lm_cortex import LMPlasticCortex
+            self._cortex = LMPlasticCortex(config.get("plastic_cortex"))
+        else:
+            self._cortex = PlasticCortex(config)
+        self.profiler = AgentProfiler([])
+
+    def answer(self, request: str) -> str:
+        if self._use_lm:
+            return self._cortex.answer(request, max_tokens=100, temperature=1.0)
+        return self._cortex.answer(request)
+
+    def learn(self, _request: str, _correction: str) -> None:
+        """Learning is deliberately disabled — this is the no-learning baseline."""
+        return None
+
+    def correct(self, _correction: str, _expected_answer: str) -> None:
+        return None
+
+    def consolidate(self) -> None:
+        return None
+
+    def memory_bytes(self) -> int:
+        return sys.getsizeof(self._cortex)
+
+    def profile_summary(self) -> dict[str, Any]:
+        return self.profiler.summary()

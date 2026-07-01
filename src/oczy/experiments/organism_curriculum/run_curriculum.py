@@ -21,8 +21,9 @@ from typing import Any
 import numpy as np
 
 from oczy.experiments.digestive_gate import DigestiveGateConfig
+from oczy.experiments.baselines import VanillaAgent
 from oczy.experiments.organism import LMBackendAgent, OrganismAgent
-from oczy.experiments.organism_curriculum.dataset import Episode, Probe, Stage, build_curriculum
+from oczy.experiments.organism_curriculum.dataset import Episode, Probe, Stage, build_curriculum, split_probes
 from oczy.experiments.organism_curriculum.scoring import categorize_results, probe_matches
 from oczy.experiments.organism_curriculum.validation import validate_curriculum
 
@@ -217,11 +218,15 @@ def run_battery(
     stage: Stage,
     episodes: tuple[Episode, ...] | None,
     semantic: bool = False,
+    split_ids: set[str] | None = None,
 ) -> list[tuple[Any, str, bool]]:
     """Run all probes from ``stage`` against ``agent``.
 
     If ``episodes`` is supplied, only probes belonging to those episodes are
     run (used for pre/post tests scoped to the current stage).
+
+    If ``split_ids`` is supplied, only probes whose identifier
+    ``"episode_id|probe_request|probe_category"`` is in the set are run.
     """
     results: list[tuple[Any, str, bool]] = []
     episode_set = set(episodes) if episodes is not None else None
@@ -229,6 +234,10 @@ def run_battery(
         if episode_set is not None and ep not in episode_set:
             continue
         for probe in ep.probes:
+            if split_ids is not None:
+                probe_id = f"{ep.id}|{probe.request}|{probe.category}"
+                if probe_id not in split_ids:
+                    continue
             answer = agent.answer(probe.request)
             ok = probe_matches(answer, probe, ep, semantic=semantic)
             results.append((probe, answer, ok))
@@ -246,13 +255,13 @@ def run_stage(
     adapter: Any | None,
     instrument_policy: bool = False,
     semantic: bool = False,
+    split_ids: set[str] | None = None,
 ) -> StageResult:
     """Present every episode in ``stage`` to ``agent`` and return metrics."""
     result = StageResult(name=stage.name, description=stage.description)
     result.memory_bytes_before = _agent_memory_bytes(agent)
 
-    # Pre-test probes *before* this stage's acquisition episodes.
-    result.pre_probe_results = run_battery(agent, stage, stage.episodes, semantic=semantic)
+    result.pre_probe_results = run_battery(agent, stage, stage.episodes, semantic=semantic, split_ids=split_ids)
 
     for ep in stage.episodes:
         first_answer = agent.answer(ep.initial_request)
@@ -309,7 +318,7 @@ def run_stage(
         )
 
     # Post-test probes *after* acquisition.
-    result.post_probe_results = run_battery(agent, stage, stage.episodes)
+    result.post_probe_results = run_battery(agent, stage, stage.episodes, split_ids=split_ids)
     result.memory_bytes_after = _agent_memory_bytes(agent)
     return result
 
@@ -333,13 +342,21 @@ def _episode_asdict(er: EpisodeResult) -> dict[str, Any]:
         d.pop("policy_score_after", None)
     return d
 
-def print_summary(results: list[StageResult]) -> None:
-    header = "%-28s %8s %7s %6s %6s %10s" % (
-        "Stage", "Episodes", "Uptake", "Pre", "Post", "Mem d"
-    )
+def print_summary(
+    results: list[StageResult],
+    vanilla_results: list[StageResult] | None = None,
+) -> None:
+    if vanilla_results:
+        header = "%-28s %8s %7s %6s %6s %10s | %7s" % (
+            "Stage", "Episodes", "Uptake", "Pre", "Post", "Mem d", "Vanilla"
+        )
+    else:
+        header = "%-28s %8s %7s %6s %6s %10s" % (
+            "Stage", "Episodes", "Uptake", "Pre", "Post", "Mem d"
+        )
     print(header)
     print("-" * len(header))
-    for sr in results:
+    for i, sr in enumerate(results):
         total = len(sr.episode_results)
         fixed = sum(1 for r in sr.episode_results if r.fixed)
         uptake = sr.uptake_latency()
@@ -352,13 +369,27 @@ def print_summary(results: list[StageResult]) -> None:
         pre = pre_ok / pre_total if pre_total else 0.0
         post = post_ok / post_total if post_total else 0.0
         mem_delta = sr.memory_bytes_after - sr.memory_bytes_before
-        print(
-            "%-28s %3d/%-4d %6.2f %5.2f %5.2f %+9dB"
-            % (sr.name, fixed, total, uptake, pre, post, mem_delta)
-        )
+        if vanilla_results:
+            vr = vanilla_results[i]
+            v_acc = categorize_results(vr.post_probe_results)
+            v_total = sum(v[1] for v in v_acc.values())
+            v_ok = sum(v[0] for v in v_acc.values())
+            v_score = v_ok / v_total if v_total else 0.0
+            print(
+                "%-28s %3d/%-4d %6.2f %5.2f %5.2f %+9dB | %6.2f"
+                % (sr.name, fixed, total, uptake, pre, post, mem_delta, v_score)
+            )
+        else:
+            print(
+                "%-28s %3d/%-4d %6.2f %5.2f %5.2f %+9dB"
+                % (sr.name, fixed, total, uptake, pre, post, mem_delta)
+            )
 
 
-def print_per_stage(results: list[StageResult]) -> None:
+def print_per_stage(
+    results: list[StageResult],
+    vanilla_results: list[StageResult] | None = None,
+) -> None:
     for sr in results:
         print("\n%s" % sr.name)
         if sr.description:
@@ -396,6 +427,15 @@ def print_per_stage(results: list[StageResult]) -> None:
                 "%s=%.2f" % (cat, acc) for cat, (_ok, _tot, acc) in sorted(post_acc.items())
             )
             print("  post-test accuracy: %s" % parts)
+        if vanilla_results:
+            vi = results.index(sr)
+            vr = vanilla_results[vi]
+            v_acc = categorize_results(vr.post_probe_results)
+            if v_acc:
+                v_parts = ", ".join(
+                    "%s=%.2f" % (cat, acc) for cat, (_ok, _tot, acc) in sorted(v_acc.items())
+                )
+                print("  vanilla accuracy: %s" % v_parts)
 
 
 def write_report(
@@ -403,6 +443,8 @@ def write_report(
     agent_name: str,
     use_lm: bool,
     out_path: Path,
+    split: str = "dev",
+    vanilla_results: list[StageResult] | None = None,
 ) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     serializable: list[dict[str, Any]] = []
@@ -418,11 +460,24 @@ def write_report(
                 "episodes": [_episode_asdict(er) for er in sr.episode_results],
             }
         )
-    payload = {
+    payload: dict[str, Any] = {
         "agent": agent_name,
         "use_lm": use_lm,
+        "split": split,
         "stages": serializable,
     }
+    if vanilla_results:
+        vanilla_serializable: list[dict[str, Any]] = []
+        for vsr in vanilla_results:
+            v_acc = categorize_results(vsr.post_probe_results)
+            vanilla_serializable.append(
+                {
+                    "name": vsr.name,
+                    "description": vsr.description,
+                    "post_accuracy": {k: v[2] for k, v in v_acc.items()},
+                }
+            )
+        payload["vanilla"] = vanilla_serializable
     with out_path.open("w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2, default=str)
 
@@ -478,6 +533,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--no-validate",
         action="store_true",
         help="Skip the curriculum validation smoke test.",
+    )
+    p.add_argument(
+        "--split",
+        choices=["dev", "holdout", "all"],
+        default="dev",
+        help="Which probe split to evaluate (default: dev).",
+    )
+    p.add_argument(
+        "--with-vanilla",
+        action="store_true",
+        default=True,
+        help="Run a vanilla (no-learning) baseline alongside the organism (default: True).",
+    )
+    p.add_argument(
+        "--no-vanilla",
+        action="store_false",
+        dest="with_vanilla",
+        help="Disable the vanilla baseline column.",
     )
     p.add_argument(
         "--report-dir",
@@ -602,6 +675,14 @@ def main(argv: list[str] | None = None) -> int:
     stage_names = tuple(args.stages) if args.stages else None
     stages = build_curriculum(stage_names=stage_names)
 
+    if args.split != "all":
+        stage_splits = {
+            stage.name: (split_probes(stage)[0] if args.split == "dev" else split_probes(stage)[1])
+            for stage in stages
+        }
+    else:
+        stage_splits = {}
+
     if not args.no_validate:
         report = validate_curriculum(stages)
         if not report.ok:
@@ -703,19 +784,37 @@ def main(argv: list[str] | None = None) -> int:
                 adapter,
                 instrument_policy=(args.policy_log is not None),
                 semantic=args.semantic,
+                split_ids=stage_splits.get(stage.name),
             )
         )
         if stage.consolidate_after:
             print("Consolidating after %s..." % stage.name)
             agent.consolidate()
+    vanilla_results: list[StageResult] | None = None
+    if args.with_vanilla:
+        vcfg: dict[str, Any] = dict(agent_config)
+        if args.lm:
+            vcfg["use_lm"] = True
+        vanilla = VanillaAgent(vcfg)
+        vanilla_results = []
+        for stage in stages:
+            vsr = StageResult(name=stage.name, description=stage.description)
+            split_ids_for_stage = stage_splits.get(stage.name) if args.split != "all" else None
+            vsr.post_probe_results = run_battery(
+                vanilla, stage, stage.episodes, semantic=args.semantic,
+                split_ids=split_ids_for_stage,
+            )
+            vanilla_results.append(vsr)
+    if args.split == "holdout":
+        print("\n*** [HELD-OUT] evaluating on held-out probes only ***")
 
     print("\n=== Organism curriculum summary ===")
-    print_summary(results)
-    print_per_stage(results)
+    print_summary(results, vanilla_results)
+    print_per_stage(results, vanilla_results)
     _print_policy_delta(results)
 
     report_path = args.report_dir / args.report_name
-    write_report(results, args.agent, args.lm, report_path)
+    write_report(results, args.agent, args.lm, report_path, split=args.split, vanilla_results=vanilla_results)
     print("\nReport written to: %s" % report_path)
 
     if args.policy_log is not None:
