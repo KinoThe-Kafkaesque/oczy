@@ -29,10 +29,11 @@ cannot touch. All later sprints are scored against this eval and only this
 eval.
 
 > **Status 2026-07-01:** S0.2–S0.8 implemented via parallel headless agents
-> (branches `fix/s0-*`, merged). S0.1 remains open (deferred: it moves the
-> files the other tasks touched). Outstanding from S0.2's DoD: re-run the
-> LM curriculum post-leakage-removal and record the honest baseline.
-> Honest outcomes already surfaced: lane_07 gap 1.0 → 0.0 against a
+> (branches `fix/s0-*`, merged). S0.1 in progress.
+> Honest post-removal baseline recorded in
+> `experiments_logs/2026-07-01_honest_post_leakage_baseline.md`:
+> real-driver Stage 2 dropped 1.00 → 0.69, Stage 5 1.00 → 0.92; vanilla
+> baseline = 0.00 on all stages. lane_07 gap 1.0 → 0.0 against a
 > competitive baseline; lane_05 honest result = 0.0 (coverage was 1.0).
 
 ### Tasks
