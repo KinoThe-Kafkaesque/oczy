@@ -24,6 +24,7 @@ from oczy.experiments.digestive_gate import DigestiveGateConfig
 from oczy.experiments.organism import LMBackendAgent, OrganismAgent
 from oczy.experiments.organism_curriculum.dataset import Episode, Probe, Stage, build_curriculum
 from oczy.experiments.organism_curriculum.scoring import categorize_results, probe_matches
+from oczy.common import format_row, summarize
 from oczy.experiments.organism_curriculum.validation import validate_curriculum
 
 def _load_real_cortex_agent(config: dict[str, Any] | None = None) -> Any:
@@ -35,10 +36,15 @@ def _load_real_cortex_agent(config: dict[str, Any] | None = None) -> Any:
     driver = LlamaCVecDriver.load(
         CVecDriverConfig(n_ctx=128, n_threads=4, embedding=True)
     )
+    cortex_seed = config.get("cortex_seed") if config else None
+    kv_kwargs: dict[str, Any] = {"d_cortex": 4}
+    if cortex_seed is not None:
+        kv_kwargs["seed"] = cortex_seed
     cfg = CortexAgentConfig(
-        cortex=KVCortexConfig(d_cortex=4),
+        cortex=KVCortexConfig(**kv_kwargs),
         use_policy_head=True,
         policy_learning_rate=0.001,
+        policy_seed=cortex_seed,
         use_ingestion_pipeline=bool(config and config.get("use_ingestion_pipeline", False)),
     )
     if config and config.get("ingestion"):
@@ -532,6 +538,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Path to write additional machine-readable policy instrumentation.",
     )
+    p.add_argument(
+        "--seeds",
+        type=int,
+        default=1,
+        help="Number of random seeds to evaluate (default: 1).",
+    )
     return p.parse_args(argv)
 
 
@@ -610,6 +622,194 @@ def _print_policy_delta(results: list[StageResult]) -> None:
     if not absolute_deltas and not margin_deltas:
         print("Policy scores present but deltas could not be computed.")
 
+def _build_agent_for_seed(
+    args: argparse.Namespace,
+    agent_config: dict[str, Any],
+    seed: int,
+) -> Any:
+    """Construct a fresh agent + cortex for a single seed evaluation.
+
+    Threads ``seed`` through whichever cortex backend was selected on the
+    command line so each seed gets a distinct, reproducible policy-head
+    initialization.
+    """
+    agent = load_agent(args.agent, dict(agent_config))
+
+    if args.use_cortex_shim and isinstance(agent, OrganismAgent):
+        shim = _DeterministicCortexShim(seed=seed)
+        if agent.cortex_agent is None:
+            agent.cortex_agent = shim
+            print("Deterministic CortexAgent shim attached (seed=%d)." % seed)
+        else:
+            print("CortexAgent already present; shim not attached.")
+
+    if args.use_cortex_agent_mock and isinstance(agent, OrganismAgent):
+        if agent.cortex_agent is None:
+            from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
+            from plastic_cortex.kv_cortex import KVCortexConfig
+
+            driver = _MockDriver()
+            cfg = CortexAgentConfig(
+                cortex=KVCortexConfig(d_cortex=4, seed=seed),
+                use_policy_head=True,
+                policy_seed=seed,
+                use_ingestion_pipeline=bool(agent_config.get("use_ingestion_pipeline", False)),
+            )
+            if agent_config.get("ingestion"):
+                cfg.ingestion = dict(agent_config["ingestion"])
+            if agent_config.get("use_hybrid_consolidation"):
+                if cfg.digestive_gate is None:
+                    cfg.digestive_gate = DigestiveGateConfig()
+                cfg.digestive_gate = cfg.digestive_gate.__class__(
+                    **{**cfg.digestive_gate.__dict__, "use_hybrid_consolidation": True}
+                )
+            if agent_config.get("use_policy_request_context"):
+                cfg.use_policy_request_context = True
+            cortex = CortexAgent(cfg, driver=driver)
+            cortex.boot()
+
+            # Work around OrganismAgent's array-valued ``_prev_hidden or _last_hidden``
+            # guard, which raises on numpy arrays. Masking _prev_hidden lets the
+            # value-baseline path fall through to _last_hidden.
+            orig_perceive = cortex.perceive
+
+            def _patched_perceive(
+                utterance: str, correction_signal: float | None = None
+            ) -> np.ndarray:
+                out = orig_perceive(utterance, correction_signal=correction_signal)
+                cortex._prev_hidden = None
+                return out
+
+            cortex.perceive = _patched_perceive.__get__(cortex, CortexAgent)
+
+            agent.cortex_agent = cortex
+            print("CortexAgent with mock driver attached (seed=%d)." % seed)
+            if getattr(agent.cortex_agent, "config", None):
+                ctx = bool(agent.cortex_agent.config.use_policy_request_context)
+                print("Policy request context: %s" % ctx)
+        else:
+            print("CortexAgent already present; mock driver not attached.")
+
+    if args.use_real_driver and isinstance(agent, OrganismAgent):
+        seed_config = dict(agent_config)
+        seed_config["cortex_seed"] = seed
+        if agent.cortex_agent is None:
+            agent.cortex_agent = _load_real_cortex_agent(config=seed_config)
+        else:
+            print("CortexAgent already present; real driver not attached.")
+        if getattr(getattr(agent, "cortex_agent", None), "config", None):
+            ctx = bool(agent.cortex_agent.config.use_policy_request_context)
+            print("Policy request context: %s" % ctx)
+
+    return agent
+
+
+def _run_stages(
+    agent: Any,
+    stages: list[Stage],
+    adapter: Any | None,
+    args: argparse.Namespace,
+) -> list[StageResult]:
+    """Run every stage against ``agent`` and return the per-stage results."""
+    results: list[StageResult] = []
+    for stage in stages:
+        if stage.consolidate_before:
+            print("Consolidating before %s..." % stage.name)
+            agent.consolidate()
+        # Before cross-domain stages, teach the DEFAULT/alternate sense of
+        # each ambiguous word so the scope-slot reranker has a slot to
+        # retrieve for scope probes (which use the word in its default
+        # domain context, not the corrected technical sense).
+        if "Cross-domain" in stage.name or "scope" in stage.name.lower():
+            _teach_stage_scope_senses(agent, stage)
+        print("Running %s..." % stage.name)
+        results.append(
+            run_stage(
+                agent,
+                stage,
+                adapter,
+                instrument_policy=(args.policy_log is not None),
+                semantic=args.semantic,
+            )
+        )
+        if stage.consolidate_after:
+            print("Consolidating after %s..." % stage.name)
+            agent.consolidate()
+    return results
+
+
+def _stage_accuracy(sr: StageResult) -> float:
+    """Post-test accuracy for a stage, matching print_summary's column."""
+    post_acc = categorize_results(sr.post_probe_results)
+    post_total = sum(v[1] for v in post_acc.values())
+    post_ok = sum(v[0] for v in post_acc.values())
+    return post_ok / post_total if post_total else 0.0
+
+def print_multi_seed_summary(
+    seed_results: list[list[StageResult]],
+    n_seeds: int,
+) -> None:
+    """Print a mean ± CI per-stage accuracy table across seeds."""
+    print("\n=== Multi-seed summary (%d seeds) ===" % n_seeds)
+    print("%-32s %s" % ("Stage", "Accuracy"))
+    print("-" * 39)
+    n_stages = len(seed_results[0]) if seed_results else 0
+    for i in range(n_stages):
+        accuracies = [_stage_accuracy(seed_results[s][i]) for s in range(len(seed_results))]
+        summary = summarize(accuracies)
+        print(format_row(seed_results[0][i].name, summary))
+
+
+def write_multi_seed_report(
+    seed_results: list[list[StageResult]],
+    agent_name: str,
+    use_lm: bool,
+    n_seeds: int,
+    out_path: Path,
+) -> None:
+    """Write a multi-seed report with per-seed results and aggregated summaries."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    per_seed_serializable: list[list[dict[str, Any]]] = []
+    for results in seed_results:
+        seed_stages: list[dict[str, Any]] = []
+        for sr in results:
+            seed_stages.append(
+                {
+                    "name": sr.name,
+                    "description": sr.description,
+                    "memory_bytes_before": sr.memory_bytes_before,
+                    "memory_bytes_after": sr.memory_bytes_after,
+                    "uptake_latency": sr.uptake_latency(),
+                    "accuracy": _stage_accuracy(sr),
+                    "pre_accuracy": {k: v[2] for k, v in categorize_results(sr.pre_probe_results).items()},
+                    "episodes": [_episode_asdict(er) for er in sr.episode_results],
+                }
+            )
+        per_seed_serializable.append(seed_stages)
+
+    n_stages = len(seed_results[0]) if seed_results else 0
+    aggregated: list[dict[str, Any]] = []
+    for i in range(n_stages):
+        accuracies = [_stage_accuracy(seed_results[s][i]) for s in range(len(seed_results))]
+        summary = summarize(accuracies)
+        aggregated.append(
+            {
+                "name": seed_results[0][i].name,
+                "accuracy": summary,
+            }
+        )
+
+    payload = {
+        "agent": agent_name,
+        "use_lm": use_lm,
+        "n_seeds": n_seeds,
+        "per_seed": per_seed_serializable,
+        "aggregated": aggregated,
+    }
+    with out_path.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, default=str)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
@@ -650,71 +850,6 @@ def main(argv: list[str] | None = None) -> int:
             for w in report.warnings:
                 print("  - %s" % w)
 
-    agent = load_agent(args.agent, agent_config)
-
-    if args.use_cortex_shim and isinstance(agent, OrganismAgent):
-        shim = _DeterministicCortexShim()
-        if agent.cortex_agent is None:
-            agent.cortex_agent = shim
-            print("Deterministic CortexAgent shim attached.")
-        else:
-            print("CortexAgent already present; shim not attached.")
-
-    if args.use_cortex_agent_mock and isinstance(agent, OrganismAgent):
-        if agent.cortex_agent is None:
-            from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
-            from plastic_cortex.kv_cortex import KVCortexConfig
-
-            driver = _MockDriver()
-            cfg = CortexAgentConfig(
-                cortex=KVCortexConfig(d_cortex=4),
-                use_policy_head=True,
-                use_ingestion_pipeline=bool(agent_config.get("use_ingestion_pipeline", False)),
-            )
-            if agent_config.get("ingestion"):
-                cfg.ingestion = dict(agent_config["ingestion"])
-            if agent_config.get("use_hybrid_consolidation"):
-                if cfg.digestive_gate is None:
-                    cfg.digestive_gate = DigestiveGateConfig()
-                cfg.digestive_gate = cfg.digestive_gate.__class__(
-                    **{**cfg.digestive_gate.__dict__, "use_hybrid_consolidation": True}
-                )
-            if agent_config.get("use_policy_request_context"):
-                cfg.use_policy_request_context = True
-            cortex = CortexAgent(cfg, driver=driver)
-            cortex.boot()
-
-            # Work around OrganismAgent's array-valued ``_prev_hidden or _last_hidden``
-            # guard, which raises on numpy arrays. Masking _prev_hidden lets the
-            # value-baseline path fall through to _last_hidden.
-            orig_perceive = cortex.perceive
-
-            def _patched_perceive(
-                utterance: str, correction_signal: float | None = None
-            ) -> np.ndarray:
-                out = orig_perceive(utterance, correction_signal=correction_signal)
-                cortex._prev_hidden = None
-                return out
-
-            cortex.perceive = _patched_perceive.__get__(cortex, CortexAgent)
-
-            agent.cortex_agent = cortex
-            print("CortexAgent with mock driver attached.")
-            if getattr(agent.cortex_agent, "config", None):
-                ctx = bool(agent.cortex_agent.config.use_policy_request_context)
-                print("Policy request context: %s" % ctx)
-        else:
-            print("CortexAgent already present; mock driver not attached.")
-
-    if args.use_real_driver and isinstance(agent, OrganismAgent):
-        if agent.cortex_agent is None:
-            agent.cortex_agent = _load_real_cortex_agent(config=agent_config)
-        else:
-            print("CortexAgent already present; real driver not attached.")
-        if getattr(getattr(agent, "cortex_agent", None), "config", None):
-            ctx = bool(agent.cortex_agent.config.use_policy_request_context)
-            print("Policy request context: %s" % ctx)
-
     adapter = None
     if args.lm:
         try:
@@ -726,52 +861,75 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001
             print("Could not load LM adapter; continuing in raw mode. (%s)" % exc)
 
-    results: list[StageResult] = []
-    for stage in stages:
-        if stage.consolidate_before:
-            print("Consolidating before %s..." % stage.name)
-            agent.consolidate()
-        # Before cross-domain stages, teach the DEFAULT/alternate sense of
-        # each ambiguous word so the scope-slot reranker has a slot to
-        # retrieve for scope probes (which use the word in its default
-        # domain context, not the corrected technical sense).
-        if "Cross-domain" in stage.name or "scope" in stage.name.lower():
-            _teach_stage_scope_senses(agent, stage)
-        print("Running %s..." % stage.name)
-        results.append(
-            run_stage(
-                agent,
-                stage,
-                adapter,
-                instrument_policy=(args.policy_log is not None),
-                semantic=args.semantic,
-            )
-        )
-        if stage.consolidate_after:
-            print("Consolidating after %s..." % stage.name)
-            agent.consolidate()
-
-    print("\n=== Organism curriculum summary ===")
-    print_summary(results)
-    print_per_stage(results)
-    _print_policy_delta(results)
-
     report_path = args.report_dir / args.report_name
-    write_report(results, args.agent, args.lm, report_path)
+
+    if args.seeds <= 1:
+        print("\n\nWARNING: single-seed point estimate — not reportable")
+
+        agent = _build_agent_for_seed(args, agent_config, seed=0)
+        results = _run_stages(agent, stages, adapter, args)
+
+        print("\n=== Organism curriculum summary ===")
+        print_summary(results)
+        print_per_stage(results)
+        _print_policy_delta(results)
+
+        write_report(results, args.agent, args.lm, report_path)
+        print("\nReport written to: %s" % report_path)
+
+        if args.policy_log is not None:
+            policy_payload = {
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "episodes": [
+                    {
+                        "stage": sr.name,
+                        "id": er.id,
+                        "policy_score_before": er.policy_score_before,
+                        "policy_score_after": er.policy_score_after,
+                    }
+                    for sr in results
+                    for er in sr.episode_results
+                ],
+            }
+            args.policy_log.parent.mkdir(parents=True, exist_ok=True)
+            with args.policy_log.open("w", encoding="utf-8") as fh:
+                json.dump(policy_payload, fh, indent=2, default=str)
+            print("Policy detail written to: %s" % args.policy_log)
+        return 0
+
+    # Multi-seed path.
+    print("Running %d seeds..." % args.seeds)
+    seed_results: list[list[StageResult]] = []
+    for seed in range(args.seeds):
+        print("\n--- Seed %d / %d ---" % (seed, args.seeds))
+        agent = _build_agent_for_seed(args, agent_config, seed=seed)
+        seed_results.append(_run_stages(agent, stages, adapter, args))
+
+    print_multi_seed_summary(seed_results, args.seeds)
+
+    write_multi_seed_report(
+        seed_results, args.agent, args.lm, args.seeds, report_path
+    )
     print("\nReport written to: %s" % report_path)
 
     if args.policy_log is not None:
         policy_payload = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "episodes": [
+            "seeds": [
                 {
-                    "stage": sr.name,
-                    "id": er.id,
-                    "policy_score_before": er.policy_score_before,
-                    "policy_score_after": er.policy_score_after,
+                    "seed": s,
+                    "episodes": [
+                        {
+                            "stage": sr.name,
+                            "id": er.id,
+                            "policy_score_before": er.policy_score_before,
+                            "policy_score_after": er.policy_score_after,
+                        }
+                        for sr in results
+                        for er in sr.episode_results
+                    ],
                 }
-                for sr in results
-                for er in sr.episode_results
+                for s, results in enumerate(seed_results)
             ],
         }
         args.policy_log.parent.mkdir(parents=True, exist_ok=True)

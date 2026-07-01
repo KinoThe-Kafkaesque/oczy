@@ -158,7 +158,10 @@ class CortexAgentConfig:
     # Bias strength for logit biasing.  Must be large enough to overcome the
     # LM's prior (≥ 20.0 on LFM2.5-1.2B-Instruct Q4).
     logit_bias_strength: float = 20.0
-
+    # Optional seed for the policy-head RNGs. When None, the RNG is seeded
+    # from id(self) for backward compatibility. When set, multi-seed
+    # evaluations get reproducible, distinct policy-head initializations.
+    policy_seed: int | None = None
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Restore missing fields for pickled configs from older versions."""
@@ -914,6 +917,19 @@ class CortexAgent:
     # ------------------------------------------------------------------
     # Response policy head (Phase 2 REINFORCE policy)
     # ------------------------------------------------------------------
+    def _policy_rng(self, offset: int = 0) -> np.random.Generator:
+        """Return a policy-head RNG, optionally offset for a second stream.
+
+        When ``self.config.policy_seed`` is set, the RNG is reproducibly
+        seeded from it (plus ``offset`` for the bilinear stream) so
+        multi-seed evaluations get distinct, deterministic policy-head
+        initializations.  When it is None, fall back to ``id(self)`` for
+        backward compatibility.
+        """
+        s = self.config.policy_seed
+        base = id(self) if s is None else s
+        return np.random.default_rng(base + offset)
+
     def _ensure_policy_head(self, candidate_hidden_dim: int) -> None:
         """Lazy-initialize the policy head weights.
 
@@ -926,7 +942,7 @@ class CortexAgent:
         # _policy_W_bilinear.  Create the bilinear matrix if missing.
         if self._policy_W is not None:
             if self._policy_W_bilinear is None:
-                rng_bc = np.random.default_rng(id(self) + 1)
+                rng_bc = self._policy_rng(offset=1)
                 self._policy_W_bilinear = (
                     rng_bc.normal(
                         0.0, 1.0 / np.sqrt(candidate_hidden_dim),
@@ -937,7 +953,7 @@ class CortexAgent:
         dim = self.cortex.config.d_cortex + candidate_hidden_dim
         if self.config.use_policy_request_context:
             dim += self.cortex.config.d_cortex
-        rng = np.random.default_rng(id(self))
+        rng = self._policy_rng()
         self._policy_W = rng.normal(0.0, 0.01, size=(dim,)).astype(
             np.float64
         )
