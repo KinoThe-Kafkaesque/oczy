@@ -17,11 +17,12 @@ parsed into canonical Episodes before being fed to the agent.
 
 from __future__ import annotations
 
-from .dataset import Episode, Probe, Stage, build_curriculum
+from .dataset import Episode, Probe, Stage, build_curriculum, split_probes
 
 __all__ = [
     "Episode",
     "Probe",
     "Stage",
     "build_curriculum",
+    "split_probes",
 ]

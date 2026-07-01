@@ -7,6 +7,7 @@ schema and returns an ordered ``tuple[Stage, ...]``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -188,6 +189,59 @@ def build_curriculum(
             raise FileNotFoundError(f"Missing stage file: {path}")
         stages.append(load_stage(path))
     return tuple(stages)
+
+def split_probes(stage: Stage, fraction: float = 0.3, salt: str = "v2") -> tuple[set[str], set[str]]:
+    """Partition stage probes into dev and holdout sets via stable hashing.
+
+    Each probe is identified by ``"episode_id|probe_request|probe_category"``.
+    Hashing is deterministic: same stage + salt always produces the same split.
+
+    Args:
+        stage: The curriculum stage whose probes to split.
+        fraction: Fraction of probes assigned to holdout (0.0–1.0).
+        salt: Salt string for hash stability across runs.
+
+    Returns:
+        ``(dev_ids, holdout_ids)`` — two sets of probe identifier strings.
+        Stages with fewer than 4 total probes are guaranteed at least
+        1 holdout probe.
+    """
+    probes: list[tuple[str, Probe, Episode]] = []
+    for ep in stage.episodes:
+        for probe in ep.probes:
+            probe_id = f"{ep.id}|{probe.request}|{probe.category}"
+            probes.append((probe_id, probe, ep))
+
+    total = len(probes)
+    if total == 0:
+        return set(), set()
+
+    holdout: set[str] = set()
+    dev: set[str] = set()
+
+    for probe_id, _, _ in probes:
+        h = hashlib.sha256(f"{salt}:{probe_id}".encode()).digest()
+        val = int.from_bytes(h[:4], "big") / 0xFFFFFFFF
+        if val < fraction:
+            holdout.add(probe_id)
+        else:
+            dev.add(probe_id)
+
+    # Guarantee at least 1 holdout probe for tiny stages
+    if total > 0 and total < 4 and len(holdout) == 0:
+        sorted_ids = sorted(
+            probes,
+            key=lambda p: hashlib.sha256(
+                f"force_holdout:{salt}:{p[0]}".encode()
+            ).digest(),
+        )
+        for probe_id, _, _ in sorted_ids:
+            if probe_id in dev:
+                dev.remove(probe_id)
+                holdout.add(probe_id)
+                break
+
+    return dev, holdout
 
 
 def extract_tokens(text: str) -> set[str]:
