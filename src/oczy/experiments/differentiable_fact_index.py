@@ -99,6 +99,10 @@ class DifferentiableFactIndex:
         # Whether each row is occupied.
         self._occupied: list[bool] = [False] * n_facts
 
+        # S0.8 integration smoke-test counters.
+        self._retrieval_count: int = 0
+        self._retrieval_hits: int = 0
+
     # ------------------------------------------------------------------
     # Store
     # ------------------------------------------------------------------
@@ -204,6 +208,9 @@ class DifferentiableFactIndex:
             if not self._occupied[i]:
                 continue
             result.append((self._labels[i], float(scores[i])))
+        self._retrieval_count += 1
+        if result:
+            self._retrieval_hits += 1
         return result
 
     def retrieve_baseline(
@@ -241,14 +248,17 @@ class DifferentiableFactIndex:
 
     # ------------------------------------------------------------------
     # Inspection
-    # ------------------------------------------------------------------
-
     def status(self) -> dict:
-        """Return a human-readable status snapshot."""
+        """Return a human-readable status snapshot.
+
+        Includes S0.8 smoke-test retrieval counters.
+        """
         return {
             "n_facts": self.n_facts,
             "n_occupied": sum(self._occupied),
             "d_model": self.d_model,
             "lora_rank": self.lora_rank,
             "labels": [l for l, o in zip(self._labels, self._occupied) if o],
+            "retrieval_count": self._retrieval_count,
+            "retrieval_hits": self._retrieval_hits,
         }
