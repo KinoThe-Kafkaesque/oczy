@@ -27,12 +27,23 @@ version. To change it:
 1. **Bump the eval version number.**
 2. **Get human sign-off.** No autonomous session may self-approve an eval
    change.
-3. **Run the guard with the override flag:**
+3. **Recompute the manifest.** After making deliberate changes to `eval/v2/`
+   files, run:
+   ```bash
+   python scripts/bump_eval_version.py
+   ```
+   This recomputes the per-file hashes in `eval/v2/MANIFEST.json` so the
+   change is recorded as intentional. The `verify_manifest()` function in
+   `eval/v2/__init__.py` enforces hash integrity at curriculum load time —
+   the harness refuses to run if a tracked file's hash changed without a
+   manifest update. Set `EVAL_CHANGE_APPROVED=1` to bypass the hash check
+   during development.
+4. **Run the guard with the override flag:**
    ```bash
    EVAL_CHANGE_APPROVED=1 python scripts/eval_guard.py --allow
    ```
    This confirms the change is intentional and approved.
-4. **Commit with a clear justification** referencing the version bump and the
+5. **Commit with a clear justification** referencing the version bump and the
    human decision that authorized it.
 
 `autoresearch.sh` runs `eval_guard.py` before committing, so any unapproved
