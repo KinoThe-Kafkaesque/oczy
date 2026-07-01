@@ -46,9 +46,11 @@ def test_cortex_agent_policy_margin_delta_positive() -> None:
         cortex=KVCortexConfig(d_cortex=4),
         use_policy_head=True,
         policy_learning_rate=0.001,
+        policy_seed=42,
     )
     cortex = CortexAgent(cfg, driver=driver)
     cortex.boot()
+
 
 
     # Zero-initialize the policy head so updates consistently increase the
@@ -56,6 +58,7 @@ def test_cortex_agent_policy_margin_delta_positive() -> None:
     cortex._policy_W = np.zeros(
         cfg.cortex.d_cortex + driver.n_embd, dtype=np.float64
     )
+    cortex._policy_W_bilinear = np.zeros((cfg.cortex.d_cortex, driver.n_embd), dtype=np.float64)
     cortex._policy_b = 0.0
 
     agent.cortex_agent = cortex

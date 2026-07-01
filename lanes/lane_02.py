@@ -67,7 +67,7 @@ def measure() -> float:
     import numpy as np
     from llama_cpp import Llama
 
-    from src.oczy.experiments.multi_fact_stressor import (
+    from oczy.experiments.multi_fact_stressor import (
         FACTS,
         QUERIES,
         TARGETS,

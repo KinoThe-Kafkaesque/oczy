@@ -59,13 +59,13 @@ def name() -> str:
 @lane_measure
 def measure() -> float:
     try:
-        from src.oczy.experiments.baselines import (
+        from oczy.experiments.baselines import (
             ContextOnlyAgent,
             FastOnlyAgent,
             ZeroMemoryAgent,
         )
-        from src.oczy.experiments.curriculum import build_curriculum
-        from src.oczy.experiments.eval_suite import (
+        from oczy.experiments.curriculum import build_curriculum
+        from oczy.experiments.eval_suite import (
             EvalSuite,
             _memory_bytes,
             _normalize,

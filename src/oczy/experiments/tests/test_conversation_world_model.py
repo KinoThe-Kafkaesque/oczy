@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import src.oczy.experiments.conversation_world_model as cwm
+import oczy.experiments.conversation_world_model as cwm
 
 
 def test_module_imports_without_llama() -> None:
@@ -19,7 +19,7 @@ def test_module_imports_without_llama() -> None:
             "run",
             "python",
             "-c",
-            "import sys; import src.oczy.experiments.conversation_world_model; "
+            "import sys; import oczy.experiments.conversation_world_model; "
             "print('llama_cpp' in sys.modules)",
         ],
         capture_output=True,

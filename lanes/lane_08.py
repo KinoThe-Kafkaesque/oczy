@@ -177,7 +177,7 @@ def measure() -> float:
     from llama_cpp import Llama
 
     from lanes.lane_06 import A0bAutoencoder
-    from src.oczy.experiments.multi_fact_stressor import _resolve_gguf_path
+    from oczy.experiments.multi_fact_stressor import _resolve_gguf_path
     from world_model_critic import WorldModelCritic
 
     resolved = _resolve_gguf_path()

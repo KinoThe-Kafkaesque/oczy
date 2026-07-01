@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import src.oczy.experiments.layer_l_probe as layer_l_probe
+import oczy.experiments.layer_l_probe as layer_l_probe
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def test_module_imports_without_heavy_deps() -> None:
         [
             sys.executable,
             "-c",
-            "import sys; import src.oczy.experiments.layer_l_probe as m; "
+            "import sys; import oczy.experiments.layer_l_probe as m; "
             "heavy = {'torch', 'transformers', 'llama_cpp'}; "
             "loaded = {name.split('.')[0] for name in sys.modules if name.split('.')[0] in heavy}; "
             "print(list(loaded))",
