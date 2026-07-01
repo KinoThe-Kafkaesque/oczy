@@ -97,6 +97,13 @@ all metrics reported with seeds/CI and a vanilla-LM column.
 KV-cache writes and mid-layer hidden reads are ordinary tensor operations,
 not research blockers.
 
+> **Status 2026-07-01: IN PROGRESS.** Kickoff: S1.3/S1.4 experiment specs
+> pre-registered as `research/09-hf-kv-slot-fact-injection.md` and
+> `research/10-hf-layer-l-hidden-probe.md` (fallback analyses fixed in
+> advance; acceptance judged only on primaries). Phase A (parallel agents):
+> S1.1 model selection, S1.2 HFDriver + contract tests on a tiny random
+> model, S1.5 legacy freeze. Phase B (after A merges): S1.3 + S1.4 per specs.
+
 ### Tasks
 
 - [ ] **S1.1 — Pick the model.**
