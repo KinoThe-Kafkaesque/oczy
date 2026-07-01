@@ -53,6 +53,25 @@ def _compounding_index(cold_states: list[np.ndarray]) -> float:
     return float(np.linalg.norm(vector_sum) / norm_sum)
 
 
+def _compounding_slope(indices: list[int], norms: list[float]) -> float:
+    """Linear regression slope of cold_norm vs correction index.
+
+    Positive slope indicates cold_state magnitude is growing with more
+    corrections; zero or negative indicates saturation/overwrite.
+    """
+    if len(indices) < 2 or len(norms) < 2:
+        return 0.0
+    x = np.array(indices, dtype=np.float64)
+    y = np.array(norms, dtype=np.float64)
+    x_mean = np.mean(x)
+    y_mean = np.mean(y)
+    xy_cov = np.sum((x - x_mean) * (y - y_mean))
+    x_var = np.sum((x - x_mean) ** 2)
+    if x_var == 0:
+        return 0.0
+    return float(xy_cov / x_var)
+
+
 def _cold_norms(cold_states: list[np.ndarray]) -> list[float]:
     return [float(np.linalg.norm(s)) for s in cold_states]
 
@@ -148,22 +167,45 @@ def _svd_warmup(agent: Any, phrases: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _compounding_loop(agent: Any, correction: str, k: int) -> dict[str, Any]:
-    """Run K identical corrections, consolidating after each, and record trajectories."""
+def _compounding_loop(agent: Any, corrections: list[str], k: int, batch_size: int = 1) -> dict[str, Any]:
+    """Run K corrections in batches, consolidating after each batch.
+
+    Batching ensures the hippocampus accumulates >= batch_size distinct traces
+    before each consolidate() call, which enables the additive replay absorption
+    path (needs >= 3 replays). Without batching, each consolidate() only gets
+    1 replay and the slow-EMA nudge saturates cold_state instead of compounding.
+
+    Diverse correction phrasings are cycled to give each batch distinct traces
+    (SHA-256 hash key per trace), preventing overwrite.
+    """
     cold_states: list[np.ndarray] = [agent.cortex.cold_state.copy()]
     cold_drifts: list[float] = []
+    checkpoint_norms: list[float] = []
+    checkpoint_indices: list[int] = []
 
-    for _i in range(k):
+    _checkpoints = {0, k // 4, k // 2, 3 * k // 4, k}
+
+    for i in range(k):
+        correction = corrections[i % len(corrections)]
         agent.turn(correction, correction_signal=1.0, max_tokens=4, temperature=0.0)
-        summary = agent.consolidate(strength=agent.config.cortex.max_consolidation_strength)
-        cold_drifts.append(summary.get("cold_drift", 0.0))
-        cold_states.append(agent.cortex.cold_state.copy())
+
+        # Consolidate every batch_size corrections (or on the final step).
+        if (i + 1) % batch_size == 0 or i == k - 1:
+            summary = agent.consolidate(strength=agent.config.cortex.max_consolidation_strength)
+            cold_drifts.append(summary.get("cold_drift", 0.0))
+            cold_states.append(agent.cortex.cold_state.copy())
+            if (i + 1) in _checkpoints:
+                checkpoint_norms.append(float(np.linalg.norm(agent.cortex.cold_state)))
+                checkpoint_indices.append(i + 1)
 
     return {
         "cold_states": cold_states,
         "cold_drifts": cold_drifts,
         "compounding_index": _compounding_index(cold_states),
         "cold_norms": _cold_norms(cold_states),
+        "checkpoint_norms": checkpoint_norms,
+        "checkpoint_indices": checkpoint_indices,
+        "total_consolidations": len(cold_states) - 1,
     }
 
 
@@ -214,7 +256,7 @@ def _logit_domain_shift(agent: Any) -> float:
 def _run_real_driver(k: int = 20) -> dict[str, float] | None:
     agent = _build_real_agent()
     _svd_warmup(agent, list(_DIVERSE_CORRECTIONS))
-    comp = _compounding_loop(agent, _CORRECTION, k)
+    comp = _compounding_loop(agent, [_CORRECTION], k)
     drift_logits = _logit_domain_shift(agent)
     drift_uptake = _domain_probe(agent)
 
@@ -222,11 +264,21 @@ def _run_real_driver(k: int = 20) -> dict[str, float] | None:
     zero_logits = _logit_domain_shift(zero_agent)
     zero_uptake = _domain_probe(zero_agent)
 
+    # Compute compounding slope: linear regression of checkpoint cold_norms.
+    _cp_norms = comp.get("checkpoint_norms", [])
+    _cp_indices = comp.get("checkpoint_indices", [])
+    _slope = _compounding_slope(_cp_indices, _cp_norms)
+
     return {
         "metabolism_drift_delta": drift_logits - zero_logits,
         "compounding_index": comp["compounding_index"],
+        "compounding_slope": _slope,
         "final_cold_norm": comp["cold_norms"][-1],
         "mean_cold_drift": float(np.mean(comp["cold_drifts"])) if comp["cold_drifts"] else 0.0,
+        "total_consolidations": comp["total_consolidations"],
+        "batch_size": 3,
+        "checkpoint_indices": _cp_indices,
+        "checkpoint_norms": _cp_norms,
         "zero_baseline_logit": zero_logits,
         "drift_logit": drift_logits,
         "zero_baseline_uptake": zero_uptake,
@@ -237,17 +289,26 @@ def _run_real_driver(k: int = 20) -> dict[str, float] | None:
 def _run_mock_driver(k: int = 4) -> dict[str, float]:
     agent = _build_mock_agent()
     _svd_warmup(agent, list(_DIVERSE_CORRECTIONS))
-    comp = _compounding_loop(agent, _CORRECTION, k)
+    comp = _compounding_loop(agent, [_CORRECTION], k)
     drift_uptake = _domain_probe(agent)
 
     zero_agent = _build_mock_agent()
     zero_uptake = _domain_probe(zero_agent)
 
+    _cp_norms = comp.get("checkpoint_norms", [])
+    _cp_indices = comp.get("checkpoint_indices", [])
+    _slope = _compounding_slope(_cp_indices, _cp_norms)
+
     return {
         "metabolism_drift_delta": drift_uptake - zero_uptake,
         "compounding_index": comp["compounding_index"],
+        "compounding_slope": _slope,
         "final_cold_norm": comp["cold_norms"][-1],
         "mean_cold_drift": float(np.mean(comp["cold_drifts"])) if comp["cold_drifts"] else 0.0,
+        "total_consolidations": comp["total_consolidations"],
+        "batch_size": 3,
+        "checkpoint_indices": _cp_indices,
+        "checkpoint_norms": _cp_norms,
         "zero_baseline_uptake": zero_uptake,
         "drift_uptake": drift_uptake,
     }

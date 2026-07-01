@@ -1,0 +1,33 @@
+{
+  "providers": {
+    "oczy-local": {
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "oczy-local",
+      "compat": {
+        "supportsDeveloperRole": true,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "lfm-oczy",
+          "name": "LFM2.5 + Oczy (Knowledge Augmented)",
+          "reasoning": false,
+          "input": ["text"],
+          "contextWindow": 4096,
+          "maxTokens": 2048,
+          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+        },
+        {
+          "id": "lfm-vanilla",
+          "name": "LFM2.5 Vanilla (No Augmentation)",
+          "reasoning": false,
+          "input": ["text"],
+          "contextWindow": 4096,
+          "maxTokens": 2048,
+          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+        }
+      ]
+    }
+  }
+}
