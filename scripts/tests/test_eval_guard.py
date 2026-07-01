@@ -22,6 +22,8 @@ PROTECTED_REL_PATHS = [
     "research/notes.md",
     "lanes/lane_a.txt",
     "eval/run.py",
+    "src/oczy/experiments/organism_curriculum/scoring.py",
+    "src/oczy/experiments/organism_curriculum/validation.py",
 ]
 
 

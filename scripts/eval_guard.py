@@ -15,6 +15,7 @@ import sys
 
 PROTECTED_PATHS = [
     "experiments/organism_curriculum/",
+    "src/oczy/experiments/organism_curriculum/",
     "research/",
     "lanes/",
     "eval/",

@@ -155,7 +155,8 @@ STAGE_ORDER = (
 
 def default_stages_dir() -> Path:
     """Return the directory containing the bundled stage JSON files."""
-    return Path(__file__).resolve().parent / "stages"
+    from eval.v2 import get_data_dir
+    return get_data_dir()
 
 
 def load_stage(path: Path) -> Stage:
@@ -163,7 +164,6 @@ def load_stage(path: Path) -> Stage:
     with path.open("r", encoding="utf-8") as fh:
         data = json.load(fh)
     return Stage.from_dict(data)
-
 
 def build_curriculum(
     stages_dir: Path | None = None,
@@ -173,13 +173,19 @@ def build_curriculum(
 
     Args:
         stages_dir: Directory containing ``stage_*.json`` files.  Defaults to
-            the bundled ``stages/`` directory.
+            the bundled ``eval/v2/`` data directory.
         stage_names: Subset/order of stages to load.  Defaults to
             :data:`STAGE_ORDER`.
 
     Returns:
         A tuple of :class:`Stage` objects in the requested order.
+
+    Raises:
+        EvalIntegrityError: If the bundled eval files have been tampered with
+            and ``EVAL_CHANGE_APPROVED`` is not set.
     """
+    from eval.v2 import verify_manifest
+    verify_manifest()
     stages_dir = stages_dir or default_stages_dir()
     names = stage_names or STAGE_ORDER
     stages: list[Stage] = []

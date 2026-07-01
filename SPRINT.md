@@ -28,20 +28,23 @@ lands, because every number produced before it is untrustworthy.
 cannot touch. All later sprints are scored against this eval and only this
 eval.
 
-> **Status 2026-07-01:** S0.2–S0.8 implemented via parallel headless agents
-> (branches `fix/s0-*`, merged). S0.1 in progress.
-> Honest post-removal baseline recorded in
-> `experiments_logs/2026-07-01_honest_post_leakage_baseline.md`:
+> **Status 2026-07-01: Sprint 0 COMPLETE.** S0.1–S0.8 implemented via
+> parallel headless agents (branches `fix/s0-*`, merged). The eval is frozen
+> in `eval/v2/` (hash-checked MANIFEST.json, `verify_manifest()` on load,
+> `bump_eval_version.py` for approved changes). Honest post-removal baseline
+> recorded in `experiments_logs/2026-07-01_honest_post_leakage_baseline.md`:
 > real-driver Stage 2 dropped 1.00 → 0.69, Stage 5 1.00 → 0.92; vanilla
 > baseline = 0.00 on all stages. lane_07 gap 1.0 → 0.0 against a
 > competitive baseline; lane_05 honest result = 0.0 (coverage was 1.0).
+> Full test suite green (500+ passed, 0 failures, 0 collection errors).
 
 ### Tasks
 
-- [ ] **S0.1 — Freeze the eval into `eval/` with a version stamp.**
+- [x] **S0.1 — Freeze the eval into `eval/` with a version stamp.**
   Move curriculum episodes, probes, scoring (`scoring.py`), and thresholds
   into a single `eval/v2/` package. Hash the episode files; the harness
   refuses to run if the hash changed without a version bump.
+> **Status 2026-07-01:** Implemented: eval/v2/ package with hash-checked MANIFEST.json, verify_manifest() loader, bump_eval_version.py, backward-compatible re-export shims.
 - [x] **S0.2 — Remove test-set leakage.**
   Delete or quarantine every episode-ID-conditioned code path:
   - `_SCOPE_TEACHING` entries keyed to specific failing Stage-5/Stage-2
