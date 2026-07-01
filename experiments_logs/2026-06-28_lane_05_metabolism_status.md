@@ -185,3 +185,27 @@ Delta = accuracy(tensor) − accuracy(hash).
 | **Delta** | computed |
 
 **Full criteria status: C1 met, C2 partial, C3 tested, C4 tested → 1.0.**
+
+## 2026-07-01 Metric Retirement Addendum (Sprint 0.4)
+
+**What changed:** Lane 05's single score was identified as a gameable
+"testing coverage" metric — it rose from 0.75 to 1.0 purely by exercising
+more sub-criteria (C3, then C4), regardless of whether the measurements
+showed improvement. The score conflated *process* (what was tested) with
+*outcome* (what the tests showed).
+
+The lane now returns a `dict` with three explicitly-named keys:
+- `lane_05_coverage`: the process metric (1.0 = all four sub-criteria
+  exercised; falls back to 0.875/0.75/nan on partial failure).
+- `lane_05_result`: the honest C3 critic AUC delta
+  (`max(0.0, auc_real − auc_string)`) — the spec-relevant outcome metric
+  for whether the hidden-feature path beats string-only. Previously
+  computed but discarded (`_ = delta`).
+- `lane_05_c4_retrieval_delta`: the C4 within-method retrieval accuracy
+  delta (informative, not spec-gating).
+
+Coverage and result are NEVER conflated. The orchestrator
+(`lanes/orchestrator.py`) was updated to handle dict returns from
+`measure()` transparently.
+
+**Files:** `lanes/lane_05.py`, `lanes/orchestrator.py`

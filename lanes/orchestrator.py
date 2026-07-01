@@ -1,10 +1,14 @@
 """Aggregator: runs every lanes/lane_NN.py module, emits METRIC lines.
 
-Primary metric: lanes_with_signal = count of lanes producing a finite, non-NaN float.
-Each lane's own metric is emitted as a secondary METRIC line.
+Primary metric: lanes_with_signal = count of metrics producing a finite,
+non-NaN float. Each lane's metric(s) emitted as secondary METRIC lines.
 
-Designed for autoresearch Phase 2: each iter that wires up a previously-NaN lane
-increments lanes_with_signal by 1 (monotone optimization target).
+Lanes may return either a single float (via name() + measure()) or a
+dict[str, float] (via measure()) for multi-metric reporting. The
+aggregator handles both forms transparently.
+
+Designed for autoresearch Phase 2: each iter that wires up a previously-NaN
+lane increments lanes_with_signal (monotone optimization target).
 """
 from __future__ import annotations
 
@@ -16,22 +20,32 @@ import traceback
 SPEC_THRESHOLD = 0.75
 
 
-def _run_lane(module_name: str) -> tuple[str, float]:
-    """Import lanes.<module_name>, call name() and measure(). Return (name, value).
+def _run_lane(module_name: str) -> list[tuple[str, float]]:
+    """Import lanes.<module_name>, call measure(). Return [(name, value), ...].
 
-    On any failure, returns (module_name, float('nan')) so the aggregator still
-    counts the lane as "no signal" rather than crashing the whole harness.
+    If measure() returns a dict[str, float], each key/value pair becomes a
+    separate metric entry. If it returns a single float, name() provides the
+    metric name (legacy single-metric lanes).
+
+    On any failure, returns [(module_name, float('nan'))] so the aggregator
+    still counts the lane as "no signal" rather than crashing the harness.
     """
     try:
         mod = importlib.import_module(f"lanes.{module_name}")
-        metric_name = mod.name()
-        value = float(mod.measure())
+        result = mod.measure()
+        if isinstance(result, dict):
+            entries: list[tuple[str, float]] = []
+            for k, v in result.items():
+                fv = float(v)
+                entries.append((str(k), float("nan") if math.isnan(fv) or math.isinf(fv) else fv))
+            return entries
+        value = float(result)
         if math.isnan(value) or math.isinf(value):
-            return metric_name, float("nan")
-        return metric_name, value
+            return [(mod.name(), float("nan"))]
+        return [(mod.name(), value)]
     except Exception:
         traceback.print_exc(file=sys.stderr)
-        return module_name, float("nan")
+        return [(module_name, float("nan"))]
 
 
 def main() -> int:
@@ -48,7 +62,7 @@ def main() -> int:
 
     results: list[tuple[str, float]] = []
     for m in lane_modules:
-        results.append(_run_lane(m))
+        results.extend(_run_lane(m))
 
     # Primary metric: count of lanes with finite, non-NaN signal.
     lanes_with_signal = sum(1 for _, v in results if not math.isnan(v))
