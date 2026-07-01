@@ -95,6 +95,8 @@ def _build_real_agent() -> Any:
             d_embd=driver.n_embd,
             n_layers=16,
             steering_mode="proj_random",
+            alpha_correction=0.3,
+            consolidate_replay_threshold=2,  # Fire additive path with only 2 replays
         ),
         articulate_scale=0.01,
         auto_consolidate=False,
@@ -256,7 +258,7 @@ def _logit_domain_shift(agent: Any) -> float:
 def _run_real_driver(k: int = 20) -> dict[str, float] | None:
     agent = _build_real_agent()
     _svd_warmup(agent, list(_DIVERSE_CORRECTIONS))
-    comp = _compounding_loop(agent, [_CORRECTION], k)
+    comp = _compounding_loop(agent, list(_DIVERSE_CORRECTIONS), k, batch_size=2)
     drift_logits = _logit_domain_shift(agent)
     drift_uptake = _domain_probe(agent)
 
@@ -276,7 +278,7 @@ def _run_real_driver(k: int = 20) -> dict[str, float] | None:
         "final_cold_norm": comp["cold_norms"][-1],
         "mean_cold_drift": float(np.mean(comp["cold_drifts"])) if comp["cold_drifts"] else 0.0,
         "total_consolidations": comp["total_consolidations"],
-        "batch_size": 3,
+        "batch_size": 2,
         "checkpoint_indices": _cp_indices,
         "checkpoint_norms": _cp_norms,
         "zero_baseline_logit": zero_logits,
