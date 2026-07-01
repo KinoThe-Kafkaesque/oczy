@@ -177,6 +177,12 @@ class OrganismAgent:
         self.scope_rerank_topk = int(config.get("scope_rerank_topk", 3))
         self.scope_rerank_sense_split = bool(config.get("scope_rerank_sense_split", False))
         self.scope_rerank_multi_label = bool(config.get("scope_rerank_multi_label", False))
+        # Integration smoke-test counters (S0.8): each mechanism increments
+        # these when it actually contributes to answer ranking.
+        self._scope_slot_fired: int = 0
+        self._hippocampus_replay_fired: int = 0
+        self._dsi_retrieval_fired: int = 0
+
 
         # Differentiable Fact Index (DSI-style F matrix + LoRA adapter).
         # Replaces the scope-slot reranker's cosine lookup with a learned
@@ -358,13 +364,18 @@ class OrganismAgent:
         """Pick the best candidate by combining request overlap, immune hints,
         identity-adapter concept deltas, and an optional cortex policy head."""
         request_tokens = set(self._tokenize(request))
-        # Context-addressed corrected labels (top-k) for this request's scope slots.
         scope_labels = self._scope_label_for(request)
+
+        # Integration smoke-test counters (S0.8): track whether each
+        # retrieval-ish mechanism actually fired during this rank call.
+        scope_fired = scope_labels is not None and len(scope_labels) > 0
+        replay_fired = replay_hint is not None
+        dsi_fired = False
 
         def _tokens(text: str) -> set[str]:
             return set(self._tokenize(text))
-
         def _score(label: str) -> float:
+            nonlocal dsi_fired
             label_tokens = _tokens(label)
             policy_delta = 0.0
             if policy_scores is not None:
@@ -441,6 +452,8 @@ class OrganismAgent:
                     dfi_hits = self.diff_fact_index.retrieve(
                         req_key, k=3, use_lora=True
                     )
+                    if dfi_hits:
+                        dsi_fired = True
                     for dfi_label, dfi_score in dfi_hits:
                         if dfi_label == label or (
                             _tokens(dfi_label) & label_tokens
@@ -463,6 +476,12 @@ class OrganismAgent:
             if s > best_score or (s == best_score and label == fast_answer):
                 best_label = label
                 best_score = s
+        if scope_fired:
+            self._scope_slot_fired += 1
+        if replay_fired:
+            self._hippocampus_replay_fired += 1
+        if dsi_fired:
+            self._dsi_retrieval_fired += 1
         return best_label
 
     @staticmethod
@@ -936,10 +955,17 @@ class OrganismAgent:
         return total
 
     def status(self) -> dict[str, Any]:
-        """Return a serializable snapshot of the organism state."""
+        """Return a serializable snapshot of the organism state.
+
+        Includes S0.8 smoke-test fired counters for integration assertions.
+        """
         return {
             "memory_bytes": self.memory_bytes(),
             "profile_summary": self.profile_summary(),
+            "scope_slot_fired": self._scope_slot_fired,
+            "hippocampus_replay_fired": self._hippocampus_replay_fired,
+            "dsi_retrieval_fired": self._dsi_retrieval_fired,
+            "scope_slot_count": len(self._scope_slot_keys),
         }
 
     def reset_state(self) -> None:
@@ -997,6 +1023,13 @@ class OrganismAgent:
             self.scope_rerank_sense_split = False
         if not hasattr(self, "scope_rerank_multi_label"):
             self.scope_rerank_multi_label = False
+        # S0.8 smoke-test counters: backfill for pickles from before they existed.
+        if not hasattr(self, "_scope_slot_fired"):
+            self._scope_slot_fired = 0
+        if not hasattr(self, "_hippocampus_replay_fired"):
+            self._hippocampus_replay_fired = 0
+        if not hasattr(self, "_dsi_retrieval_fired"):
+            self._dsi_retrieval_fired = 0
         if not hasattr(self, "diff_fact_index"):
             from oczy.experiments.differentiable_fact_index import (
                 DifferentiableFactIndex,
