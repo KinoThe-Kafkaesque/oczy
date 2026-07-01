@@ -75,6 +75,7 @@ testpaths = [
     "correction-benchmark/tests",
     "src/oczy/experiments",
     "src/oczy/lm",
+    "scripts/tests",
 ]
 markers = [
     "slow: tests that load a GGUF model or take >1s",
