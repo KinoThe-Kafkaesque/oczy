@@ -1,3 +1,8 @@
+> **INVALIDATION NOTICE — 2026-07-01**  
+> **Classification: PARTIAL**  
+> **Reason:** The "Scope-slot reranker (post-aggregate)" section (line ~84) and "Verification rerun" section (line ~117) report curriculum measurements that flowed through the broken scope-slot reranker (three compounding bugs, fixed 2026-06-30). Those numbers are INVALIDATED. The pre-reranker aggregate (7/7 experiments, lines 1–83) and the post-fix "Scope-slot reranker fix (2026-06-30)" section (line ~143) are VALID. The "Bilinear policy head fix" section is VALID.  
+> **See:** `2026-06-30_scope_slot_reranker_fix.md` for the bug diagnosis; `2026-07-01_honest_post_leakage_baseline.md` for the current reference point.
+
 # Curriculum Experiments — Aggregate Orchestrator Report
 
 Date: 2026-06-29  

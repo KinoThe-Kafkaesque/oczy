@@ -1,3 +1,8 @@
+> **INVALIDATION NOTICE — 2026-07-01**  
+> **Classification: PARTIAL**  
+> **Reason:** The original A/B comparison body (lines 1–117) was run on code with three compounding bugs in the scope-slot reranker (all slots collapsed into one, retrieval threshold too high, topk degenerate). The conclusions drawn ("topk=3 is neutral," "scope=0.0") are INVALIDATED artifacts of the broken reranker. The "Update: bug fix changes conclusions (2026-06-30)" section (line ~118) correctly identifies and corrects these errors and is VALID.  
+> **See:** `2026-06-30_scope_slot_reranker_fix.md` for the full bug diagnosis; `2026-07-01_honest_post_leakage_baseline.md` for the current reference point.
+
 # Scope-Slot Reranker A/B Comparison
 
 **Date**: 2026-06-29

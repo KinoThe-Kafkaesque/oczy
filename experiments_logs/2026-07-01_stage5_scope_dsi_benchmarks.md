@@ -1,3 +1,8 @@
+> **INVALIDATION NOTICE — 2026-07-01**  
+> **Classification: PARTIAL**  
+> **Reason:** The Stage 5 scope fix claiming 1.00 (Section 1, line ~7) and the "Current State" table (line ~175) reporting Stage 5 scope=1.00, Stage 5 retention=1.00 are SUPERSEDED by the honest post-leakage baseline — the two-slot `_SCOPE_TEACHING` mechanism used per-episode-ID entries, which was test-set leakage removed on 2026-07-01. The honest baseline measures Stage 5 at 0.92. The DSI Fact Index implementation (Section 2), external benchmark integration (Section 3), and papers analysis (Section 4) are VALID.  
+> **See:** `2026-07-01_honest_post_leakage_baseline.md` for the current reference point.
+
 # Stage 5 Cross-Domain Fix, DSI Fact Index, and External Benchmark Integration
 
 **Date**: 2026-07-01
