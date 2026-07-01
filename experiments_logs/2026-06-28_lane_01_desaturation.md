@@ -94,3 +94,20 @@ aedf3858). Phase 2 (segment 1) drove individual lane metrics toward their
 spec thresholds over 6 iterations (5 keeps + 1 discard). Lane 01 was the
 3rd consecutive lane to hit spec threshold after lane_04 (iter #2) and
 lane_06 (iter #3).
+
+## 2026-07-01 Metric Retirement Addendum (Sprint 0.4)
+
+**What changed:** The `desaturation_count` acceptance criterion — "count of
+sub-metrics with spread > 0.2" — was identified as a gameable metric: sessions
+could (and did) pass it by ADDING new derived sub-metrics, creating metrics
+about metrics. The sub-metric list `_BASE_SUB_METRICS` + `_NEW_SUB_METRICS`
+has been replaced with a single frozen constant `_FROZEN_SUB_METRICS` (the
+exact union of the prior two lists: 10 entries total). A module-level comment
+forbids additions without an eval version bump. The measurement logic
+counting spread > 0.2 across the baseline agent set is unchanged; only the
+policy forbidding unversioned additions is new.
+
+The lane metric name changed from `lane_01_desaturation_count` to
+`lane_01_frozen_desaturation_count` to reflect the policy.
+
+**Files:** `lanes/lane_01.py`

@@ -1,26 +1,13 @@
 """Lane 01: Correction-to-Competence Benchmark v2 de-saturation count.
 
-Counts how many of the original 7 ``EvalSuite.final_card`` sub-metrics plus
-3 NEW behavior-only sub-metrics produce a spread (max - min) > 0.2 across
-{ZeroMemoryAgent, ContextOnlyAgent, FastOnlyAgent} on a one-level seed=0
-subset of the curriculum. Spec:
+Counts how many of the FROZEN set of ``EvalSuite.final_card`` sub-metrics
+produce a spread (max - min) > 0.2 across {ZeroMemoryAgent, ContextOnlyAgent,
+FastOnlyAgent} on a one-level seed=0 subset of the curriculum. Spec:
 research/01-correction-to-competence-benchmark.md.
 
-The 3 NEW sub-metrics (spec-suggested, added to lift count from 1 -> >=3):
-
-- ``signed_interference_forgetting``: signed mean shift on held-out
-  transfer probes (pre vs post learning). Legacy
-  ``forgetting_score = min(1.0, post/pre)`` saturates to 0 for every toy
-  baseline. Un-capped signed version: +1 per probe whose answer moved
-  toward the corrected token, -1 for away, 0 if unchanged; [-1, +1].
-- ``separated_exact_vs_domain_recall``: |exact_recall - domain_recall| on
-  transfer probes. Legacy ``transfer_score`` (exact normalized match)
-  scores 0 for every toy baseline; relaxed domain token match exposes
-  the gap. Reuses ``eval_suite._token_set`` so domain axis == the spec's
-  token-overlap sense_match axis.
-- ``behavior_delta_per_byte``: un-inverted north star
-  ``behavior_delta / max(1, Δpersistent_bytes)``. Legacy
-  ``memory_bytes_per_behavior_delta`` is INVERTED (bytes / delta).
+The sub-metric set is FROZEN per eval version: see ``_FROZEN_SUB_METRICS``.
+Adding new sub-metrics requires an eval version bump; appending entries to
+inflate the desaturation count is metric gaming.
 
 If imports fail or fewer than 2 agents survive, returns float('nan').
 """
@@ -31,7 +18,7 @@ from typing import Any
 
 from lanes._common import lane_measure
 
-_BASE_SUB_METRICS = (
+_FROZEN_SUB_METRICS = (
     "correction_uptake_latency",
     "transfer_score",
     "scope_score",
@@ -39,14 +26,13 @@ _BASE_SUB_METRICS = (
     "consolidation_score",
     "memory_bytes_per_behavior_delta",
     "identity_drift_score",
-)
-
-_NEW_SUB_METRICS = (
     "signed_interference_forgetting",
     "separated_exact_vs_domain_recall",
     "behavior_delta_per_byte",
 )
-
+# WARNING: This set is FROZEN per eval version. Adding new sub-metrics
+# requires an eval version bump. Do not append entries here to inflate
+# the desaturation count — that is metric gaming.
 
 class _SubsetCurriculum:
     """Adapter exposing only the first N levels of a base Curriculum."""
@@ -67,7 +53,7 @@ class _SubsetCurriculum:
 
 
 def name() -> str:
-    return "lane_01_desaturation_count"
+    return "lane_01_frozen_desaturation_count"
 
 
 @lane_measure
@@ -163,7 +149,7 @@ def measure() -> float:
     if len(cards) < 2:
         return float("nan")
     count = 0
-    for metric in _BASE_SUB_METRICS + _NEW_SUB_METRICS:
+    for metric in _FROZEN_SUB_METRICS:
         try:
             values = [float(c.get(metric, 0.0)) for c in cards]
         except (TypeError, ValueError):

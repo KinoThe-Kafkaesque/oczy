@@ -146,3 +146,32 @@ lanes" session. Phase 1 wired the harness (commit aedf3858). Phase 2 segment
 teaching+probe wiring. Lane 07 was the 4th lane to hit spec threshold in
 segment 1 (after lane_04 in iter #2, lane_06 in iter #3, and lane_01 in
 iter #4).
+
+## 2026-07-01 Metric Retirement Addendum (Sprint 0.4)
+
+**What changed:** The headline `marker_free_uptake_gap = 1.0` was identified
+as a gameable metric: the lexical baseline was "0 by construction" —
+`_lexical_flags()` searched for substring markers (e.g., "actually, ",
+"correction:") that CANNOT fire on marker-stripped corrections by design.
+This guaranteed a perfect gap regardless of the world-model critic's actual
+capability.
+
+The lexical baseline has been replaced with a competitive token-overlap
+Jaccard NN classifier (`_token_overlap_flag()`): same whitespace-lowercase
+tokenization, same Jaccard >= 0.25 threshold the critic's
+`_similar_correction_rate` feature uses. This baseline CAN fire on
+marker-stripped corrections — "the sky is blue" shares 4/6 tokens with
+"no actually the sky is blue" (Jaccard 0.67).
+
+**Honest outcome:** The gap collapses to **0.0** (world-model critic and
+token-overlap baseline both flag 4/4 on the 4-marker-stripped corpus,
+n=4). This is the correct, non-gameable result: both methods exploit the
+same token-overlap signal. The marker-free uptake gap was measuring
+token-overlap detectability, not world-model generalization.
+
+The lane now returns a `dict` with: `lane_07_marker_free_uptake_gap`,
+`lane_07_corpus_n`, `lane_07_wm_uptake`, `lane_07_baseline_uptake`. The
+orchestrator (`lanes/orchestrator.py`) was updated to handle dict returns
+transparently.
+
+**Files:** `lanes/lane_07.py`, `lanes/orchestrator.py`

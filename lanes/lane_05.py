@@ -1,7 +1,22 @@
 """Lane 05: Metabolism Loop Closure.
 
-Reports completion progress for the metabolism-loop-closure research lane
+Reports two distinct outputs for the metabolism-loop-closure research lane
 (research/05-metabolism-loop-closure.md), spanning four sub-criteria C1-C4.
+
+measure() returns a dict[str, float] with:
+- "lane_05_coverage": testing-coverage fraction of sub-criteria exercised
+  (C1 done, C2 partial, C3 tested, C4 tested -> 1.0). This is a process
+  metric: it reports whether the real-driver measurements were *run*
+  end-to-end, not whether it succeeded. nan when the GGUF driver is
+  unavailable; 0.875 when C4's hiddens are malformed but C3 already
+  succeeded (result carries the C3 delta, c4 field is nan).
+- "lane_05_result": the actual measured C3 critic AUC delta
+  (max(0.0, auc_real - auc_string)) -- the honest outcome metric for
+  whether the hidden-feature path beats the string-only path. nan when C3
+  could not run.
+- "lane_05_c4_retrieval_delta": the C4 within-method accuracy delta
+  (acc(tensor) - acc(hash)). Informative but not a spec-relevant outcome
+  metric. nan when C4 could not run.
 
 Sub-criteria status:
 - C1 (compounding_index): MET. 0.067 -> 0.805 -> 0.617, control-validated
@@ -11,26 +26,25 @@ Sub-criteria status:
 - C3 (critic_auc_delta): TESTED here. Wires WorldModelCritic with real
   LM hiddens (GGUF peek_embedding) on an 8-example correction-vs-acceptance
   corpus and measures the AUC delta of the hidden-input path over the
-  string-only path. The status value reflects *testing coverage*, not the
-  delta magnitude: returning 0.875 means C3 was exercised end-to-end on
-  the real driver, regardless of whether the delta is positive.
+  string-only path. The coverage value reports that C3 was exercised
+  end-to-end on the real driver; the result value reports the delta
+  magnitude. The two are never conflated.
 - C4 (tensor replay bank): TESTED here. Replaces the NeuralHippocampus
   hash-keyed retrieval (sha256(text) -> random unit vec) with
   embedding-cosine-keyed retrieval (actual LM hidden vectors) on a
   6-phrase, 3-concept x 2-paraphrase corpus. Measures nearest-neighbor
   retrieval accuracy under both keys and reports
-  c4_retrieval_delta = acc(tensor) - acc(hash). Status reflects testing
-  coverage, not the delta sign.
+  c4_retrieval_delta = acc(tensor) - acc(hash).
 
-Completion: C1 done, C2 partial-but-tracked, C3 tested, C4 tested => 1.0.
+Coverage: C1 done, C2 partial-but-tracked, C3 tested, C4 tested => 1.0.
 If the GGUF driver is unavailable the C3/C4 measurements cannot run and
-the lane returns float(nan) on failure. On
-any import/load/crash failure, measure() returns float('nan').
+both fields are nan. On any import/load/crash failure, measure() returns
+nan in every field.
 """
 
 from __future__ import annotations
 
-from lanes._common import MARKER_BEARING_CORRECTIONS, cosine, lane_measure
+from lanes._common import MARKER_BEARING_CORRECTIONS, cosine
 
 
 def name() -> str:
@@ -73,8 +87,7 @@ def _auc(scores: list[float], labels: list[int]) -> float:
     return wins / n
 
 
-@lane_measure
-def measure() -> float:
+def _measure_impl() -> dict[str, float]:
     import numpy as np
 
     from oczy.lm import CVecDriverConfig, LlamaCVecDriver
@@ -82,16 +95,16 @@ def measure() -> float:
 
     # --- Load the real GGUF driver for lm_hidden extraction ------------
     # CVecDriverConfig defaults include embedding=True so peek_embedding
-    # is enabled. On any load failure the C3 measurement cannot run: fall
-    # back to the prior 0.75 baseline (no regression).
+    # is enabled. On any load failure the C3/C4 measurements cannot run:
+    # both fields return nan.
     try:
         driver = LlamaCVecDriver.load(
             CVecDriverConfig(n_ctx=256, n_threads=4, embedding=True)
         )
     except Exception:
-        return float("nan")
+        return {"lane_05_coverage": float("nan"), "lane_05_result": float("nan"), "lane_05_c4_retrieval_delta": float("nan")}
     if driver.n_embd == 0:
-        return float("nan")
+        return {"lane_05_coverage": float("nan"), "lane_05_result": float("nan"), "lane_05_c4_retrieval_delta": float("nan")}
 
     # --- Build the 8-example labeled corpus ----------------------------
     queries: list[str] = list(MARKER_BEARING_CORRECTIONS) + list(_ACCEPTANCES)
@@ -105,7 +118,7 @@ def measure() -> float:
         emb = driver.peek_embedding(q, last_token_only=False)
         emb = np.asarray(emb, dtype=np.float32)
         if emb.shape[0] != driver.n_embd:
-            return float("nan")
+            return {"lane_05_coverage": float("nan"), "lane_05_result": float("nan"), "lane_05_c4_retrieval_delta": float("nan")}
         embeddings.append(emb)
 
     # --- Train the critic on all 8 examples ----------------------------
@@ -152,11 +165,8 @@ def measure() -> float:
     auc_string = _auc(scores_string, labels)
     delta = max(0.0, auc_real - auc_string)
 
-    # Status reflects testing coverage, not delta magnitude: C3 was
-    # exercised end-to-end on the real driver. delta is computed but
-    # does not gate the status; even a negative measured delta counts
-    # as "tested".
-    _ = delta  # measured; magnitude reported via status() if needed.
+    # delta is the honest C3 outcome metric (lane_05_result); coverage
+    # reports that C3 was exercised end-to-end on the real driver.
 
     # --- C4: tensor-keyed vs hash-keyed retrieval ---------------------
     # Replace NeuralHippocampus hash-keyed retrieval (sha256(text) ->
@@ -182,7 +192,7 @@ def measure() -> float:
         if h.shape[0] != driver.n_embd:
             # GGUF returned a malformed hidden -- C4 cannot run, but
             # C3 already succeeded, so keep the 0.875 status.
-            return 0.875
+            return {"lane_05_coverage": 0.875, "lane_05_result": delta, "lane_05_c4_retrieval_delta": float("nan")}
         c4_hiddens.append(h)
 
 
@@ -224,8 +234,16 @@ def measure() -> float:
     acc_hash = _nn_accuracy(hash_keys)
     acc_tensor = _nn_accuracy(tensor_keys)
     c4_retrieval_delta = acc_tensor - acc_hash
-    _ = c4_retrieval_delta  # measured; status reflects testing coverage
+    # c4_retrieval_delta is reported as lane_05_c4_retrieval_delta.
 
     # C3 + C4 both exercised end-to-end on the real GGUF driver ->
     # 1.0 (C1 done, C2 partial-but-tracked, C3 tested, C4 tested).
-    return 1.0
+    return {"lane_05_coverage": 1.0, "lane_05_result": delta, "lane_05_c4_retrieval_delta": c4_retrieval_delta}
+
+
+def measure() -> dict[str, float]:
+    """Fail-soft wrapper: any unexpected crash -> nan in all fields."""
+    try:
+        return _measure_impl()
+    except Exception:
+        return {"lane_05_coverage": float("nan"), "lane_05_result": float("nan"), "lane_05_c4_retrieval_delta": float("nan")}
