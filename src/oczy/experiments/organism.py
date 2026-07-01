@@ -122,6 +122,16 @@ class OrganismAgent:
         self._high_correction_threshold = float(config.get("high_correction_threshold", 0.4))
         self._surprise_threshold = float(config.get("surprise_threshold", 0.5))
         self._unk = "I don't know."
+
+        # Organ ablation flags — gate each organ so the ablation matrix can
+        # isolate individual contributions.  Every flag defaults to True
+        # (preserving current behavior); set to False to disable the organ.
+        self.use_neural_hippocampus = bool(config.get("use_neural_hippocampus", True))
+        self.use_world_model_critic = bool(config.get("use_world_model_critic", True))
+        self.use_identity_hypernetwork = bool(config.get("use_identity_hypernetwork", True))
+        self.use_skill_immune_cortex = bool(config.get("use_skill_immune_cortex", True))
+        self.use_experience_autoencoder = bool(config.get("use_experience_autoencoder", True))
+        self.use_diff_fact_index = bool(config.get("use_diff_fact_index", True))
         self.use_cortex_lm_answer = bool(config.get("use_cortex_lm_answer", False))
         self.use_cortex_policy = bool(config.get("use_cortex_policy", False))
         self.use_value_baseline = bool(config.get("use_value_baseline", False))
@@ -219,33 +229,37 @@ class OrganismAgent:
 
         # 1. Immune check: see if any previous mistake detector fires for the raw
         # request.  We do not have a proposed answer yet, so pass an empty one.
-        with self.profiler.profile("skill_immune_cortex"):
-            immune_responses = self.skill_immune_cortex.check(request, "")
-        if immune_responses:
-            # Surface immune guidance in-line so downstream modules can see it.
-            meta = "[immune] " + " ".join(immune_responses)
-            request_with_meta = f"{meta} {request}"
+        if self.use_skill_immune_cortex:
+            with self.profiler.profile("skill_immune_cortex"):
+                immune_responses = self.skill_immune_cortex.check(request, "")
+            if immune_responses:
+                # Surface immune guidance in-line so downstream modules can see it.
+                meta = "[immune] " + " ".join(immune_responses)
+                request_with_meta = f"{meta} {request}"
+            else:
+                request_with_meta = request
         else:
             request_with_meta = request
         # 2. Fast-weight / recurrent answer.
         with self.profiler.profile("plastic_cortex"):
             fast_answer = self.plastic_cortex.answer(request_with_meta)
-
         # 3. World-model confidence check.
-        with self.profiler.profile("world_model_critic"):
-            critic_pred = self.world_model_critic.predict_acceptance(
-                query=request, proposed_answer=fast_answer
+        if self.use_world_model_critic:
+            with self.profiler.profile("world_model_critic"):
+                critic_pred = self.world_model_critic.predict_acceptance(
+                    query=request, proposed_answer=fast_answer
+                )
+            accepted_prob = float(critic_pred.get("accepted_prob", 0.0))
+            correction_likelihood = float(critic_pred.get("correction_likelihood", 0.0))
+            low_confidence = (
+                accepted_prob < self._low_confidence_threshold
+                or correction_likelihood > self._high_correction_threshold
             )
-        accepted_prob = float(critic_pred.get("accepted_prob", 0.0))
-        correction_likelihood = float(critic_pred.get("correction_likelihood", 0.0))
-        low_confidence = (
-            accepted_prob < self._low_confidence_threshold
-            or correction_likelihood > self._high_correction_threshold
-        )
-
+        else:
+            low_confidence = False
         candidate_answers = list(self.plastic_cortex.labels)
         replay_hint: str | None = None
-        if low_confidence:
+        if self.use_neural_hippocampus and low_confidence:
             with self.profiler.profile("neural_hippocampus"):
                 replays = self.neural_hippocampus.reinforce(query=request, k=3)
             if replays:
@@ -300,30 +314,33 @@ class OrganismAgent:
 
         # 5. Apply identity-hypernetwork concept-score deltas to rank the
         # candidate labels.
-        with self.profiler.profile("identity_hypernetwork"):
-            # Encode the current request as a partial episode to get a
-            # residual that represents "what experience does this request
-            # remind me of?"  Pass it to generate_adapters so the
-            # residual-to-concept projection can bias concept scores.
-            _req_residual = None
-            # Only use the residual-to-concept projection when we have
-            # contextualized hidden states.  Bag-of-words residuals don't
-            # carry sense-discriminating signal and add noise.
-            if self._last_request_hidden_state is not None:
-                try:
-                    _req_episode = {
-                        "situation": request,
-                        "outcome": "unknown",
-                        "hidden_delta": self._last_request_hidden_state,
-                    }
-                    _req_dz = self.experience_autoencoder.encode(_req_episode)
-                    _req_residual = _req_dz[OUTCOME_DIM:]
-                except Exception:
-                    pass
-            adapters = self.identity_hypernetwork.generate_adapters(
-                residual=_req_residual
-            )
-        concept_scores = adapters.get("concept_scores", {})
+        if self.use_identity_hypernetwork:
+            with self.profiler.profile("identity_hypernetwork"):
+                # Encode the current request as a partial episode to get a
+                # residual that represents "what experience does this request
+                # remind me of?"  Pass it to generate_adapters so the
+                # residual-to-concept projection can bias concept scores.
+                _req_residual = None
+                # Only use the residual-to-concept projection when we have
+                # contextualized hidden states.  Bag-of-words residuals don't
+                # carry sense-discriminating signal and add noise.
+                if self.use_experience_autoencoder and self._last_request_hidden_state is not None:
+                    try:
+                        _req_episode = {
+                            "situation": request,
+                            "outcome": "unknown",
+                            "hidden_delta": self._last_request_hidden_state,
+                        }
+                        _req_dz = self.experience_autoencoder.encode(_req_episode)
+                        _req_residual = _req_dz[OUTCOME_DIM:]
+                    except Exception:
+                        pass
+                adapters = self.identity_hypernetwork.generate_adapters(
+                    residual=_req_residual
+                )
+            concept_scores = adapters.get("concept_scores", {})
+        else:
+            concept_scores: dict[str, float] = {}
         final_answer = self._rank_answer(
             request=request,
             candidates=candidate_answers,
@@ -446,21 +463,22 @@ class OrganismAgent:
             # that match facts retrieved from the learned embedding matrix.
             # The index uses inner-product retrieval, making it more robust
             # than token-overlap heuristics for cross-domain disambiguation.
-            try:
-                req_key = self._scope_key(request)
-                if req_key is not None:
-                    dfi_hits = self.diff_fact_index.retrieve(
-                        req_key, k=3, use_lora=True
-                    )
-                    if dfi_hits:
-                        dsi_fired = True
-                    for dfi_label, dfi_score in dfi_hits:
-                        if dfi_label == label or (
-                            _tokens(dfi_label) & label_tokens
-                        ):
-                            score += 1.5 * float(dfi_score)
-            except Exception:
-                pass
+            if self.use_diff_fact_index:
+                try:
+                    req_key = self._scope_key(request)
+                    if req_key is not None:
+                        dfi_hits = self.diff_fact_index.retrieve(
+                            req_key, k=3, use_lora=True
+                        )
+                        if dfi_hits:
+                            dsi_fired = True
+                        for dfi_label, dfi_score in dfi_hits:
+                            if dfi_label == label or (
+                                _tokens(dfi_label) & label_tokens
+                            ):
+                                score += 1.5 * float(dfi_score)
+                except Exception:
+                    pass
 
             # Optional CortexAgent policy-head score.
             score += policy_delta
