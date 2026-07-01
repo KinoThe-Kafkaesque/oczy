@@ -1,3 +1,8 @@
+> **INVALIDATION NOTICE — 2026-07-01**  
+> **Classification: PARTIAL**  
+> **Reason:** The bug diagnosis and fix description (Sections "Root Causes," "Verification," "Remaining Work," "Key Files Changed") are VALID. The "Curriculum Impact" table (line ~40) reports leakage-era numbers (Stage 2 scope=1.00, Stage 5 retention=1.00, etc.) that are SUPERSEDED by the honest post-leakage baseline — those claims included test-set leakage removed on 2026-07-01. The honest baseline measures the same configuration at Stage 2 scope=0.69, Stage 5 scope=0.92.  
+> **See:** `2026-07-01_honest_post_leakage_baseline.md` for the current reference point; `2026-07-01_stage5_scope_dsi_benchmarks.md` for additional superseded Stage 5 claims.
+
 # Scope-Slot Reranker Fix: Three Bugs Found and Fixed
 
 **Date**: 2026-06-30
