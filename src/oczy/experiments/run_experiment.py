@@ -24,6 +24,7 @@ from oczy.experiments.curriculum import build_curriculum
 from oczy.experiments.eval_suite import EvalSuite, EvalResult, NullAgent
 from oczy.experiments.logger import ExperimentLogger
 from oczy.experiments.organism import OrganismAgent
+from oczy.common import format_row, summarize
 
 
 @dataclass(frozen=True)
@@ -130,6 +131,97 @@ def _print_table(rows: list[tuple[str, dict[str, Any]]]) -> None:
         )
 
 
+# Metric keys from ``EvalResult.final_card`` that are aggregatable floats.
+_AGGREGATABLE_METRICS: tuple[str, ...] = (
+    "correction_uptake_latency",
+    "transfer_score",
+    "scope_score",
+    "forgetting_score",
+    "consolidation_score",
+    "identity_drift_score",
+    "memory_bytes_per_behavior_delta",
+)
+
+
+def _build_agent(agent_name: str, agent_cls: type, seed: int) -> Any:
+    """Construct a fresh agent for ``seed``, seeding organs where supported.
+
+    Baseline agents without seed-aware organs (``ZeroMemoryAgent``,
+    ``ContextOnlyAgent``, ``NullAgent``) are deterministic and take no config.
+    """
+    if agent_name in ("ZeroMemoryAgent", "ContextOnlyAgent", "NullAgent"):
+        return agent_cls()
+    if agent_name == "FastOnlyAgent":
+        return agent_cls(config={"seed": seed})
+    if agent_name == "HippocampusOnlyAgent":
+        return agent_cls(config={"neural_hippocampus": {"seed": seed}})
+    if agent_name == "IdentityOnlyAgent":
+        return agent_cls(config={"identity_hypernetwork": {"seed": seed}})
+    if agent_name == "OrganismAgent":
+        return agent_cls(
+            config={
+                "plastic_cortex": {"seed": seed},
+                "neural_hippocampus": {"seed": seed},
+                "identity_hypernetwork": {"seed": seed},
+                "world_model_critic": {"seed": seed},
+            }
+        )
+    return agent_cls()
+
+
+def _aggregate_scorecards(
+    scorecards: list[dict[str, Any]],
+) -> dict[str, dict[str, float]]:
+    """Summarize each aggregatable metric across per-seed scorecards.
+
+    Returns ``{metric_key: summarize(values)}``.
+    """
+    per_metric: dict[str, list[float]] = {}
+    for card in scorecards:
+        for key in _AGGREGATABLE_METRICS:
+            value = card.get(key)
+            if isinstance(value, (int, float)):
+                per_metric.setdefault(key, []).append(float(value))
+    return {key: summarize(vals) for key, vals in per_metric.items()}
+
+
+def _aggregated_card(
+    per_metric: dict[str, dict[str, float]],
+) -> dict[str, Any]:
+    """Flatten per-metric summaries into a ``<metric>_(mean|std|n|ci95)`` card."""
+    card: dict[str, Any] = {}
+    for key, summary in per_metric.items():
+        card[f"{key}_mean"] = summary.get("mean")
+        card[f"{key}_std"] = summary.get("std")
+        card[f"{key}_n"] = summary.get("n")
+        card[f"{key}_ci95_half"] = summary.get("ci95_half")
+    return card
+
+
+def _print_multi_seed_table(
+    rows: list[tuple[str, dict[str, dict[str, float]]]],
+    num_seeds: int,
+) -> None:
+    """Print an ASCII comparison table of per-metric mean ± CI across seeds."""
+    print("\n=== Multi-seed comparison (%d seeds) ===" % num_seeds)
+    header = f"{'Agent':<22} {'transfer_score':>20}"
+    print(header)
+    print("-" * len(header))
+    for agent_name, per_metric in rows:
+        summary = per_metric.get("transfer_score")
+        if summary and summary.get("n", 0):
+            print(f"{format_row(agent_name, summary):<43}")
+        else:
+            print(f"{agent_name:<22} {'--':>20}")
+    print()
+    for agent_name, per_metric in rows:
+        print(f"[{agent_name}]")
+        for key in _AGGREGATABLE_METRICS:
+            summary = per_metric.get(key)
+            if summary and summary.get("n", 0):
+                print(f"  {format_row(key, summary)}")
+        print()
+
 def main() -> int:
     """Run evaluation over selected agents and log the results."""
     available_agents: dict[str, type] = {
@@ -164,6 +256,12 @@ def main() -> int:
         action="store_true",
         help="Use exact string matching instead of sense-level scoring.",
     )
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        default=1,
+        help="Number of random seeds to evaluate (default: 1).",
+    )
     args = parser.parse_args()
 
     config = RunConfig(
@@ -183,8 +281,68 @@ def main() -> int:
     ]
 
     logger = ExperimentLogger()
-    rows: list[tuple[str, dict[str, Any]]] = []
 
+    if args.seeds > 1:
+        # Multi-seed path: build fresh agents per seed and aggregate metrics.
+        print("Running %d seeds..." % args.seeds)
+        seeds = list(range(args.seeds))
+        per_agent: dict[str, list[dict[str, Any]]] = {}
+        for agent_name in agent_order:
+            agent_cls = available_agents[agent_name]
+            per_agent[agent_name] = []
+            for seed in seeds:
+                agent = _build_agent(agent_name, agent_cls, seed)
+                run_config = RunConfig(
+                    seed=seed,
+                    consolidate=config.consolidate,
+                    sense_match=config.sense_match,
+                    num_repetitions=config.num_repetitions,
+                )
+                scorecard, artifacts = evaluate_agent(agent, agent_name, run_config)
+                per_agent[agent_name].append(scorecard)
+                logger.log_run(
+                    run_id=f"{agent_name}/seed{seed}",
+                    config={
+                        "seed": seed,
+                        "seeds": args.seeds,
+                        "consolidate": run_config.consolidate,
+                        "sense_match": run_config.sense_match,
+                        "num_repetitions": run_config.num_repetitions,
+                    },
+                    scorecard=scorecard,
+                    artifacts=artifacts,
+                )
+
+        table_rows: list[tuple[str, dict[str, dict[str, float]]]] = []
+        for agent_name in agent_order:
+            per_metric = _aggregate_scorecards(per_agent[agent_name])
+            agg_card = _aggregated_card(per_metric)
+            logger.log_run(
+                run_id=f"{agent_name}-aggregated",
+                config={
+                    "seeds": args.seeds,
+                    "consolidate": config.consolidate,
+                    "sense_match": config.sense_match,
+                },
+                scorecard=agg_card,
+                artifacts={"per_seed": per_agent[agent_name]},
+            )
+            findings_lines = [f"## {agent_name} (aggregated, {args.seeds} seeds)\n"]
+            for key in _AGGREGATABLE_METRICS:
+                summary = per_metric.get(key)
+                if summary and summary.get("n", 0):
+                    findings_lines.append(f"- {format_row(key, summary)}")
+            logger.append_findings(
+                f"{agent_name}-aggregated", "\n".join(findings_lines)
+            )
+            table_rows.append((agent_name, per_metric))
+
+        _print_multi_seed_table(table_rows, args.seeds)
+        return 0
+
+    # Single-seed path (default): point estimate, not reportable.
+    print("\n\nWARNING: single-seed point estimate — not reportable")
+    rows: list[tuple[str, dict[str, Any]]] = []
     for agent_name in agent_order:
         agent_cls = available_agents[agent_name]
         agent = agent_cls()

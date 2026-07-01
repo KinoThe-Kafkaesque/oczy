@@ -28,6 +28,7 @@ from .text_utils import (
     extract_expected_from_correction,
     tokenize,
 )
+from .stats import format_row, run_seeded, summarize
 
 __all__ = [
     "Episode",
@@ -37,4 +38,7 @@ __all__ = [
     "STOPWORDS",
     "extract_expected_from_correction",
     "tokenize",
+    "format_row",
+    "run_seeded",
+    "summarize",
 ]
