@@ -13,6 +13,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -463,6 +465,7 @@ def write_report(
                 "memory_bytes_after": sr.memory_bytes_after,
                 "uptake_latency": sr.uptake_latency(),
                 "pre_accuracy": {k: v[2] for k, v in categorize_results(sr.pre_probe_results).items()},
+                "post_accuracy": _stage_accuracy(sr),
                 "episodes": [_episode_asdict(er) for er in sr.episode_results],
             }
         )
@@ -488,6 +491,20 @@ def write_report(
         json.dump(payload, fh, indent=2, default=str)
 
 
+
+
+def _regenerate_dashboard() -> None:
+    """Invoke the dashboard regeneration script."""
+    script = Path(__file__).resolve().parent.parent.parent.parent / "scripts" / "dashboard.py"
+    try:
+        subprocess.run(
+            [sys.executable, str(script)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        print("Dashboard regeneration failed: %s" % exc.stderr.strip(), file=sys.stderr)
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run the Oczy organism curriculum.")
     p.add_argument(
@@ -580,6 +597,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=1,
         help="Number of random seeds to evaluate (default: 1).",
+    )
+    p.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Regenerate DASHBOARD.md after writing the report.",
     )
     return p.parse_args(argv)
 
@@ -948,6 +970,8 @@ def main(argv: list[str] | None = None) -> int:
         _print_policy_delta(results)
 
         write_report(results, args.agent, args.lm, report_path, split=args.split, vanilla_results=vanilla_results)
+        if args.dashboard:
+            _regenerate_dashboard()
         print("\nReport written to: %s" % report_path)
 
         if args.policy_log is not None:
@@ -988,6 +1012,8 @@ def main(argv: list[str] | None = None) -> int:
     write_multi_seed_report(
         seed_results, args.agent, args.lm, args.seeds, report_path
     )
+    if args.dashboard:
+        _regenerate_dashboard()
     print("\nReport written to: %s" % report_path)
 
     if args.policy_log is not None:
