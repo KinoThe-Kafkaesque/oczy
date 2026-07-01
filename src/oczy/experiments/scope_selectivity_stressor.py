@@ -78,68 +78,6 @@ def _slot_retrieve(slot_keys, slot_warm, key):
     return warm.copy() if warm is not None else None
 
 
-# Scope-sense teaching utterances keyed by episode id.
-_SCOPE_TEACHING: dict[str, str] = {
-    "s2_file": (
-        "In everyday language, a file is a folder or document. "
-        "You file paperwork to submit it officially."
-    ),
-    "s2_cell": (
-        "In biology, a cell is the basic structural unit of "
-        "living organisms."
-    ),
-    "s2_branch": (
-        "In nature, a branch is a woody part of a tree growing "
-        "from the trunk."
-    ),
-    "s2_run": (
-        "In geography, a run is a flowing stream or creek of water."
-    ),
-    "s2_log": (
-        "In everyday language, a log is a captain's journal or "
-        "record of events."
-    ),
-    "s2_key": (
-        "In everyday language, a key is a map legend or guide "
-        "to symbols."
-    ),
-    "s2_record": (
-        "In everyday language, a record is a music disc or "
-        "vinyl album."
-    ),
-    "s2_model": (
-        "In everyday language, a model is a fashion model or "
-        "person who poses."
-    ),
-    "s5_log_context": (
-        "In computing, a log is a system error log or record of "
-        "server events and crashes."
-    ),
-    "s5_file_context": (
-        "In computing, a file is a computer file saved to disk, "
-        "like a source code file or document."
-    ),
-    "s5_model_context": (
-        "In machine learning, a model is an ML model trained on "
-        "datasets to make predictions."
-    ),
-    "s5_run_context": (
-        "In computing, a run is an ML experiment run or training "
-        "run that executes a model pipeline."
-    ),
-    "s5_key_context": (
-        "In computing, a key is a keyboard key like the escape key "
-        "or enter key."
-    ),
-    "s5_cell_context": (
-        "In spreadsheets, a cell is a spreadsheet cell in a column "
-        "that holds data like numbers or text."
-    ),
-}
-
-_SCOPE_PREFIX_EPISODES = frozenset({"s2_file", "s2_cell", "s2_branch", "s2_run"})
-
-
 def _measure_ssi(driver: Any, is_mock: bool = False) -> float:
     import numpy as np
 
@@ -184,20 +122,6 @@ def _measure_ssi(driver: Any, is_mock: bool = False) -> float:
             continue
         _slot_write(slot_keys, slot_warm, teach_key, cortex.cortex.warm_state.copy())
 
-        scope_probe = ep.probes[1] if len(ep.probes) > 1 else None
-        scope_text = _SCOPE_TEACHING.get(ep.id)
-        if scope_probe is not None and scope_text:
-            try:
-                cortex.cortex.warm_state = np.zeros_like(cortex.cortex.warm_state)
-                cortex.perceive(scope_text, correction_signal=1.0)
-                scope_key = driver.peek_embedding(
-                    scope_probe.request, last_token_only=False
-                )
-                _slot_write(
-                    slot_keys, slot_warm, scope_key, cortex.cortex.warm_state.copy()
-                )
-            except Exception:
-                pass
 
         both_ok = True
         for probe in ep.probes:
@@ -216,9 +140,7 @@ def _measure_ssi(driver: Any, is_mock: bool = False) -> float:
                 prefix_targets = None
             else:
                 cortex.cortex.warm_state = warm.copy()
-                if probe.category == "scope" and ep.id in _SCOPE_PREFIX_EPISODES:
-                    prefix_targets = [probe.expected]
-                elif probe.category == "scope":
+                if probe.category == "scope":
                     prefix_targets = None
                 else:
                     prefix_targets = [ep.corrected_label]

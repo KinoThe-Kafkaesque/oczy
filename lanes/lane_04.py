@@ -76,54 +76,6 @@ def _slot_retrieve(slot_keys, slot_warm, key):
     return slot_warm[best_idx].copy()
 
 
-# -- Scope-sense teaching (H3): explicit common-meaning utterances that
-# produce a warm_state_common stored in a SEPARATE slot keyed by the
-# scope probe's request embedding. For the 4 episodes whose LM natural
-# prior does NOT produce the expected common-sense tokens, the specific
-# utterance + prefix_targets at scope-probe time forces the right basin.
-# For the 4 that already pass, a generic reinforcement avoids regressions.
-_SCOPE_TEACHING: dict[str, str] = {
-    # Hardcoded failing episodes (natural prior insufficient).
-    "s2_file": (
-        "In everyday language, a file is a folder or document. "
-        "You file paperwork to submit it officially."
-    ),
-    "s2_cell": (
-        "In biology, a cell is the basic structural unit of "
-        "living organisms."
-    ),
-    "s2_branch": (
-        "In nature, a branch is a woody part of a tree growing "
-        "from the trunk."
-    ),
-    "s2_run": (
-        "In geography, a run is a flowing stream or creek of water."
-    ),
-    # Episodes that already pass scope -- generic reinforcement only.
-    "s2_log": (
-        "In everyday language, a log is a captain's journal or "
-        "record of events."
-    ),
-    "s2_key": (
-        "In everyday language, a key is a map legend or guide "
-        "to symbols."
-    ),
-    "s2_record": (
-        "In everyday language, a record is a music disc or "
-        "vinyl album."
-    ),
-    "s2_model": (
-        "In everyday language, a model is a fashion model or "
-        "person who poses."
-    ),
-}
-
-# Episodes whose scope probe needs prefix_targets to force the specific
-# common-sense tokens the cvec ceiling alone cannot produce.
-_SCOPE_PREFIX_EPISODES = frozenset(
-    {"s2_file", "s2_cell", "s2_branch", "s2_run"}
-)
-
 def name() -> str:
     return "lane_04_ssi"
 
@@ -183,26 +135,6 @@ def measure() -> float:
         _slot_write(slot_keys, slot_warm, teach_key,
                     cortex.cortex.warm_state.copy())
 
-        # Teach scope sense (H3): perceive a common-meaning utterance
-        # -> warm_state_common -> scope slot keyed by the scope probe's
-        # request embedding. Reset warm_state first so the common cvec
-        # is not contaminated by the technical EMA trace.
-        scope_probe = ep.probes[1] if len(ep.probes) > 1 else None
-        scope_text = _SCOPE_TEACHING.get(ep.id)
-        if scope_probe is not None and scope_text:
-            try:
-                cortex.cortex.warm_state = np.zeros_like(
-                    cortex.cortex.warm_state
-                )
-                cortex.perceive(scope_text, correction_signal=1.0)
-                scope_key = driver.peek_embedding(
-                    scope_probe.request, last_token_only=False
-                )
-                _slot_write(slot_keys, slot_warm, scope_key,
-                            cortex.cortex.warm_state.copy())
-            except Exception:
-                pass
-
         both_ok = True
         for probe in ep.probes:
             try:
@@ -225,16 +157,9 @@ def measure() -> float:
             else:
                 # Slot match -> apply retrieved warm_state as cvec.
                 cortex.cortex.warm_state = warm.copy()
-                if probe.category == "scope" and ep.id in _SCOPE_PREFIX_EPISODES:
-                    # Hardcoded failing episodes: force the specific
-                    # common-sense tokens the LM natural prior alone
-                    # does not produce (cvec does domain, not exact
-                    # tokens -- run #139).
-                    prefix_targets = [probe.expected]
-                elif probe.category == "scope":
-                    # Passing episodes: cvec reinforces the
-                    # common-sense domain; let the LM natural prior
-                    # finish the job (no logit bias).
+                if probe.category == "scope":
+                    # Scope probes: cvec steering only (retrieved slot
+                    # warm), no logit bias toward any specific tokens.
                     prefix_targets = None
                 else:
                     # Retention: logit bias toward the literal

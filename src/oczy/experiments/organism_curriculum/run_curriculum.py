@@ -212,42 +212,6 @@ def _record_policy_scores(agent: Any, candidates: list[str]) -> dict[str, float]
         return None
 
 
-
-def _teach_stage_scope_senses(agent: Any, stage: Stage) -> None:
-    """Teach default/alternate senses for cross-domain stage episodes.
-
-    For each episode that has a scope probe (category="scope"), this
-    looks up a scope-sense teaching utterance from
-    :data:`scope_selectivity_stressor._SCOPE_TEACHING` and stores a
-    scope-slot entry keyed by the scope probe's request embedding.
-
-    This ensures the scope-slot reranker retrieves the correct
-    default-sense label for scope probes instead of the corrected
-    technical sense (which belongs to a different domain context).
-    """
-    if not hasattr(agent, "teach_scope_sense"):
-        return
-    from oczy.experiments.scope_selectivity_stressor import _SCOPE_TEACHING
-    for ep in stage.episodes:
-        # Find the scope probe (category="scope").
-        scope_probe = next(
-            (p for p in ep.probes if getattr(p, "category", "") == "scope"),
-            None,
-        )
-        if scope_probe is None:
-            continue
-        scope_text = _SCOPE_TEACHING.get(ep.id)
-        if scope_text is None:
-            continue
-        try:
-            agent.teach_scope_sense(
-                teaching_text=scope_text,
-                scope_request=scope_probe.request,
-                scope_label=scope_probe.expected,
-            )
-        except Exception:
-            pass
-
 def run_battery(
     agent: Any,
     stage: Stage,
@@ -731,12 +695,6 @@ def main(argv: list[str] | None = None) -> int:
         if stage.consolidate_before:
             print("Consolidating before %s..." % stage.name)
             agent.consolidate()
-        # Before cross-domain stages, teach the DEFAULT/alternate sense of
-        # each ambiguous word so the scope-slot reranker has a slot to
-        # retrieve for scope probes (which use the word in its default
-        # domain context, not the corrected technical sense).
-        if "Cross-domain" in stage.name or "scope" in stage.name.lower():
-            _teach_stage_scope_senses(agent, stage)
         print("Running %s..." % stage.name)
         results.append(
             run_stage(
