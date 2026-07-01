@@ -46,6 +46,10 @@ MODELS: list[tuple[str, str]] = [
     ("Qwen3.5-0.8B", "Qwen/Qwen3.5-0.8B"),
     ("LFM2.5-350M", "LiquidAI/LFM2.5-350M"),
     ("LFM2.5-1.2B-Instruct", "LiquidAI/LFM2.5-1.2B-Instruct"),
+    # Sprint 1 candidates — plain decoder-only transformers (S1.1)
+    ("Qwen2.5-0.5B", "Qwen/Qwen2.5-0.5B-Instruct"),
+    ("Qwen2.5-1.5B", "Qwen/Qwen2.5-1.5B-Instruct"),
+    ("TinyLlama-1.1B", "TinyLlama/TinyLlama-1.1B-Chat-v1.0"),
 ]
 
 # A short but non-trivial prompt.  Two sentences is enough to encode
