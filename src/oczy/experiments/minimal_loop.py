@@ -39,6 +39,13 @@ from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
 # ---------------------------------------------------------------------------
 
 MAX_PREFIX_TOKENS: int = 48
+
+# Combined L2 budget for the answer-time cvec posture. Raw warm-state cvecs
+# reach combined norms of ~140 (per-layer ~29 x 24 layers), which degrades
+# generation into token repetition — the S2.4 magnitude pathology. Posture
+# must ride at a working amplitude, so emitted cvecs are uniformly scaled
+# down to this budget before generation.
+CVEC_NORM_BUDGET: float = 1.0
 CHECKPOINTS: list[int] = [0, 1, 2, 4, -1]  # -1 means "all episodes"
 
 
@@ -102,9 +109,16 @@ class MinimalOrganism:
         d_cortex: int = 128,
         cortex_seed: int = 0,
         hippocampus_config: dict[str, Any] | None = None,
+        use_cvec_posture: bool = False,
     ) -> None:
         self.driver = driver
         self.d_cortex = d_cortex
+        # research/11 makes the cvec posture OPTIONAL. Default off: the
+        # working amplitude on this substrate is unknown — raw warm-state
+        # cvecs (combined norm ~140) destroy generation, and even a combined
+        # norm of 1.0 still degrades some probes into token noise. Posture
+        # is deferred until an amplitude calibration exists for Qwen.
+        self.use_cvec_posture = use_cvec_posture
 
         # Hippocampus: store everything (surprise_threshold=0) so every
         # teaching episode is available for consolidation-time replay.
@@ -182,9 +196,21 @@ class MinimalOrganism:
         """
         self.hippocampus._in_answer = True
         try:
-            # Articulate: push current cortex cvecs to the driver.
-            cvecs = self.cortex.emit_all_cvecs()
-            self.driver.set_cvecs_per_layer(cvecs)
+            # Articulate: optionally push cortex cvecs to the driver,
+            # clamped to the posture budget (unclamped warm-state cvecs
+            # destroy generation outright). Default: posture disabled —
+            # see __init__.
+            if self.use_cvec_posture:
+                cvecs = self.cortex.emit_all_cvecs()
+                combined = float(
+                    np.sqrt(sum(float(np.sum(v * v)) for v in cvecs))
+                )
+                if combined > CVEC_NORM_BUDGET:
+                    scale = CVEC_NORM_BUDGET / combined
+                    cvecs = [v * scale for v in cvecs]
+                self.driver.set_cvecs_per_layer(cvecs)
+            else:
+                self.driver.clear_cvec()
             result = self.driver.generate(request, max_tokens=max_tokens)
             return result
         finally:
@@ -280,13 +306,16 @@ class MinimalOrganism:
         if total <= MAX_PREFIX_TOKENS:
             self._prefix_token_count = total
             self._prefix_overflow_count = 0
-            return " ".join(corrections)
+            return " ".join(corrections) + "\n"
 
         # Drop oldest tokens to fit budget.
         kept_ids = seq[-MAX_PREFIX_TOKENS:]
         self._prefix_token_count = len(kept_ids)
         self._prefix_overflow_count = total - MAX_PREFIX_TOKENS
-        return self.driver._tokenizer.decode(kept_ids, skip_special_tokens=True)
+        return (
+            self.driver._tokenizer.decode(kept_ids, skip_special_tokens=True)
+            + "\n"
+        )
 
     # ------------------------------------------------------------------
     # Helpers
