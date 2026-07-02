@@ -40,7 +40,7 @@ from .cvec_driver import ReservedPosition
 # arg if the module hasn't landed yet.
 # ---------------------------------------------------------------------------
 try:
-    from .hf_model_choice import DEFAULT_MODEL_ID  # type: ignore[import-untyped]
+    from .hf_model_choice import HF_MODEL_ID as DEFAULT_MODEL_ID
 except ImportError:
     DEFAULT_MODEL_ID: str | None = None  # type: ignore[no-redef]
 
