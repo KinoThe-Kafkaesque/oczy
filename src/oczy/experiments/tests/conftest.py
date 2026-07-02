@@ -1,8 +1,9 @@
 """Pytest configuration for experiments tests.
 
-The ``eval`` package lives at the repo root, outside the ``src/``
-import tree.  Insert the repo root into ``sys.path`` so that
-``from eval.v2 import ...`` works in modules under test.
+The ``eval`` package lives at the repo root, outside the ``src/`` import
+tree.  Insert the repo root into ``sys.path`` so that
+``from eval.v2 import ...`` resolves in modules under test (pulled in
+transitively by ``oczy.experiments.minimal_loop`` and friends).
 """
 
 from __future__ import annotations
