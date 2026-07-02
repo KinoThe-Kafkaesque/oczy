@@ -566,7 +566,11 @@ def _run_mock_driver(k: int = 4) -> dict[str, float]:
     }
 
 
-def _run_ablation_real(checkpoints: list[int] = [0, 5, 10, 15, 20], seeds: int = 1) -> None:
+def _run_ablation_real(
+    checkpoints: list[int] = [0, 5, 10, 15, 20],
+    seeds: int = 1,
+    output_path: str | None = None,
+) -> None:
     """S2.4 single-variable ablation on the real GGUF driver.
 
     Five conditions isolate the effect of alpha, threshold, and diversity:
@@ -579,15 +583,24 @@ def _run_ablation_real(checkpoints: list[int] = [0, 5, 10, 15, 20], seeds: int =
     ``clamp_norm`` for conditions 2-5 is condition 1's final cvec norm, so the
     clamped metric isolates steering DIRECTION from LOUDNESS across conditions.
     """
-    _run_ablation(checkpoints, seeds, use_logits=True)
+    _run_ablation(checkpoints, seeds, use_logits=True, output_path=output_path)
 
 
-def _run_ablation_mock(checkpoints: list[int] = [0, 5, 10, 15, 20], seeds: int = 1) -> None:
+def _run_ablation_mock(
+    checkpoints: list[int] = [0, 5, 10, 15, 20],
+    seeds: int = 1,
+    output_path: str | None = None,
+) -> None:
     """S2.4 ablation on the mock driver (uptake-based, no GGUF needed)."""
-    _run_ablation(checkpoints, seeds, use_logits=False)
+    _run_ablation(checkpoints, seeds, use_logits=False, output_path=output_path)
 
 
-def _run_ablation(checkpoints: list[int], seeds: int, use_logits: bool) -> None:
+def _run_ablation(
+    checkpoints: list[int],
+    seeds: int,
+    use_logits: bool,
+    output_path: str | None = None,
+) -> None:
     """Shared ablation runner for both real and mock drivers.
 
     For each condition, iterates through every K in *checkpoints*, creating
@@ -718,12 +731,12 @@ def _run_ablation(checkpoints: list[int], seeds: int, use_logits: bool) -> None:
                     row["wall_time_s"] = elapsed
                     results.append(row)
 
-    output_path = str(
-        Path(__file__).parent.parent.parent.parent
-        / "experiments_logs"
-        / "2026-07-01_s2_4_breakthrough_ablation.md"
-    )
-    _write_ablation_report(results, cp_sorted, seeds, use_logits, output_path)
+    # Historical note: this used to hardcode the 2026-07-01 S2.4 log path,
+    # which silently rewrote a frozen experiment record on every mock/test
+    # run. Reports are now written only to an explicitly requested path;
+    # otherwise the tables go to stdout alone.
+    if output_path is not None:
+        _write_ablation_report(results, cp_sorted, seeds, use_logits, output_path)
 
 
 def _write_ablation_report(
@@ -950,19 +963,31 @@ def main(argv: list[str] | None = None) -> int:
         default=1,
         help="Number of seeds for the ablation suite (default 1).",
     )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "Path for the ablation markdown report. Omitted = stdout only "
+            "(reports never overwrite historical logs implicitly)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.ablation:
         if args.driver == "real":
             try:
                 _run_ablation_real(
-                    checkpoints=[0, 5, 10, 15, 20], seeds=args.ablation_seeds
+                    checkpoints=[0, 5, 10, 15, 20],
+                    seeds=args.ablation_seeds,
+                    output_path=args.output,
                 )
             except Exception:
                 print("ASI ablation_real=failed")
         else:
             _run_ablation_mock(
-                checkpoints=[0, 5, 10, 15, 20], seeds=args.ablation_seeds
+                checkpoints=[0, 5, 10, 15, 20],
+                seeds=args.ablation_seeds,
+                output_path=args.output,
             )
         return 0
 
