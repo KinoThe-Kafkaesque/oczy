@@ -494,8 +494,9 @@ class HFDriver:
         Args:
             prompt: text to forward through the model.
             layer_idx: 0-based decoder layer index.
-            pooling: ``"last"`` (default — last-token hidden) or
-                     ``"mean"`` (mean-pool all tokens).
+            pooling: ``"last"`` (default — last-token hidden),
+                     ``"mean"`` (mean-pool all tokens), or
+                     ``"max"`` (max-pool over tokens).
 
         Returns:
             ``ndarray`` of shape ``(n_embd,)``, dtype ``float32``.
@@ -505,9 +506,9 @@ class HFDriver:
                 "layer_idx %d out of range [0, %d)"
                 % (layer_idx, self.n_layers)
             )
-        if pooling not in ("last", "mean"):
+        if pooling not in ("last", "mean", "max"):
             raise ValueError(
-                "pooling must be 'last' or 'mean', got %r" % pooling
+                "pooling must be 'last', 'mean', or 'max', got %r" % pooling
             )
 
         input_ids = self._tokenize(prompt)
@@ -518,6 +519,8 @@ class HFDriver:
 
         if pooling == "last":
             vec = hidden[0, -1, :]
+        elif pooling == "max":
+            vec = hidden[0].max(dim=0).values
         else:
             vec = hidden[0].mean(dim=0)
 
