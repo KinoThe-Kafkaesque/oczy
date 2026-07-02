@@ -97,22 +97,33 @@ all metrics reported with seeds/CI and a vanilla-LM column.
 KV-cache writes and mid-layer hidden reads are ordinary tensor operations,
 not research blockers.
 
-> **Status 2026-07-01: IN PROGRESS.** Kickoff: S1.3/S1.4 experiment specs
-> pre-registered as `research/09-hf-kv-slot-fact-injection.md` and
-> `research/10-hf-layer-l-hidden-probe.md` (fallback analyses fixed in
-> advance; acceptance judged only on primaries). Phase A (parallel agents):
-> S1.1 model selection, S1.2 HFDriver + contract tests on a tiny random
-> model, S1.5 legacy freeze. Phase B (after A merges): S1.3 + S1.4 per specs.
+> **Status 2026-07-02: COMPLETE.** Substrate: `Qwen/Qwen2.5-0.5B-Instruct`
+> (82.8 ms/tok CPU; plain-transformer KV verified; 1.5B fallback recorded).
+> `HFDriver` merged (peek_layer, cvec hooks, KV-splice API; 27+ contract
+> tests). Pre-registered experiment verdicts:
+> - **S1.4 REFUTE** (`2026-07-01_s1_4_hf_layer_probe.md`): no mid-layer
+>   beats final-layer mean-pool on Qwen-0.5B (gap −0.083) OR LFM2.5 (+0.058
+>   < +0.10). lane_03 confirmed as a model property, not a llama.cpp
+>   keyhole. **Goal 2's mid-layer assumption is retired — the cortex
+>   consumes final-layer hiddens.**
+> - **S1.3 REFUTE on absolute recall** (`2026-07-01_s1_3_hf_kv_slot_injection.md`):
+>   KV-splice rank-1 on 1/3 facts. But C2 (KV splice) matched C1 (text
+>   prefix) rank-for-rank on every fact — **the KV mechanism is
+>   behaviorally equivalent to the prefix at zero visible-token cost**;
+>   the absolute failure is the 0.5B model's recall ceiling (the prefix
+>   fails the same facts). Pre-blank splice position fixed the hardest
+>   fact (rank 4→0). Sprint 2 implications: KV slots replace the prefix,
+>   spliced pre-blank; consider the 1.5B fallback for recall-critical runs.
 
 ### Tasks
 
-- [ ] **S1.1 — Pick the model.**
+- [x] **S1.1 — Pick the model.**
   A plain small *transformer* (e.g. Qwen-0.5B/1.5B or Pythia-1B class), not
   a hybrid conv+attention model — LFM2.5's recurrence state made even KV
   snapshots ambiguous (348 KB blobs including conv1d state). Use
   `bench_hf_cpu.py` as the starting harness; confirm CPU latency is
   tolerable for the curriculum (seconds/probe is fine).
-- [ ] **S1.2 — `HFDriver` with the same surface as `LlamaCVecDriver`.**
+- [x] **S1.2 — `HFDriver` with the same surface as `LlamaCVecDriver`.**
   `generate()`, `peek_embedding()`, `set_cvecs_per_layer()` (forward
   pre-hooks adding residual bias), plus the two capabilities llama.cpp
   never gave us:
@@ -120,17 +131,17 @@ not research blockers.
     `output_hidden_states=True`.
   - `write_kv_slot(layer, position, k, v)` → real Goal 1, by editing
     `past_key_values` before decode.
-- [ ] **S1.3 — Re-run the Goal-1 discriminating test on the new substrate.**
+- [x] **S1.3 — Re-run the Goal-1 discriminating test on the new substrate.**
   The 2026-06-27 finding (cvec cannot force exact tokens; logit bias can)
   must be re-tested with true KV-slot injection: does a written KV slot
   achieve rank-1 recall *without* logit bias and *without* a text prefix?
   This is the single most thesis-relevant experiment in the whole plan.
-- [ ] **S1.4 — Re-run the Goal-2 layer-L probe honestly.**
+- [x] **S1.4 — Re-run the Goal-2 layer-L probe honestly.**
   Lane 03's refutation (no mid-layer beats final-layer pooling) was run
   through llama.cpp's keyhole. Re-run the silhouette test across all layers
   with real hiddens. Pre-register the fallback analysis (pooling variants)
   this time instead of shopping post-hoc.
-- [ ] **S1.5 — Keep llama.cpp as a frozen legacy path.**
+- [x] **S1.5 — Keep llama.cpp as a frozen legacy path.**
   Don't port organs yet; just keep old results reproducible.
 
 ### Definition of done
