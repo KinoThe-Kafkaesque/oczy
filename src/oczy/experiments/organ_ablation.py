@@ -1,18 +1,25 @@
-"""Organ ablation harness for Sprint 3.1.
+"""Organ ablation harness for Sprint 3.1 / S3.M1.
 
 Runs the full 6-stage curriculum for each organ configuration (FULL, MINIMAL,
-FULL-minus-X) and reports per-stage accuracy across ``--seeds`` seeds on the
-dev split.  Uses the raw (no-cortex-agent) backend so no GGUF is required;
-the mock-path verdicts are labelled explicitly as the mock-path pass.
+FULL-minus-X) and reports per-stage holdout accuracy across ``--seeds`` seeds.
+Two modes:
+
+- **Mock path** (default): raw backend, no GGUF, no cortex agent.  Fast,
+  already run and logged.
+- **Real-driver path** (``--real-driver``): full ``OrganismAgent`` with
+  LlamaCVecDriver via the legacy GGUF substrate — the honest reproduction
+  pass required by ``research/14`` before archive decisions.  Per-organ
+  off-switch configs are threaded through to the real agent.
 
 Usage::
 
-    uv run python -m oczy.experiments.organ_ablation [--seeds N] [--stages S0 S1 ...]
+    uv run python -m oczy.experiments.organ_ablation [--seeds N] [--stages S0 S1 ...] [--real-driver]
 
 Outputs::
 
-    experiments_logs/2026-07-01_s3_1_organ_ablation_mock.md   (human-readable)
-    experiments_logs/2026-07-01_s3_1_organ_ablation_mock.json  (machine-readable)
+    experiments_logs/2026-07-02_s3_m1_subtractive_ablation.md   (real-driver)
+    experiments_logs/2026-07-02_s3_m1_subtractive_ablation.json  (real-driver)
+    experiments_logs/2026-07-01_s3_1_organ_ablation_mock.*       (mock, existing)
 """
 
 from __future__ import annotations
@@ -96,16 +103,17 @@ def build_configs() -> dict[str, dict[str, Any]]:
 # Harness helpers
 # ---------------------------------------------------------------------------
 
-def _build_minimal_args(seeds: int = 3) -> argparse.Namespace:
+def _build_minimal_args(seeds: int = 3, *, use_real_driver: bool = False) -> argparse.Namespace:
     """Build an argparse.Namespace suitable for programmatic curriculum runs.
 
-    No cortex agent is attached (raw backend path, no GGUF).
+    When ``use_real_driver`` is False (default), no cortex agent is attached
+    (raw backend path, no GGUF).  When True, the real-driver path is wired.
     """
     return argparse.Namespace(
         agent="OrganismAgent",
         use_cortex_shim=False,
         use_cortex_agent_mock=False,
-        use_real_driver=False,
+        use_real_driver=use_real_driver,
         policy_log=None,
         semantic=False,
         seeds=seeds,
@@ -115,22 +123,38 @@ def _build_minimal_args(seeds: int = 3) -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 # Main runner
 # ---------------------------------------------------------------------------
-
 def run_ablation(
     stages: list[Stage],
     stage_splits: dict[str, set[str]],
     n_seeds: int = 3,
     *,
+    use_real_driver: bool = False,
     verbose: bool = True,
 ) -> dict[str, list[tuple[str, dict[str, float]]]]:
     """Run the organ ablation matrix.
+
+    When ``use_real_driver`` is True, policy-loop gates are enabled in every
+    config (mirroring ``run_curriculum.py``'s main) and the real GGUF driver
+    is attached via ``_build_agent_for_seed``.
 
     Returns ``{config_name: [(stage_name, summary_dict), ...]}`` where each
     summary dict carries ``n``, ``mean``, ``std``, ``ci95_half``, ``min``,
     ``max``.
     """
     configs = build_configs()
-    args = _build_minimal_args(seeds=n_seeds)
+    args = _build_minimal_args(seeds=n_seeds, use_real_driver=use_real_driver)
+
+    # When running the real driver, enable the policy-loop gates that
+    # run_curriculum.py's main activates for --use-real-driver, so the
+    # CortexAgent policy head and value baseline are wired in.
+    real_driver_gates: dict[str, Any] = {}
+    if use_real_driver:
+        real_driver_gates = {
+            "use_cortex_policy": True,
+            "use_value_baseline": True,
+            "use_acceptance_policy_reward": True,
+            "policy_suppresses_fast_answer": True,
+        }
 
     results: dict[str, list[tuple[str, dict[str, float]]]] = {}
 
@@ -140,11 +164,15 @@ def run_ablation(
             print(f"  {config_name}")
             print(f"{'=' * 60}")
 
+        # Merge real-driver gates into each config before agent construction.
+        merged_config = dict(extra_config)
+        merged_config.update(real_driver_gates)
+
         seed_results: list[list[StageResult]] = []
         for seed in range(n_seeds):
             if verbose:
                 print(f"    seed {seed + 1}/{n_seeds} ...", end="", flush=True)
-            agent = _build_agent_for_seed(args, dict(extra_config), seed=seed)
+            agent = _build_agent_for_seed(args, merged_config, seed=seed)
             sr = _run_stages(agent, stages, None, args, stage_splits)
             seed_results.append(sr)
             if verbose:
@@ -236,7 +264,7 @@ def print_matrix(
     sep = "-" * len(header)
 
     print(f"\n{'=' * len(header)}")
-    print("  Organ Ablation Matrix  (raw backend, dev split)")
+    print("  Organ Ablation Matrix  (dev split)")
     print(f"{'=' * len(header)}")
     print()
     print(header)
@@ -282,6 +310,8 @@ def write_outputs(
     vanilla: list[tuple[str, dict[str, float]]] | None,
     out_dir: Path,
     out_stem: str,
+    *,
+    use_real_driver: bool = False,
 ) -> tuple[Path, Path]:
     """Write JSON + markdown log to ``out_dir``."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -289,20 +319,20 @@ def write_outputs(
     md_path = out_dir / f"{out_stem}.md"
     json_path = out_dir / f"{out_stem}.json"
 
+    path_label = "real-driver (LlamaCVecDriver GGUF)" if use_real_driver else "mock (raw backend)"
+    backend_label = "real GGUF + CortexAgent" if use_real_driver else "raw (no cortex)"
+
     # ----------------------------------------------------------------
     # Markdown log
     # ----------------------------------------------------------------
     md_lines: list[str] = []
     md_lines.append(f"# Organ Ablation Matrix — {out_stem}")
     md_lines.append("")
-    md_lines.append(
-        "**Path:** raw (no cortex agent, no GGUF).  "
-        "This is the **mock-path** pass; the real-driver pass is a follow-up."
-    )
+    md_lines.append(f"**Path:** {path_label}.")
     md_lines.append("")
     md_lines.append(f"**Generated:** {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}")
     md_lines.append(f"**Seeds:** {int(next(iter(results.values()))[0][1]['n'])}  |  "
-                    f"**Split:** dev  |  **Backend:** raw (no cortex)")
+                    f"**Split:** dev  |  **Backend:** {backend_label}")
     md_lines.append("")
 
     # Matrix table
@@ -337,40 +367,73 @@ def write_outputs(
 
     md_lines.append("")
 
-    # Per-organ verdicts — compare FULL vs FULL-X
+    # Per-organ Δ = FULL − (FULL−organ) table — per stage and all-stage mean.
     full_map = dict(results.get("FULL", []))
-    md_lines.append("## Per-Organ Verdicts (mock path)")
+    md_lines.append("## Per-Organ Δ (FULL minus FULL-organ)")
     md_lines.append("")
-    md_lines.append("Each verdict compares FULL-*organ* against FULL on the raw backend.")
+    md_lines.append("Positive Δ → organ contributes; negative → ablation improves accuracy.")
+    md_lines.append("")
+    delta_header = "| Organ | " + " | ".join(stage_names) + " | All-stage mean ± CI |"
+    md_lines.append(delta_header)
+    delta_sep = "|" + "|".join("---" for _ in range(len(stage_names) + 2)) + "|"
+    md_lines.append(delta_sep)
+
+    for organ in ORGANS:
+        cn = f"FULL-{organ.short}"
+        if cn not in results:
+            continue
+        ablated_map = dict(results[cn])
+        deltas: list[float] = []
+        row = f"| **{organ.display}** |"
+        for sn in stage_names:
+            f_mean = full_map.get(sn, {}).get("mean", 0.0)
+            a_mean = ablated_map.get(sn, {}).get("mean", 0.0)
+            d = f_mean - a_mean
+            deltas.append(d)
+            row += f" {d:+.4f} |"
+        # All-stage mean ± CI of the per-stage deltas.
+        if deltas:
+            delta_summary = summarize(deltas)
+            row += f" {delta_summary['mean']:+.4f} ± {delta_summary['ci95_half']:.4f} |"
+        else:
+            row += " N/A |"
+        md_lines.append(row)
+
+    md_lines.append("")
+
+    # Per-organ verdicts
+    md_lines.append("## Per-Organ Verdicts")
+    md_lines.append("")
+    md_lines.append(f"Each verdict compares FULL-*organ* against FULL ({path_label}).")
+    if not use_real_driver:
+        md_lines.append("")
+        md_lines.append("> ⚠️ **MOCK-PATH CAVEAT:** The raw backend has no cortex agent, so "
+                         "critic/DSI/scope-slot signals are minimal or absent.  "
+                         "The real-driver pass is required before organ archive decisions.")
     md_lines.append("")
     for organ in ORGANS:
         cn = f"FULL-{organ.short}"
         if cn not in results:
             continue
         ablated_map = dict(results[cn])
-        # Average delta across stages
         deltas: list[float] = []
         for sn in stage_names:
             f = full_map.get(sn, {}).get("mean", 0.0)
             a = ablated_map.get(sn, {}).get("mean", 0.0)
-            deltas.append(a - f)
+            deltas.append(f - a)
         avg_delta = sum(deltas) / len(deltas) if deltas else 0.0
         if abs(avg_delta) < 0.005:
-            verdict = "**dead weight** (delta indistinguishable from noise on mock path)"
-        elif avg_delta < 0:
-            verdict = f"**contributing** (ablation loses {abs(avg_delta):.4f} on average; mock path)"
+            verdict = "**dead weight** (delta indistinguishable from noise)"
+        elif avg_delta > 0:
+            verdict = f"**contributing** (organ saves {avg_delta:+.4f} on average)"
         else:
-            verdict = f"**harmful** (ablation gains {avg_delta:+.4f} on average; mock path)"
+            verdict = f"**harmful** (ablation improves accuracy by {abs(avg_delta):+.4f} on average)"
 
         md_lines.append(
             f"- **{organ.display}** (`{organ.short}`): {verdict}  "
-            f"(stage deltas: {', '.join(f'{sn}: {d:+.4f}' for sn, d in zip(stage_names, deltas))})"
+            f"(per-stage Δ: {', '.join(f'{sn}: {d:+.4f}' for sn, d in zip(stage_names, deltas))})"
         )
 
-    md_lines.append("")
-    md_lines.append("> ⚠️ **MOCK-PATH CAVEAT:** The raw backend has no cortex agent, so "
-                     "critic/DSI/scope-slot signals are minimal or absent.  "
-                     "The real-driver pass is required before organ archive decisions.")
     md_lines.append("")
 
     with md_path.open("w", encoding="utf-8") as fh:
@@ -380,7 +443,7 @@ def write_outputs(
     # JSON output
     # ----------------------------------------------------------------
     json_payload: dict[str, Any] = {
-        "path": "mock",
+        "path": "real" if use_real_driver else "mock",
         "split": "dev",
         "n_seeds": int(next(iter(results.values()))[0][1]["n"]),
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -410,7 +473,7 @@ def write_outputs(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="S3.1 Organ ablation matrix harness."
+        description="S3.1 / S3.M1 Organ ablation matrix harness."
     )
     p.add_argument(
         "--seeds", type=int, default=3,
@@ -421,12 +484,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Limit to these stage names (default: all 6).",
     )
     p.add_argument(
+        "--real-driver",
+        action="store_true",
+        help="Attach a CortexAgent backed by the real LFM2.5 GGUF model (legacy substrate).",
+    )
+    p.add_argument(
         "--output-dir", type=Path,
         default=Path(__file__).resolve().parents[3] / "experiments_logs",
         help="Output directory for JSON + markdown.",
     )
     return p.parse_args(argv)
-
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
@@ -440,15 +507,24 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     # Run ablation
-    results = run_ablation(stages, stage_splits, n_seeds=args.seeds)
+    results = run_ablation(
+        stages, stage_splits, n_seeds=args.seeds,
+        use_real_driver=args.real_driver,
+    )
 
     # Vanilla baseline
     vanilla = run_vanilla_baseline(stages, stage_splits)
 
     # Print and write
     print_matrix(results, vanilla)
-    out_stem = "2026-07-01_s3_1_organ_ablation_mock"
-    md_path, json_path = write_outputs(results, vanilla, args.output_dir, out_stem)
+    if args.real_driver:
+        out_stem = "2026-07-02_s3_m1_subtractive_ablation"
+    else:
+        out_stem = "2026-07-01_s3_1_organ_ablation_mock"
+    md_path, json_path = write_outputs(
+        results, vanilla, args.output_dir, out_stem,
+        use_real_driver=args.real_driver,
+    )
     print(f"  Markdown: {md_path}")
     print(f"  JSON:     {json_path}")
     return 0
