@@ -117,3 +117,17 @@ ranks remain poor as expected.
 uv run pytest src/oczy/experiments/tests/test_minimal_loop_kv.py -v   # 12 passed
 uv run python -m oczy.experiments.minimal_loop_kv --seeds 3 --stage 0
 ```
+
+---
+
+## Addendum 2026-07-02 (post-adjudication)
+
+1. The run above is **INVALID (instrument failure)**, not REFUTE: it executed
+   against the degenerate 0-probe stage-0 holdout, since repaired (see the
+   amendment in `research/12` and commit `11d8aca`).
+2. With research/11 now adjudicated **REFUTE** on the repaired split
+   (`2026-07-02_s2_1_minimal_loop.md`), the spec's validity gate binds:
+   **S2.2 is BLOCKED** — C1 produces no holdout effect, so a C2-vs-C1 parity
+   verdict would be fake. The KV content channel implementation
+   (`minimal_loop_kv.py`) and its tests are merged and remain valid code for
+   a future re-attempt under a new spec.

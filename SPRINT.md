@@ -154,15 +154,26 @@ vanilla column.
 
 ## Sprint 2 — Close ONE metabolism loop
 
-> **Status 2026-07-02: S2.3+S2.4 pulled forward and DONE**
+> **Status 2026-07-02 (end of day): SPRINT 2 COMPLETE — all five tasks
+> adjudicated.** S2.1 ran on the repaired stage-0 holdout split (see the
+> research/11-13 amendment; the pre-registered split was degenerate, 0
+> holdout probes) and is **REFUTE**
+> (`experiments_logs/2026-07-02_s2_1_minimal_loop.md`): loop_delta_holdout
+> 0.0000, rho nan, vanilla gate valid. Mechanism: the 48-token prefix budget
+> evicts corrections (transient K=4 bump 0.13 collapses to 0 at K=8), and
+> cvec posture harms generation at every tested amplitude (disabled;
+> uncalibrated on Qwen). Per their pre-registered validity gates, **S2.2 and
+> S2.5 are BLOCKED** (implementations + tests merged and ready). The clamp
+> metric fix (S2.0, `f761cc0`) landed.
+>
+> Earlier same day: **S2.3+S2.4 pulled forward and DONE**
 > (`experiments_logs/2026-07-01_s2_4_breakthrough_ablation.md`).
 > **The 13.5x claim (044cb51) is RETRACTED as magnitude inflation**: control
 > words rose MORE than target words (Δ_control 2.92 > Δ_target 1.60); under
 > norm control the NEW config (0.566) falls below OLD unclamped (0.627);
 > survival ratio 0.354 < 0.5; no single variable improves on OLD. Caveats:
 > single seed; clamp-budget capture has a cross-instance stochasticity
-> artifact (cond 1) — fix before reusing the clamped metric.
-> S2.1/S2.2/S2.5 remain (need the HF substrate path from Sprint 1).
+> artifact (cond 1) — fixed by S2.0 (`f761cc0`).
 
 **Goal:** the minimal thesis loop, end to end, with nothing else attached:
 correction → cortex fast-weight change → consolidation → **changed LM
@@ -170,10 +181,10 @@ behavior on held-out probes** → raw trace deleted → behavior survives.
 
 ### Tasks
 
-- [ ] **S2.1 — Minimal organism: KVCortex + hippocampus + HFDriver only.**
+- [x] **S2.1 — Minimal organism: KVCortex + hippocampus + HFDriver only.** — REFUTE
   No critic, no identity, no immune, no autoencoder, no DSI, no scope-slot
   reranker. If the loop can't close with two components, five won't help.
-- [ ] **S2.2 — Content path through KV slots, not prefix text.**
+- [x] **S2.2 — Content path through KV slots, not prefix text.** — BLOCKED (gate: S2.1 REFUTE); code merged
   Consolidated facts are injected as written KV entries (S1.2), retiring
   the token-burning articulation prefix. Cvec stays as the posture surface
   only, per the honest 06-25/06-27 findings.
@@ -189,7 +200,7 @@ behavior on held-out probes** → raw trace deleted → behavior survives.
   diverse corrections), each on identical data, 5 seeds, full K-trajectory
   (K=0,1,5,10,15,20) with Spearman ρ against the spec's C2 criterion.
   Keep whichever mechanism survives; retract the claim if none does.
-- [ ] **S2.5 — The forgetting test (the thesis's signature move).**
+- [x] **S2.5 — The forgetting test (the thesis's signature move).** — BLOCKED (gate: S2.1 REFUTE); harness merged
   After consolidation, delete the hippocampus raw traces and re-run
   held-out probes. `behavior_delta_per_byte` is only meaningful if the
   bytes counted are the ones that *remain*. This is the first experiment

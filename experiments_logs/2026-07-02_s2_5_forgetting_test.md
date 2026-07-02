@@ -102,3 +102,16 @@ Per research/13 acceptance criteria:
 - REFUTE: ratio < 0.5
 - PARTIAL: 0.5 ≤ ratio < 0.8
 - BLOCKED: validity gate failed on all seeds
+
+---
+
+## Addendum 2026-07-02 (post-adjudication)
+
+The BLOCKED verdict above stands, but the binding reason has changed: the
+0-holdout split it observed was an instrument failure, since repaired (see
+the amendment in `research/13` and commit `11d8aca`). On the repaired split,
+research/11 was adjudicated **REFUTE** (`2026-07-02_s2_1_minimal_loop.md`),
+so the validity gate `A_full − A_none ≥ 0.10` cannot hold and **S2.5 remains
+BLOCKED** until a loop design closes at C1. The deletion APIs, snapshot/
+restore, and 2×2 harness (`minimal_loop_forgetting.py`) are merged and ready
+for that day.
