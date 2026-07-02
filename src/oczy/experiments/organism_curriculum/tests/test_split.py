@@ -17,6 +17,8 @@ cases, defending the concrete contracts of ``split_probes`` and
 
 from __future__ import annotations
 
+import math
+
 from oczy.experiments.organism_curriculum.dataset import (
     Episode,
     Probe,
@@ -140,3 +142,38 @@ def test_validate_split() -> None:
     report = validate_split((bad_stage,), fraction=0.0, salt="v2")
     assert not report.ok
     assert any("empty_holdout" in msg for msg in report.errors)
+
+
+def test_split_guarantee_engages_for_unlucky_large_stage() -> None:
+    """Bundled stage 0 hashes all 8 probes into dev at fraction=0.3, salt="v2"
+    — the degenerate split that invalidated the first S2.2 run. The
+    generalized guarantee must promote ceil(fraction * total) probes instead
+    of returning an empty holdout.
+    """
+    stage_0 = build_curriculum()[0]
+    total = sum(len(e.probes) for e in stage_0.episodes)
+    dev, holdout = split_probes(stage_0, fraction=0.3, salt="v2")
+    assert len(holdout) == math.ceil(0.3 * total) > 0
+    assert dev.isdisjoint(holdout)
+    assert len(dev) + len(holdout) == total
+
+
+def test_split_guarantee_never_alters_nonempty_holdouts() -> None:
+    """The guarantee only engages on an EMPTY holdout: every other bundled
+    stage keeps the exact partition it had before the guarantee was
+    generalized, preserving comparability with all previously logged numbers.
+    """
+    expected_holdout_counts = {1: 1, 2: 3, 3: 3, 4: 4, 5: 3}
+    stages = build_curriculum()
+    for idx, count in expected_holdout_counts.items():
+        _, holdout = split_probes(stages[idx], fraction=0.3, salt="v2")
+        assert len(holdout) == count, f"stage {idx} holdout changed"
+
+
+def test_validate_split_healthy_at_preregistered_fraction() -> None:
+    """The Sprint-2 pre-registered split params (fraction=0.3, salt="v2") must
+    validate cleanly across the whole bundled curriculum.
+    """
+    report = validate_split(build_curriculum(), fraction=0.3, salt="v2")
+    assert report.ok
+    assert report.errors == []

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -209,8 +210,9 @@ def split_probes(stage: Stage, fraction: float = 0.3, salt: str = "v2") -> tuple
 
     Returns:
         ``(dev_ids, holdout_ids)`` — two sets of probe identifier strings.
-        Stages with fewer than 4 total probes are guaranteed at least
-        1 holdout probe.
+        Every stage is guaranteed a non-empty holdout: if thresholding
+        assigns no probes, the lowest-force-hash probes are promoted (1 for
+        stages under 4 probes, ceil(fraction * total) otherwise).
     """
     probes: list[tuple[str, Probe, Episode]] = []
     for ep in stage.episodes:
@@ -233,8 +235,14 @@ def split_probes(stage: Stage, fraction: float = 0.3, salt: str = "v2") -> tuple
         else:
             dev.add(probe_id)
 
-    # Guarantee at least 1 holdout probe for tiny stages
-    if total > 0 and total < 4 and len(holdout) == 0:
+    # Guarantee a non-empty holdout for ANY stage: an empty holdout is an
+    # ERROR by validate_split's contract, and an unlucky hash can produce one
+    # (stage 0 grounding: all 8 probes hash > 0.3 under salt "v2"). When
+    # thresholding leaves holdout empty, promote the lowest-force-hash probes
+    # up to the expected holdout size. Non-empty splits are never altered, so
+    # every previously measurable split stays byte-identical.
+    if total > 0 and len(holdout) == 0:
+        target = 1 if total < 4 else math.ceil(fraction * total)
         sorted_ids = sorted(
             probes,
             key=lambda p: hashlib.sha256(
@@ -242,10 +250,11 @@ def split_probes(stage: Stage, fraction: float = 0.3, salt: str = "v2") -> tuple
             ).digest(),
         )
         for probe_id, _, _ in sorted_ids:
+            if len(holdout) >= target:
+                break
             if probe_id in dev:
                 dev.remove(probe_id)
                 holdout.add(probe_id)
-                break
 
     return dev, holdout
 

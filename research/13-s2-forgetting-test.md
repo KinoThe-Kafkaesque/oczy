@@ -70,3 +70,22 @@ mean over seeds of (`A_forget` − `A_none`) / (`A_full` − `A_none`).
 2×2 table (mean ± CI per arm), survival + retrieval-dependence ratios,
 memory_bytes before/after deletion, model id, exact commands; log to
 `experiments_logs/2026-07-02_s2_5_forgetting_test.md` quoting this spec.
+
+---
+
+## Amendment 2026-07-02 (before any primary verdict was drawn)
+
+The pre-registered split call `split_probes(stage, fraction=0.3, salt="v2")`
+was discovered to be degenerate on stage 0: an unlucky hash assigned all 8
+probes to dev, 0 to holdout — a state `validate_split` itself defines as an
+ERROR. The first S2.2 run executed against this empty holdout and is recorded
+as **INVALID (instrument failure)**; its 0/0 "REFUTE" is void and carries no
+evidential weight for or against H-KVCONTENT.
+
+**Repair (instrument-level, not spec-level):** `split_probes` now guarantees a
+non-empty holdout for every stage by promoting the lowest-force-hash probes to
+`ceil(fraction × total)` when thresholding yields none (stage 0: 3 holdout
+probes). No previously non-empty split is altered (locked by regression test
+`test_split_guarantee_never_alters_nonempty_holdouts`), so all previously
+logged numbers remain comparable. The spec's split call, salt, and fraction
+are unchanged. Amendment applies identically to research/11, 12, and 13.
