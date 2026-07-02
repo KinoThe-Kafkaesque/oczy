@@ -326,11 +326,17 @@ class MinimalOrganismKV:
 # ---------------------------------------------------------------------------
 
 
-def _load_stage_and_split(stage_name: str) -> tuple[Stage, set[str], set[str]]:
+def _load_stage_and_split(stage_spec: str) -> tuple[Stage, set[str], set[str]]:
     """Load a frozen stage JSON and partition probes into dev/holdout.
 
-    The stage is loaded from eval/v2/<stage_name>.json.
+    stage_spec can be a numeric stage index (e.g. "0") or a full stage
+    file name (e.g. "stage_0_grounding").
     """
+    # Map numeric stage indices to full file names.
+    _STAGE_NAMES: dict[str, str] = {
+        "0": "stage_0_grounding",
+    }
+    stage_name = _STAGE_NAMES.get(stage_spec, stage_spec)
     data_dir = Path(__file__).resolve().parents[3] / "eval" / "v2"
     stage_path = data_dir / f"{stage_name}.json"
     stage = load_stage(stage_path)
