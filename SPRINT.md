@@ -154,6 +154,16 @@ vanilla column.
 
 ## Sprint 2 — Close ONE metabolism loop
 
+> **Status 2026-07-02: S2.3+S2.4 pulled forward and DONE**
+> (`experiments_logs/2026-07-01_s2_4_breakthrough_ablation.md`).
+> **The 13.5x claim (044cb51) is RETRACTED as magnitude inflation**: control
+> words rose MORE than target words (Δ_control 2.92 > Δ_target 1.60); under
+> norm control the NEW config (0.566) falls below OLD unclamped (0.627);
+> survival ratio 0.354 < 0.5; no single variable improves on OLD. Caveats:
+> single seed; clamp-budget capture has a cross-instance stochasticity
+> artifact (cond 1) — fix before reusing the clamped metric.
+> S2.1/S2.2/S2.5 remain (need the HF substrate path from Sprint 1).
+
 **Goal:** the minimal thesis loop, end to end, with nothing else attached:
 correction → cortex fast-weight change → consolidation → **changed LM
 behavior on held-out probes** → raw trace deleted → behavior survives.
@@ -167,13 +177,13 @@ behavior on held-out probes** → raw trace deleted → behavior survives.
   Consolidated facts are injected as written KV entries (S1.2), retiring
   the token-burning articulation prefix. Cvec stays as the posture surface
   only, per the honest 06-25/06-27 findings.
-- [ ] **S2.3 — Magnitude-controlled drift metric.**
+- [x] **S2.3 — Magnitude-controlled drift metric.**
   Replace `metabolism_drift_delta` reporting with a three-part report:
   (a) target-domain logit delta, (b) non-target logit delta (specificity —
   steering vs shouting), (c) the same measurement with steering-vector
   norm normalized to a fixed budget. A "drift" gain that vanishes under
   norm control is loudness, not learning.
-- [ ] **S2.4 — Re-adjudicate the "13.5x breakthrough" (commit `044cb51`).**
+- [x] **S2.4 — Re-adjudicate the "13.5x breakthrough" (commit `044cb51`).**
   Single-variable ablation of the four things that changed at once
   (alpha_correction 1.0→0.3, replay threshold 3→2, batch 3→2, single→8
   diverse corrections), each on identical data, 5 seeds, full K-trajectory
