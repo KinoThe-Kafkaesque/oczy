@@ -269,23 +269,13 @@ class MinimalForgettingOrganism:
     # ------------------------------------------------------------------
 
     def answer(self, request: str, max_tokens: int = 64) -> str:
-        """Generate an answer through the LM with cortex steering + prefix.
+        """Generate an answer through the LM with consolidated prefix.
 
+        The prefix is the sole content channel; cvec posture is disabled
+        (it currently breaks generation on Qwen 0.5B at these magnitudes).
         NEVER accesses the hippocampus at answer time.
         """
-        # Apply cortex steering
-        if self.cortex.has_uniform_proj_c():
-            vec = self.cortex.emit_uniform_cvec()
-            self.driver.set_cvec_uniform(vec)
-        else:
-            self.driver.set_cvecs_per_layer(self.cortex.emit_all_cvecs())
-
-        try:
-            result = self.driver.generate(request, max_tokens=max_tokens)
-        finally:
-            self.driver.clear_cvec()
-
-        return result
+        return self.driver.generate(request, max_tokens=max_tokens)
 
     # ------------------------------------------------------------------
     # Deletion APIs
