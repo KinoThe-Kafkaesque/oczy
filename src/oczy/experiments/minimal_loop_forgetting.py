@@ -30,6 +30,7 @@ from oczy.common.stats import format_row, summarize
 from oczy.eval_v2.scoring import probe_matches
 from oczy.experiments.organism_curriculum.dataset import (
     Episode,
+    Probe,
     Stage,
     build_curriculum,
     split_probes,
@@ -436,7 +437,6 @@ def _run_seed(
     seed: int,
     model_id: str,
     stage: Stage,
-    dev_probes: list[Any],
     holdout_probes: list[Any],
 ) -> dict[str, Any]:
     """Run one seed: train → snapshot → score four arms."""
@@ -763,11 +763,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Stage {stage_idx} not found (max {len(stages) - 1})")
         return 1
     stage = stages[stage_idx]
-
     # Split probes
     dev_ids, holdout_ids = split_probes(stage, fraction=0.3, salt="v2")
-    holdout_probes = [p for p in stage.probes if p.id in holdout_ids]
-    dev_probes = [p for p in stage.probes if p.id in dev_ids]
+    holdout_probes: list[Probe] = []
+    dev_probes: list[Probe] = []
+    for ep in stage.episodes:
+        for probe in ep.probes:
+            probe_id = f"{ep.id}|{probe.request}|{probe.category}"
+            if probe_id in holdout_ids:
+                holdout_probes.append(probe)
+            else:
+                dev_probes.append(probe)
     print(
         f"Stage {stage_idx} ({stage.name}): "
         f"{len(stage.episodes)} episodes, "
@@ -775,12 +781,12 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # Dry-run one seed to estimate time
-    print(f"\n--- Dry-run seed 0 (timing) ---")
+    print("\n--- Dry-run seed 0 (timing) ---")
     t_dry_start = time.monotonic()
-    _run_seed(0, model_id, stage, dev_probes, holdout_probes)
+    _run_seed(0, model_id, stage, holdout_probes)
     dry_time = time.monotonic() - t_dry_start
     est_total = dry_time * seeds
-    print(f"Dry-run: {dry_time:.1f}s → estimated {est_total:.1f}s for {seeds} seeds")
+    print(f"Dry-run: {dry_time:.1f}s -> estimated {est_total:.1f}s for {seeds} seeds")
 
     if est_total > seeds * 900 and seeds > FALLBACK_SEEDS:
         print(
@@ -794,7 +800,7 @@ def main(argv: list[str] | None = None) -> int:
     for seed in range(seeds):
         print(f"\n--- Seed {seed + 1}/{seeds} ---")
         t0 = time.monotonic()
-        result = _run_seed(seed, model_id, stage, dev_probes, holdout_probes)
+        result = _run_seed(seed, model_id, stage, holdout_probes)
         elapsed = time.monotonic() - t0
         acc = result["arm_accuracies"]
         print(
