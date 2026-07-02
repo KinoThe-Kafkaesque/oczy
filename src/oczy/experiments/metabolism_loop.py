@@ -14,7 +14,10 @@ Mode:
 from __future__ import annotations
 
 import argparse
+import copy
+from pathlib import Path
 import sys
+import time
 from typing import Any
 
 import numpy as np
@@ -32,13 +35,26 @@ _DIVERSE_CORRECTIONS: tuple[str, ...] = (
     "When you see 'profile' in this request, interpret it as business vertical.",
 )
 _DOMAIN_WORDS = ["commercial", "economic", "business", "strategy", "market", "vertical"]
-
+_CONTROL_WORDS = [
+    "document",
+    "information",
+    "report",
+    "number",
+    "system",
+    "process",
+]
 
 def _domain_uptake(answer: str) -> float:
     """Fraction of probe domain words present in the answer."""
     tokens = {t.strip(".,!?;:'\"()*[]").lower() for t in answer.split()}
     hits = sum(1 for w in _DOMAIN_WORDS if w.lower() in tokens)
     return hits / len(_DOMAIN_WORDS)
+
+
+def _control_uptake(answer: str) -> float:
+    """Fraction of probe control words present in the answer."""
+    hits = sum(1 for w in _CONTROL_WORDS if w in answer.lower())
+    return hits / len(_CONTROL_WORDS)
 
 
 def _compounding_index(cold_states: list[np.ndarray]) -> float:
@@ -73,7 +89,92 @@ def _compounding_slope(indices: list[int], norms: list[float]) -> float:
 
 
 def _cold_norms(cold_states: list[np.ndarray]) -> list[float]:
+    """L2 norms of each cold state snapshot."""
     return [float(np.linalg.norm(s)) for s in cold_states]
+
+# ---------------------------------------------------------------------------
+# S2.3 Magnitude-controlled drift metric
+# ---------------------------------------------------------------------------
+
+
+def _cvec_combined_norm(agent: Any) -> float:
+    """Combined L2 norm across all per-layer cvecs.
+
+    sqrt(sum(||v||^2 for v in cvecs)).  This is the scalar magnitude
+    of the steering vector that the LM sees.
+    """
+    cvecs = agent.cortex.emit_all_cvecs()
+    merged_sq = sum(float(np.sum(v * v)) for v in cvecs)
+    return float(np.sqrt(merged_sq))
+
+
+def _logit_shift_with_cvec(
+    agent: Any, word_list: list[str], cvec_norm_clamp: float | None = None
+) -> float:
+    """Mean next-token logit of words at the probe blank, with cvec applied.
+
+    When ``cvec_norm_clamp`` is provided, the per-layer cvecs are uniformly
+    scaled down so their combined L2 norm does not exceed that budget.
+    This isolates steering DIRECTION from steering LOUDNESS.
+
+    Requires a real driver (llama-cpp-python backed).  Mock drivers should
+    use the uptake-based path.
+    """
+    from numpy import ctypeslib
+
+    cvecs = agent.cortex.emit_all_cvecs()
+    if cvec_norm_clamp is not None and cvec_norm_clamp > 0:
+        current_norm = np.sqrt(sum(float(np.sum(v * v)) for v in cvecs))
+        if current_norm > cvec_norm_clamp:
+            scale = cvec_norm_clamp / current_norm
+            cvecs = [v * scale for v in cvecs]
+
+    agent.driver.set_cvecs_per_layer(cvecs, scale=agent.config.articulate_scale)
+    try:
+        llm = agent.driver._llm
+        n_vocab = llm.n_vocab()
+        text_bytes = _PROBE.encode("utf-8")
+        ids = llm.tokenize(text_bytes, add_bos=True)
+        llm.eval(ids)
+        raw = llm._ctx.get_logits()
+        logits = ctypeslib.as_array(raw, shape=(len(ids) * n_vocab,))
+        last = logits[(len(ids) - 1) * n_vocab : len(ids) * n_vocab].copy()
+
+        token_ids: list[int] = []
+        for word in word_list:
+            word_ids = llm.tokenize(word.encode("utf-8"), add_bos=False)
+            if word_ids:
+                token_ids.append(int(word_ids[0]))
+        if not token_ids:
+            return 0.0
+        return float(np.mean(last[token_ids]))
+    finally:
+        agent.driver.clear_cvec()
+
+
+def _domain_probe_with_cvec(
+    agent: Any, cvec_norm_clamp: float | None = None
+) -> float:
+    """Domain uptake with cvec applied, optionally clamped.
+
+    Mock-driver-safe path: applies clamped cvec then calls articulate().
+    """
+    if cvec_norm_clamp is not None and cvec_norm_clamp > 0:
+        cvecs = agent.cortex.emit_all_cvecs()
+        current_norm = np.sqrt(sum(float(np.sum(v * v)) for v in cvecs))
+        if current_norm > cvec_norm_clamp:
+            scale = cvec_norm_clamp / current_norm
+            cvecs = [v * scale for v in cvecs]
+        answer = agent.articulate(
+            _PROBE,
+            max_tokens=8,
+            temperature=0.0,
+            apply_steering=False,
+            use_reserved_position=False,
+        )
+        return _domain_uptake(answer)
+    else:
+        return _domain_probe(agent)
 
 
 # ---------------------------------------------------------------------------
@@ -81,13 +182,35 @@ def _cold_norms(cold_states: list[np.ndarray]) -> list[float]:
 # ---------------------------------------------------------------------------
 
 
-def _build_real_agent() -> Any:
+def _build_parametrized_agent(
+    alpha: float,
+    threshold: int,
+    batch_size: int,
+    corrections: tuple[str, ...],
+) -> tuple[Any, bool]:
+    """Build a real-driver agent with configurable correction parameters.
+
+    Returns ``(agent, is_diverse)`` where ``is_diverse`` is True when more than
+    one correction phrasing is supplied.
+    """
     from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
-    from oczy.lm import CVecDriverConfig, LlamaCVecDriver
+    from oczy.lm.cvec_driver import CVecDriverConfig, LlamaCVecDriver
+    from llama_cpp import Llama
+    from pathlib import Path
     from plastic_cortex.kv_cortex import KVCortexConfig
 
+    _MODEL_PATH = str(
+        Path.home()
+        / ".cache/huggingface/hub/models--LiquidAI--LFM2.5-1.2B-Instruct-GGUF"
+        / "snapshots/047e06635fbe71469926b35ea414537245218200"
+        / "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
+    )
+
     driver_cfg = CVecDriverConfig(n_ctx=128, n_threads=12, verbose=False)
-    driver = LlamaCVecDriver.load(driver_cfg)
+    llm = Llama(model_path=_MODEL_PATH, n_ctx=driver_cfg.n_ctx,
+                n_threads=driver_cfg.n_threads, verbose=driver_cfg.verbose,
+                embedding=driver_cfg.embedding)
+    driver = LlamaCVecDriver(llm, driver_cfg)
     cfg = CortexAgentConfig(
         driver=driver_cfg,
         cortex=KVCortexConfig(
@@ -95,14 +218,21 @@ def _build_real_agent() -> Any:
             d_embd=driver.n_embd,
             n_layers=16,
             steering_mode="proj_random",
-            alpha_correction=0.3,
-            consolidate_replay_threshold=2,  # Fire additive path with only 2 replays
+            alpha_correction=alpha,
+            consolidate_replay_threshold=threshold,
         ),
         articulate_scale=0.01,
         auto_consolidate=False,
     )
     agent = CortexAgent(config=cfg, driver=driver)
     agent.boot()
+    return agent, len(corrections) > 1
+
+
+def _build_real_agent() -> Any:
+    agent, _ = _build_parametrized_agent(
+        alpha=0.3, threshold=2, batch_size=2, corrections=_DIVERSE_CORRECTIONS
+    )
     return agent
 
 
@@ -169,7 +299,14 @@ def _svd_warmup(agent: Any, phrases: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _compounding_loop(agent: Any, corrections: list[str], k: int, batch_size: int = 1) -> dict[str, Any]:
+def _compounding_loop(
+    agent: Any,
+    corrections: list[str],
+    k: int,
+    batch_size: int = 1,
+    checkpoints: set[int] | None = None,
+    return_agent: bool = False,
+) -> dict[str, Any]:
     """Run K corrections in batches, consolidating after each batch.
 
     Batching ensures the hippocampus accumulates >= batch_size distinct traces
@@ -179,13 +316,21 @@ def _compounding_loop(agent: Any, corrections: list[str], k: int, batch_size: in
 
     Diverse correction phrasings are cycled to give each batch distinct traces
     (SHA-256 hash key per trace), preventing overwrite.
+
+    When ``checkpoints`` is None the default set ``{0, k//4, k//2, 3*k//4, k}``
+    is used; otherwise the supplied set of ints is used. When ``return_agent``
+    is True the (possibly drifted) agent is included in the result dict under
+    ``"agent"``.
     """
     cold_states: list[np.ndarray] = [agent.cortex.cold_state.copy()]
     cold_drifts: list[float] = []
     checkpoint_norms: list[float] = []
     checkpoint_indices: list[int] = []
 
-    _checkpoints = {0, k // 4, k // 2, 3 * k // 4, k}
+    _checkpoints = checkpoints if checkpoints is not None else {0, k // 4, k // 2, 3 * k // 4, k}
+    if 0 in _checkpoints:
+        checkpoint_norms.append(float(np.linalg.norm(agent.cortex.cold_state)))
+        checkpoint_indices.append(0)
 
     for i in range(k):
         correction = corrections[i % len(corrections)]
@@ -200,7 +345,7 @@ def _compounding_loop(agent: Any, corrections: list[str], k: int, batch_size: in
                 checkpoint_norms.append(float(np.linalg.norm(agent.cortex.cold_state)))
                 checkpoint_indices.append(i + 1)
 
-    return {
+    result = {
         "cold_states": cold_states,
         "cold_drifts": cold_drifts,
         "compounding_index": _compounding_index(cold_states),
@@ -209,6 +354,9 @@ def _compounding_loop(agent: Any, corrections: list[str], k: int, batch_size: in
         "checkpoint_indices": checkpoint_indices,
         "total_consolidations": len(cold_states) - 1,
     }
+    if return_agent:
+        result["agent"] = agent
+    return result
 
 
 def _domain_probe(agent: Any) -> float:
@@ -221,6 +369,18 @@ def _domain_probe(agent: Any) -> float:
         use_reserved_position=False,
     )
     return _domain_uptake(answer)
+
+
+def _control_probe(agent: Any) -> float:
+    """Control uptake on the probe with steering but no prefix/logit-bias."""
+    answer = agent.articulate(
+        _PROBE,
+        max_tokens=16,
+        temperature=0.0,
+        apply_steering=True,
+        use_reserved_position=False,
+    )
+    return _control_uptake(answer)
 
 
 def _logit_domain_shift(agent: Any) -> float:
@@ -250,6 +410,77 @@ def _logit_domain_shift(agent: Any) -> float:
     return float(np.mean(last[token_ids]))
 
 
+def _logit_control_shift(agent: Any) -> float:
+    """Mean next-token logit of control word token ids at the probe blank.
+
+    Mirrors ``_logit_domain_shift`` but iterates over ``_CONTROL_WORDS``.
+    Reads the underlying Llama model logits directly.
+    """
+    from numpy import ctypeslib
+
+    llm = agent.driver._llm
+    n_vocab = llm.n_vocab()
+    text_bytes = _PROBE.encode("utf-8")
+    ids = llm.tokenize(text_bytes, add_bos=True)
+    llm.eval(ids)
+    raw = llm._ctx.get_logits()
+    logits = ctypeslib.as_array(raw, shape=(len(ids) * n_vocab,))
+    last = logits[(len(ids) - 1) * n_vocab : len(ids) * n_vocab].copy()
+
+    token_ids: list[int] = []
+    for word in _CONTROL_WORDS:
+        word_ids = llm.tokenize(word.encode("utf-8"), add_bos=False)
+        if word_ids:
+            token_ids.append(int(word_ids[0]))
+    if not token_ids:
+        return 0.0
+    return float(np.mean(last[token_ids]))
+
+
+def _drift_metric_triple(
+    agent: Any,
+    zero_agent: Any,
+    clamp_norm: float | None = None,
+    use_logits: bool = True,
+) -> dict[str, float]:
+    """Magnitude-controlled drift metric triple.
+
+    Returns ``delta_target``, ``delta_control`` and ``delta_target_clamped``
+    relative to ``zero_agent`` (an unsteered baseline). When ``use_logits`` is
+    True the real-driver logit path is used; otherwise the mock-driver
+    uptake-based path is used (cvec is a no-op on the mock driver).
+
+    All three legs apply the steering vector (cvec) before measurement.
+    ``delta_target`` and ``delta_control`` use the full, unclamped steering
+    vector; ``delta_target_clamped`` uses the same steering vector but
+    uniformly scaled so its combined L2 norm does not exceed ``clamp_norm``.
+    """
+    if use_logits:
+        delta_target = (
+            _logit_shift_with_cvec(agent, _DOMAIN_WORDS, cvec_norm_clamp=None)
+            - _logit_shift_with_cvec(zero_agent, _DOMAIN_WORDS, cvec_norm_clamp=None)
+        )
+        delta_control = (
+            _logit_shift_with_cvec(agent, _CONTROL_WORDS, cvec_norm_clamp=None)
+            - _logit_shift_with_cvec(zero_agent, _CONTROL_WORDS, cvec_norm_clamp=None)
+        )
+        delta_target_clamped = (
+            _logit_shift_with_cvec(agent, _DOMAIN_WORDS, clamp_norm)
+            - _logit_shift_with_cvec(zero_agent, _DOMAIN_WORDS, cvec_norm_clamp=None)
+        )
+    else:
+        delta_target = _domain_probe(agent) - _domain_probe(zero_agent)
+        delta_control = _control_probe(agent) - _control_probe(zero_agent)
+        delta_target_clamped = (
+            _domain_probe_with_cvec(agent, clamp_norm) - _domain_probe(zero_agent)
+        )
+    return {
+        "delta_target": float(delta_target),
+        "delta_control": float(delta_control),
+        "delta_target_clamped": float(delta_target_clamped),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main entrypoints
 # ---------------------------------------------------------------------------
@@ -259,11 +490,14 @@ def _run_real_driver(k: int = 20) -> dict[str, float] | None:
     agent = _build_real_agent()
     _svd_warmup(agent, list(_DIVERSE_CORRECTIONS))
     comp = _compounding_loop(agent, list(_DIVERSE_CORRECTIONS), k, batch_size=2)
-    drift_logits = _logit_domain_shift(agent)
-    drift_uptake = _domain_probe(agent)
 
     zero_agent = _build_real_agent()
-    zero_logits = _logit_domain_shift(zero_agent)
+
+    # Magnitude-controlled drift triple (S2.3).
+    clamp_norm = _cvec_combined_norm(agent)
+    triple = _drift_metric_triple(agent, zero_agent, clamp_norm=clamp_norm, use_logits=True)
+
+    drift_uptake = _domain_probe(agent)
     zero_uptake = _domain_probe(zero_agent)
 
     # Compute compounding slope: linear regression of checkpoint cold_norms.
@@ -272,7 +506,7 @@ def _run_real_driver(k: int = 20) -> dict[str, float] | None:
     _slope = _compounding_slope(_cp_indices, _cp_norms)
 
     return {
-        "metabolism_drift_delta": drift_logits - zero_logits,
+        "metabolism_drift_delta": triple["delta_target"],
         "compounding_index": comp["compounding_index"],
         "compounding_slope": _slope,
         "final_cold_norm": comp["cold_norms"][-1],
@@ -281,10 +515,12 @@ def _run_real_driver(k: int = 20) -> dict[str, float] | None:
         "batch_size": 2,
         "checkpoint_indices": _cp_indices,
         "checkpoint_norms": _cp_norms,
-        "zero_baseline_logit": zero_logits,
-        "drift_logit": drift_logits,
         "zero_baseline_uptake": zero_uptake,
         "drift_uptake": drift_uptake,
+        "delta_target": triple["delta_target"],
+        "delta_control": triple["delta_control"],
+        "delta_target_clamped": triple["delta_target_clamped"],
+        "cvec_combined_norm": clamp_norm,
     }
 
 
@@ -292,9 +528,12 @@ def _run_mock_driver(k: int = 4) -> dict[str, float]:
     agent = _build_mock_agent()
     _svd_warmup(agent, list(_DIVERSE_CORRECTIONS))
     comp = _compounding_loop(agent, [_CORRECTION], k)
-    drift_uptake = _domain_probe(agent)
 
     zero_agent = _build_mock_agent()
+
+    triple = _drift_metric_triple(agent, zero_agent, clamp_norm=None, use_logits=False)
+
+    drift_uptake = _domain_probe(agent)
     zero_uptake = _domain_probe(zero_agent)
 
     _cp_norms = comp.get("checkpoint_norms", [])
@@ -302,7 +541,7 @@ def _run_mock_driver(k: int = 4) -> dict[str, float]:
     _slope = _compounding_slope(_cp_indices, _cp_norms)
 
     return {
-        "metabolism_drift_delta": drift_uptake - zero_uptake,
+        "metabolism_drift_delta": triple["delta_target"],
         "compounding_index": comp["compounding_index"],
         "compounding_slope": _slope,
         "final_cold_norm": comp["cold_norms"][-1],
@@ -313,7 +552,312 @@ def _run_mock_driver(k: int = 4) -> dict[str, float]:
         "checkpoint_norms": _cp_norms,
         "zero_baseline_uptake": zero_uptake,
         "drift_uptake": drift_uptake,
+        "delta_target": triple["delta_target"],
+        "delta_control": triple["delta_control"],
+        "delta_target_clamped": triple["delta_target_clamped"],
     }
+
+
+def _run_ablation_real(checkpoints: list[int] = [0, 5, 10, 15, 20], seeds: int = 1) -> None:
+    """S2.4 single-variable ablation on the real GGUF driver.
+
+    Five conditions isolate the effect of alpha, threshold, and diversity:
+      1. OLD          : alpha=1.0, threshold=3, bs=3, single correction
+      2. NEW          : alpha=0.3, threshold=2, bs=2, diverse corrections
+      3. OLD+alpha    : alpha=0.3, threshold=3, bs=3, single correction
+      4. OLD+threshold: alpha=1.0, threshold=2, bs=3, single correction
+      5. OLD+diverse  : alpha=1.0, threshold=3, bs=3, diverse corrections
+
+    ``clamp_norm`` for conditions 2-5 is condition 1's final cvec norm, so the
+    clamped metric isolates steering DIRECTION from LOUDNESS across conditions.
+    """
+    _run_ablation(checkpoints, seeds, use_logits=True)
+
+
+def _run_ablation_mock(checkpoints: list[int] = [0, 5, 10, 15, 20], seeds: int = 1) -> None:
+    """S2.4 ablation on the mock driver (uptake-based, no GGUF needed)."""
+    _run_ablation(checkpoints, seeds, use_logits=False)
+
+
+def _run_ablation(checkpoints: list[int], seeds: int, use_logits: bool) -> None:
+    """Shared ablation runner for both real and mock drivers.
+
+    For each condition, iterates through every K in *checkpoints*, creating
+    fresh agents each time and running the full compounding loop from scratch
+    with exactly K corrections.  This produces a K-trajectory (not just an
+    endpoint measurement).
+    """
+    cp_sorted = sorted(checkpoints)
+
+    conditions: list[tuple[int, float, int, int, tuple[str, ...]]] = [
+        (1, 1.0, 3, 3, (_CORRECTION,)),          # OLD
+        (2, 0.3, 2, 2, _DIVERSE_CORRECTIONS),     # NEW (breakthrough)
+        (3, 0.3, 3, 3, (_CORRECTION,)),           # OLD + alpha only
+        (4, 1.0, 2, 3, (_CORRECTION,)),           # OLD + threshold only
+        (5, 1.0, 3, 3, _DIVERSE_CORRECTIONS),     # OLD + diverse only
+    ]
+
+    # First, establish the clamp budget from condition 1 (OLD) at max K.
+    # For condition 1 itself clamped == unclamped because the clamp equals
+    # its own norm; we capture it once then reuse for conditions 2-5.
+    clamp_norm: float | None = None
+    results: list[dict[str, Any]] = []
+
+    for seed in range(seeds):
+        for cond, alpha, threshold, batch_size, corrections in conditions:
+            t0 = time.time()
+            cond_rows: list[dict[str, Any]] = []
+            for ki in cp_sorted:
+                if use_logits:
+                    agent, _ = _build_parametrized_agent(alpha, threshold, batch_size, corrections)
+                else:
+                    agent = _build_mock_agent()
+
+                _svd_warmup(agent, list(_DIVERSE_CORRECTIONS))
+
+                if ki > 0:
+                    _compounding_loop(
+                        agent, list(corrections), ki,
+                        batch_size=batch_size,
+                        checkpoints={ki},
+                    )
+
+                if use_logits:
+                    zero_agent, _ = _build_parametrized_agent(alpha, threshold, batch_size, corrections)
+                else:
+                    zero_agent = _build_mock_agent()
+
+                # Capture clamp budget from condition 1's max-K run.
+                if cond == 1 and ki == cp_sorted[-1]:
+                    clamp_norm = _cvec_combined_norm(agent)
+
+                triple = _drift_metric_triple(
+                    agent, zero_agent, clamp_norm=clamp_norm, use_logits=use_logits
+                )
+                print(
+                    f"ABLATION cond={cond} seed={seed} K={ki} "
+                    f"delta_target={triple['delta_target']} "
+                    f"delta_control={triple['delta_control']} "
+                    f"delta_target_clamped={triple['delta_target_clamped']}"
+                )
+                cond_rows.append({
+                    "cond": cond,
+                    "seed": seed,
+                    "K": ki,
+                    "delta_target": triple["delta_target"],
+                    "delta_control": triple["delta_control"],
+                    "delta_target_clamped": triple["delta_target_clamped"],
+                })
+            elapsed = time.time() - t0
+            print(f"ABLATION cond={cond} seed={seed} wall_time_s={elapsed}")
+            for row in cond_rows:
+                row["wall_time_s"] = elapsed
+                results.append(row)
+
+    output_path = str(
+        Path(__file__).parent.parent.parent.parent
+        / "experiments_logs"
+        / "2026-07-01_s2_4_breakthrough_ablation.md"
+    )
+    _write_ablation_report(results, cp_sorted, seeds, use_logits, output_path)
+
+
+def _write_ablation_report(
+    results: list[dict[str, Any]],
+    checkpoints: list[int],
+    seeds: int,
+    use_logits: bool,
+    output_path: str,
+) -> None:
+    """Write the S2.4 ablation markdown report to *output_path*.
+
+    Aggregates per-(cond, K) measurements across seeds by mean, then emits
+    a condition × K trajectory table, a per-condition max-K summary, a norm
+    control survival table, a VERDICT, and the raw CSV.
+    """
+    cond_labels = {
+        1: "OLD",
+        2: "NEW (breakthrough)",
+        3: "OLD + alpha only",
+        4: "OLD + threshold only",
+        5: "OLD + diverse only",
+    }
+    driver = "real" if use_logits else "mock"
+    cp_sorted = sorted(checkpoints)
+
+    # Aggregate across seeds: mean per (cond, K).
+    agg: dict[tuple[int, int], dict[str, float]] = {}
+    for row in results:
+        key = (row["cond"], row["K"])
+        bucket = agg.setdefault(
+            key,
+            {
+                "delta_target": 0.0,
+                "delta_control": 0.0,
+                "delta_target_clamped": 0.0,
+                "wall_time_s": 0.0,
+                "n": 0.0,
+            },
+        )
+        bucket["delta_target"] += row["delta_target"]
+        bucket["delta_control"] += row["delta_control"]
+        bucket["delta_target_clamped"] += row["delta_target_clamped"]
+        bucket["wall_time_s"] += row["wall_time_s"]
+        bucket["n"] += 1
+
+    def mean(key: tuple[int, int], field: str) -> float:
+        b = agg[key]
+        return b[field] / b["n"]
+
+    conds = sorted({c for c, _ in agg})
+    max_k = cp_sorted[-1]
+
+    lines: list[str] = []
+    lines.append("# S2.4 Breakthrough Ablation — Magnitude-Controlled Drift")
+    lines.append("")
+    lines.append("**Date:** 2026-07-01")
+    lines.append(f"**Driver:** {driver}")
+    lines.append(f"**Seeds:** {seeds}")
+    lines.append("")
+
+    # Condition × K trajectory.
+    lines.append("## Condition × K Trajectory")
+    lines.append("")
+    lines.append("| Cond | K | Δ Target | Δ Control | Δ Target (clamped) |")
+    lines.append("|------|---|------------|------------|----------------------|")
+    for ci, cond in enumerate(conds):
+        for ki in cp_sorted:
+            key = (cond, ki)
+            if key not in agg:
+                continue
+            lines.append(
+                f"| {cond_labels[cond]} | {ki} | "
+                f"{mean(key, 'delta_target'):.6f} | "
+                f"{mean(key, 'delta_control'):.6f} | "
+                f"{mean(key, 'delta_target_clamped'):.6f} |"
+            )
+        if ci < len(conds) - 1:
+            lines.append("| | | | | |")
+    lines.append("")
+
+    # Per-condition summary (max-K row).
+    lines.append("## Per-Condition Summary")
+    lines.append("")
+    lines.append("| Cond | Max K Δ Target | Max K Δ Control | Max K Δ Clamped | Wall Time (s) |")
+    lines.append("|------|------------------|-------------------|-------------------|---------------|")
+    maxk_rows: dict[int, dict[str, float]] = {}
+    for cond in conds:
+        key = (cond, max_k)
+        if key not in agg:
+            continue
+        dt = mean(key, "delta_target")
+        dc = mean(key, "delta_control")
+        dcl = mean(key, "delta_target_clamped")
+        wt = mean(key, "wall_time_s")
+        maxk_rows[cond] = {
+            "delta_target": dt,
+            "delta_control": dc,
+            "delta_target_clamped": dcl,
+            "wall_time_s": wt,
+        }
+        lines.append(
+            f"| {cond_labels[cond]} | {dt:.6f} | {dc:.6f} | {dcl:.6f} | {wt:.2f} |"
+        )
+    lines.append("")
+
+    # Norm control survival.
+    lines.append("## Norm Control Survival")
+    lines.append("")
+    lines.append("| Cond | Δ Target | Δ Clamped | Survival Ratio |")
+    lines.append("|------|-----------|------------|---------------|")
+    survival: dict[int, float] = {}
+    for cond in conds:
+        if cond not in maxk_rows:
+            continue
+        dt = maxk_rows[cond]["delta_target"]
+        dcl = maxk_rows[cond]["delta_target_clamped"]
+        ratio = dcl / dt if dt != 0 else float("nan")
+        survival[cond] = ratio
+        ratio_str = f"{ratio:.6f}" if dt != 0 else "NaN"
+        lines.append(
+            f"| {cond_labels[cond]} | {dt:.6f} | {dcl:.6f} | {ratio_str} |"
+        )
+    lines.append("")
+
+    # VERDICT.
+    lines.append("## VERDICT")
+    lines.append("")
+    old_dt = maxk_rows.get(1, {}).get("delta_target", 0.0)
+    single_var_deltas: dict[int, float] = {
+        c: maxk_rows[c]["delta_target"] - old_dt
+        for c in (3, 4, 5)
+        if c in maxk_rows
+    }
+    if single_var_deltas:
+        any_positive = any(v > 0 for v in single_var_deltas.values())
+        if any_positive:
+            best_cond = max(single_var_deltas, key=single_var_deltas.get)
+            best_delta = single_var_deltas[best_cond]
+            var_name = {3: "alpha", 4: "threshold", 5: "diversity"}[best_cond]
+            lines.append(
+                f"1. Largest single-variable improvement vs OLD: "
+                f"**{var_name}** (cond {best_cond}), Δ_target = {best_delta:.6f}."
+            )
+        else:
+            lines.append("1. **No single variable improves upon OLD.**")
+            for c in (3, 4, 5):
+                if c in single_var_deltas:
+                    var_name = {3: "alpha", 4: "threshold", 5: "diversity"}[c]
+                    d = single_var_deltas[c]
+                    lines.append(
+                        f"   - {var_name}: Δ_target = {d:+.6f} vs OLD"
+                    )
+    else:
+        lines.append("1. Insufficient data to rank single-variable improvements.")
+    new_ratio = survival.get(2, float("nan"))
+    if new_ratio == new_ratio:  # not NaN
+        survives = new_ratio > 0.5
+        lines.append(
+            f"2. NEW survival ratio = {new_ratio:.6f}; "
+            f"{'survives' if survives else 'does NOT survive'} norm control (> 0.5)."
+        )
+        # Cross-check: does NEW clamped gain exceed OLD unclamped?
+        new_dcl = maxk_rows.get(2, {}).get("delta_target_clamped", 0.0)
+        if old_dt > 0 and new_dcl < old_dt:
+            lines.append(
+                f"3. Under norm control, NEW clamped Δ = {new_dcl:.6f} falls "
+                f"BELOW OLD unclamped Δ = {old_dt:.6f} — "
+                f"the raw gain is magnitude inflation."
+            )
+        if not survives:
+            lines.append(
+                "4. The 13.5x claim is retracted as magnitude inflation — "
+                "the gain does not survive norm control."
+            )
+        else:
+            lines.append("3. NEW gain survives norm control (ratio > 0.5).")
+    else:
+        lines.append("2. NEW survival ratio is NaN (delta_target = 0).")
+        lines.append("3. Cannot evaluate norm-control retraction (NaN).")
+    lines.append("")
+
+    # Raw CSV.
+    lines.append("## Raw Data (CSV for reproducibility)")
+    lines.append("```csv")
+    lines.append("cond,seed,K,delta_target,delta_control,delta_target_clamped")
+    for row in results:
+        lines.append(
+            f"{row['cond']},{row['seed']},{row['K']},"
+            f"{row['delta_target']},{row['delta_control']},"
+            f"{row['delta_target_clamped']}"
+        )
+    lines.append("```")
+    lines.append("")
+
+    out_path = Path(output_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"ABLATION report written to {output_path}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -331,7 +875,32 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Number of correction cycles (default: 4 mock, 20 real).",
     )
+    parser.add_argument(
+        "--ablation",
+        action="store_true",
+        help="Run the S2.4 single-variable ablation suite.",
+    )
+    parser.add_argument(
+        "--ablation-seeds",
+        type=int,
+        default=1,
+        help="Number of seeds for the ablation suite (default 1).",
+    )
     args = parser.parse_args(argv)
+
+    if args.ablation:
+        if args.driver == "real":
+            try:
+                _run_ablation_real(
+                    checkpoints=[0, 5, 10, 15, 20], seeds=args.ablation_seeds
+                )
+            except Exception:
+                print("ASI ablation_real=failed")
+        else:
+            _run_ablation_mock(
+                checkpoints=[0, 5, 10, 15, 20], seeds=args.ablation_seeds
+            )
+        return 0
 
     k = args.corrections
     if args.driver == "real":
