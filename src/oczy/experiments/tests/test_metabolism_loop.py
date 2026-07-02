@@ -210,3 +210,71 @@ def test_drift_metric_triple_specificity_sanity() -> None:
     # Mock driver is semantically null, so both should be near zero.
     assert abs(triple["delta_target"]) <= 1.0
     assert abs(triple["delta_control"]) <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# S2.0 clamp-budget cross-instance stochasticity fix
+# ---------------------------------------------------------------------------
+
+
+def test_budget_defining_condition_clamp_equals_unclamped() -> None:
+    """Budget-defining condition: delta_target_clamped == delta_target.
+
+    When clamp_norm equals the current cvec norm (no-op scaling), the
+    clamped and unclamped measurements must be identical within float
+    tolerance.  This is the core invariant from the S2.0 fix.
+    """
+    agent = ml._build_mock_agent(seed=42)
+    ml._svd_warmup(agent, [ml._CORRECTION])
+    ml._compounding_loop(agent, [ml._CORRECTION], k=4, batch_size=1)
+    zero = ml._build_mock_agent(seed=42)
+    clamp_norm = ml._cvec_combined_norm(agent)
+    triple = ml._drift_metric_triple(
+        agent, zero, clamp_norm=clamp_norm, use_logits=False,
+    )
+    assert triple["delta_target"] == pytest.approx(triple["delta_target_clamped"])
+
+
+def test_two_agents_same_seed_have_identical_cvec_norm() -> None:
+    """Agents built with the same seed + K have identical _cvec_combined_norm.
+
+    Two agents constructed with identical (condition, seed, K) parameters
+    and run through the same compounding loop must end up with the same
+    combined cvec norm — otherwise the clamp budget is meaningless.
+    """
+    def _build_and_run(seed: int, k: int) -> float:
+        a = ml._build_mock_agent(seed=seed)
+        ml._svd_warmup(a, [ml._CORRECTION])
+        if k > 0:
+            ml._compounding_loop(a, [ml._CORRECTION], k, batch_size=1)
+        return ml._cvec_combined_norm(a)
+
+    seed, k = 123, 3
+    norm_a = _build_and_run(seed, k)
+    norm_b = _build_and_run(seed, k)
+    assert norm_a == pytest.approx(norm_b)
+    # Norm should be non-zero after running corrections.
+    assert norm_a > 0.0
+
+
+def test_smaller_clamp_budget_scales_cvec_norm_down() -> None:
+    """Clamp budget smaller than current norm scales the effective cvec norm.
+
+    When the clamp budget is strictly smaller than the current combined
+    cvec norm, the clamped cvecs are uniformly scaled so the effective
+    norm equals the budget.  This verifies the math, not the mock-driver
+    measurement (which is always zero on mock).
+    """
+    agent = ml._build_mock_agent(seed=77)
+    ml._svd_warmup(agent, [ml._CORRECTION])
+    ml._compounding_loop(agent, [ml._CORRECTION], k=3, batch_size=1)
+
+    current_norm = ml._cvec_combined_norm(agent)
+    assert current_norm > 0.0, "cvec norm is zero — can't test clamping"
+
+    small_budget = current_norm * 0.4
+    cvecs = agent.cortex.emit_all_cvecs()
+    scale = small_budget / current_norm
+    scaled_norm = float(np.sqrt(sum(float(np.sum((v * scale) * (v * scale))) for v in cvecs)))
+    assert scaled_norm == pytest.approx(small_budget)
+    assert scaled_norm < current_norm

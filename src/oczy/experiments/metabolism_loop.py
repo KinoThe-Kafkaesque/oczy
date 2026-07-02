@@ -157,7 +157,8 @@ def _domain_probe_with_cvec(
 ) -> float:
     """Domain uptake with cvec applied, optionally clamped.
 
-    Mock-driver-safe path: applies clamped cvec then calls articulate().
+    Mock-driver-safe path: computes clamped cvecs, pushes them to the driver,
+    then calls articulate() with apply_steering=False (cvec already applied).
     """
     if cvec_norm_clamp is not None and cvec_norm_clamp > 0:
         cvecs = agent.cortex.emit_all_cvecs()
@@ -165,14 +166,18 @@ def _domain_probe_with_cvec(
         if current_norm > cvec_norm_clamp:
             scale = cvec_norm_clamp / current_norm
             cvecs = [v * scale for v in cvecs]
-        answer = agent.articulate(
-            _PROBE,
-            max_tokens=8,
-            temperature=0.0,
-            apply_steering=False,
-            use_reserved_position=False,
-        )
-        return _domain_uptake(answer)
+        agent.driver.set_cvecs_per_layer(cvecs, scale=agent.config.articulate_scale)
+        try:
+            answer = agent.articulate(
+                _PROBE,
+                max_tokens=8,
+                temperature=0.0,
+                apply_steering=False,
+                use_reserved_position=False,
+            )
+            return _domain_uptake(answer)
+        finally:
+            agent.driver.clear_cvec()
     else:
         return _domain_probe(agent)
 
@@ -187,6 +192,7 @@ def _build_parametrized_agent(
     threshold: int,
     batch_size: int,
     corrections: tuple[str, ...],
+    seed: int = 0,
 ) -> tuple[Any, bool]:
     """Build a real-driver agent with configurable correction parameters.
 
@@ -220,6 +226,7 @@ def _build_parametrized_agent(
             steering_mode="proj_random",
             alpha_correction=alpha,
             consolidate_replay_threshold=threshold,
+            seed=seed,
         ),
         articulate_scale=0.01,
         auto_consolidate=False,
@@ -236,7 +243,7 @@ def _build_real_agent() -> Any:
     return agent
 
 
-def _build_mock_agent() -> Any:
+def _build_mock_agent(seed: int = 0) -> Any:
     from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
     from oczy.experiments.multi_fact_stressor import _MockDriver
     from plastic_cortex.kv_cortex import KVCortexConfig
@@ -260,6 +267,7 @@ def _build_mock_agent() -> Any:
             d_embd=driver.n_embd,
             n_layers=2,
             steering_mode="proj_random",
+            seed=seed,
         ),
         articulate_scale=0.01,
         auto_consolidate=False,
@@ -586,8 +594,15 @@ def _run_ablation(checkpoints: list[int], seeds: int, use_logits: bool) -> None:
     fresh agents each time and running the full compounding loop from scratch
     with exactly K corrections.  This produces a K-trajectory (not just an
     endpoint measurement).
+
+    The clamp budget is captured from condition 1 (OLD) at max K using its
+    OWN agent instance — not a separately-built copy — then applied to every
+    other (condition, K) combination.  Agent construction is deterministically
+    seeded per (condition, seed, K) so cross-instance cvec-norm drift is
+    impossible.
     """
     cp_sorted = sorted(checkpoints)
+    max_k = cp_sorted[-1]
 
     conditions: list[tuple[int, float, int, int, tuple[str, ...]]] = [
         (1, 1.0, 3, 3, (_CORRECTION,)),          # OLD
@@ -597,42 +612,92 @@ def _run_ablation(checkpoints: list[int], seeds: int, use_logits: bool) -> None:
         (5, 1.0, 3, 3, _DIVERSE_CORRECTIONS),     # OLD + diverse only
     ]
 
-    # First, establish the clamp budget from condition 1 (OLD) at max K.
-    # For condition 1 itself clamped == unclamped because the clamp equals
-    # its own norm; we capture it once then reuse for conditions 2-5.
-    clamp_norm: float | None = None
+    def _agent_seed(cond: int, seed: int, ki: int) -> int:
+        return hash((cond, seed, ki)) & 0x7FFFFFFF
+
     results: list[dict[str, Any]] = []
 
     for seed in range(seeds):
+        # ── Phase 1: capture clamp budget from condition 1 at max K ──
+        # Build cond-1's max-K agent first, run the full compounding loop,
+        # capture clamp_norm from *this* instance, and measure the triple
+        # immediately so clamped == unclamped for the budget-defining
+        # checkpoint.
+        bt0 = time.time()
+        s_budget = _agent_seed(1, seed, max_k)
+        if use_logits:
+            budget_agent, _ = _build_parametrized_agent(
+                1.0, 3, 3, (_CORRECTION,), seed=s_budget,
+            )
+        else:
+            budget_agent = _build_mock_agent(seed=s_budget)
+
+        _svd_warmup(budget_agent, list(_DIVERSE_CORRECTIONS))
+        _compounding_loop(
+            budget_agent, [_CORRECTION], max_k,
+            batch_size=3, checkpoints={max_k},
+        )
+
+        if use_logits:
+            budget_zero, _ = _build_parametrized_agent(
+                1.0, 3, 3, (_CORRECTION,), seed=s_budget,
+            )
+        else:
+            budget_zero = _build_mock_agent(seed=s_budget)
+
+        clamp_norm: float | None = _cvec_combined_norm(budget_agent)
+        triple = _drift_metric_triple(
+            budget_agent, budget_zero, clamp_norm=clamp_norm, use_logits=use_logits,
+        )
+        print(
+            f"ABLATION cond=1 seed={seed} K={max_k} "
+            f"delta_target={triple['delta_target']} "
+            f"delta_control={triple['delta_control']} "
+            f"delta_target_clamped={triple['delta_target_clamped']}"
+        )
+        elapsed_budget = time.time() - bt0
+        results.append({
+            "cond": 1, "seed": seed, "K": max_k,
+            "delta_target": triple["delta_target"],
+            "delta_control": triple["delta_control"],
+            "delta_target_clamped": triple["delta_target_clamped"],
+            "wall_time_s": elapsed_budget,
+        })
+        print(f"ABLATION cond=1 seed={seed} wall_time_s={elapsed_budget}")
+
+        # ── Phase 2: all remaining (condition, K) pairs ──
         for cond, alpha, threshold, batch_size, corrections in conditions:
             t0 = time.time()
             cond_rows: list[dict[str, Any]] = []
             for ki in cp_sorted:
+                if cond == 1 and ki == max_k:
+                    continue  # already handled in Phase 1
+
+                s = _agent_seed(cond, seed, ki)
                 if use_logits:
-                    agent, _ = _build_parametrized_agent(alpha, threshold, batch_size, corrections)
+                    agent, _ = _build_parametrized_agent(
+                        alpha, threshold, batch_size, corrections, seed=s,
+                    )
                 else:
-                    agent = _build_mock_agent()
+                    agent = _build_mock_agent(seed=s)
 
                 _svd_warmup(agent, list(_DIVERSE_CORRECTIONS))
 
                 if ki > 0:
                     _compounding_loop(
                         agent, list(corrections), ki,
-                        batch_size=batch_size,
-                        checkpoints={ki},
+                        batch_size=batch_size, checkpoints={ki},
                     )
 
                 if use_logits:
-                    zero_agent, _ = _build_parametrized_agent(alpha, threshold, batch_size, corrections)
+                    zero_agent, _ = _build_parametrized_agent(
+                        alpha, threshold, batch_size, corrections, seed=s,
+                    )
                 else:
-                    zero_agent = _build_mock_agent()
-
-                # Capture clamp budget from condition 1's max-K run.
-                if cond == 1 and ki == cp_sorted[-1]:
-                    clamp_norm = _cvec_combined_norm(agent)
+                    zero_agent = _build_mock_agent(seed=s)
 
                 triple = _drift_metric_triple(
-                    agent, zero_agent, clamp_norm=clamp_norm, use_logits=use_logits
+                    agent, zero_agent, clamp_norm=clamp_norm, use_logits=use_logits,
                 )
                 print(
                     f"ABLATION cond={cond} seed={seed} K={ki} "
@@ -641,18 +706,17 @@ def _run_ablation(checkpoints: list[int], seeds: int, use_logits: bool) -> None:
                     f"delta_target_clamped={triple['delta_target_clamped']}"
                 )
                 cond_rows.append({
-                    "cond": cond,
-                    "seed": seed,
-                    "K": ki,
+                    "cond": cond, "seed": seed, "K": ki,
                     "delta_target": triple["delta_target"],
                     "delta_control": triple["delta_control"],
                     "delta_target_clamped": triple["delta_target_clamped"],
                 })
-            elapsed = time.time() - t0
-            print(f"ABLATION cond={cond} seed={seed} wall_time_s={elapsed}")
-            for row in cond_rows:
-                row["wall_time_s"] = elapsed
-                results.append(row)
+            if cond_rows:
+                elapsed = time.time() - t0
+                print(f"ABLATION cond={cond} seed={seed} wall_time_s={elapsed}")
+                for row in cond_rows:
+                    row["wall_time_s"] = elapsed
+                    results.append(row)
 
     output_path = str(
         Path(__file__).parent.parent.parent.parent
