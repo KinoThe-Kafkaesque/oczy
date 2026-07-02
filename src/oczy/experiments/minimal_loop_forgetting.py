@@ -118,10 +118,12 @@ class MinimalForgettingOrganism:
         # Replay bank: accumulated hidden states from teaching
         self._replay_bank: list[np.ndarray] = []
 
+        # Episode queries for hippocampus replay at consolidation time
+        self._episode_queries: list[str] = []
+
         # Counters
         self._episode_count: int = 0
         self._consolidation_count: int = 0
-
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
@@ -154,6 +156,7 @@ class MinimalForgettingOrganism:
         self.cortex.reset_warm_from_cold()
         self._prefix_text = None
         self._replay_bank.clear()
+        self._episode_queries.clear()
 
     # ------------------------------------------------------------------
     # Teaching
@@ -183,9 +186,8 @@ class MinimalForgettingOrganism:
             prediction_error=0.5,
             corrected_answer=episode.corrected_label,
         )
-
-        # Accumulate hidden for consolidation replay
         self._replay_bank.append(hidden.copy())
+        self._episode_queries.append(episode.initial_request)
         self._episode_count += 1
 
     # ------------------------------------------------------------------
@@ -200,8 +202,11 @@ class MinimalForgettingOrganism:
         # 1. Replay traces through cortex consolidation path
         replays = self._replay_bank.copy()
         self.cortex.consolidate(replays=replays, strength=1.0)
+        # 2. Replay episodes through hippocampus so traces meet replay threshold
+        for query in self._episode_queries:
+            self.hippocampus.reinforce(query, k=1)
 
-        # 2. Hippocampus consolidation → summaries
+        # 3. Hippocampus consolidation → summaries
         hippo_summaries = self.hippocampus.consolidate()
 
         # 3. Compile consolidated prefix from summaries (≤ 48 tokens)
@@ -293,6 +298,7 @@ class MinimalForgettingOrganism:
         # Clear hippocampus: create new instance (no public clear_all)
         self.hippocampus = NeuralHippocampus()
         self._replay_bank.clear()
+        self._episode_queries.clear()
         self._episode_count = 0
 
         # Verify: episode count should be 0
