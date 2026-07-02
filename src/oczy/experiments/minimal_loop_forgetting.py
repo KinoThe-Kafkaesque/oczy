@@ -27,7 +27,7 @@ from eval.v2 import verify_manifest
 from neural_hippocampus import NeuralHippocampus
 from oczy.common.bytes import mem_bytes
 from oczy.common.stats import format_row, summarize
-from oczy.eval_v2.scoring import probe_matches
+from oczy.eval_v2.scoring import matches
 from oczy.experiments.organism_curriculum.dataset import (
     Episode,
     Probe,
@@ -433,7 +433,7 @@ def _score_holdout(
     total = 0
     for probe in probes:
         ans = organism.answer(probe.request, max_tokens=64)
-        if probe_matches(ans, probe.expected, probe.match_mode):
+        if matches(ans, probe.expected, match_mode=probe.match_mode):
             correct += 1
         total += 1
     return correct / total if total > 0 else 0.0
