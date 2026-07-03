@@ -217,16 +217,29 @@ norm-controlled variants reported alongside every drift number.
 
 ## Sprint 3 — Organ triage
 
+> **Status 2026-07-03: COMPLETE — every organ has its verdict**
+> (`experiments_logs/2026-07-03_s3_organ_triage_adjudication.md`).
+> M1 subtractive (real GGUF, 8 configs) + M2 additive (HF minimal organism,
+> holdout) ran per research/14. **Scope-slot reranker: RETRIEVAL-BASELINE**
+> (M2 S0 +0.667 and S4 +0.250 at zero seed variance; M1 S2 +0.205) — kept,
+> honestly labeled. **Everything else: ARCHIVE** — answer-time hippocampal
+> retrieval added exactly 0.0000; DSI unsupported at v2 power and net-harmful
+> in the full stack (appeal: v2.1 stage-1 battery); critic/identity/immune/
+> autoencoder all noise in M1 (M2b harness merged as the appeal instrument;
+> its run was not executed — recorded as the adjudication's weakest link).
+> **research/15 tensor wiring: VACUOUS** (nothing earned KEEP) — Goal 3's
+> question closed honestly. S3.4 attic moves remain a pending code task.
+
 **Goal:** stop carrying dead weight. Every organ must either move a
 behavioral metric on the frozen eval or be archived.
 
 ### Tasks
 
-- [ ] **S3.1 — Ablation matrix.**
+- [x] **S3.1 — Ablation matrix.** — DONE (M1 + M2a; M2b harness merged, run not executed)
   Minimal organism ± each organ, one at a time, on frozen eval v2.
   An organ earns its place only if it moves a held-out behavioral metric
   beyond noise (per S0.5 statistics).
-- [ ] **S3.2 — Expected outcomes to confirm or refute (from the code audit):**
+- [x] **S3.2 — Expected outcomes to confirm or refute (from the code audit):** — all five audit predictions CONFIRMED
   - **SkillImmuneCortex** — pure keyword substring matcher, no learned
     parameters, `Skill` compilation never invoked → archive or rebuild as
     the thesis's detector-merging design.
@@ -240,11 +253,11 @@ behavioral metric on the frozen eval or be archived.
   - **DSI/scope-slot reranker** — honest framing: these are retrieval.
     Keep them if they win, but label them as the retrieval baseline the
     metabolism must beat, not as metabolism.
-- [ ] **S3.3 — Wire survivors to tensors (Goal 3, for real).**
+- [x] **S3.3 — Wire survivors to tensors (Goal 3, for real).** — VACUOUS per research/15 (no KEEP verdicts)
   Organ outputs must update cortex state/projectors, not rerank label
   strings in `organism.py:_rank_answer`. One organ done properly beats
   five wired to a string ranker.
-- [ ] **S3.4 — Archive the rest** under `attic/` with a one-page post-mortem
+- [ ] **S3.4 — Archive the rest** (unblocked 2026-07-03: critic, identity, immune, autoencoder, DSI, answer-time hippocampal path) under `attic/` with a one-page post-mortem
   each, so autonomous sessions stop "improving" them.
 
 ### Definition of done
@@ -305,12 +318,36 @@ All surviving claims reproduced on eval v2 with statistics; external + second
 ## Sequencing
 
 ```
-Sprint 0 (gate: eval integrity)
-   └─► Sprint 1 (substrate: HF driver, Goals 1+2)
-          └─► Sprint 2 (one closed loop + forgetting test + 13.5x ablation)
-                 └─► Sprint 3 (organ triage, Goal 3)
+Sprint 0 (gate: eval integrity)                    ✅ complete
+   └─► Sprint 1 (substrate: HF driver, Goals 1+2)  ✅ complete
+          └─► Sprint 2 (one closed loop + forgetting + 13.5x)  ✅ complete
+                 └─► Sprint 3 (organ triage, Goal 3)           ✅ verdicts in
                         └─► Sprint 4 (re-baseline, external, 2nd model)
+                        └─► Sprint 5 (the two plasticity bets)
 ```
+
+## Sprint 5 — The two plasticity bets (added 2026-07-03)
+
+After the Sprint 1–3 refutation arc, exactly two credible mechanisms remain
+for "memory becomes changed dynamics"; both are pre-registered and both run
+on eval v2.1 (expanded 2026-07-03: stage-1 40-probe transfer battery,
+adversarial scope probes — `2026-07-03_eval_v2_1_expansion.md`):
+
+- [ ] **S5.1 — research/18: consolidation as context distillation.**
+  Per-fact transient prefix → KL-distilled LoRA → delete prefix + traces →
+  survival on holdout. Plasticity in LM weights. Teacher-validity gate with
+  one chat-template fallback.
+- [ ] **S5.2 — research/19: the LM as language organ.**
+  ≤64k-param trained head over frozen embeddings, abstain path,
+  stage-1-untaught transfer battery. Plasticity in cortex weights. The
+  reranker's zero-variance M2 wins (S0 +0.667, S4 +0.250) are the bar its
+  transfer numbers must clear where exemplar rerank cannot generalize.
+- [ ] **S5.3 — Head-to-head table:** 18 vs 19 vs retrieval-baseline vs
+  vanilla, same eval, same forgetting 2×2, honest per-byte + per-context-token
+  accounting. This table is the thesis's judgement day: if neither bet wins,
+  "retrieval is the architecture" is the recorded conclusion.
+
+Background/conceptual grounding: `notes/2026-07-03_steering_vs_posture_postmortem.md`.
 
 Sprint 0 and Sprint 1 can overlap after S0.1–S0.4 land; nothing in Sprints
 2–4 may start before Sprint 0 is fully done.
