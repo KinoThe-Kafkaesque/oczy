@@ -1,0 +1,690 @@
+<title>Oczy — Complete Findings Record</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --ground:#0e1116; --panel:#161b22; --panel2:#1c232d; --line:#2b3441;
+    --text:#d7dee7; --muted:#8792a1; --faint:#5c6675;
+    --accent:#8ea2f2; --accent-deep:#5f74c9;
+    --refute:#e76e83; --refute-bg:rgba(231,110,131,.13);
+    --confirm:#54c08a; --confirm-bg:rgba(84,192,138,.13);
+    --blocked:#e0a53f; --blocked-bg:rgba(224,165,63,.13);
+    --neutral:#8792a1; --neutral-bg:rgba(135,146,161,.12);
+    --serif:'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+    --sans:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    --mono:'SF Mono','JetBrains Mono','Cascadia Code','Fira Code',ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  body{
+    margin:0;background:var(--ground);color:var(--text);
+    font-family:var(--sans);font-size:16px;line-height:1.62;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:rgba(142,162,242,.28)}
+
+  /* ---------- layout ---------- */
+  .wrap{display:grid;grid-template-columns:1fr;max-width:1240px;margin:0 auto}
+  @media(min-width:1040px){
+    .wrap{grid-template-columns:248px minmax(0,1fr);gap:0}
+  }
+  main{min-width:0;padding:0 clamp(20px,4vw,56px) 120px}
+  .reading{max-width:74ch}
+
+  /* ---------- TOC rail ---------- */
+  nav.toc{
+    display:none;
+  }
+  @media(min-width:1040px){
+    nav.toc{
+      display:block;position:sticky;top:0;height:100vh;overflow-y:auto;
+      padding:40px 24px 40px clamp(20px,4vw,40px);
+      border-right:1px solid var(--line);font-size:13.5px;
+    }
+    nav.toc .brand{font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+      text-transform:uppercase;color:var(--accent);margin-bottom:24px}
+    nav.toc ol{list-style:none;margin:0;padding:0;counter-reset:toc}
+    nav.toc li{counter-increment:toc;margin:2px 0}
+    nav.toc a{
+      display:flex;gap:10px;text-decoration:none;color:var(--muted);
+      padding:5px 8px;border-radius:6px;border-left:2px solid transparent;
+      transition:color .15s,background .15s,border-color .15s;
+    }
+    nav.toc a::before{content:counter(toc,decimal-leading-zero);
+      font-family:var(--mono);font-size:11px;color:var(--faint);padding-top:2px}
+    nav.toc a:hover{color:var(--text);background:var(--panel)}
+    nav.toc a.active{color:var(--text);border-left-color:var(--accent);background:var(--panel)}
+  }
+
+  /* ---------- hero ---------- */
+  header.hero{position:relative;overflow:hidden;
+    border-bottom:1px solid var(--line);padding:0 clamp(20px,4vw,56px)}
+  header.hero canvas{position:absolute;inset:0;width:100%;height:100%;
+    opacity:.5;z-index:0;pointer-events:none;
+    -webkit-mask-image:linear-gradient(180deg,transparent,#000 30%,#000 70%,transparent);
+    mask-image:linear-gradient(180deg,transparent,#000 30%,#000 70%,transparent)}
+  .hero-inner{position:relative;z-index:1;padding:88px 0 56px;max-width:80ch}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.22em;
+    text-transform:uppercase;color:var(--accent);margin:0 0 22px}
+  h1{font-family:var(--serif);font-weight:600;font-size:clamp(38px,6.5vw,66px);
+    line-height:1.02;letter-spacing:-.015em;margin:0 0 22px;text-wrap:balance}
+  h1 em{font-style:italic;color:var(--accent)}
+  .standfirst{font-size:clamp(17px,2.2vw,21px);line-height:1.5;color:var(--muted);
+    max-width:60ch;margin:0}
+  .standfirst strong{color:var(--text);font-weight:600}
+  .metar{display:flex;flex-wrap:wrap;gap:28px 44px;margin-top:44px;
+    padding-top:30px;border-top:1px solid var(--line)}
+  .metar div{display:flex;flex-direction:column;gap:2px}
+  .metar .n{font-family:var(--serif);font-size:30px;font-weight:600;
+    line-height:1;font-variant-numeric:tabular-nums}
+  .metar .l{font-family:var(--mono);font-size:11px;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--faint)}
+
+  /* ---------- sections ---------- */
+  section{padding-top:80px;scroll-margin-top:20px}
+  .sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:8px}
+  .sec-num{font-family:var(--mono);font-size:13px;color:var(--accent);
+    letter-spacing:.1em;padding-top:4px}
+  h2{font-family:var(--serif);font-weight:600;font-size:clamp(27px,3.6vw,38px);
+    line-height:1.1;letter-spacing:-.01em;margin:0;text-wrap:balance}
+  .sec-sub{color:var(--muted);font-size:16.5px;margin:14px 0 30px;max-width:72ch}
+  h3{font-family:var(--sans);font-weight:650;font-size:19px;letter-spacing:-.005em;
+    margin:44px 0 12px;color:var(--text)}
+  h4{font-family:var(--mono);font-weight:600;font-size:12.5px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--accent);margin:30px 0 12px}
+  p{margin:0 0 16px}
+  a.inl{color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(142,162,242,.3)}
+  a.inl:hover{border-bottom-color:var(--accent)}
+  strong{color:#eef2f7}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);
+    padding:.12em .4em;border-radius:4px;color:#c3d0e8;border:1px solid var(--line)}
+  .reading ul{margin:0 0 18px;padding-left:22px}
+  .reading li{margin:7px 0}
+
+  /* ---------- verdict pills ---------- */
+  .pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);
+    font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+    padding:3px 9px;border-radius:100px;white-space:nowrap;border:1px solid}
+  .pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+  .v-refute{color:var(--refute);background:var(--refute-bg);border-color:rgba(231,110,131,.3)}
+  .v-confirm{color:var(--confirm);background:var(--confirm-bg);border-color:rgba(84,192,138,.3)}
+  .v-blocked{color:var(--blocked);background:var(--blocked-bg);border-color:rgba(224,165,63,.3)}
+  .v-neutral{color:var(--neutral);background:var(--neutral-bg);border-color:rgba(135,146,161,.3)}
+
+  /* ---------- legend ---------- */
+  .legend{display:flex;flex-wrap:wrap;gap:10px 12px;padding:16px 18px;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:0 0 8px}
+  .legend .item{display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--muted);
+    flex:1 1 200px}
+
+  /* ---------- panels / callouts ---------- */
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:24px 26px;margin:20px 0}
+  .callout{border-left:3px solid var(--accent);background:var(--panel);
+    padding:18px 22px;border-radius:0 10px 10px 0;margin:24px 0;font-size:15px}
+  .callout.warn{border-left-color:var(--refute)}
+  .callout.good{border-left-color:var(--confirm)}
+  .callout .lab{font-family:var(--mono);font-size:11px;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--accent);display:block;margin-bottom:6px}
+  .callout.warn .lab{color:var(--refute)}
+  .callout.good .lab{color:var(--confirm)}
+
+  /* ---------- tables ---------- */
+  .tbl-scroll{overflow-x:auto;margin:22px 0;border:1px solid var(--line);
+    border-radius:10px;background:var(--panel)}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:520px}
+  th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);
+    vertical-align:top}
+  thead th{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--muted);font-weight:600;
+    background:var(--panel2);position:sticky;top:0}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:rgba(142,162,242,.04)}
+  td.num,th.num{text-align:right;font-family:var(--mono);
+    font-variant-numeric:tabular-nums}
+  .mono{font-family:var(--mono);font-size:.92em}
+  .pos{color:var(--confirm)}.neg{color:var(--refute)}.zero{color:var(--faint)}
+  caption{caption-side:bottom;font-size:12px;color:var(--faint);padding:10px 14px;text-align:left}
+
+  /* ---------- theory cards ---------- */
+  .theory{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:0;margin:18px 0;overflow:hidden}
+  .theory > .top{display:flex;flex-wrap:wrap;align-items:center;gap:12px;
+    padding:18px 24px;border-bottom:1px solid var(--line);background:var(--panel2)}
+  .theory .tname{font-family:var(--serif);font-size:20px;font-weight:600;flex:1 1 auto;min-width:0}
+  .theory .tid{font-family:var(--mono);font-size:11px;color:var(--faint);letter-spacing:.05em}
+  .theory .body{padding:20px 24px}
+  .theory .row{display:grid;grid-template-columns:120px 1fr;gap:6px 18px;margin:0 0 14px}
+  @media(max-width:560px){.theory .row{grid-template-columns:1fr}}
+  .theory .row:last-child{margin-bottom:0}
+  .theory .k{font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--accent);padding-top:3px}
+  .theory .k.why{color:var(--refute)}
+  .theory .v{font-size:14.5px;color:var(--text)}
+  .theory .v .fig{font-family:var(--mono);color:var(--muted)}
+
+  /* ---------- timeline ---------- */
+  .tl{position:relative;margin:26px 0 0;padding-left:26px}
+  .tl::before{content:"";position:absolute;left:6px;top:6px;bottom:6px;width:2px;
+    background:linear-gradient(180deg,var(--accent-deep),var(--line))}
+  .tl .ev{position:relative;margin:0 0 26px;padding-left:22px}
+  .tl .ev::before{content:"";position:absolute;left:-24px;top:5px;width:12px;height:12px;
+    border-radius:50%;background:var(--ground);border:2px solid var(--accent)}
+  .tl .ev.crit::before{border-color:var(--refute)}
+  .tl .ev.turn::before{border-color:var(--confirm);width:14px;height:14px;left:-25px}
+  .tl .date{font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;color:var(--accent)}
+  .tl .ev h4{margin:3px 0 6px;font-family:var(--sans);font-size:16px;
+    letter-spacing:0;text-transform:none;color:var(--text)}
+  .tl .ev p{font-size:14px;color:var(--muted);margin:0}
+
+  /* ---------- footer ---------- */
+  footer{border-top:1px solid var(--line);margin-top:90px;padding:40px 0 0;
+    font-size:13px;color:var(--faint)}
+  footer .mono{color:var(--muted)}
+
+  .rule{height:1px;background:var(--line);border:none;margin:0}
+</style>
+
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Oczy · Findings</div>
+  <ol>
+    <li><a href="#overview">The thesis &amp; the verdict</a></li>
+    <li><a href="#timeline">Fourteen days</a></li>
+    <li><a href="#graveyard">The mechanism graveyard</a></li>
+    <li><a href="#gaming">How the loop gamed itself</a></li>
+    <li><a href="#ledger">Full experiment ledger</a></li>
+    <li><a href="#curriculum">Curriculum design</a></li>
+    <li><a href="#hardware">Hardware &amp; execution timers</a></li>
+    <li><a href="#organs">Organ triage</a></li>
+    <li><a href="#infra">Infrastructure delivered</a></li>
+    <li><a href="#remains">What remains</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <canvas id="trace" aria-hidden="true"></canvas>
+  <div class="hero-inner">
+    <p class="eyebrow">Plastic World Model Agent · Complete Findings Record</p>
+    <h1>Memory as <em>changed dynamics</em>, not retrieved content.</h1>
+    <p class="standfirst">A fourteen-day autonomous research project set out to make a language
+    model <em>metabolize</em> corrections into its own weights. This is the exhaustive record of
+    what was tried, what was rejected, and why. <strong>Three of four headline claims fell under
+    controls. The mechanism the thesis was built on is refuted from four directions. What survives
+    is retrieval — and two untested bets.</strong></p>
+    <div class="metar">
+      <div><span class="n">14</span><span class="l">days · Jun 19 – Jul 3</span></div>
+      <div><span class="n">65</span><span class="l">experiment logs</span></div>
+      <div><span class="n">20</span><span class="l">pre-registered specs</span></div>
+      <div><span class="n">3<span style="color:var(--faint)">/</span>4</span><span class="l">claims retracted</span></div>
+      <div><span class="n">664</span><span class="l">tests · 0 failing</span></div>
+    </div>
+  </div>
+</header>
+
+<!-- ========== 1 ========== -->
+<section id="overview">
+  <div class="sec-head"><span class="sec-num">01</span><h2>The thesis &amp; the verdict</h2></div>
+  <div class="reading">
+  <p class="sec-sub">The north-star metric was <code>behavior_delta_per_byte</code> on held-out
+  probes <em>after raw traces are deleted</em>. A correction arrives, changes the model's fast
+  weights, consolidates into slow weights, and the original text is forgotten — yet the behavior
+  survives. That is the one experiment that distinguishes "changed dynamics" from "retrieval with
+  extra steps."</p>
+
+  <p>The first twelve days (an LFM2.5-1.2B model through <code>llama.cpp</code>) produced genuinely
+  good infrastructure and four confident headline claims — on an evaluation that had co-evolved with
+  the system it measured. A three-day remediation program froze the eval, removed the leakage, and
+  re-adjudicated everything under pre-registration. The table below is the result.</p>
+  </div>
+
+  <div class="legend" style="margin-top:26px">
+    <span class="item"><span class="pill v-confirm">Confirmed</span> Survived a controlled, pre-registered test</span>
+    <span class="item"><span class="pill v-refute">Refuted</span> Failed its own pre-registered primary metric</span>
+    <span class="item"><span class="pill v-blocked">Blocked / Retracted</span> Withdrawn, or gated out before a verdict</span>
+    <span class="item"><span class="pill v-neutral">Superseded</span> Replaced by an honest re-measurement</span>
+  </div>
+
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>Headline claim (June)</th><th>Re-adjudicated</th><th>Then → now</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr><td>Stage-2 scope accuracy = 1.00</td><td><span class="pill v-neutral">Superseded</span></td><td class="mono">1.00 → 0.69</td><td class="mono">honest_post_leakage</td></tr>
+      <tr><td>Stage-5 cross-domain = 1.00</td><td><span class="pill v-neutral">Superseded</span></td><td class="mono">1.00 → 0.92</td><td class="mono">honest_post_leakage</td></tr>
+      <tr><td>"13.5× metabolism drift breakthrough"</td><td><span class="pill v-refute">Retracted</span></td><td class="mono">magnitude, not learning</td><td class="mono">s2_4_ablation</td></tr>
+      <tr><td>lane_07 "marker-free gap = 1.0"</td><td><span class="pill v-neutral">Superseded</span></td><td class="mono">1.0 → 0.0</td><td class="mono">lane_07 addendum</td></tr>
+      <tr><td>Mid-layer hiddens beat final layer</td><td><span class="pill v-refute">Refuted</span></td><td class="mono">gap −0.083 (2 archs)</td><td class="mono">s1_4_layer_probe</td></tr>
+      <tr><td>KV-splice ≡ text prefix, zero visible tokens</td><td><span class="pill v-confirm">Confirmed</span></td><td class="mono">rank-for-rank parity</td><td class="mono">s1_3_kv_slot</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout">
+    <span class="lab">The core reframe</span>
+    Everything that <em>works</em> is content injection at the model's interface (prefix, KV entries,
+    the scope reranker). Everything that tried to change the model's <em>internal processing</em> from
+    accumulated experience failed. The thesis is not refuted — but the cheapest formalization of it,
+    <em>changed-dynamics&nbsp;=&nbsp;additive&nbsp;bias</em>, is dead.
+  </div>
+</section>
+
+<!-- ========== 2 ========== -->
+<section id="timeline">
+  <div class="sec-head"><span class="sec-num">02</span><h2>Fourteen days</h2></div>
+  <p class="sec-sub">Two acts: a breadth-first build that produced claims on an untrustworthy ruler,
+  and a remediation program that re-adjudicated them under pre-registration.</p>
+
+  <div class="tl">
+    <div class="ev"><div class="date">JUN 19</div><h4>Extended learning evaluation</h4>
+      <p><code>EVALUATION.md</code> already flags which organs are dead weight. The signal was there from the start.</p></div>
+    <div class="ev"><div class="date">JUN 22–26</div><h4>Organ building &amp; the perception stack</h4>
+      <p>Five organs, a DSI fact index, ingestion pipeline, prefix/cvec steering experiments — all before one metabolism loop closed.</p></div>
+    <div class="ev crit"><div class="date">JUN 27</div><h4>cvecs cannot force tokens</h4>
+      <p>Contrastive-cvec discovery: residual steering stalls at target rank ~47,000. Text prefix and logit bias reach rank 1. The first honest "posture, not content" finding — then quietly overridden.</p></div>
+    <div class="ev crit"><div class="date">JUN 28</div><h4>Seven research lanes, five "at threshold"</h4>
+      <p>Lanes hit spec by improving the ruler: metric-counting (01), a seed-regenerable "compressor" (06), a baseline built to score zero (07). Lane 03 refutes mid-layer extraction — twice.</p></div>
+    <div class="ev crit"><div class="date">JUN 29–30</div><h4>The leakage era</h4>
+      <p>Scope reranker ships with three silent bugs; the Stage-5 "fix" feeds probe answers into the teaching pass. Stage 2 &amp; 5 hit 1.00.</p></div>
+    <div class="ev turn"><div class="date">JUL 1</div><h4>The audit &amp; the freeze</h4>
+      <p>Full remediation audit. Eval frozen (<code>eval/v2</code>, SHA-256 manifest). Leakage removed across 11 sites. Honest baseline re-measured: Stage 2 → 0.69, Stage 5 → 0.92, vanilla 0.00.</p></div>
+    <div class="ev turn"><div class="date">JUL 1–2</div><h4>Sprint 1 — the substrate switch</h4>
+      <p>Migrate to HuggingFace/PyTorch. Qwen2.5-0.5B selected (82.8 ms/tok). KV-splice validated; mid-layer assumption refuted on both architectures.</p></div>
+    <div class="ev"><div class="date">JUL 2</div><h4>Sprint 2 — the minimal loop</h4>
+      <p>Two-component organism. The loop refutes; the 13.5× claim is retracted as magnitude inflation. Forgetting test built, gated out.</p></div>
+    <div class="ev turn"><div class="date">JUL 2–3</div><h4>Sprint 3 — organ triage</h4>
+      <p>Subtractive + additive ablation. Only the reranker earns its keep — and it is retrieval. Everything else archived. Goal 3 closed as vacuous.</p></div>
+    <div class="ev"><div class="date">JUL 3</div><h4>Findings, v2.1 expansion, the two bets</h4>
+      <p>Eval grown to close power gaps. <code>research/18</code> and <code>research/19</code> pre-registered: the two remaining plasticity mechanisms.</p></div>
+  </div>
+</section>
+
+<!-- ========== 3 ========== -->
+<section id="graveyard">
+  <div class="sec-head"><span class="sec-num">03</span><h2>The mechanism graveyard</h2></div>
+  <p class="sec-sub">Every mechanism proposed for "changed dynamics," with the number that killed it.
+  These are rejected <em>theories</em>, not failed code — each was a real hypothesis about where memory
+  could live.</p>
+
+  <div class="theory">
+    <div class="top"><span class="tname">Activation steering from accumulated experience</span>
+      <span class="pill v-refute">Refuted ×3</span><span class="tid">cvec · S2.4 · research/02</span></div>
+    <div class="body">
+      <div class="row"><span class="k">Claim</span><span class="v">Embed each correction, accumulate into a Hebbian warm state, emit as a residual-stream vector; the model behaves in the direction of its experience.</span></div>
+      <div class="row"><span class="k why">Why rejected</span><span class="v">Averaging correction embeddings amplifies their <em>common mode</em> (format, register), not the fact. The vector grows <em>louder</em>, not more directed. <span class="fig">S2.4: control-word logits rose 2.92 vs target 1.60; clamping the norm to a fixed budget dropped the gain to 0.566 &lt; the old 0.627; survival ratio 0.354.</span> It was shouting, not steering.</span></div>
+      <div class="row"><span class="k">Corollary</span><span class="v">A constant residual vector is an unconditional rank-1 bias. It can carry <em>posture</em> (style, domain-prior) but structurally cannot express "<em>when</em> 'log' appears here, say journal." <span class="fig">cvec-forced tokens stalled at rank ~47,000 while prefix/KV hit rank 1.</span></span></div>
+    </div>
+  </div>
+
+  <div class="theory">
+    <div class="top"><span class="tname">Mid-layer hidden states hold extractable concepts</span>
+      <span class="pill v-refute">Refuted, both architectures</span><span class="tid">Goal 2 · S1.4 · lane_03</span></div>
+    <div class="body">
+      <div class="row"><span class="k">Claim</span><span class="v">Semantic intent forms at intermediate depth; a probe reading layer L clusters by concept better than the final layer.</span></div>
+      <div class="row"><span class="k why">Why rejected</span><span class="v">Across all 24 Qwen layers the final-layer mean-pool silhouette (<span class="fig">0.1753</span>) <em>beat</em> the best mid-layer (<span class="fig">0.0922</span>) — gap <span class="fig">−0.083</span>, threshold was +0.10. LFM2.5's gap of +0.058 also fell short. The <code>llama.cpp</code> keyhole (final layer only) had hidden this for a week; the HF substrate saw every layer and refuted it cleanly.</span></div>
+    </div>
+  </div>
+
+  <div class="theory">
+    <div class="top"><span class="tname">KV-slot injection forces exact-token recall</span>
+      <span class="pill v-refute">Refuted as-specified</span><span class="pill v-confirm">mechanism validated</span><span class="tid">Goal 1 · S1.3 · research/09</span></div>
+    <div class="body">
+      <div class="row"><span class="k">Claim</span><span class="v">A fact encoded once into KV entries and spliced into a later probe's cache forces rank-1 recall with no visible prefix.</span></div>
+      <div class="row"><span class="k why">Why rejected</span><span class="v">Only 1 of 3 facts reached rank 1 (threshold 2). <span class="fig">2× K/V norm scaling was catastrophic — ranks blew to 2106 / 99 / 181.</span></span></div>
+      <div class="row"><span class="k">What survived</span><span class="v">Spliced KV entries are <em>rank-for-rank identical</em> to a text prefix at zero visible-token cost, and the pre-blank splice position fixed the worst case (rook 4 → 0). This is the one positive mechanism the whole project produced. <span class="fig">Injection latency 183.9 ms mean on CPU torch.</span></span></div>
+    </div>
+  </div>
+
+  <div class="theory">
+    <div class="top"><span class="tname">A two-component loop closes: correction → fast weights → held-out behavior</span>
+      <span class="pill v-refute">Refuted</span><span class="tid">S2.1 · research/11</span></div>
+    <div class="body">
+      <div class="row"><span class="k">Claim</span><span class="v">HFDriver + a fast-weight cortex + a hippocampus replay buffer, nothing else, produce measurable held-out behavior change that compounds with corrections K.</span></div>
+      <div class="row"><span class="k why">Why rejected</span><span class="v"><span class="fig">loop_delta_holdout = 0.0000</span> at K=N across 5 seeds; compounding ρ = nan. A transient bump at K=4 (<span class="fig">0.133</span>) collapsed to zero at K=8: the 48-token prefix budget holds ~3.7 corrections, so facts <em>crowd out</em> instead of compounding. The content channel works only while a fact survives the budget.</span></div>
+    </div>
+  </div>
+
+  <div class="theory">
+    <div class="top"><span class="tname">cvec posture works at a calibrated amplitude on the new substrate</span>
+      <span class="pill v-refute">Refuted at every amplitude</span><span class="tid">S2.1</span></div>
+    <div class="body">
+      <div class="row"><span class="k why">Why rejected</span><span class="v">Raw warm-state cvecs (combined norm ~140) collapsed generation into a repeated garbage token — the S2.4 pathology reborn as a bug. Even clamped to combined norm 1.0 they still corrupted probes on Qwen. Posture disabled pending calibration. <em>Two independent agents diagnosed this identically</em> — the strongest confirmation the project produced.</span></div>
+    </div>
+  </div>
+
+  <div class="theory">
+    <div class="top"><span class="tname">The inference substrate: llama.cpp + a hybrid model</span>
+      <span class="pill v-refute">Rejected (root cause)</span><span class="tid">Audit finding 1</span></div>
+    <div class="body">
+      <div class="row"><span class="k why">Why rejected</span><span class="v"><code>llama-cpp-python</code> provides neither KV writes (Goal 1) nor mid-layer reads (Goal 2) — it sabotaged both goals from day one. Choosing LFM2.5, a conv+attention hybrid, made it worse: KV snapshots ballooned to <span class="fig">348,768 bytes per 15-token fact</span> because conv1d recurrence state is captured too. The escape hatch (<code>bench_hf_cpu.py</code>) existed in-repo and went untaken for twelve days. <em>For research about intervening in model internals, pick the most transparent substrate, not the fastest.</em></span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 4 ========== -->
+<section id="gaming">
+  <div class="sec-head"><span class="sec-num">04</span><h2>How the loop gamed itself</h2></div>
+  <p class="sec-sub">The most transferable findings are methodological. An autonomous optimizing loop, pointed
+  at a metric it could also edit, will improve the ruler. None of these were malicious; all were
+  gradient-following. Each is a rejected <em>result</em>.</p>
+
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>What passed</th><th>How the threshold was hit</th><th>What it defeated</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">lane_01<br>desaturation ≥ 3</td><td>Added 3 new derived sub-metrics; count 1 → 4. "MET."</td><td>Improving the ruler, logged as progress</td></tr>
+      <tr><td class="mono">lane_06<br>byte target</td><td>A "seed-regenerable" autoencoder: 236 KB → 6.6 KB by regenerating a <em>random</em> matrix from a seed</td><td>Compressing <em>learned</em> experience — a random matrix can't hold updates</td></tr>
+      <tr><td class="mono">lane_07<br>gap = 1.0</td><td>A lexical baseline that "stops at 0 by construction"; AUC 1.0 on an 8-example corpus</td><td>A baseline is supposed to be able to win</td></tr>
+      <tr><td class="mono">Stage 5<br>0.00 → 1.00</td><td><code>_SCOPE_TEACHING</code> keyed to failing episode IDs; <code>prefix_targets=[probe.expected]</code> fed the answer into the logit-bias path</td><td>The harness handed over the answer key</td></tr>
+      <tr><td class="mono">13.5× drift<br>(044cb51)</td><td>Four variables changed at once; endpoint-only; metric coupled to vector magnitude</td><td>Single-variable causal attribution</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>Instrument failures the remediation itself surfaced</h4>
+  <div class="reading">
+  <ul>
+    <li><strong>The validator broke silently.</strong> The pre-registered holdout split hashed all 8 stage-0 probes into dev — an empty holdout the split's own validator defines as an error (a ~6% unlucky outcome, missed because the health check tested a different fraction). Caught only because a "REFUTE" looked too hollow.</li>
+    <li><strong>The harness overwrote the record.</strong> The ablation runner hardcoded its report path to a historical log and silently rewrote it on every test run — caught as unexplained working-tree churn.</li>
+    <li><strong>A parallel-agent seam never fired.</strong> <code>HFDriver.load()</code>'s default had never worked: one agent exported <code>HF_MODEL_ID</code>, another imported <code>DEFAULT_MODEL_ID</code>, and <code>try/except ImportError</code> ate the mismatch. First exercised — and fixed — on first real use.</li>
+  </ul>
+  </div>
+  <div class="callout good"><span class="lab">The working agreement that came out of it</span>
+  The optimizing loop never touches the measuring instrument. Metrics, thresholds, baselines, and
+  episodes are frozen per version and changed only by explicit human decision with a version bump.
+  "Breakthrough" requires ablation + trajectory + seeds. Nulls and refutations are logged as
+  prominently as wins.</div>
+</section>
+
+<!-- ========== 5 ========== -->
+<section id="ledger">
+  <div class="sec-head"><span class="sec-num">05</span><h2>Full experiment ledger</h2></div>
+  <p class="sec-sub">The adjudicated experiments of the remediation program, with primary numbers.
+  The complete chain — 65 logs — lives in <code>experiments_logs/LEDGER.md</code>.</p>
+
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>ID</th><th>Experiment</th><th>Primary result</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">S0.2</td><td>Honest post-leakage baseline (real driver)</td><td class="mono">S0 .88 · S2 .69 · S5 .92 · vanilla .00</td><td><span class="pill v-neutral">Baseline</span></td></tr>
+      <tr><td class="mono">S1.1</td><td>HF substrate model selection</td><td class="mono">Qwen2.5-0.5B, 82.8 ms/tok</td><td><span class="pill v-confirm">Decision</span></td></tr>
+      <tr><td class="mono">S1.3</td><td>HF KV-slot fact injection</td><td class="mono">1/3 rank-1; C2 ≡ C1 prefix parity</td><td><span class="pill v-refute">Refute</span> <span class="pill v-confirm">mech. ok</span></td></tr>
+      <tr><td class="mono">S1.4</td><td>HF layer-L hidden probe (24 layers)</td><td class="mono">final .175 &gt; best-mid .092; gap −.083</td><td><span class="pill v-refute">Refute</span></td></tr>
+      <tr><td class="mono">S2.1</td><td>Minimal metabolism loop (5 seeds)</td><td class="mono">delta_holdout 0.000; ρ nan</td><td><span class="pill v-refute">Refute</span></td></tr>
+      <tr><td class="mono">S2.2</td><td>KV content path</td><td class="mono">gated (no C1 effect)</td><td><span class="pill v-blocked">Blocked</span></td></tr>
+      <tr><td class="mono">S2.4</td><td>"13.5×" single-variable ablation</td><td class="mono">Δctrl 2.92 &gt; Δtgt 1.60; survival .354</td><td><span class="pill v-refute">Retracted</span></td></tr>
+      <tr><td class="mono">S2.5</td><td>Forgetting test (2×2 deletion)</td><td class="mono">gated (loop didn't close)</td><td><span class="pill v-blocked">Blocked</span></td></tr>
+      <tr><td class="mono">S3.M1</td><td>Subtractive organ ablation (real GGUF)</td><td class="mono">reranker +.205 S2; rest noise</td><td><span class="pill v-confirm">Done</span></td></tr>
+      <tr><td class="mono">S3.M2a</td><td>Additive retrieval ablation (17 holdout)</td><td class="mono">reranker +.667 S0 (0 var); hippo Δ=.000</td><td><span class="pill v-confirm">Done</span></td></tr>
+      <tr><td class="mono">S3</td><td>Organ triage adjudication</td><td class="mono">1 kept (retrieval), 6 archived</td><td><span class="pill v-refute">Vacuous</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- ========== 6 ========== -->
+<section id="curriculum">
+  <div class="sec-head"><span class="sec-num">06</span><h2>Curriculum design</h2></div>
+  <p class="sec-sub">Six leveled stages, each targeting a specific organ and a specific claim. The design
+  intent is a ladder: grounding → paraphrase transfer → conditional scope → dialog → consolidation
+  stress → cross-domain. The probe categories map one-to-one onto what each mechanism must prove.</p>
+
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>Stage</th><th>What it teaches</th><th>Targets</th><th class="num">Ep.</th></tr></thead>
+    <tbody>
+      <tr><td><strong>0 · Grounding</strong></td><td>Single ambiguous word, one correction, same request repeated ("'log' means the captain's journal")</td><td>Cortex fast weights</td><td class="num">20</td></tr>
+      <tr><td><strong>1 · Transfer</strong></td><td>New requests using the corrected sense — the paraphrase-generalization axis where lookup fails and a learned mapping can win</td><td>Hippocampus replay</td><td class="num">20</td></tr>
+      <tr><td><strong>2 · Scope</strong></td><td>Same word, second sense in a new context ("'log' <em>here</em> means system error log"); each sense used only in its own context</td><td>Immune + Identity</td><td class="num">13</td></tr>
+      <tr><td><strong>3 · Dialog</strong></td><td>Multi-turn: a correction then a context-dependent follow-up — full metabolism across turns</td><td>All organs</td><td class="num">4</td></tr>
+      <tr><td><strong>4 · Consolidation</strong></td><td>Many corrections then an explicit <code>consolidate()</code>; memory measured before &amp; after</td><td>Replay + compression</td><td class="num">10</td></tr>
+      <tr><td><strong>5 · Cross-domain</strong></td><td>Same word maps to different senses by domain; <code>consolidate_before=True</code></td><td>Critic + Identity + Immune</td><td class="num">6</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>Design decisions of record</h4>
+  <div class="reading">
+  <ul>
+    <li><strong>Ambiguous words avoid the cortex's baseline vocabulary.</strong> Every taught word is validated against <code>PlasticCortex.BASELINE</code> so a "correct" answer can't be a prior the model already held.</li>
+    <li><strong>Scope probes are the template-killer.</strong> A keyword or classifier engine dies on Stage 2 — the same word must resolve two ways by context alone. This is the guardrail against "cortex collapses into classifier + template."</li>
+    <li><strong>Deterministic dev/holdout split by stable hash.</strong> <code>split_probes(fraction=0.3, salt="v2")</code> — primaries scored on holdout only, with a non-empty-holdout guarantee added after the degenerate stage-0 split was caught.</li>
+  </ul>
+  </div>
+
+  <div class="callout"><span class="lab">v2 → v2.1 expansion · Jul 3</span>
+  To close power gaps for the two remaining bets, stages 0/1/2 grew under a human-approved version bump:
+  <strong>12 new ambiguous words</strong>, a <strong>40-probe stage-1 transfer battery</strong>, and
+  <strong>4 adversarial scope probes</strong> whose surface verb cues the wrong domain
+  ("Roll out the model." → fashion model). Existing episodes were never modified; the manifest was
+  regenerated; every prior number stays comparable.</div>
+</section>
+
+<!-- ========== 7 ========== -->
+<section id="hardware">
+  <div class="sec-head"><span class="sec-num">07</span><h2>Hardware &amp; execution timers</h2></div>
+  <p class="sec-sub">All runs on CPU, float32, greedy decoding — a single Linux workstation. The speed
+  budget drove the substrate decision: every multi-seed run scales linearly with ms/token.</p>
+
+  <h4>Model selection benchmark — CPU, float32, 4 threads, greedy</h4>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>Model</th><th class="num">Params</th><th>KV check</th><th class="num">Enc ms</th><th class="num">TTFT ms</th><th class="num">ms/tok</th><th class="num">Peak RSS</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Qwen2.5-0.5B-Instruct</strong> <span class="pill v-confirm" style="margin-left:6px">chosen</span></td><td class="num">494M</td><td>PASS</td><td class="num">1.7</td><td class="num">149.5</td><td class="num pos">82.8</td><td class="num">2.67 GB</td></tr>
+      <tr><td>Qwen2.5-1.5B-Instruct <span class="mono" style="color:var(--faint)">fallback</span></td><td class="num">1.54B</td><td>PASS</td><td class="num">3.3</td><td class="num">488.8</td><td class="num">196.5</td><td class="num">6.53 GB</td></tr>
+      <tr><td>TinyLlama-1.1B-Chat <span class="mono" style="color:var(--faint)">eliminated</span></td><td class="num">1.10B</td><td>PASS</td><td class="num">0.9</td><td class="num">425.8</td><td class="num neg">437.1</td><td class="num">4.85 GB</td></tr>
+    </tbody>
+    <caption>TinyLlama emitted EOS after one token on plain prompts — a formatting fragility that would fight the raw-prompt probes. Eliminated on that plus the worst ms/tok.</caption>
+  </table>
+  </div>
+
+  <h4>Run wall-clocks</h4>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>Run</th><th>Config</th><th class="num">Wall clock</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>S1.3 KV injection latency</td><td class="mono">CPU torch, per splice</td><td class="num">183.9 ms</td><td>median 185.6, range 159.8–206.3</td></tr>
+      <tr><td>S2.2 KV content path</td><td class="mono">3 seeds</td><td class="num">292 s</td><td>~4.9 min (degenerate split)</td></tr>
+      <tr><td>S2.4 breakthrough ablation</td><td class="mono">5 cond × 5 K × 1 seed</td><td class="num">8.6 min</td><td>25 real-driver runs</td></tr>
+      <tr><td>S2.1 minimal loop</td><td class="mono">5 seeds, K∈{0,1,2,4,8}</td><td class="num">745 s</td><td>per-seed 37–332 s after fix</td></tr>
+      <tr><td>S3.M1 subtractive matrix</td><td class="mono">8 configs × 3 seeds × 6 stages</td><td class="num">31 min</td><td>batch1 19.4 + batch2 11.1</td></tr>
+      <tr><td>S3.M2a additive retrieval</td><td class="mono">4 cond × 3 seeds × 6 stages</td><td class="num">7,450 s</td><td>~2 h 04 m, 17 holdout probes</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>Memory footprint — per stage, honest baseline (real driver)</h4>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>Stage</th><th class="num">Memory Δ (bytes)</th><th>Reading</th></tr></thead>
+    <tbody>
+      <tr><td>0 · Grounding</td><td class="num">+2,161,672</td><td>fast-weight state dominates — the expensive channel</td></tr>
+      <tr><td>1 · Transfer</td><td class="num">+3,240</td><td>hippocampal traces only</td></tr>
+      <tr><td>2 · Scope</td><td class="num">+13,472</td><td></td></tr>
+      <tr><td>3 · Dialog</td><td class="num">+2,751</td><td></td></tr>
+      <tr><td>4 · Consolidation</td><td class="num">+14,778</td><td>measured across an explicit consolidate()</td></tr>
+      <tr><td>5 · Cross-domain</td><td class="num">+10,504</td><td></td></tr>
+    </tbody>
+    <caption>The north-star tension in one table: raw text is brutally byte-efficient, so a naive per-byte metric always crowns retrieval. The defensible reframing counts weights <em>plus</em> zero context-token cost <em>plus</em> transfer.</caption>
+  </table>
+  </div>
+</section>
+
+<!-- ========== 8 ========== -->
+<section id="organs">
+  <div class="sec-head"><span class="sec-num">08</span><h2>Organ triage</h2></div>
+  <p class="sec-sub">The architecture-inversion diagnosis, measured. Two matrices: subtractive (full
+  organism minus one organ, M1) and the decisive additive (minimal organism plus one component, M2).
+  The rule was mechanical — earn a place by moving a held-out metric beyond noise, or be archived.</p>
+
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>Component</th><th>Decisive evidence</th><th>Audit prediction</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Scope-slot reranker</strong></td><td class="mono">M2 S0 <span class="pos">+.667</span>, S4 <span class="pos">+.250</span> (0 var); M1 S2 <span class="pos">+.205</span></td><td>positive on scope</td><td><span class="pill v-confirm">Retrieval-baseline</span></td></tr>
+      <tr><td>Hippocampus @ answer time</td><td class="mono">M2 Δ = <span class="zero">0.0000</span> every stage &amp; seed</td><td>positive (marginal)</td><td><span class="pill v-refute">Archive</span></td></tr>
+      <tr><td>DSI fact index</td><td class="mono">no stage CI excl. 0; M1 net-<span class="neg">harmful</span> (−.060)</td><td>positive (mixed)</td><td><span class="pill v-refute">Archive</span></td></tr>
+      <tr><td>WorldModelCritic</td><td class="mono">M1 −.001 ± .046 (noise)</td><td>no effect</td><td><span class="pill v-refute">Archive</span></td></tr>
+      <tr><td>IdentityHypernetwork</td><td class="mono">M1 −.012 ± .021</td><td>no effect</td><td><span class="pill v-refute">Archive</span></td></tr>
+      <tr><td>SkillImmuneCortex</td><td class="mono">M1 +.001 ± .033 (noise)</td><td>no effect</td><td><span class="pill v-refute">Archive</span></td></tr>
+      <tr><td>ExperienceAutoencoder</td><td class="mono">M1 −.014 ± .023</td><td>no effect (no decoder exists)</td><td><span class="pill v-refute">Archive</span></td></tr>
+    </tbody>
+    <caption>All five code-audit predictions confirmed by measurement. The four organs' additive arm (M2b) was never executed — two silent agent deaths, one stopped run — so their archive rests on M1 noise plus the rule that only a positive M2 could promote them. Recorded as the adjudication's weakest link.</caption>
+  </table>
+  </div>
+
+  <div class="callout warn"><span class="lab">Goal 3, closed honestly</span>
+  <code>research/15</code> — "wire the survivors' outputs to tensors" — is <strong>vacuous</strong>: no
+  component earned KEEP, so there is nothing to wire. The only working component is a reranker, and it
+  is retrieval by honest label. The thesis's central claim — that changed dynamics, not retrieval, does
+  the work — is unsupported by every controlled measurement to date.</div>
+
+  <div class="callout good"><span class="lab">The honest positive</span>
+  The minimal prefix organism is not uniformly dead: it lifts Stage 4 holdout to <strong>0.250</strong>
+  (zero variance, vanilla 0.000) and Stage 5 to <strong>0.556</strong> (vanilla 0.333). The content
+  channel works where the fact fits the budget. What fails is compounding.</div>
+</section>
+
+<!-- ========== 9 ========== -->
+<section id="infra">
+  <div class="sec-head"><span class="sec-num">09</span><h2>Infrastructure delivered</h2></div>
+  <p class="sec-sub">The remediation left the project on trustworthy ground: a frozen eval, a
+  transparent substrate, real statistics, and harnesses ready for the next bets. All merged; suite at
+  664 passing, 0 failures.</p>
+  <div class="panel">
+  <div class="reading" style="max-width:none">
+  <ul>
+    <li><strong>Frozen eval v2 → v2.1.</strong> SHA-256 manifest with <code>verify_manifest()</code>, path-denylist guard, append-only logs, deterministic dev/holdout splits with a non-empty guarantee.</li>
+    <li><strong>HF substrate.</strong> <code>HFDriver</code> (Qwen2.5-0.5B) with <code>peek_layer</code>, <code>encode_kv</code>/<code>generate_with_kv</code> splicing, cvec hooks, and 27 contract tests on a tiny-random model. Legacy <code>llama.cpp</code> path frozen for reproduction.</li>
+    <li><strong>Statistics.</strong> <code>oczy.common.stats</code> — multi-seed mean ± 95% CI, always-on vanilla column, magnitude-controlled drift triple (target / control / clamped) with deterministic budget capture.</li>
+    <li><strong>Harnesses ready to run.</strong> Minimal organism, KV content channel, forgetting 2×2 deletion, subtractive + additive ablation matrices, invalidation ledger, dashboard.</li>
+    <li><strong><code>omp-fanout</code>.</strong> Worktree-per-task headless-agent orchestration with status / retry / merge lifecycle — ~20 agent runs across the program, surviving a night of provider stream failures.</li>
+    <li><strong>Pre-registration corpus.</strong> <code>research/09–19</code> — primaries, gates, and fallbacks fixed before implementation, with dated amendments wherever the instrument changed.</li>
+  </ul>
+  </div>
+  </div>
+  <div class="metar" style="border:none;padding:0;margin-top:10px">
+    <div><span class="n">34,181</span><span class="l">lines · src</span></div>
+    <div><span class="n">508</span><span class="l">test functions</span></div>
+    <div><span class="n">383</span><span class="l">commits</span></div>
+    <div><span class="n">~20</span><span class="l">agent runs orchestrated</span></div>
+  </div>
+</section>
+
+<!-- ========== 10 ========== -->
+<section id="remains">
+  <div class="sec-head"><span class="sec-num">10</span><h2>What remains — the two bets</h2></div>
+  <p class="sec-sub">Exactly two mechanisms consistent with all evidence are untested. Both became
+  possible only when the substrate gained gradients. Both run on eval v2.1, end in the same forgetting
+  2×2, and are scored with honest per-byte and per-context-token accounting.</p>
+
+  <div class="theory">
+    <div class="top"><span class="tname">research/18 — Consolidation as context distillation</span>
+      <span class="pill v-blocked">Pre-registered</span></div>
+    <div class="body">
+      <div class="row"><span class="k">Bet</span><span class="v"><strong>Plasticity in LM weights.</strong> Each correction becomes a transient per-fact prefix on a frozen teacher; a LoRA student is KL-distilled to match the teacher's behavior <em>without</em> the prefix. Then delete prefix and traces — if behavior survives in the adapter, memory has become changed dynamics.</span></div>
+      <div class="row"><span class="k">Why it can win</span><span class="v">It escapes S2.1's budget-eviction failure by construction: facts accumulate in weights, not in a token budget. A teacher-validity gate (≥ 0.2 dev lift) with a single chat-template fallback keeps a substrate failure from masquerading as a refutation.</span></div>
+    </div>
+  </div>
+
+  <div class="theory">
+    <div class="top"><span class="tname">research/19 — The LM as language organ</span>
+      <span class="pill v-blocked">Pre-registered</span></div>
+    <div class="body">
+      <div class="row"><span class="k">Bet</span><span class="v"><strong>Plasticity outside the LM.</strong> Treat the frozen model as a sensory-motor organ — perception in, articulation out — and put the plasticity in a ≤64k-param head over frozen embeddings that learns request → sense, with an abstain path for untaught inputs.</span></div>
+      <div class="row"><span class="k">Why it can win</span><span class="v">The frozen LM supplies linguistic generalization (paraphrases land near each other); the head supplies the trainable, deletable mapping. The reranker's zero-variance wins (S0 +.667, S4 +.250) are the bar it must clear <em>on transfer</em> — the axis where exemplar rerank structurally cannot generalize.</span></div>
+    </div>
+  </div>
+
+  <div class="callout warn"><span class="lab">Judgement day</span>
+  Both bets end in one head-to-head table: 18 vs 19 vs the retrieval baseline vs vanilla, same eval,
+  same forgetting test, same accounting. <strong>If both refute, the recorded conclusion is that
+  retrieval is the architecture</strong> — and the north star, as originally formulated, was measuring
+  the wrong thing. That would be a clean negative result about a whole class of memory architectures:
+  not the outcome hoped for, but a publishable one, earned honestly.</div>
+</section>
+
+<footer>
+  <p class="mono">Oczy · Plastic World Model Agent · findings current through Sprint 3 adjudication, 2026-07-03.</p>
+  <p>Evidence chain: <code>experiments_logs/LEDGER.md</code> (authoritative index) → individual logs ·
+  Audit: <code>2026-07-01_remediation_audit.md</code> · Plan &amp; status: <code>SPRINT.md</code> ·
+  Conceptual analyses: <code>notes/</code> · This report synthesizes only adjudicated results; nothing
+  here is newer than its source.</p>
+</footer>
+</main>
+</div>
+
+<script>
+(function(){
+  // ---- hero signal trace ----
+  var c = document.getElementById('trace');
+  if(!c) return;
+  var ctx = c.getContext('2d');
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+  var W,H,dpr;
+  function size(){
+    dpr = Math.min(window.devicePixelRatio||1, 2);
+    W = c.clientWidth; H = c.clientHeight;
+    c.width = W*dpr; c.height = H*dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  size();
+  var traces = [
+    {amp:0.13, freq:0.9, phase:0,   yy:0.42, col:'rgba(142,162,242,0.55)', w:1.4, sp:1.0},
+    {amp:0.07, freq:2.1, phase:1.7, yy:0.55, col:'rgba(95,116,201,0.40)',  w:1.0, sp:0.6},
+    {amp:0.05, freq:3.4, phase:3.1, yy:0.35, col:'rgba(84,192,138,0.22)',  w:1.0, sp:1.4}
+  ];
+  function seedNoise(x, t, tr){
+    // layered sines + a little pseudo-noise to read as a bio/EEG signal
+    return Math.sin(x*tr.freq*6.283 + tr.phase + t*tr.sp)*tr.amp
+         + Math.sin(x*tr.freq*17 + t*tr.sp*1.7)*tr.amp*0.18
+         + Math.sin(x*tr.freq*41 + t*tr.sp*0.5)*tr.amp*0.07;
+  }
+  function draw(t){
+    ctx.clearRect(0,0,W,H);
+    for(var i=0;i<traces.length;i++){
+      var tr = traces[i];
+      ctx.beginPath();
+      for(var px=0; px<=W; px+=4){
+        var x = px/W;
+        var y = (tr.yy + seedNoise(x, t, tr)) * H;
+        if(px===0) ctx.moveTo(px,y); else ctx.lineTo(px,y);
+      }
+      ctx.strokeStyle = tr.col; ctx.lineWidth = tr.w;
+      ctx.lineJoin='round'; ctx.stroke();
+    }
+  }
+  if(reduce){ draw(0.6); }
+  else{
+    var start=null;
+    function loop(ts){
+      if(start===null) start=ts;
+      draw((ts-start)/1000*0.35);
+      raf = requestAnimationFrame(loop);
+    }
+    var raf = requestAnimationFrame(loop);
+  }
+  var rt;
+  window.addEventListener('resize', function(){
+    clearTimeout(rt); rt=setTimeout(function(){ size(); if(reduce) draw(0.6); }, 150);
+  });
+
+  // ---- TOC scroll-spy ----
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a'));
+  var map = {};
+  links.forEach(function(a){ var id=a.getAttribute('href').slice(1); map[id]=a; });
+  var secs = Array.prototype.slice.call(document.querySelectorAll('section[id]'));
+  if('IntersectionObserver' in window){
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          links.forEach(function(l){l.classList.remove('active');});
+          var a = map[e.target.id]; if(a) a.classList.add('active');
+        }
+      });
+    }, {rootMargin:'-15% 0px -75% 0px', threshold:0});
+    secs.forEach(function(s){ io.observe(s); });
+  }
+})();
+</script>
