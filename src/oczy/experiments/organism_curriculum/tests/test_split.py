@@ -145,29 +145,49 @@ def test_validate_split() -> None:
 
 
 def test_split_guarantee_engages_for_unlucky_large_stage() -> None:
-    """Bundled stage 0 hashes all 8 probes into dev at fraction=0.3, salt="v2"
-    — the degenerate split that invalidated the first S2.2 run. The
-    generalized guarantee must promote ceil(fraction * total) probes instead
-    of returning an empty holdout.
+    """A >=4-probe stage whose probes ALL hash into dev (the degenerate split
+    that invalidated the first S2.2 run, before the v2.1 expansion) must get
+    ceil(fraction * total) promoted probes instead of an empty holdout.
+
+    Uses a synthetic stage pinned to a (fraction, salt) combination verified
+    to threshold every probe into dev, so the guarantee path is exercised
+    deterministically regardless of bundled-eval content.
     """
-    stage_0 = build_curriculum()[0]
-    total = sum(len(e.probes) for e in stage_0.episodes)
-    dev, holdout = split_probes(stage_0, fraction=0.3, salt="v2")
-    assert len(holdout) == math.ceil(0.3 * total) > 0
+    stage = _synthetic_stage(n_probes=8, name="unlucky")
+    fraction, salt = 0.05, "v2"
+    dev_raw = 0
+    # Find the raw assignment first so the test is self-checking: if this
+    # (fraction, salt) ever stops producing an empty raw holdout, fail loudly
+    # rather than silently testing nothing.
+    import hashlib as _h
+    for ep in stage.episodes:
+        for probe in ep.probes:
+            pid = f"{ep.id}|{probe.request}|{probe.category}"
+            v = int.from_bytes(_h.sha256(f"{salt}:{pid}".encode()).digest()[:4], "big") / 0xFFFFFFFF
+            if v >= fraction:
+                dev_raw += 1
+    assert dev_raw == 8, "fixture no longer degenerate; pick a new (fraction, salt)"
+    dev, holdout = split_probes(stage, fraction=fraction, salt=salt)
+    assert len(holdout) == math.ceil(fraction * 8) > 0
     assert dev.isdisjoint(holdout)
-    assert len(dev) + len(holdout) == total
+    assert len(dev) + len(holdout) == 8
 
 
-def test_split_guarantee_never_alters_nonempty_holdouts() -> None:
-    """The guarantee only engages on an EMPTY holdout: every other bundled
-    stage keeps the exact partition it had before the guarantee was
-    generalized, preserving comparability with all previously logged numbers.
+def test_split_counts_locked_to_eval_v2_1() -> None:
+    """Lock the bundled dev/holdout counts at the pre-registered params.
+
+    Updated for the human-approved eval v2.1 expansion (2026-07-03): stages
+    0/1/2 grew (new probes hash independently; existing probes keep their raw
+    assignment). Note stage 0's holdout is now raw-hash assigned, so the
+    emptiness guarantee no longer engages there — the 3 previously PROMOTED
+    v2 probes reverted to dev (disclosed in the expansion log; S2.1 ran on
+    the promoted trio, later experiments run on v2.1's holdout).
     """
-    expected_holdout_counts = {1: 1, 2: 3, 3: 3, 4: 4, 5: 3}
+    expected = {0: 3, 1: 9, 2: 4, 3: 3, 4: 4, 5: 3}
     stages = build_curriculum()
-    for idx, count in expected_holdout_counts.items():
+    for idx, count in expected.items():
         _, holdout = split_probes(stages[idx], fraction=0.3, salt="v2")
-        assert len(holdout) == count, f"stage {idx} holdout changed"
+        assert len(holdout) == count, f"stage {idx} holdout count changed"
 
 
 def test_validate_split_healthy_at_preregistered_fraction() -> None:

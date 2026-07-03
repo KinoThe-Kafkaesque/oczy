@@ -110,7 +110,7 @@ def test_eval_change_approved_bypasses(
 def test_recompute_manifest_produces_valid() -> None:
     """``recompute_manifest()`` returns a well-formed manifest of real files."""
     manifest = recompute_manifest()
-    assert manifest["version"] == "v2"
+    assert manifest["version"] == "v2.1"
     files = manifest["files"]
     assert files, "manifest should hash at least one file"
     data_dir = get_data_dir()
@@ -138,5 +138,5 @@ def test_bump_script_idempotent(
     assert first == second, "bump_eval_version.py is not idempotent"
     # And the regenerated manifest is itself structurally valid.
     parsed = json.loads(second)
-    assert parsed["version"] == "v2"
+    assert parsed["version"] == "v2.1"
     assert parsed["files"]

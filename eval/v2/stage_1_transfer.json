@@ -1,103 +1,467 @@
 {
-  "name": "Stage 1: Transfer within domain",
-  "description": "New requests that use the corrected sense learned in Stage 0. Targets NeuralHippocampus replay when fast weights are weak.",
-  "consolidate_before": false,
-  "episodes": [
+ "name": "Stage 1: Transfer within domain",
+ "description": "New requests that use the corrected sense learned in Stage 0. Targets NeuralHippocampus replay when fast weights are weak.",
+ "consolidate_before": false,
+ "episodes": [
+  {
+   "id": "s1_log",
+   "initial_request": "Open the captain's log.",
+   "default_response": "I'll open the system error log.",
+   "correction_utterance": "No, 'log' means the captain's journal.",
+   "corrected_label": "captain's journal",
+   "corrected_response": "I'll open the captain's journal.",
+   "domain": "nautical",
+   "probes": [
     {
-      "id": "s1_log",
-      "initial_request": "Open the captain's log.",
-      "default_response": "I'll open the system error log.",
-      "correction_utterance": "No, 'log' means the captain's journal.",
-      "corrected_label": "captain's journal",
-      "corrected_response": "I'll open the captain's journal.",
-      "domain": "nautical",
-      "probes": [
-        {"request": "Open the captain's log.", "expected": "captain's journal", "category": "transfer", "match_mode": "sense"}
-      ]
+     "request": "Open the captain's log.",
+     "expected": "captain's journal",
+     "category": "transfer",
+     "match_mode": "sense"
     },
     {
-      "id": "s1_file",
-      "initial_request": "File this application.",
-      "default_response": "I'll save this application to disk.",
-      "correction_utterance": "No, 'file' means submit it officially.",
-      "corrected_label": "submit officially",
-      "corrected_response": "I'll submit this application officially.",
-      "domain": "bureaucracy",
-      "probes": [
-        {"request": "File this application.", "expected": "submit officially", "category": "transfer", "match_mode": "sense"}
-      ]
-    },
-    {
-      "id": "s1_key",
-      "initial_request": "Read the map key.",
-      "default_response": "I'll read the keyboard key.",
-      "correction_utterance": "No, 'key' means the map legend.",
-      "corrected_label": "map legend",
-      "corrected_response": "I'll read the map legend.",
-      "domain": "cartography",
-      "probes": [
-        {"request": "Read the map key.", "expected": "map legend", "category": "transfer", "match_mode": "sense"}
-      ]
-    },
-    {
-      "id": "s1_cell",
-      "initial_request": "Study the cell.",
-      "default_response": "I'll study the spreadsheet cell.",
-      "correction_utterance": "No, 'cell' means the biology cell.",
-      "corrected_label": "biology cell",
-      "corrected_response": "I'll study the biology cell.",
-      "domain": "science",
-      "probes": [
-        {"request": "Study the cell.", "expected": "biology cell", "category": "transfer", "match_mode": "sense"}
-      ]
-    },
-    {
-      "id": "s1_record",
-      "initial_request": "Spin the record.",
-      "default_response": "I'll spin the database record.",
-      "correction_utterance": "No, 'record' means the music record.",
-      "corrected_label": "music record",
-      "corrected_response": "I'll spin the music record.",
-      "domain": "music",
-      "probes": [
-        {"request": "Spin the record.", "expected": "music record", "category": "transfer", "match_mode": "sense"}
-      ]
-    },
-    {
-      "id": "s1_branch",
-      "initial_request": "Snap the branch.",
-      "default_response": "I'll snap the git branch.",
-      "correction_utterance": "No, 'branch' means tree branch.",
-      "corrected_label": "tree branch",
-      "corrected_response": "I'll snap the tree branch.",
-      "domain": "nature",
-      "probes": [
-        {"request": "Snap the branch.", "expected": "tree branch", "category": "transfer", "match_mode": "sense"}
-      ]
-    },
-    {
-      "id": "s1_model",
-      "initial_request": "Book the model.",
-      "default_response": "I'll book the ML model.",
-      "correction_utterance": "No, 'model' means fashion model.",
-      "corrected_label": "fashion model",
-      "corrected_response": "I'll book the fashion model.",
-      "domain": "fashion",
-      "probes": [
-        {"request": "Book the model.", "expected": "fashion model", "category": "transfer", "match_mode": "sense"}
-      ]
-    },
-    {
-      "id": "s1_run",
-      "initial_request": "Follow the run.",
-      "default_response": "I'll follow the ML experiment run.",
-      "correction_utterance": "No, 'run' means the river run.",
-      "corrected_label": "river run",
-      "corrected_response": "I'll follow the river run.",
-      "domain": "nature",
-      "probes": [
-        {"request": "Follow the run.", "expected": "river run", "category": "transfer", "match_mode": "sense"}
-      ]
+     "request": "Bring up the log.",
+     "expected": "captain's journal",
+     "category": "transfer",
+     "match_mode": "sense"
     }
-  ]
+   ]
+  },
+  {
+   "id": "s1_file",
+   "initial_request": "File this application.",
+   "default_response": "I'll save this application to disk.",
+   "correction_utterance": "No, 'file' means submit it officially.",
+   "corrected_label": "submit officially",
+   "corrected_response": "I'll submit this application officially.",
+   "domain": "bureaucracy",
+   "probes": [
+    {
+     "request": "File this application.",
+     "expected": "submit officially",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "File these documents.",
+     "expected": "submit officially",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_key",
+   "initial_request": "Read the map key.",
+   "default_response": "I'll read the keyboard key.",
+   "correction_utterance": "No, 'key' means the map legend.",
+   "corrected_label": "map legend",
+   "corrected_response": "I'll read the map legend.",
+   "domain": "cartography",
+   "probes": [
+    {
+     "request": "Read the map key.",
+     "expected": "map legend",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Explain the key.",
+     "expected": "map legend",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_cell",
+   "initial_request": "Study the cell.",
+   "default_response": "I'll study the spreadsheet cell.",
+   "correction_utterance": "No, 'cell' means the biology cell.",
+   "corrected_label": "biology cell",
+   "corrected_response": "I'll study the biology cell.",
+   "domain": "science",
+   "probes": [
+    {
+     "request": "Study the cell.",
+     "expected": "biology cell",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Draw the cell.",
+     "expected": "biology cell",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_record",
+   "initial_request": "Spin the record.",
+   "default_response": "I'll spin the database record.",
+   "correction_utterance": "No, 'record' means the music record.",
+   "corrected_label": "music record",
+   "corrected_response": "I'll spin the music record.",
+   "domain": "music",
+   "probes": [
+    {
+     "request": "Spin the record.",
+     "expected": "music record",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Flip the record.",
+     "expected": "music record",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_branch",
+   "initial_request": "Snap the branch.",
+   "default_response": "I'll snap the git branch.",
+   "correction_utterance": "No, 'branch' means tree branch.",
+   "corrected_label": "tree branch",
+   "corrected_response": "I'll snap the tree branch.",
+   "domain": "nature",
+   "probes": [
+    {
+     "request": "Snap the branch.",
+     "expected": "tree branch",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Trim the branch.",
+     "expected": "tree branch",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_model",
+   "initial_request": "Book the model.",
+   "default_response": "I'll book the ML model.",
+   "correction_utterance": "No, 'model' means fashion model.",
+   "corrected_label": "fashion model",
+   "corrected_response": "I'll book the fashion model.",
+   "domain": "fashion",
+   "probes": [
+    {
+     "request": "Book the model.",
+     "expected": "fashion model",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Photograph the model.",
+     "expected": "fashion model",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_run",
+   "initial_request": "Follow the run.",
+   "default_response": "I'll follow the ML experiment run.",
+   "correction_utterance": "No, 'run' means the river run.",
+   "corrected_label": "river run",
+   "corrected_response": "I'll follow the river run.",
+   "domain": "nature",
+   "probes": [
+    {
+     "request": "Follow the run.",
+     "expected": "river run",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Map the run.",
+     "expected": "river run",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_draft",
+   "initial_request": "Dodge the draft.",
+   "default_response": "I'll dodge the draft document.",
+   "correction_utterance": "No, 'draft' means the military draft.",
+   "corrected_label": "military draft",
+   "corrected_response": "I'll dodge the military draft.",
+   "domain": "military",
+   "probes": [
+    {
+     "request": "Dodge the draft.",
+     "expected": "military draft",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Answer the draft.",
+     "expected": "military draft",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_pitch",
+   "initial_request": "Mow the pitch.",
+   "default_response": "I'll mow the sales pitch.",
+   "correction_utterance": "No, 'pitch' means the football pitch.",
+   "corrected_label": "football pitch",
+   "corrected_response": "I'll mow the football pitch.",
+   "domain": "sports",
+   "probes": [
+    {
+     "request": "Mow the pitch.",
+     "expected": "football pitch",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Line up on the pitch.",
+     "expected": "football pitch",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_bar",
+   "initial_request": "Unwrap the bar.",
+   "default_response": "I'll unwrap the progress bar.",
+   "correction_utterance": "No, 'bar' means the chocolate bar.",
+   "corrected_label": "chocolate bar",
+   "corrected_response": "I'll unwrap the chocolate bar.",
+   "domain": "confectionery",
+   "probes": [
+    {
+     "request": "Unwrap the bar.",
+     "expected": "chocolate bar",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Snack on the bar.",
+     "expected": "chocolate bar",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_note",
+   "initial_request": "Hum the note.",
+   "default_response": "I'll hum the meeting note.",
+   "correction_utterance": "No, 'note' means the musical note.",
+   "corrected_label": "musical note",
+   "corrected_response": "I'll hum the musical note.",
+   "domain": "music",
+   "probes": [
+    {
+     "request": "Hum the note.",
+     "expected": "musical note",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Sustain the note.",
+     "expected": "musical note",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_scale",
+   "initial_request": "Collect the scale.",
+   "default_response": "I'll collect the chart scale.",
+   "correction_utterance": "No, 'scale' means the fish scale.",
+   "corrected_label": "fish scale",
+   "corrected_response": "I'll collect the fish scale.",
+   "domain": "biology",
+   "probes": [
+    {
+     "request": "Collect the scale.",
+     "expected": "fish scale",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Examine the scale under the microscope.",
+     "expected": "fish scale",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_bridge",
+   "initial_request": "Clean the bridge.",
+   "default_response": "I'll clean the network bridge.",
+   "correction_utterance": "No, 'bridge' means the dental bridge.",
+   "corrected_label": "dental bridge",
+   "corrected_response": "I'll clean the dental bridge.",
+   "domain": "dentistry",
+   "probes": [
+    {
+     "request": "Clean the bridge.",
+     "expected": "dental bridge",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Fit the bridge.",
+     "expected": "dental bridge",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_port",
+   "initial_request": "Sip the port.",
+   "default_response": "I'll sip the network port.",
+   "correction_utterance": "No, 'port' means the port wine.",
+   "corrected_label": "port wine",
+   "corrected_response": "I'll sip the port wine.",
+   "domain": "wine",
+   "probes": [
+    {
+     "request": "Sip the port.",
+     "expected": "port wine",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Decant the port.",
+     "expected": "port wine",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_crane",
+   "initial_request": "Spot the crane.",
+   "default_response": "I'll spot the construction crane.",
+   "correction_utterance": "No, 'crane' means the crane bird.",
+   "corrected_label": "crane bird",
+   "corrected_response": "I'll spot the crane bird.",
+   "domain": "ornithology",
+   "probes": [
+    {
+     "request": "Spot the crane.",
+     "expected": "crane bird",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Photograph the crane by the lake.",
+     "expected": "crane bird",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_jam",
+   "initial_request": "Spread the jam.",
+   "default_response": "I'll spread the paper jam.",
+   "correction_utterance": "No, 'jam' means the fruit jam.",
+   "corrected_label": "fruit jam",
+   "corrected_response": "I'll spread the fruit jam.",
+   "domain": "food",
+   "probes": [
+    {
+     "request": "Spread the jam.",
+     "expected": "fruit jam",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Taste the jam.",
+     "expected": "fruit jam",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_seal",
+   "initial_request": "Watch the seal.",
+   "default_response": "I'll watch the envelope seal.",
+   "correction_utterance": "No, 'seal' means the harbor seal.",
+   "corrected_label": "harbor seal",
+   "corrected_response": "I'll watch the harbor seal.",
+   "domain": "marine",
+   "probes": [
+    {
+     "request": "Watch the seal.",
+     "expected": "harbor seal",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Track the seal offshore.",
+     "expected": "harbor seal",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_mole",
+   "initial_request": "Expose the mole.",
+   "default_response": "I'll expose the skin mole.",
+   "correction_utterance": "No, 'mole' means the spy mole.",
+   "corrected_label": "spy mole",
+   "corrected_response": "I'll expose the spy mole.",
+   "domain": "espionage",
+   "probes": [
+    {
+     "request": "Expose the mole.",
+     "expected": "spy mole",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Question the mole.",
+     "expected": "spy mole",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  },
+  {
+   "id": "s1_organ",
+   "initial_request": "Donate the organ.",
+   "default_response": "I'll donate the pipe organ.",
+   "correction_utterance": "No, 'organ' means the body organ.",
+   "corrected_label": "body organ",
+   "corrected_response": "I'll donate the body organ.",
+   "domain": "anatomy",
+   "probes": [
+    {
+     "request": "Donate the organ.",
+     "expected": "body organ",
+     "category": "transfer",
+     "match_mode": "sense"
+    },
+    {
+     "request": "Transplant the organ.",
+     "expected": "body organ",
+     "category": "transfer",
+     "match_mode": "sense"
+    }
+   ]
+  }
+ ]
 }
