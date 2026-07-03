@@ -142,3 +142,14 @@ What survives: the KV-splice mechanism (≡ text prefix at zero token cost, see
 S1.3), the scope-slot reranker's legitimate 0.92, and a frozen eval that can no
 longer be quietly bent. See `SPRINT.md` for the remediation plan and current
 sprint status.
+
+## Notes (conceptual, non-log)
+
+Analysis documents live in `notes/` (created 2026-07-03) — they interpret
+logged evidence but are not themselves experiment logs:
+
+- `notes/2026-07-03_steering_vs_posture_postmortem.md` — why the
+  steering/posture intuition failed (three broken assumptions: common-mode
+  accumulation has magnitude not direction; constant vectors cannot condition;
+  mention-space ≠ use-space), synthesizing S1.3, S1.4, S2.1, S2.4. Successor
+  mechanism pre-registered in `research/18-consolidation-as-distillation.md`.

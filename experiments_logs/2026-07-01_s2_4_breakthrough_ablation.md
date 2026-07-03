@@ -96,3 +96,11 @@ cond,seed,K,delta_target,delta_control,delta_target_clamped
 5,0,15,0.0,0.0,0.0
 5,0,20,0.0,0.0,0.0
 ```
+
+## Addendum 2026-07-03 — conceptual post-mortem
+
+The magnitude-inflation mechanism this ablation isolated (common-mode
+amplification of accumulated correction embeddings) is analyzed together with
+the S1.3/S1.4/S2.1 refutations in
+`notes/2026-07-03_steering_vs_posture_postmortem.md`; the pre-registered
+successor mechanism is `research/18-consolidation-as-distillation.md`.

@@ -95,3 +95,11 @@ containing "fashion" but never "fashion model").
    works at C1 first.
 
 An honest REFUTE is a successful outcome; this one comes with a mechanism.
+
+## See also
+
+Conceptual post-mortem of why the steering/posture channel failed here and
+across S1.3/S1.4/S2.4 — the three broken assumptions and what survives:
+`notes/2026-07-03_steering_vs_posture_postmortem.md`. The surviving
+mechanism (consolidation as context distillation) is pre-registered as
+`research/18-consolidation-as-distillation.md`.
