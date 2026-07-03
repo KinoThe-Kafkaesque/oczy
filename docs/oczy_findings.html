@@ -183,6 +183,30 @@
   footer .mono{color:var(--muted)}
 
   .rule{height:1px;background:var(--line);border:none;margin:0}
+
+  /* ---------- charts ---------- */
+  figure.chart{margin:26px 0;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:20px 22px 16px}
+  figure.chart .ctitle{font-family:var(--mono);font-size:11px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--accent);margin:0 0 4px}
+  figure.chart .csub{font-size:13.5px;color:var(--muted);margin:0 0 18px;max-width:64ch}
+  figure.chart svg{width:100%;height:auto;display:block;overflow:visible}
+  figure.chart .legend2{display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;
+    font-size:12px;color:var(--muted);font-family:var(--mono)}
+  figure.chart .legend2 span{display:inline-flex;align-items:center;gap:7px}
+  figure.chart .legend2 i{width:15px;height:3px;border-radius:2px;display:inline-block}
+  figure.chart figcaption{font-size:12.5px;color:var(--faint);margin-top:14px;line-height:1.5}
+  .ax{stroke:var(--line)}
+  .grid{stroke:var(--line);opacity:.55}
+  .tk{fill:var(--faint);font-family:var(--mono);font-size:10px}
+  .val{fill:var(--text);font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums}
+  .catlab{fill:var(--muted);font-family:var(--mono);font-size:11px}
+  .endlab{font-family:var(--mono);font-size:10.5px;font-weight:600}
+  .ttip{position:fixed;pointer-events:none;background:var(--panel2);
+    border:1px solid var(--line);border-radius:8px;padding:8px 11px;font-size:12px;
+    color:var(--text);z-index:60;opacity:0;transition:opacity .1s;
+    box-shadow:0 10px 30px rgba(0,0,0,.5);font-family:var(--mono);white-space:nowrap}
+  .ttip b{color:#fff}
 </style>
 
 <div class="wrap">
@@ -260,6 +284,14 @@
   </table>
   </div>
 
+  <figure class="chart" data-chart="baseline">
+    <p class="ctitle">The honest baseline · real driver, frozen eval v2</p>
+    <p class="csub">Post-leakage accuracy per stage — the numbers every future claim must beat.
+    The vanilla model answers <b>0.00</b> on every stage, so the whole bar is what the system adds
+    (partly via retrieval).</p>
+    <svg viewBox="0 0 720 250" role="img" aria-label="Per-stage accuracy bar chart"></svg>
+  </figure>
+
   <div class="callout">
     <span class="lab">The core reframe</span>
     Everything that <em>works</em> is content injection at the model's interface (prefix, KV entries,
@@ -316,6 +348,16 @@
     </div>
   </div>
 
+  <figure class="chart" data-chart="magnitude">
+    <p class="ctitle">Shouting, not steering · S2.4 logit lift</p>
+    <p class="csub">If the steering vector encoded the target <em>direction</em>, it would raise
+    target-domain tokens more than unrelated control tokens. It did the opposite — the accumulated
+    warm state just made every logit louder.</p>
+    <svg viewBox="0 0 720 190" role="img" aria-label="Target vs control logit lift"></svg>
+    <figcaption>Under norm control the whole gain inverts: the "breakthrough" config clamped to the
+    old budget scores 0.566, <em>below</em> the old config's unclamped 0.627. Survival ratio 0.354.</figcaption>
+  </figure>
+
   <div class="theory">
     <div class="top"><span class="tname">Mid-layer hidden states hold extractable concepts</span>
       <span class="pill v-refute">Refuted, both architectures</span><span class="tid">Goal 2 · S1.4 · lane_03</span></div>
@@ -324,6 +366,20 @@
       <div class="row"><span class="k why">Why rejected</span><span class="v">Across all 24 Qwen layers the final-layer mean-pool silhouette (<span class="fig">0.1753</span>) <em>beat</em> the best mid-layer (<span class="fig">0.0922</span>) — gap <span class="fig">−0.083</span>, threshold was +0.10. LFM2.5's gap of +0.058 also fell short. The <code>llama.cpp</code> keyhole (final layer only) had hidden this for a week; the HF substrate saw every layer and refuted it cleanly.</span></div>
     </div>
   </div>
+
+  <figure class="chart" data-chart="layer">
+    <p class="ctitle">The final layer wins · S1.4 concept-cluster silhouette by depth</p>
+    <p class="csub">All 24 Qwen decoder layers. The thesis needed a mid-layer to cluster concepts
+    better than the output — the mean-pool curve (primary) instead peaks at the <em>last</em> layer.</p>
+    <svg viewBox="0 0 720 300" role="img" aria-label="Silhouette score across 24 layers"></svg>
+    <div class="legend2">
+      <span><i style="background:#8ea2f2"></i>mean pool (primary)</span>
+      <span><i style="background:#e0a53f"></i>last token</span>
+      <span><i style="background:#8792a1"></i>max pool</span>
+    </div>
+    <figcaption>Final-layer mean 0.175 beats the best mid-layer 0.092 — gap −0.083 against a +0.10
+    threshold. LFM2.5 fell short too (+0.058). The llama.cpp keyhole had hidden this for a week.</figcaption>
+  </figure>
 
   <div class="theory">
     <div class="top"><span class="tname">KV-slot injection forces exact-token recall</span>
@@ -343,6 +399,14 @@
       <div class="row"><span class="k why">Why rejected</span><span class="v"><span class="fig">loop_delta_holdout = 0.0000</span> at K=N across 5 seeds; compounding ρ = nan. A transient bump at K=4 (<span class="fig">0.133</span>) collapsed to zero at K=8: the 48-token prefix budget holds ~3.7 corrections, so facts <em>crowd out</em> instead of compounding. The content channel works only while a fact survives the budget.</span></div>
     </div>
   </div>
+
+  <figure class="chart" data-chart="ktraj">
+    <p class="ctitle">Crowds out, never compounds · S2.1 holdout accuracy vs corrections K</p>
+    <p class="csub">The thesis predicts a monotone rise as corrections accumulate. Instead a transient
+    bump at K=4 collapses to zero at K=8 — once the 48-token prefix budget fills (~3.7 facts), new
+    corrections evict old ones.</p>
+    <svg viewBox="0 0 720 240" role="img" aria-label="Holdout accuracy across correction count K"></svg>
+  </figure>
 
   <div class="theory">
     <div class="top"><span class="tname">cvec posture works at a calibrated amplitude on the new substrate</span>
@@ -466,6 +530,13 @@
   <p class="sec-sub">All runs on CPU, float32, greedy decoding — a single Linux workstation. The speed
   budget drove the substrate decision: every multi-seed run scales linearly with ms/token.</p>
 
+  <figure class="chart" data-chart="mstok">
+    <p class="ctitle">Speed drove the decision · decode latency</p>
+    <p class="csub">Every multi-seed run scales linearly with ms/token. The 0.5B model passes every
+    structural check at 2.4× the speed of the next option — so it won.</p>
+    <svg viewBox="0 0 720 170" role="img" aria-label="Milliseconds per token by model"></svg>
+  </figure>
+
   <h4>Model selection benchmark — CPU, float32, 4 threads, greedy</h4>
   <div class="tbl-scroll">
   <table>
@@ -533,6 +604,16 @@
     <caption>All five code-audit predictions confirmed by measurement. The four organs' additive arm (M2b) was never executed — two silent agent deaths, one stopped run — so their archive rests on M1 noise plus the rule that only a positive M2 could promote them. Recorded as the adjudication's weakest link.</caption>
   </table>
   </div>
+
+  <figure class="chart" data-chart="organ">
+    <p class="ctitle">One earns its keep · S3.M1 all-stage Δ (full stack minus each organ)</p>
+    <p class="csub">Bars right of zero = the organ contributes; left = removing it <em>improves</em>
+    accuracy. Six of seven sit on the noise line. The one clear contributor is a retrieval reranker;
+    the one clear harm is a retrieval index.</p>
+    <svg viewBox="0 0 720 300" role="img" aria-label="Per-organ contribution delta"></svg>
+    <figcaption>Corroborated by the additive M2 matrix, where the reranker alone lifts Stage-0 holdout
+    +0.667 at zero seed variance and answer-time hippocampal retrieval adds exactly 0.000.</figcaption>
+  </figure>
 
   <div class="callout warn"><span class="lab">Goal 3, closed honestly</span>
   <code>research/15</code> — "wire the survivors' outputs to tensors" — is <strong>vacuous</strong>: no
@@ -686,5 +767,179 @@
     }, {rootMargin:'-15% 0px -75% 0px', threshold:0});
     secs.forEach(function(s){ io.observe(s); });
   }
+})();
+</script>
+
+<script>
+/* ---- self-contained SVG chart renderer (no external libs) ---- */
+(function(){
+  var NS='http://www.w3.org/2000/svg';
+  var C={accent:'#8ea2f2',amber:'#e0a53f',slate:'#8792a1',green:'#54c08a',
+    rose:'#e76e83',line:'#2b3441',text:'#d7dee7',faint:'#5c6675'};
+  function E(t,a,txt){var n=document.createElementNS(NS,t);for(var k in a)n.setAttribute(k,a[k]);
+    if(txt!=null)n.textContent=txt;return n;}
+  var tip=document.createElement('div');tip.className='ttip';document.body.appendChild(tip);
+  function tShow(html,e){tip.innerHTML=html;tip.style.opacity='1';
+    var x=e.clientX,y=e.clientY;tip.style.left=Math.min(x+14,window.innerWidth-tip.offsetWidth-8)+'px';
+    tip.style.top=(y+16)+'px';}
+  function tHide(){tip.style.opacity='0';}
+  function hoverable(node,html){
+    node.style.cursor='default';
+    node.addEventListener('mousemove',function(e){tShow(html,e);});
+    node.addEventListener('mouseleave',tHide);
+  }
+
+  /* vertical bars: stage accuracy */
+  function baseline(svg){
+    var W=720,H=250,mL=40,mR=16,mT=24,mB=40,pw=W-mL-mR,ph=H-mT-mB;
+    var d=[['S0',0.88],['S1',0.75],['S2',0.69],['S3',0.38],['S4',0.90],['S5',0.92]];
+    [0,0.25,0.5,0.75,1].forEach(function(g){
+      var y=mT+(1-g)*ph;
+      svg.appendChild(E('line',{x1:mL,y1:y,x2:W-mR,y2:y,class:g===0?'ax':'grid'}));
+      svg.appendChild(E('text',{x:mL-8,y:y+3,'text-anchor':'end',class:'tk'},g.toFixed(2)));
+    });
+    var bw=pw/d.length, bar=bw*0.52;
+    d.forEach(function(r,i){
+      var x=mL+i*bw+(bw-bar)/2, h=r[1]*ph, y=mT+ph-h;
+      var rect=E('rect',{x:x,y:y,width:bar,height:h,rx:4,fill:C.accent});
+      hoverable(rect,'<b>'+r[0]+'</b> · '+r[1].toFixed(2)+' &nbsp;<span style="color:'+C.faint+'">vanilla 0.00</span>');
+      svg.appendChild(rect);
+      svg.appendChild(E('text',{x:x+bar/2,y:y-7,'text-anchor':'middle',class:'val'},r[1].toFixed(2)));
+      svg.appendChild(E('text',{x:x+bar/2,y:mT+ph+18,'text-anchor':'middle',class:'catlab'},r[0]));
+    });
+  }
+
+  /* horizontal bars: ms/tok */
+  function mstok(svg){
+    var W=720,H=170,mL=150,mR=70,mT=14,mB=14,pw=W-mL-mR,ph=H-mT-mB;
+    var d=[['Qwen2.5-0.5B',82.8,true],['Qwen2.5-1.5B',196.5,false],['TinyLlama-1.1B',437.1,false]];
+    var max=460, bh=ph/d.length, bar=bh*0.5;
+    [0,100,200,300,400].forEach(function(g){
+      var x=mL+g/max*pw;
+      svg.appendChild(E('line',{x1:x,y1:mT,x2:x,y2:mT+ph,class:g===0?'ax':'grid'}));
+      svg.appendChild(E('text',{x:x,y:mT+ph+13,'text-anchor':'middle',class:'tk'},g));
+    });
+    d.forEach(function(r,i){
+      var y=mT+i*bh+(bh-bar)/2, w=r[1]/max*pw, col=r[2]?C.accent:C.slate;
+      var rect=E('rect',{x:mL,y:y,width:w,height:bar,rx:4,fill:col});
+      hoverable(rect,'<b>'+r[0]+'</b> · '+r[1]+' ms/tok'+(r[2]?' &nbsp;<span style="color:'+C.green+'">chosen</span>':''));
+      svg.appendChild(rect);
+      svg.appendChild(E('text',{x:mL-12,y:y+bar/2+4,'text-anchor':'end',class:'catlab'},r[0]));
+      svg.appendChild(E('text',{x:mL+w+8,y:y+bar/2+4,class:'val'},r[1]));
+    });
+  }
+
+  /* horizontal bars: target vs control logit lift */
+  function magnitude(svg){
+    var W=720,H=190,mL=150,mR=80,mT=22,mB=26,pw=W-mL-mR,ph=H-mT-mB;
+    var d=[['Target-word lift',1.60,C.accent],['Control-word lift',2.92,C.amber]];
+    var max=3.2, bh=ph/d.length, bar=bh*0.5;
+    [0,1,2,3].forEach(function(g){
+      var x=mL+g/max*pw;
+      svg.appendChild(E('line',{x1:x,y1:mT,x2:x,y2:mT+ph,class:g===0?'ax':'grid'}));
+      svg.appendChild(E('text',{x:x,y:mT+ph+14,'text-anchor':'middle',class:'tk'},g.toFixed(1)));
+    });
+    d.forEach(function(r,i){
+      var y=mT+i*bh+(bh-bar)/2, w=r[1]/max*pw;
+      var rect=E('rect',{x:mL,y:y,width:w,height:bar,rx:4,fill:r[2]});
+      hoverable(rect,'<b>'+r[0]+'</b> · Δ '+r[1].toFixed(2));
+      svg.appendChild(rect);
+      svg.appendChild(E('text',{x:mL-12,y:y+bar/2+4,'text-anchor':'end',class:'catlab'},r[0]));
+      svg.appendChild(E('text',{x:mL+w+8,y:y+bar/2+4,class:'val'},'Δ '+r[1].toFixed(2)));
+    });
+    svg.appendChild(E('text',{x:mL+pw*0.9,y:mT+8,'text-anchor':'end',class:'endlab',fill:C.rose},'control rose more →'));
+  }
+
+  /* multi-line: layer silhouette */
+  function layer(svg){
+    var W=720,H=300,mL=44,mR=56,mT=16,mB=28,pw=W-mL-mR,ph=H-mT-mB,n=24,ymax=0.45;
+    var mean=[0.4198,0.3012,0.0788,0.0789,0.0779,0.0952,0.0922,0.0857,0.0874,0.0829,0.0857,0.0876,0.0815,0.0829,0.0860,0.0812,0.0843,0.0792,0.0760,0.0719,0.0708,0.1219,0.1193,0.1753];
+    var last=[0.0080,0.0117,0.0230,0.0273,0.0606,0.0718,0.0761,0.0856,0.1039,0.1013,0.1214,0.1162,0.1071,0.1126,0.1351,0.1344,0.1288,0.1171,0.1241,0.1311,0.1272,0.1022,0.1074,0.1421];
+    var mx=[0.0890,0.0739,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.0001,0.0001,0.0001,0.0647,0.0694,0.0909];
+    var X=function(i){return mL+i/(n-1)*pw;}, Y=function(v){return mT+(1-v/ymax)*ph;};
+    [0,0.1,0.2,0.3,0.4].forEach(function(g){var y=Y(g);
+      svg.appendChild(E('line',{x1:mL,y1:y,x2:W-mR,y2:y,class:g===0?'ax':'grid'}));
+      svg.appendChild(E('text',{x:mL-8,y:y+3,'text-anchor':'end',class:'tk'},g.toFixed(1)));});
+    [0,4,8,12,16,20,23].forEach(function(i){
+      svg.appendChild(E('text',{x:X(i),y:mT+ph+16,'text-anchor':'middle',class:'tk'},'L'+i));});
+    function poly(arr,col,w){var p=arr.map(function(v,i){return X(i)+','+Y(v);}).join(' ');
+      svg.appendChild(E('polyline',{points:p,fill:'none',stroke:col,'stroke-width':w,
+        'stroke-linejoin':'round','stroke-linecap':'round'}));}
+    poly(mx,C.slate,1.6); poly(last,C.amber,2); poly(mean,C.accent,2.6);
+    // emphasize final-layer mean & best mid
+    svg.appendChild(E('circle',{cx:X(23),cy:Y(0.1753),r:5,fill:C.accent,stroke:'#0e1116','stroke-width':2}));
+    svg.appendChild(E('text',{x:X(23)+8,y:Y(0.1753)+4,class:'endlab',fill:C.accent},'0.175'));
+    svg.appendChild(E('text',{x:X(23)+8,y:Y(last[23])+4,class:'endlab',fill:C.amber},'last'));
+    svg.appendChild(E('text',{x:X(23)+8,y:Y(mx[23])+4,class:'endlab',fill:C.slate},'max'));
+    // crosshair + hit columns
+    var cross=E('line',{x1:0,y1:mT,x2:0,y2:mT+ph,stroke:C.accent,'stroke-width':1,opacity:0});
+    svg.appendChild(cross);
+    for(var i=0;i<n;i++){(function(i){
+      var hit=E('rect',{x:X(i)-pw/(n-1)/2,y:mT,width:pw/(n-1),height:ph,fill:'transparent'});
+      hit.addEventListener('mousemove',function(e){
+        cross.setAttribute('x1',X(i));cross.setAttribute('x2',X(i));cross.setAttribute('opacity','.5');
+        tShow('<b>Layer '+i+'</b><br><span style="color:'+C.accent+'">mean</span> '+mean[i].toFixed(3)
+          +'<br><span style="color:'+C.amber+'">last</span> '+last[i].toFixed(3)
+          +'<br><span style="color:'+C.slate+'">max</span> '+mx[i].toFixed(3),e);});
+      hit.addEventListener('mouseleave',function(){cross.setAttribute('opacity','0');tHide();});
+      svg.appendChild(hit);
+    })(i);}
+  }
+
+  /* single line: K-trajectory */
+  function ktraj(svg){
+    var W=720,H=240,mL=44,mR=30,mT=24,mB=34,pw=W-mL-mR,ph=H-mT-mB;
+    var d=[['0',0],['1',0.0667],['2',0],['4',0.1333],['8',0]],ymax=0.2,n=d.length;
+    var X=function(i){return mL+i/(n-1)*pw;},Y=function(v){return mT+(1-v/ymax)*ph;};
+    [0,0.05,0.1,0.15,0.2].forEach(function(g){var y=Y(g);
+      svg.appendChild(E('line',{x1:mL,y1:y,x2:W-mR,y2:y,class:g===0?'ax':'grid'}));
+      svg.appendChild(E('text',{x:mL-8,y:y+3,'text-anchor':'end',class:'tk'},g.toFixed(2)));});
+    var p=d.map(function(r,i){return X(i)+','+Y(r[1]);}).join(' ');
+    svg.appendChild(E('polyline',{points:p,fill:'none',stroke:C.accent,'stroke-width':2.4,
+      'stroke-linejoin':'round'}));
+    d.forEach(function(r,i){
+      var big=(r[0]==='4'||r[0]==='8');
+      var c=E('circle',{cx:X(i),cy:Y(r[1]),r:big?5:3.4,fill:r[0]==='4'?C.green:C.accent,
+        stroke:'#0e1116','stroke-width':big?2:0});
+      hoverable(c,'<b>K='+r[0]+'</b> · holdout '+r[1].toFixed(3));
+      svg.appendChild(c);
+      svg.appendChild(E('text',{x:X(i),y:mT+ph+16,'text-anchor':'middle',class:'catlab'},'K='+r[0]));});
+    svg.appendChild(E('text',{x:X(3),y:Y(0.1333)-12,'text-anchor':'middle',class:'endlab',fill:C.green},'bump 0.133'));
+    svg.appendChild(E('text',{x:X(4)-4,y:Y(0)-10,'text-anchor':'end',class:'endlab',fill:C.rose},'collapse →'));
+  }
+
+  /* diverging horizontal bars: organ contribution */
+  function organ(svg){
+    var W=720,H=300,mL=150,mR=54,mT=16,mB=26,pw=W-mL-mR,ph=H-mT-mB;
+    var d=[['ScopeSlotReranker',0.0465,C.green],['NeuralHippocampus',0.0068,C.slate],
+      ['SkillImmuneCortex',0.0006,C.slate],['WorldModelCritic',-0.0013,C.slate],
+      ['IdentityHypernetwork',-0.0122,C.slate],['ExperienceAutoencoder',-0.0141,C.slate],
+      ['DifferentiableFactIndex',-0.0596,C.rose]];
+    var lim=0.07, z=mL+(0.0+lim)/(2*lim)*pw; // zero x
+    var scale=function(v){return v/(2*lim)*pw;};
+    // zero axis
+    [-0.06,-0.03,0,0.03,0.06].forEach(function(g){var x=mL+(g+lim)/(2*lim)*pw;
+      svg.appendChild(E('line',{x1:x,y1:mT,x2:x,y2:mT+ph,class:g===0?'ax':'grid'}));
+      svg.appendChild(E('text',{x:x,y:mT+ph+14,'text-anchor':'middle',class:'tk'},g>0?'+'+g:g));});
+    var bh=ph/d.length, bar=bh*0.52;
+    d.forEach(function(r,i){
+      var y=mT+i*bh+(bh-bar)/2, w=scale(r[1]), x=r[1]>=0?z:z+w;
+      var rect=E('rect',{x:x,y:y,width:Math.abs(w),height:bar,rx:3,fill:r[2]});
+      hoverable(rect,'<b>'+r[0]+'</b> · Δ '+(r[1]>=0?'+':'')+r[1].toFixed(4));
+      svg.appendChild(rect);
+      svg.appendChild(E('text',{x:mL-12,y:y+bar/2+4,'text-anchor':'end',class:'catlab'},r[0]));
+      var lx=r[1]>=0?z+Math.abs(w)+7:z-Math.abs(w)-7;
+      svg.appendChild(E('text',{x:lx,y:y+bar/2+4,'text-anchor':r[1]>=0?'start':'end',class:'val'},
+        (r[1]>=0?'+':'')+r[1].toFixed(3)));
+    });
+    svg.appendChild(E('text',{x:z+6,y:mT-2,class:'tk'},'contributes →'));
+    svg.appendChild(E('text',{x:z-6,y:mT-2,'text-anchor':'end',class:'tk'},'← harmful'));
+  }
+
+  var R={baseline:baseline,mstok:mstok,magnitude:magnitude,layer:layer,ktraj:ktraj,organ:organ};
+  document.querySelectorAll('figure.chart[data-chart]').forEach(function(fig){
+    var id=fig.getAttribute('data-chart'),svg=fig.querySelector('svg');
+    if(svg&&R[id]){try{R[id](svg);}catch(err){/* fail silent, table data remains */}}
+  });
 })();
 </script>
