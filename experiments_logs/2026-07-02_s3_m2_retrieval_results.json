@@ -1,0 +1,285 @@
+{
+  "spec": "research/14-s3-organ-ablation-matrix.md",
+  "task": "S3.M2a",
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "wall_clock_s": 7450.302168069873,
+  "total_holdout_probes": 17,
+  "results": {
+    "BASE": {
+      "Stage 0: Sense grounding": {
+        "accuracies": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "ci95_half": 0.0,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 1: Transfer within domain": {
+        "accuracies": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "ci95_half": 0.0,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 2: Scope control": {
+        "accuracies": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "ci95_half": 0.0,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 3: Dialog": {
+        "accuracies": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "ci95_half": 0.0,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 4: Consolidation stress": {
+        "accuracies": [
+          0.25,
+          0.25,
+          0.25
+        ],
+        "mean": 0.25,
+        "ci95_half": 0.0,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 5: Cross-domain disambiguation": {
+        "accuracies": [
+          0.6666666666666666,
+          0.6666666666666666,
+          0.3333333333333333
+        ],
+        "mean": 0.5555555555555556,
+        "ci95_half": 0.4781111111111111,
+        "n": 3,
+        "vanilla_acc": 0.3333333333333333
+      }
+    },
+    "HIPPOCAMPUS_AT_ANSWER": {
+      "Stage 0: Sense grounding": {
+        "accuracies": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "ci95_half": 0.0,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 1: Transfer within domain": {
+        "accuracies": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "ci95_half": 0.0,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 2: Scope control": {
+        "accuracies": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "ci95_half": 0.0,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 3: Dialog": {
+        "accuracies": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "ci95_half": 0.0,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 4: Consolidation stress": {
+        "accuracies": [
+          0.25,
+          0.25,
+          0.25
+        ],
+        "mean": 0.25,
+        "ci95_half": 0.0,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 5: Cross-domain disambiguation": {
+        "accuracies": [
+          0.6666666666666666,
+          0.6666666666666666,
+          0.3333333333333333
+        ],
+        "mean": 0.5555555555555556,
+        "ci95_half": 0.4781111111111111,
+        "n": 3,
+        "vanilla_acc": 0.3333333333333333
+      }
+    },
+    "DSI_FACT_INDEX": {
+      "Stage 0: Sense grounding": {
+        "accuracies": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "ci95_half": 0.0,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 1: Transfer within domain": {
+        "accuracies": [
+          0.0,
+          1.0,
+          1.0
+        ],
+        "mean": 0.6666666666666666,
+        "ci95_half": 1.4343333333333332,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 2: Scope control": {
+        "accuracies": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "ci95_half": 0.0,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 3: Dialog": {
+        "accuracies": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "ci95_half": 0.0,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 4: Consolidation stress": {
+        "accuracies": [
+          0.5,
+          0.0,
+          0.5
+        ],
+        "mean": 0.3333333333333333,
+        "ci95_half": 0.7171666666666666,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 5: Cross-domain disambiguation": {
+        "accuracies": [
+          0.6666666666666666,
+          0.6666666666666666,
+          0.3333333333333333
+        ],
+        "mean": 0.5555555555555556,
+        "ci95_half": 0.4781111111111111,
+        "n": 3,
+        "vanilla_acc": 0.3333333333333333
+      }
+    },
+    "SCOPE_SLOT_RERANKER": {
+      "Stage 0: Sense grounding": {
+        "accuracies": [
+          0.6666666666666666,
+          0.6666666666666666,
+          0.6666666666666666
+        ],
+        "mean": 0.6666666666666666,
+        "ci95_half": 0.0,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 1: Transfer within domain": {
+        "accuracies": [
+          1.0,
+          1.0,
+          0.0
+        ],
+        "mean": 0.6666666666666666,
+        "ci95_half": 1.4343333333333332,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 2: Scope control": {
+        "accuracies": [
+          0.0,
+          0.0,
+          0.3333333333333333
+        ],
+        "mean": 0.1111111111111111,
+        "ci95_half": 0.4781111111111111,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 3: Dialog": {
+        "accuracies": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "ci95_half": 0.0,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 4: Consolidation stress": {
+        "accuracies": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "mean": 0.5,
+        "ci95_half": 0.0,
+        "n": 3,
+        "vanilla_acc": 0.0
+      },
+      "Stage 5: Cross-domain disambiguation": {
+        "accuracies": [
+          0.6666666666666666,
+          0.6666666666666666,
+          0.3333333333333333
+        ],
+        "mean": 0.5555555555555556,
+        "ci95_half": 0.4781111111111111,
+        "n": 3,
+        "vanilla_acc": 0.3333333333333333
+      }
+    }
+  }
+}
