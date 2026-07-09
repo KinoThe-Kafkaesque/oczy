@@ -1,118 +1,202 @@
-# 19 — The LM as language organ: trained embedding-cortex head, frozen LM
+# 19 — The LM as language organ: direct cortex learning, two articulation paths
 
-**Pre-registered 2026-07-03** (human-approved, before implementation).
-Agents running this experiment MUST NOT edit this spec; deviations are
-reported as deviations. Designed as the paired competitor to `research/18`
-(plasticity in LM weights) on the same eval, same forgetting test, same
-accounting.
+**Originally pre-registered 2026-07-03** (human-approved, before
+implementation). **Human-approved amendment 2026-07-09, still before
+implementation:** the original label-prefix articulation path is preserved as
+Arm A and explicitly classified as **parametric retrieval**. A matched
+latent-control path, Arm B, is added as the primary test of whether learned
+cortex state can control a frozen language organ without retrieving answer
+content. This amendment does not modify `eval/v2`; it closes an interpretation
+loophole in the architecture under test.
+
+Agents running this experiment MUST NOT edit this spec. Deviations are reported
+as deviations. Research/19 is a direct-online-learning diagnostic. Research/20
+is the successor that meta-trains the cortex's update and consolidation rules.
 
 ## Problem / reframe
 
-Every failed mechanism tried to make experience live *inside* the LM
-(steering: refuted 4×; layer-L extraction: refuted). Every working component
-treats the LM as an interface (prefix/KV hand it content; the reranker — the
-only organ that earns its keep in M1 — decides *outside* it). And the one
-component that was supposed to be the organism, the cortex, never received a
-training loop at all.
+Every failed mechanism tried to derive a useful LM control direction directly
+from an embedding of the correction. Cvec steering was refuted, the layer-L
+assumption failed on two architectures, and the cortex never received a
+behavior-aligned training loop. The one component that worked reliably was a
+retrieval reranker.
 
-Reframe: the LM is the **language organ** — perception (`peek_embedding`) and
-articulation (generation) — and *changed dynamics* lives in a small trainable
-cortex head over frozen LM embeddings. Corrections train the head; the frozen
-LM supplies linguistic generalization (paraphrases land near each other in
-embedding space); raw texts are then deletable because the mapping lives in
-head weights, not stored exemplars.
+The intended architecture is different: the LM is a frozen **language organ**
+for perception and articulation, while experience changes a trainable cortex
+outside it. The first version of this spec conditioned articulation by supplying
+the cortex's winning label as text. That is a useful comparator, but it can be
+understood as a classifier retrieving content from its parameters and handing
+that content to the LM. Deleting raw correction text does not by itself make
+that path changed dynamics.
 
-## Hypothesis
+Research/19 therefore asks two separate questions on the same learned cortex:
 
-**H-ORGAN:** a small head (≤ 64k params, e.g. logistic/2-layer MLP) trained
-online from correction events on frozen `peek_layer`/`peek_embedding`
-features — mapping request → sense label, with articulation conditioned on
-the predicted label — produces held-out behavior change that (a) survives
-deletion of all raw correction texts, (b) transfers to untaught paraphrases,
-and (c) conditions on context (scope), which no template/keyword engine can.
+1. Can a small cortex learn a request-to-label mapping that survives raw-trace
+   deletion? This is **parametric retrieval** (Arm A).
+2. Can the same cortex alter a frozen LM through a fixed-width latent interface,
+   with no label or answer text injected at probe time? This is the primary
+   **latent-control** test (Arm B).
+
+## Hypotheses
+
+**H-LABEL (comparator):** a small head trained online from correction events on
+frozen LM embeddings maps requests to sense labels, transfers to paraphrases,
+and retains the mapping after raw-text deletion when its predicted label is
+supplied to the LM as text.
+
+**H-LATENT (primary):** using the same perception features, correction events,
+parameter budget, and teaching order, a cortex with a learned latent
+articulation coupler produces held-out retention and transfer after raw-trace
+deletion while:
+
+- the language-organ weights remain bit-identical;
+- no predicted label, expected answer, correction text, exemplar, or retrieved
+  content enters the LM prompt at probe time; and
+- zeroing or swapping the learned cortex state causally removes or redirects the
+  learned behavior.
+
+A positive H-LABEL result cannot accept H-LATENT.
 
 ## Architecture (fixed here)
 
-- **Perception:** frozen `HFDriver` (Qwen2.5-0.5B-Instruct) embedding of the
-  request (`peek_layer`, final layer, mean pooling — the S1.4 winner).
-- **Cortex head:** trainable, ≤ 64k params, gradient-trained online per
-  correction event (label = the sense phrase extracted from the correction
-  utterance — the `corrected_label` that the teacher SAYS; eval `expected`
-  strings and the frozen scorer are never inputs to training).
-- **Articulation:** the LM generates conditioned on the head's winning label
-  (e.g. label text supplied as a short generation prefix). The head decides;
-  the language organ phrases. An "abstain" output (below-threshold
-  confidence) falls through to vanilla generation — required, so untaught
-  requests are untouched (specificity by construction is a claim to TEST,
-  not assume).
-- **Banned:** storing correction texts past consolidation, exemplar lookup at
-  answer time, episode-ID conditioning, eval-derived features.
+- **Frozen language organ:** `HFDriver` with
+  `Qwen/Qwen2.5-0.5B-Instruct`; model parameters and tokenizer are hashed before
+  and after every run.
+- **Perception:** final-layer, mean-pooled frozen LM features, the S1.4 winner.
+- **Shared cortex:** a trainable head of at most 64k persistent parameters. It
+  receives the request feature and is updated online from the correction the
+  teacher actually supplied. Eval `expected` strings and scorer outputs are
+  never training inputs.
+- **Arm A — `label_prefix`:** the head predicts a sense label and that label is
+  supplied as a short text prefix. This preserves the original Research/19 path
+  and is reported as parametric retrieval.
+- **Arm B — `latent_control`:** a learned cortex-owned coupler maps the
+  query-conditioned cortex state to a fixed-width bank of soft embeddings or KV
+  entries consumed by the frozen LM. The bank contains no decoded text and has
+  a fixed shape independent of episode count. The coupler is trained on DEV,
+  then frozen before any holdout run; its parameters count toward the 64k
+  budget.
+- **Abstain path:** below a DEV-calibrated confidence threshold, both arms fall
+  through to the unmodified language organ.
+- **No meta-learned update yet:** Research/19 uses one fixed optimizer and
+  direct online gradients on the cortex head. Learning the update rule itself
+  is Research/20.
+
+## Hard boundary: what Arm B may and may not transmit
+
+Allowed at probe time:
+
+- the current request;
+- frozen LM features of that request;
+- query-conditioned activations computed from persistent cortex parameters;
+- the fixed-width latent control bank.
+
+Banned at probe time:
+
+- correction text or its tokens;
+- predicted label text;
+- expected-answer text;
+- stored exemplars, nearest-neighbor matches, episode IDs, or raw traces;
+- a variable-length latent bank that grows with experiences;
+- any LM-parameter update.
+
+The runner must emit a machine-checkable articulation audit containing prompt
+text, latent-bank shape, raw-trace count, language-organ hash, and persistent
+cortex bytes for every scored condition.
 
 ## Protocol
 
-- **Curriculum:** eval v2 (current frozen version at run time; if the v3
-  expansion has landed, use v3 and say so), research/11 replay protocol:
-  teach stage-0 episodes seed-shuffled, consolidate (= finish head training +
-  DELETE all raw correction texts, verified count 0), then score.
-- **Tuning firewall (Gap provision a1):** all hyperparameters (features,
-  head size, lr, epochs, abstain threshold, label-prefix phrasing) tuned on
-  **stage-0 dev probes only**. Attested in the log. Holdout and all other
-  stages are one-shot.
-- **Transfer battery (Gap provision a2):** stage 1 is **never taught**. Its
-  probes (paraphrase requests over stage-0's ambiguous words) are therefore
-  all untouched by both teaching and tuning, and ALL stage-1 probes — dev and
-  holdout alike — form the pre-registered transfer battery.
-- **Scope test:** stages 2+5 taught and scored per protocol (holdout only) —
-  the same-word-two-contexts conditioning that kills keyword/template
-  engines.
-- **Seeds:** ≥5 (head init + teaching order); fallback 3 (>15 min/seed,
-  reported). Vanilla column mandatory everywhere.
+1. **Instrument:** current human-approved frozen eval version at run time
+   (v2.1 as of this amendment), with its manifest verified before and after.
+2. **Phase 0 distribution check on DEV only:** measure no-update repeatability,
+   confidence, and specificity distributions. Freeze the abstain threshold and
+   the specificity equivalence margin in the run manifest before holdout. They
+   require human sign-off and may not be changed after seeing holdout.
+3. **Coupler development:** train Arm B's articulation coupler on stage-0 DEV
+   tasks only. Freeze it before the final teaching/evaluation runs. Arm A's
+   label phrasing is frozen at the same point.
+4. **Online teaching:** initialize a fresh cortex head for each seed; teach
+   stage-0 corrections in seed-shuffled order using the same examples and
+   optimizer for Arms A and B.
+5. **Consolidation:** finish head training, serialize cortex parameters, delete
+   all correction texts and transient optimizer examples, and verify raw-trace
+   count zero.
+6. **One-shot evaluation:** stage-0 holdout retention; the complete, untaught
+   stage-1 transfer battery; stage-2 holdout scope; untaught stages for
+   specificity.
+7. **Causal intervention:** rerun Arm B with learned state active, zeroed, and
+   swapped with a different seed/task state. No relearning occurs between arms.
+8. **Seeds:** at least 5. A fallback to 3 is allowed only if a measured seed
+   exceeds 15 minutes and is reported as a deviation. Vanilla is mandatory.
 
-## Primary metrics & acceptance
+## Conditions / matched comparisons
 
-1. `organ_delta_holdout` — stage-0 holdout accuracy (head active, raw texts
-   deleted) − vanilla.
-2. `organ_transfer_delta` — full stage-1 battery accuracy − vanilla.
-3. `organ_scope_delta` — stage-2 holdout accuracy − vanilla.
-4. `organ_specificity_delta` — accuracy change on untaught stages' holdout
-   (3, 4) — the abstain path must keep this ≥ −0.05.
+| ID | Condition | Purpose | Matched variable |
+|---|---|---|---|
+| C0 | Frozen language organ only | Vanilla baseline | no cortex |
+| C1 | Cortex architecture, online update disabled | Architectural/no-update control | update off |
+| C2 | Arm A: trained head + label prefix | Parametric-retrieval comparator | text readout |
+| C3 | Arm B: trained head + latent control | Primary cortex condition | latent readout |
+| C4 | C3 with cortex state zeroed after learning | Causal state test | state active/zero |
+| C5 | C3 with cortex state swapped | Addressing test | correct/wrong state |
+| C6 | C3 with correction labels permuted during teaching | Feedback-semantic control | correct/permuted feedback |
+| C7 | S3.M2a retrieval baseline | External bar only; never attached to C3 | retrieval |
 
-- **Accept H-ORGAN:** (1) > 0 with 95% CI excluding 0, AND (2) > 0 with 95%
-  CI excluding 0, AND (4) ≥ −0.05. Criterion (3) is reported and interpreted
-  but does not gate acceptance (scope may need more capacity than 64k).
-- **Refute:** (1) or (2) fails. If (1) passes and (2) fails, the head is an
-  exemplar-memorizer with extra steps — record that framing explicitly.
+C2 versus C3 isolates articulation. C3 versus C4 isolates learned cortex state.
+C3 versus C6 isolates whether semantically correct feedback drives the change.
 
-## Comparisons (mandatory columns, same tables)
+## Primary metrics
 
-- Vanilla; the S3.M2a retrieval conditions (exemplar lookup — the baseline a
-  *learned* mapping must beat on TRANSFER, where lookup structurally fails);
-  research/18's LoRA result if available (weights-in-LM vs weights-in-cortex,
-  the pair this spec exists for).
+All metrics are computed separately for C2 and C3 and reported with mean and
+95% CI over seeds.
 
-## Pre-registered secondaries (exploratory only)
+1. `retention_delta` — stage-0 holdout accuracy minus C1.
+2. `transfer_delta` — complete untaught stage-1 battery accuracy minus C1.
+3. `scope_delta` — stage-2 holdout accuracy minus C1; reported but non-gating.
+4. `specificity_delta` — change on untaught stages relative to C1.
+5. `causal_state_delta` — C3 active minus C4 zeroed.
+6. `state_addressing_delta` — C3 correct state minus C5 swapped state.
+7. `feedback_semantics_delta` — C3 minus C6.
+8. `persistent_bytes` and `behavior_delta_per_byte`, with coupler and head bytes
+   both counted.
 
-1. **North-star accounting:** `behavior_delta_per_byte` with head bytes
-   (serialized) as denominator — on RETENTION and separately on TRANSFER
-   (where stored-text baselines pay per-probe failure, the axis per-byte can
-   honestly flip).
-2. Forgetting 2×2 via the merged harness (artifact = head weights).
-3. Abstain-rate and confidence calibration curve.
-4. Head size sweep (8k/64k/256k params) on dev only.
-5. External-battery spot check (research/16 composition) — a head trained on
-   8 episodes is exactly the overfitting risk that battery exists to catch.
+## Acceptance and verdicts
+
+**Accept H-LATENT** only if all of the following hold:
+
+- C3 `retention_delta > 0` with 95% CI excluding zero;
+- C3 `transfer_delta > 0` with 95% CI excluding zero;
+- `causal_state_delta > 0` and `feedback_semantics_delta > 0`, each with 95%
+  CI excluding zero;
+- specificity remains within the DEV-frozen equivalence margin;
+- raw-trace deletion, fixed latent width, no-text-injection audit, and frozen-LM
+  hash all pass.
+
+**Accept H-LABEL** separately if C2 passes the original retention, transfer,
+and specificity criteria. It remains a parametric-retrieval result even if it
+outperforms C3.
+
+**Refute H-LATENT** if its validity gates pass but any primary condition fails.
+If C2 accepts and C3 refutes, record: "a parametric label store works; latent
+control of the frozen language organ does not yet work."
+
+**Blocked** if the frozen LM cannot perform the task with an oracle text
+demonstration on DEV, or if the latent coupler cannot produce coherent DEV
+articulation before holdout. No cortex-learning verdict is drawn in either
+case.
 
 ## Reporting
 
-Per-seed tables for all four primaries with CIs; deletion verification;
-tuning-firewall attestation; comparison columns; model id; commands; log to
-`experiments_logs/<date>_s19_language_organ.md` quoting this spec.
+The report must contain per-seed C0–C7 tables, the Phase 0 distribution record,
+frozen thresholds, deletion and articulation audits, model hashes, exact
+commands, and separate verdicts for H-LABEL and H-LATENT. Log to
+`experiments_logs/<date>_s19_language_organ_two_readouts.md`.
 
-## Known eval gaps this spec inherits (and their remedy)
+## Relationship to the next projects
 
-Stage-1 holdout is 1 probe and stage-0 holdout is 3 — hence provision a2
-(full-battery transfer) above, and the separately-executed **eval v3
-expansion** (S0.6 growth path: more episodes, paraphrase/adversarial holdout
-variants, human-approved version bump via `scripts/bump_eval_version.py`).
-If v3 lands before this experiment runs, this spec runs on v3 unchanged —
-thresholds and metrics are split-relative, not count-relative.
+- Research/19 asks whether direct gradient training can make a small cortex
+  control one frozen language organ.
+- Research/20 learns the cortex update and consolidation rules across task
+  families, then tests adaptation to unseen tasks without online backprop.
+- Research/21 adds independently frozen specialist organs and asks whether the
+  learned cortex can route and condition them while retaining task state.

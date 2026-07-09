@@ -326,28 +326,45 @@ Sprint 0 (gate: eval integrity)                    ✅ complete
                         └─► Sprint 5 (the two plasticity bets)
 ```
 
-## Sprint 5 — The two plasticity bets (added 2026-07-03)
+## Sprint 5 — Plasticity bets and the learned-cortex successor
 
-After the Sprint 1–3 refutation arc, exactly two credible mechanisms remain
-for "memory becomes changed dynamics"; both are pre-registered and both run
-on eval v2.1 (expanded 2026-07-03: stage-1 40-probe transfer battery,
-adversarial scope probes — `2026-07-03_eval_v2_1_expansion.md`):
+The 2026-07-03 plan identified two immediate mechanisms after the Sprint 1–3
+refutation arc. **Human-authorized amendment 2026-07-09:** those remain useful
+comparators, but they are not the final judgement on the cortex premise.
+Research/19's label-prefix path can be parametric retrieval, and neither 18 nor
+19 learns the online update rule across tasks. Research/20 now carries the core
+test: a meta-trained cortex controlling a frozen language organ with retrieval
+disabled in the primary condition. Research/21 is the dependent multi-organ
+extension.
 
 - [ ] **S5.1 — research/18: consolidation as context distillation.**
   Per-fact transient prefix → KL-distilled LoRA → delete prefix + traces →
-  survival on holdout. Plasticity in LM weights. Teacher-validity gate with
-  one chat-template fallback.
-- [ ] **S5.2 — research/19: the LM as language organ.**
-  ≤64k-param trained head over frozen embeddings, abstain path,
-  stage-1-untaught transfer battery. Plasticity in cortex weights. The
-  reranker's zero-variance M2 wins (S0 +0.667, S4 +0.250) are the bar its
-  transfer numbers must clear where exemplar rerank cannot generalize.
-- [ ] **S5.3 — Head-to-head table:** 18 vs 19 vs retrieval-baseline vs
-  vanilla, same eval, same forgetting 2×2, honest per-byte + per-context-token
-  accounting. This table is the thesis's judgement day: if neither bet wins,
-  "retrieval is the architecture" is the recorded conclusion.
+  survival on holdout. Plasticity in LM weights; retained as the mouth-weight
+  comparator, not the frozen-organ cortex condition.
+- [ ] **S5.2 — research/19: direct cortex learning, two articulation arms.**
+  The same ≤64k-param online-trained cortex is evaluated through (A) a
+  label-prefix parametric-retrieval readout and (B) a fixed-width latent-control
+  readout into a frozen LM. Only B can support the cortex premise; zero/swap/
+  shuffled-feedback interventions must prove causal dependence on cortex state.
+- [ ] **S5.3 — Diagnostic head-to-head table:** 18 vs both 19 arms vs
+  retrieval-baseline vs vanilla, with deletion audits, CIs, per-byte accounting,
+  and explicit classification of every answer path. This table adjudicates the
+  direct mechanisms; it does not close Research/20 before the learned update
+  rule has been tested.
+- [ ] **S5.4 — research/20 / experiment/09: meta-trained cortex over a frozen
+  language organ.** Developmentally learn write, read, consolidation, and
+  latent articulation rules across task families; freeze them; then learn an
+  unseen rule online with no backprop, retrieval, trace, label text, or LM
+  update in the primary condition. Require transfer, composition, deletion,
+  and state-causal controls.
+- [ ] **S5.5 — research/21: cortex-routed frozen specialist organs.** Begin
+  only if S5.4 accepts. Add a separately frozen action/tool organ, opaque tool
+  families, learned routing, and recurrent goal state. Existing Pi tasks become
+  an external battery, not the primary measuring instrument.
 
-Background/conceptual grounding: `notes/2026-07-03_steering_vs_posture_postmortem.md`.
+Background/conceptual grounding:
+`notes/2026-07-03_steering_vs_posture_postmortem.md`; successor rationale and
+frozen-organ boundary are fixed in `research/20` and `research/21`.
 
 Sprint 0 and Sprint 1 can overlap after S0.1–S0.4 land; nothing in Sprints
 2–4 may start before Sprint 0 is fully done.

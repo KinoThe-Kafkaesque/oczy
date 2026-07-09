@@ -1,9 +1,11 @@
 # Oczy Research Agenda
 
 A prioritized set of research projects for the **Plastic World Model Agent**
-(`../experiments.txt`). Each project here is a *proposal* — problem, falsifiable
-hypothesis, approach, and discriminating success criteria. Each has a matching
-runnable experiment design under [`../experiments/`](../experiments/).
+(`../experiments.txt`). Each project is a problem, falsifiable hypothesis,
+approach, and discriminating success criterion. The original projects 01–07
+have matching designs under [`../experiments/`](../experiments/); later numbered
+specs are pre-registered remediation and successor experiments, with concrete
+experiment directories linked where they exist.
 
 > The thesis in one line: *experience → fast change → replay → compression →
 > slow change → forgetting raw trace.* "An agent should not store experiences;
@@ -41,6 +43,38 @@ So the agenda is built as a spine and ribs:
 | [05](05-metabolism-loop-closure.md) | **Closing the metabolism loop** | §2, §3, §4 | Goal 3 | Tensor critic / value head / replay-SGD are wired but unvalidated; corrections don't yet *compound* into cold drift. |
 | [06](06-bounded-growth-consolidation.md) | **Bounded-growth consolidation** | §5, §9 | Goal 3 | The autoencoder/hypernetwork hoard serialized objects (~68 KB/Δ) instead of compact adapters. |
 | [07](07-conversation-world-model-rl.md) | **RL Phase 0: conversation world model** | §6 | — | A lexical `_looks_like_correction` stop-gap stands in for a model that should *predict* the correction. |
+
+## Post-remediation frontier
+
+Sprints 0–3 invalidated the cheap activation-steering route, established
+retrieval as the honest baseline, and left a narrower question: can learned
+neural state outside a frozen LM acquire and express experience without an
+answer-time content store?
+
+| # | Project | Role in the new sequence | Primary distinction |
+|---|---|---|---|
+| [18](18-consolidation-as-distillation.md) | Weight-editing comparator | Experience is consolidated into LoRA weights inside the LM. |
+| [19](19-lm-as-language-organ.md) | Direct-learning diagnostic | A label-prefix parametric-retrieval arm is separated from latent control of a frozen language organ. |
+| [20](20-meta-trained-cortex-frozen-language-organ.md) | Core cortex hypothesis; [Experiment 09](../experiments/09-meta-trained-cortex-frozen-language-organ/) | The write, read, consolidation, and articulation rules are meta-trained; only cortex state changes on an unseen task. |
+| [21](21-cortex-routed-frozen-specialist-organs.md) | Multi-organ extension | A learned cortex routes shared state into independently frozen language and action organs. |
+
+Dependency and verdict order:
+
+```text
+18  LM-weight comparator ───────────────┐
+                                        ├─► same reporting table
+19  direct cortex: label vs latent ─────┘
+                    │
+                    ▼
+20  meta-trained cortex over frozen language organ
+                    │ ACCEPT + causal-state audit
+                    ▼
+21  cortex-routed frozen language + action organs
+```
+
+Retrieval is mandatory in every comparison table but disabled in the primary
+conditions for 19B, 20, and 21. A retrieval win is a result; it cannot be
+relabelled as cortex metabolism.
 
 ## Dependency graph
 
@@ -96,3 +130,8 @@ benchmarks) degraded to placeholders, but the per-project grounding pass read
 those subsystems directly, so the cited `eval_suite.py` / `autoencoder.py` /
 `hypernet.py` / `organism.py` facts are first-hand. Treat any remaining
 unverified forward-looking claim as a hypothesis, not a finding.
+
+**2026-07-09 human-authorized extension:** Research/19 was amended before
+implementation to close the label-prefix interpretation loophole; Research/20
+and /21 plus Experiment/09 were added to test a meta-trained cortex controlling
+frozen language and action organs without retrieval in the primary path.

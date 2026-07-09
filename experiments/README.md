@@ -21,6 +21,7 @@ below name the module each spec asks you to create.
 | [05](05-metabolism-loop-closure/) | Metabolism loop closure | Do repeated corrections *compound* cold-state drift, and does that drift (not a label) drive the answer? | `oczy.experiments.metabolism_loop` |
 | [06](06-bounded-growth-consolidation/) | Bounded-growth consolidation | Can a trained encoder + hypernetwork raise `behavior_delta_per_byte` vs the random-projection baseline? | `oczy.experiments.bounded_growth.bounded_growth_eval` |
 | [07](07-conversation-world-model-rl/) | Conversation world model (RL Phase 0) | Can a self-supervised model predict acceptance / correction-type before answering, beating the lexical stop-gap? | `oczy.experiments.conversation_world_model` |
+| [09](09-meta-trained-cortex-frozen-language-organ/) | Meta-trained cortex over a frozen language organ | Can a cortex learn a reusable write/read/consolidate rule, then learn an unseen behavior without retrieval or online backprop? | `oczy.experiments.meta_cortex.run_meta_test` |
 
 ## How to run (once implemented)
 
@@ -40,6 +41,10 @@ uv run python -m oczy.experiments.<module> [--driver mock|real] [flags]
   (seconds per turn, CPU).
 - Each spec emits `METRIC ...` / `ASI ...` lines compatible with the
   autoresearch harness, and writes a JSON report under `reports/`.
+- Experiment **09** uses the frozen HF `Qwen2.5-0.5B-Instruct` organ and a
+  separately manifest-frozen `meta_cortex/v1` instrument. Its primary condition
+  explicitly disables retrieval and permits only cortex fast/slow state to
+  change during meta-test.
 
 The headline regression gate stays `bash autoresearch.sh`
 (`code_qa_accuracy` must remain 1.0) — but note that this very saturation is
@@ -61,7 +66,8 @@ what experiment **01** exists to fix.
 
 ## Status
 
-All seven are **PROPOSED / not yet implemented**. Suggested sequencing mirrors
-the research dependency graph: land **01** (so wins become measurable), then
-**03** (it unblocks **04** and **05**). See each `research/NN-*.md` for the
-full motivation and `experiments/NN-*/README.md` for the build-out.
+This directory now contains eight experiment specifications at different stages
+of implementation. The current cortex sequence is **19 → 20 → 21** in the
+research agenda: Experiment **09** operationalizes Research/20. See each
+`research/NN-*.md` for verdict gates and each experiment README for its
+build-out.
