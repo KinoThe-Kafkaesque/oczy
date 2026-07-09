@@ -278,6 +278,7 @@ def _run_one_seed(
     max_steps: int,
     lora_rank: int,
     lora_lr: float,
+    lora_alpha: float,
 ) -> dict[str, Any]:
     """Run research 18 for one random seed."""
     random.seed(seed)
@@ -290,7 +291,7 @@ def _run_one_seed(
     model.requires_grad_(False)
     model.eval()
 
-    adapter = LoRAAdapter(model, rank=lora_rank, alpha=1.0)
+    adapter = LoRAAdapter(model, rank=lora_rank, alpha=lora_alpha)
 
     dev_episode_ids = {pid.split("|")[0] for pid in dev_ids}
     dev_episodes = [ep for ep in stage.episodes if ep.id in dev_episode_ids]
@@ -405,8 +406,9 @@ def _mean_ci(values: list[float]) -> tuple[float, float, float]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Research 18: consolidation as distillation")
     parser.add_argument("--seeds", type=int, default=1, help="number of random seeds")
-    parser.add_argument("--max-steps", type=int, default=1, help="distillation steps per fact")
+    parser.add_argument("--max-steps", type=int, default=2, help="distillation steps per fact")
     parser.add_argument("--lora-rank", type=int, default=2, help="LoRA rank")
+    parser.add_argument("--lora-alpha", type=float, default=4.0, help="LoRA alpha scaling")
     parser.add_argument("--lora-lr", type=float, default=1e-3, help="LoRA learning rate")
     parser.add_argument("--stage", type=str, default="stage_0_grounding", help="target stage")
     args = parser.parse_args(argv)
@@ -432,6 +434,7 @@ def main(argv: list[str] | None = None) -> int:
             max_steps=args.max_steps,
             lora_rank=args.lora_rank,
             lora_lr=args.lora_lr,
+            lora_alpha=args.lora_alpha,
         )
         r["wall_s"] = time.monotonic() - t0
         results.append(r)
@@ -449,6 +452,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"ASI distill_specificity_delta_ci95=[{s_lower},{s_upper}]")
     print(f"ASI seeds={args.seeds}")
     print(f"ASI lora_rank={args.lora_rank}")
+    print(f"ASI lora_alpha={args.lora_alpha}")
     print(f"ASI max_steps={args.max_steps}")
     print(f"ASI lora_lr={args.lora_lr}")
     print(f"ASI stage={args.stage}")
