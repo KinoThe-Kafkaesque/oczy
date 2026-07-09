@@ -77,12 +77,12 @@ class LoRAAdapter:
             attn = getattr(layer, "self_attn", None)
             if attn is None:
                 continue
-            for proj_name in ("q_proj", "v_proj"):
+            for proj_name in ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"):
                 module = getattr(attn, proj_name, None)
                 if not isinstance(module, torch.nn.Linear):
                     continue
                 key = (layer_idx, proj_name)
-                a_init = torch.randn(module.in_features, self.rank) * 0.01
+                a_init = torch.randn(module.in_features, self.rank) / math.sqrt(module.in_features)
                 b_init = torch.zeros(self.rank, module.out_features)
                 a = torch.nn.Parameter(a_init, requires_grad=True)
                 b = torch.nn.Parameter(b_init, requires_grad=True)
@@ -135,9 +135,9 @@ class LoRAAdapter:
 def _distillation_prompts(request: str) -> list[str]:
     """Generic templates for distillation; no eval/expected text allowed."""
     return [
+        request,
         f"Q: {request}\nA:",
         f"Question: {request}\nAnswer:",
-        f"{request}\nAnswer briefly:",
     ]
 
 
@@ -146,21 +146,15 @@ def _distillation_prompts(request: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _trim_logits_for_prompt(
-    full_logits: torch.Tensor,
-    prompt_ids: list[int],
-    full_ids: list[int],
-) -> torch.Tensor:
-    """Extract logits for the prompt positions from a prefix-prepended sequence.
-
-    full_logits: [1, len(full_ids), V]
-    full_ids = [bos] + prefix_ids + prompt_ids
-    prompt_ids = [bos] + prompt_token_ids
-    Returns logits[1, len(prompt_ids)-1, V] aligned with prompt tokens.
-    """
-    m = len(prompt_ids) - 1  # number of prompt tokens
-    k = len(full_ids) - 1 - m  # number of prefix tokens
-    return full_logits[:, k : k + m, :]
+def _token_count(tokenizer: Any, text: str) -> int:
+    """Return the number of content token ids in *text* (excluding BOS/EOS)."""
+    ids = tokenizer.encode(text, add_special_tokens=True)
+    n = len(ids)
+    if n >= 1 and getattr(tokenizer, "bos_token_id", None) is not None and ids[0] == tokenizer.bos_token_id:
+        n -= 1
+    if n >= 1 and getattr(tokenizer, "eos_token_id", None) is not None and ids[-1] == tokenizer.eos_token_id:
+        n -= 1
+    return n
 
 
 # ---------------------------------------------------------------------------
@@ -176,31 +170,48 @@ def _distill_correction(
     lr: float,
     tokenizer: Any,
 ) -> dict[str, Any]:
-    """Distill one per-fact prefix into the LoRA adapter."""
+    """Distill one per-fact prefix into the LoRA adapter.
+
+    Teacher = base model with the correction prefix; student = base model plus
+    LoRA.  Both are shown a prompt followed by the answer, and the student is
+    trained with token-level KL on the answer positions.  At test time the
+    student is given only the prompt, so the LoRA must encode the prefix.
+    """
     prefix = episode.correction_utterance
     request = episode.initial_request
+    answer = episode.corrected_response
 
     prompts = _distillation_prompts(request)
-    prompt_id_lists = [tokenizer.encode(p, add_special_tokens=True) for p in prompts]
+    # Prepend a space so the answer token merges with the prompt naturally.
+    answer_text = " " + answer
 
-    # Build full ids for teacher (prefix + prompt) once.
-    full_ids_list = []
-    for p_ids in prompt_id_lists:
-        prompt_text = tokenizer.decode(p_ids, skip_special_tokens=True)
-        full_text = prefix + prompt_text
-        full_ids = tokenizer.encode(full_text, add_special_tokens=True)
-        full_ids_list.append(full_ids)
+    # Token counts for slicing the answer-position logits.
+    prefix_count = _token_count(tokenizer, prefix)
+    answer_count = len(tokenizer.encode(answer_text, add_special_tokens=False))
+    if answer_count <= 0:
+        return {"loss_mean": 0.0, "n_updates": 0}
 
-    m_list = [len(p_ids) - 1 for p_ids in prompt_id_lists]
+    # Build full (teacher) and short (student) token sequences once.
+    entries: list[tuple[int, list[int], list[int]]] = []
+    for prompt in prompts:
+        prompt_count = _token_count(tokenizer, prompt)
+        student_text = prompt + answer_text
+        teacher_text = prefix + " " + student_text
+        student_ids = tokenizer.encode(student_text, add_special_tokens=True)
+        teacher_ids = tokenizer.encode(teacher_text, add_special_tokens=True)
+        entries.append((prompt_count, student_ids, teacher_ids))
 
     # Teacher logits are computed once with the base model, adapter disabled.
     adapter.set_enabled(False)
     teacher_logits_list: list[torch.Tensor] = []
     with torch.no_grad():
-        for full_ids in full_ids_list:
-            t = torch.tensor([full_ids], dtype=torch.long, device="cpu")
+        for prompt_count, _student_ids, teacher_ids in entries:
+            t = torch.tensor([teacher_ids], dtype=torch.long, device="cpu")
             out = driver._model(input_ids=t, use_cache=False, output_hidden_states=False)
-            teacher_logits_list.append(out.logits)
+            # Slice logits for the answer positions.
+            start = prefix_count + prompt_count - 1
+            end = start + answer_count
+            teacher_logits_list.append(out.logits[:, start:end, :])
 
     # Train student with adapter enabled.
     adapter.set_enabled(True)
@@ -209,19 +220,18 @@ def _distill_correction(
     n_updates = 0
 
     for _ in range(max_steps):
-        for p_idx, prompt_ids in enumerate(prompt_id_lists):
-            full_ids = full_ids_list[p_idx]
-            m = m_list[p_idx]
-            if m <= 0:
+        for p_idx, (prompt_count, student_ids, _teacher_ids) in enumerate(entries):
+            start = prompt_count - 1
+            end = start + answer_count
+            if start < 0 or end <= start:
                 continue
 
-            t_logits_raw = teacher_logits_list[p_idx]
-            t_logits = _trim_logits_for_prompt(t_logits_raw, prompt_ids, full_ids)
-            t_logits = t_logits.reshape(-1, t_logits.size(-1))
-
-            s_ids = torch.tensor([prompt_ids], dtype=torch.long, device="cpu")
+            s_ids = torch.tensor([student_ids], dtype=torch.long, device="cpu")
             out = driver._model(input_ids=s_ids, use_cache=False, output_hidden_states=False)
-            s_logits = out.logits[:, :m, :].reshape(-1, out.logits.size(-1))
+            s_logits = out.logits[:, start:end, :].reshape(-1, out.logits.size(-1))
+
+            t_logits = teacher_logits_list[p_idx]
+            t_logits = t_logits.reshape(-1, t_logits.size(-1))
 
             loss = F.kl_div(
                 F.log_softmax(s_logits, dim=-1),
@@ -406,10 +416,10 @@ def _mean_ci(values: list[float]) -> tuple[float, float, float]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Research 18: consolidation as distillation")
     parser.add_argument("--seeds", type=int, default=1, help="number of random seeds")
-    parser.add_argument("--max-steps", type=int, default=2, help="distillation steps per fact")
-    parser.add_argument("--lora-rank", type=int, default=4, help="LoRA rank")
-    parser.add_argument("--lora-alpha", type=float, default=8.0, help="LoRA alpha scaling")
-    parser.add_argument("--lora-lr", type=float, default=0.001, help="LoRA learning rate")
+    parser.add_argument("--max-steps", type=int, default=10, help="distillation steps per fact")
+    parser.add_argument("--lora-rank", type=int, default=8, help="LoRA rank")
+    parser.add_argument("--lora-alpha", type=float, default=16.0, help="LoRA alpha scaling")
+    parser.add_argument("--lora-lr", type=float, default=0.005, help="LoRA learning rate")
     parser.add_argument("--stage", type=str, default="stage_0_grounding", help="target stage")
     args = parser.parse_args(argv)
 
