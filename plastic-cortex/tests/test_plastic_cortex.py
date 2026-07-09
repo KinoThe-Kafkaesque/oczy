@@ -79,7 +79,7 @@ def test_fast_weight_state_snapshot_is_serializable():
 
 
 def test_status_reports_serialized_bytes_and_record_count():
-    """status() must expose the cross-organ serialized_bytes / record_count fields."""
+    """status() exposes the cross-organ serialized_bytes / record_count fields when asked."""
     agent = PlasticCortex()
 
     # Drive a little learning so record_count is non-zero.
@@ -87,7 +87,7 @@ def test_status_reports_serialized_bytes_and_record_count():
     agent.correct("profile means business vertical", "business vertical")
     agent.answer("What is a profile?")
 
-    status = agent.status()
+    status = agent.status(include_size=True)
 
     assert status["project"] == "plastic_cortex"
     assert status["serialized_bytes"] > 0

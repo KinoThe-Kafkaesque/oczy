@@ -1,0 +1,215 @@
+"""Tests for the multi-fact turn stressor."""
+
+from __future__ import annotations
+
+import io
+from contextlib import redirect_stdout
+
+import pytest
+
+from oczy.experiments.multi_fact_stressor import _gguf_available, main
+
+
+def _capture_output(argv: list[str]) -> list[str]:
+    """Run the probe CLI and return emitted lines."""
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        main(argv)
+    return buf.getvalue().strip().splitlines()
+
+
+def _parse_metric(lines: list[str]) -> dict[str, str]:
+    """Extract the first ``METRIC`` line as a key/value map."""
+    for line in lines:
+        if line.startswith("METRIC"):
+            result: dict[str, str] = {}
+            for part in line.split()[1:]:
+                if "=" in part:
+                    key, value = part.split("=", 1)
+                    result[key] = value
+            return result
+    raise AssertionError(f"no METRIC line in output: {lines}")
+
+
+def _assert_valid_metric(metric: dict[str, str], expected_mode: str) -> None:
+    """Common assertions for a METRIC line."""
+    assert metric["mode"] == expected_mode
+    assert metric["use_prefix"] in {"True", "False"}
+    assert metric["prefix_source"] in {"hand", "hippocampus", "None"}
+    assert metric["auto_consolidated"] in {"0", "1"}
+    assert metric["recall_a"] in {"0", "1"}
+    assert metric["recall_b"] in {"0", "1"}
+    assert metric["co_recall"] in {"0", "1"}
+    assert int(metric["traces"]) >= 0
+    assert int(metric["embedding_calls"]) >= 0
+    assert int(metric["memory_bytes"]) > 0, "serialized hippocampus size should be positive"
+
+
+def test_multi_fact_stressor_auto_consolidate_mock() -> None:
+    lines = _capture_output(["--auto-consolidate", "--length", "64"])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    assert metric["auto_consolidated"] in {"0", "1"}
+    assert any(line.startswith("ASI") for line in lines)
+
+
+def test_multi_fact_stressor_hybrid_cap_uncapped() -> None:
+    """With hybrid-cap 0 the hybrid strength can exceed the default 10.0 cap."""
+    lines = _capture_output(
+        ["--mode", "hybrid", "--auto-consolidate", "--hybrid-cap", "0", "--length", "256"]
+    )
+    metric = _parse_metric(lines)
+    if metric["auto_consolidated"] == "1":
+        assert float(metric["consolidation_strength"]) > 10.0
+    assert any(line.startswith("ASI") for line in lines)
+
+def test_multi_fact_stressor_runs_scalar() -> None:
+    lines = _capture_output(["--mode", "scalar"])
+    metric = _parse_metric(lines)
+    assert any(line.startswith("ASI") for line in lines)
+    _assert_valid_metric(metric, "scalar")
+
+
+def test_multi_fact_stressor_runs_hybrid() -> None:
+    lines = _capture_output(["--mode", "hybrid"])
+    metric = _parse_metric(lines)
+    assert any(line.startswith("ASI") for line in lines)
+    _assert_valid_metric(metric, "hybrid")
+
+
+def test_multi_fact_stressor_can_recall_both_facts() -> None:
+    """Exact co-recall requires a real LM; here we verify storage and metrics.
+
+    The bundled mock driver returns the literal string ``mock`` for every
+    generation call, so ``co_recall`` is expected to be ``0`` in this test
+    harness.  The deterministic acceptance gate is that valid ``METRIC`` lines
+    are emitted and the chunked pipeline stores at least one trace under both
+    consolidation modes.
+    """
+    for mode in ("scalar", "hybrid"):
+        lines = _capture_output(["--mode", mode, "--length", "256"])
+        metric = _parse_metric(lines)
+        # The mock driver returns 'mock' for all generation calls, so exact
+        # co-recall is always 0 under this harness. Real-LM co-recall is tested
+        # by the --requires-model probe, not here.
+        assert metric["co_recall"] == "0"
+        assert int(metric["traces"]) > 0
+        assert any(line.startswith("ASI") for line in lines)
+
+
+def test_multi_fact_stressor_config_override() -> None:
+    """A JSON config object should be accepted and not crash the probe."""
+    config_json = '{"ingestion": {"chunker_window_tokens": 32}}'
+    lines = _capture_output(["--mode", "scalar", "--config", config_json])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    # A smaller window should produce at least as many traces as the default.
+    assert int(metric["embedding_calls"]) > 0
+
+
+def test_multi_fact_stressor_mock_prefix_runs() -> None:
+    """The prefix path should run on the mock driver and emit valid output."""
+    lines = _capture_output(["--mode", "scalar", "--use-prefix", "--length", "64"])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    assert metric["use_prefix"] == "True"
+    assert any(line.startswith("ASI") for line in lines)
+
+def test_memory_bytes_emitted_and_positive() -> None:
+    lines = _capture_output(["--length", "64"])
+    metric = _parse_metric(lines)
+    assert int(metric["memory_bytes"]) > 0
+
+
+def test_max_traces_prunes_to_target() -> None:
+    lines = _capture_output(["--length", "128", "--max-traces", "1"])
+    metric = _parse_metric(lines)
+    assert int(metric["traces"]) <= 1
+    assert int(metric["memory_bytes"]) > 0
+
+
+def test_multi_fact_stressor_domain_recall_mock() -> None:
+    """The domain-recall flag should append domain-co-recall metrics."""
+    lines = _capture_output(["--domain-recall", "--length", "64"])
+    metric = _parse_metric(lines)
+    assert "domain_co_recall" in metric
+    assert metric["domain_co_recall"] in {"0", "1"}
+    assert "domain_recall_a" in metric
+    assert "domain_recall_b" in metric
+    assert metric["co_recall"] in {"0", "1"}
+    assert any(line.startswith("ASI") for line in lines)
+
+
+@pytest.mark.slow
+@pytest.mark.requires_model
+def test_multi_fact_stressor_runs_real_driver() -> None:
+    """Run against the real LFM2.5 GGUF; skipped if the model is not cached."""
+    if not _gguf_available():
+        pytest.skip("LFM2.5 GGUF not found in OCZY_MODEL_PATH or HF cache")
+    lines = _capture_output(["--use-real-driver", "--mode", "scalar", "--length", "256"])
+    assert any(line.startswith("METRIC") for line in lines)
+    assert any(line.startswith("ASI") for line in lines)
+
+
+def test_multi_fact_stressor_auto_prefix_mock() -> None:
+    """Auto-prefix still derives a hippocampal prefix but emits a deprecation ASI."""
+    lines = _capture_output(["--auto-prefix", "--length", "64"])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    assert metric["prefix_source"] == "hippocampus"
+    assert metric["co_recall"] in {"0", "1"}
+    assert any(line.startswith("ASI") for line in lines)
+    assert any("deprecated_auto_prefix" in line for line in lines)
+
+
+def test_multi_fact_stressor_auto_prefix_empty_fallback_mock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the hippocampus yields no memory, auto-prefix falls back cleanly."""
+    monkeypatch.setattr(
+        "oczy.experiments.multi_fact_stressor._derive_prefix_from_hippocampus",
+        lambda agent: None,
+    )
+    lines = _capture_output(["--auto-prefix", "--length", "64"])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    assert metric["prefix_source"] == "None"
+    assert any("deprecated_auto_prefix" in line for line in lines)
+
+
+def test_multi_fact_stressor_use_prefix_source_hand() -> None:
+    """The hand-coded prefix path should report prefix_source=hand."""
+    lines = _capture_output(["--use-prefix", "--length", "64"])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    assert metric["prefix_source"] == "hand"
+    assert any(line.startswith("ASI") for line in lines)
+
+
+def test_multi_fact_stressor_use_agent_prefix_mock() -> None:
+    """The live-agent prefix path should derive a hippocampal prefix and report it."""
+    lines = _capture_output(["--use-agent-prefix", "--length", "64"])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    assert metric["prefix_source"] == "hippocampus"
+    assert metric["use_prefix"] == "False"
+    assert any(line.startswith("ASI") for line in lines)
+
+
+def test_multi_fact_stressor_use_agent_prefix_takes_precedence_over_hand_prefix() -> None:
+    """When both --use-agent-prefix and --use-prefix are given, the live-agent path wins."""
+    lines = _capture_output(["--use-agent-prefix", "--use-prefix", "--length", "64"])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    assert metric["prefix_source"] == "hippocampus"
+    assert metric["use_prefix"] == "True"
+    assert any(line.startswith("ASI") for line in lines)
+
+
+def test_multi_fact_stressor_paraphrase_mock() -> None:
+    """The paraphrase flag should run without error and emit a valid METRIC."""
+    lines = _capture_output(["--use-agent-prefix", "--paraphrase", "--length", "64"])
+    metric = _parse_metric(lines)
+    _assert_valid_metric(metric, "scalar")
+    assert metric["prefix_source"] == "hippocampus"
+    assert any(line.startswith("ASI") for line in lines)

@@ -17,7 +17,7 @@ import random
 import re
 
 from .fast_weight import FastWeightLayer
-from .state import TokenRNN
+from .state import TokenRNN, _stable_hash_int
 
 
 class PlasticCortex:
@@ -52,7 +52,7 @@ class PlasticCortex:
         self.labels = list(self.LABELS)
         self.baseline = {token: dict(scores) for token, scores in self.BASELINE.items()}
 
-        self.hidden_dim = self.config.get("hidden_dim", 8)
+        self.hidden_dim = self.config.get("hidden_dim", 64)
         self.alpha_normal = self.config.get("alpha_normal", 0.02)
         self.alpha_correction = self.config.get("alpha_correction", 5.0)
         self.recurrent_gain = self.config.get("recurrent_gain", 0.05)
@@ -91,7 +91,7 @@ class PlasticCortex:
             for row in self.baseline.values():
                 row.setdefault(label, 0.0)
             self._recurrent_gate[label] = [
-                (random.Random(hash(label) + i).random() * 2.0 - 1.0) * math.sqrt(1.0 / self.hidden_dim)
+                (random.Random(_stable_hash_int(label) + i).random() * 2.0 - 1.0) * math.sqrt(1.0 / self.hidden_dim)
                 for i in range(self.hidden_dim)
             ]
         return label
@@ -168,9 +168,9 @@ class PlasticCortex:
 
         self.correction_count += 1
 
-    def status(self) -> dict:
+    def status(self, include_size: bool = False) -> dict:
         """Return a serializable status snapshot."""
-        return {
+        result = {
             "project": "plastic_cortex",
             "ready": True,
             "labels": list(self.labels),
@@ -180,14 +180,15 @@ class PlasticCortex:
             "correction_writes": self.fast.correction_writes,
             "answers": self.answer_count,
             "corrections": self.correction_count,
-            # Cross-organ memory-metrics fields.
-            # serialized_bytes mirrors the other organs' stdlib pickling of
-            # the whole organ instance.
-            "serialized_bytes": len(pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)),
             # record_count is the natural learning-progress signal: how many
             # explicit corrections the cortex has internalized.
             "record_count": self.correction_count,
         }
+        if include_size:
+            result["serialized_bytes"] = len(
+                pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
+            )
+        return result
 
     def reset_state(self) -> None:
         """Reset all mutable session state."""

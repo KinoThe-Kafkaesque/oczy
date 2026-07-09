@@ -12,9 +12,13 @@ It proves the *shape* of state-space tracking without needing torch.
 
 from __future__ import annotations
 
+import hashlib
 import math
 import random
 
+
+def _stable_hash_int(text: str) -> int:
+    return int.from_bytes(hashlib.sha256(text.encode("utf-8")).digest()[:4], "big")
 
 class TokenRNN:
     """Minimal recurrent cell driven by hashed token embeddings.
@@ -49,7 +53,7 @@ class TokenRNN:
         This avoids building a vocabulary table.  Any token is reduced to a
         fixed-size real vector derived from its hash.
         """
-        rng = random.Random((hash(token) + 0x7F) & 0xFFFFFFFF)
+        rng = random.Random((_stable_hash_int(token) + 0x7F) & 0xFFFFFFFF)
         return [(rng.random() * 2.0 - 1.0) for _ in range(self.input_dim)]
 
     def update(self, token: str) -> None:

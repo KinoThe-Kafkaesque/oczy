@@ -1,0 +1,102 @@
+Enabled policy-loop gates for real LM driver.
+/home/nyanpasu/Desktop/code/kinoSoft/oczy/src/oczy/experiments/organism_curriculum/run_curriculum.py:185: UserWarning: use_cortex_policy=True but no cortex_agent provided; falling back to the legacy ranking path.
+  return OrganismAgent(config)
+/home/nyanpasu/Desktop/code/kinoSoft/oczy/src/oczy/experiments/organism_curriculum/run_curriculum.py:185: UserWarning: use_value_baseline=True but no cortex_agent provided; policy updates will use baseline=0.0.
+  return OrganismAgent(config)
+/home/nyanpasu/Desktop/code/kinoSoft/oczy/src/oczy/experiments/organism_curriculum/run_curriculum.py:185: UserWarning: use_acceptance_policy_reward=True but no cortex_agent provided; acceptance policy updates will be skipped.
+  return OrganismAgent(config)
+Loading real LlamaCVecDriver...
+/home/nyanpasu/Desktop/code/kinoSoft/oczy/.venv/lib/python3.12/site-packages/huggingface_hub/utils/_validators.py:205: UserWarning: The `local_dir_use_symlinks` argument is deprecated and ignored in `hf_hub_download`. Downloading to a local directory does not use symlinks anymore.
+  warnings.warn(
+llama_context: n_ctx_seq (256) < n_ctx_train (128000) -- the full capacity of the model will not be utilized
+llama_kv_cache: the V embeddings have different sizes across layers and FA is not enabled - padding V cache to 512
+Real CortexAgent loaded.
+Policy request context: False
+Running Stage 0: Sense grounding...
+Running Stage 1: Transfer within domain...
+Running Stage 2: Scope control...
+Running Stage 3: Dialog...
+Running Stage 4: Consolidation stress...
+Consolidating after Stage 4: Consolidation stress...
+Consolidating before Stage 5: Cross-domain disambiguation...
+Running Stage 5: Cross-domain disambiguation...
+
+=== Organism curriculum summary ===
+Stage                        Episodes  Uptake    Pre   Post      Mem d
+----------------------------------------------------------------------
+Stage 0: Sense grounding       8/8      0.00  0.00  0.12    +15749B
+Stage 1: Transfer within domain   8/8      0.00  0.12  0.12     +3273B
+Stage 2: Scope control         8/8      0.00  0.06  0.12     +9431B
+Stage 3: Dialog                4/4      0.00  0.00  0.12     +2751B
+Stage 4: Consolidation stress  10/10     0.00  0.20  0.10     +6144B
+Stage 5: Cross-domain disambiguation   6/6      0.00  0.00  0.08    +10000B
+
+Stage 0: Sense grounding
+  Single ambiguous word, one correction, same request repeated. Targets PlasticCortex fast weights.
+  [OK] s0_log                    1st='business vertical'       2nd="the captain's journal"  
+  [OK] s0_file                   1st="the captain's journal"   2nd='submit it officially'   
+  [OK] s0_key                    1st='submit it officially'    2nd='the map legend'         
+  [OK] s0_cell                   1st='the map legend'          2nd='the biology cell'       
+  [OK] s0_record                 1st='the biology cell'        2nd='the music record'       
+  [OK] s0_branch                 1st='the music record'        2nd='tree branch'            
+  [OK] s0_model                  1st='tree branch'             2nd='fashion model'          
+  [OK] s0_run                    1st='fashion model'           2nd='the river run'          
+  post-test accuracy: retention=0.12
+
+Stage 1: Transfer within domain
+  New requests that use the corrected sense learned in Stage 0. Targets NeuralHippocampus replay when fast weights are weak.
+  [OK] s1_log                    1st='the river run'           2nd="the captain's journal"  
+  [OK] s1_file                   1st="the captain's journal"   2nd='submit it officially'   
+  [OK] s1_key                    1st='submit it officially'    2nd='the map legend'         
+  [OK] s1_cell                   1st='the map legend'          2nd='the biology cell'       
+  [OK] s1_record                 1st='the biology cell'        2nd='the music record'       
+  [OK] s1_branch                 1st='the music record'        2nd='tree branch'            
+  [OK] s1_model                  1st='tree branch'             2nd='fashion model'          
+  [OK] s1_run                    1st='fashion model'           2nd='the river run'          
+  post-test accuracy: transfer=0.12
+
+Stage 2: Scope control
+  Teach an alternative common/technical sense for words corrected in Stage 0, then test that each sense is used only in its own context. Targets SkillImmuneCortex and IdentityHypernetwork.
+  [OK] s2_log                    1st='the river run'           2nd='system error log'       
+  [OK] s2_file                   1st='system error log'        2nd='computer file'          
+  [OK] s2_key                    1st='computer file'           2nd='keyboard key'           
+  [OK] s2_cell                   1st='keyboard key'            2nd='spreadsheet cell'       
+  [OK] s2_record                 1st='spreadsheet cell'        2nd='database record'        
+  [OK] s2_branch                 1st='database record'         2nd='git branch'             
+  [OK] s2_model                  1st='git branch'              2nd='ml model'               
+  [OK] s2_run                    1st='ml model'                2nd='ml experiment run'      
+  post-test accuracy: retention=0.25, scope=0.00
+
+Stage 3: Dialog
+  Multi-turn interactions: a correction followed by a context-dependent follow-up. Tests the full organ metabolism across turns.
+  [OK] s3_ship_log               1st='ml experiment run'       2nd="the captain's journal"  
+  [OK] s3_official_file          1st="the captain's journal"   2nd='submit it officially'   
+  [OK] s3_map_key                1st='submit it officially'    2nd='the map legend'         
+  [OK] s3_music_record           1st='the map legend'          2nd='the music record'       
+  post-test accuracy: scope=0.00, transfer=0.25
+
+Stage 4: Consolidation stress
+  Many corrections in sequence followed by an explicit consolidate(). Tests hippocampal replay, consolidation, and autoencoder compression. Memory metrics are captured before and after consolidation.
+  [OK] s4_log_nautical           1st='the music record'        2nd="the captain's journal"  
+  [OK] s4_file_official          1st="the captain's journal"   2nd='submit it officially'   
+  [OK] s4_key_map                1st='submit it officially'    2nd='the map legend'         
+  [OK] s4_cell_biology           1st='the map legend'          2nd='the biology cell'       
+  [OK] s4_record_music           1st='the biology cell'        2nd='the music record'       
+  [OK] s4_branch_tree            1st='the music record'        2nd='tree branch'            
+  [OK] s4_model_fashion          1st='tree branch'             2nd='fashion model'          
+  [OK] s4_run_river              1st='fashion model'           2nd='the river run'          
+  [OK] s4_table_dining           1st='the river run'           2nd='dining table'           
+  [OK] s4_service_church         1st='dining table'            2nd='church service'         
+  post-test accuracy: retention=0.10
+
+Stage 5: Cross-domain disambiguation
+  The same ambiguous word must map to different senses depending on domain context. Targets WorldModelCritic, IdentityHypernetwork, and SkillImmuneCortex together.
+  [OK] s5_log_context            1st='church service'          2nd="the captain's journal"  
+  [OK] s5_file_context           1st="the captain's journal"   2nd='submit it officially'   
+  [OK] s5_model_context          1st='submit it officially'    2nd='fashion model'          
+  [OK] s5_run_context            1st='fashion model'           2nd='the river run'          
+  [OK] s5_key_context            1st='the river run'           2nd='the map legend'         
+  [OK] s5_cell_context           1st='the map legend'          2nd='the biology cell'       
+  post-test accuracy: retention=0.17, scope=0.00
+
+Report written to: /home/nyanpasu/Desktop/code/kinoSoft/oczy/src/oczy/experiments/organism_curriculum/reports/run_rerank_topk3.json

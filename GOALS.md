@@ -12,32 +12,86 @@ The reference cortex contract lives in
 `plastic-cortex/src/plastic_cortex/kv_cortex.py` (9/9 contract tests
 passing as of 2026-06-23).
 
-## Goal 1 — LM-side KV-write binding
+## Goal 1 — LM-side steering binding
 
-The cortex emits `(k, v)` pairs per attention layer via
-`KVCortex.project_intent(layer_idx)`. The LM driver must write those tensors
-into a **reserved KV slot** at the corresponding layer so attention consults
-the cortex's intent during decoding.
+The cortex emits per-layer steering vectors via `KVCortex.emit_cvec(layer_idx)`.
+`LlamaCVecDriver` binds these into the LM's forward pass via
+`llama_set_adapter_cvec`, which applies them as a per-layer residual bias.
+This is sufficient to shift logits, but the available binding is a **residual
+control vector**, not a reserved KV slot.
 
-**Why it matters:** this is the only place the cortex touches the LM's
-forward pass. Without it, the cortex is decorative — it absorbs hidden
-states and computes intent vectors but those vectors never reach the
-LM, so the agent's behaviour is unchanged.
+**Why it matters:** a control vector steers generation at the level of
+*semantic posture*: framing, style, broad domain. It cannot reliably
+override the LM's prior for a specific arbitrary token. Empirically, a small
+projected cvec moves "profile" answers from "strategy" toward
+"commercial"/"economic" but does not emit "vertical". A reserved KV slot lets
+the cortex inject factual content into attention at a fixed sequence position
+and force specific tokens.
 
-**Surface under investigation:**
-- `llama-cpp-python`'s `Llama.kv_self` attribute exposes the KV cache
-  per layer, but the high-level API wraps it opaquely.
-- `Llama.eval(tokens)` writes to the cache automatically but doesn't
-  expose per-layer per-position writes.
-- Likely needs either a wrapper around the low-level eval (one token at
-  a time, manual KV writes) or a thin binding patchfork.
+**Status:** direct reserved KV-slot injection is **blocked** on the installed
+`llama-cpp-python` binding. The package exposes `Llama.kv_self` opaquely and
+does not provide a public API to write an arbitrary `(k, v)` tensor directly
+into a chosen layer and position. C++ internal methods are exposed in the SO
+but are mangled and tied to internal structures; calling them through ctypes
+would require a binding fork or an upstream API addition.
 
-**Done when:**
+**Proxy available today:** a fixed text prefix prepended to the prompt acts
+as a reserved-position KV signal. The prefix tokens flow through the normal
+forward pass and populate fixed KV positions, biasing generation toward the
+encoded concept. In a 2026-06-25 probe this proxy achieved exact-token uptake
+("vertical" appeared) where the residual cvec only achieved domain shift. The
+prefix is therefore the practical fact-recall surface today; the cvec remains
+the practical posture/framing surface.
+
+**Done when (direct path):**
 - A reserved KV slot per layer can be written and overwritten.
-- The LM's next-token logits visibly shift when the slot is populated
-  versus empty (a measurable behavioural test).
-- Latency: <5 ms per cortex injection, so the loop can keep up with
-  token streaming.
+- The LM's next-token logits visibly shift when the slot is populated versus
+  empty (a measurable behavioural test).
+- Latency: <5 ms per cortex injection, so the loop can keep up with token
+  streaming.
+
+### What works today
+
+`LlamaCVecDriver` provides two complementary surfaces:
+1. Residual control vectors via `llama_set_adapter_cvec` for posture/framing.
+2. An optional articulation prefix (`set_articulation_prefix`) prepended to
+   every generate() prompt for exact fact recall.
+
+The current codebase therefore uses **cvec for posture** and **prefix for
+exact fact recall**, while Goal 1 remains a future architecture upgrade for
+direct KV-slot writes.
+
+### First-class reserved-position API (implemented)
+
+`LlamaCVecDriver` now exposes `ReservedPosition` as a dataclass separate
+from cvec steering.  The abstraction records provenance and optional
+measured uptake so the organism can later learn which reserved positions
+work:
+
+```python
+from oczy.lm import ReservedPosition
+
+driver.set_reserved_position(
+    ReservedPosition(
+        text="In this codebase, profile means business vertical. ",
+        source="knowledge_store",
+    )
+)
+```
+
+`LlamaCVecDriver` now provides two complementary surfaces:
+1. Residual control vectors via `set_cvecs_per_layer` / `set_cvec_uniform`
+   for posture/framing.
+2. Reserved positions via `set_reserved_position` / `clear_reserved_position`
+   for exact fact recall.
+
+When a reserved position is set, the driver prepends `text` to every
+`generate()` call.  If a cvec is also set, its scale must be attenuated
+(`articulate_scale` < 0.01) under a prefix to prevent interference.
+
+Long-term, this abstraction should accept a **prefilled KV cache chunk**
+once the binding supports it, so the reserved position is not burned as
+text tokens on every forward pass.
 
 ## Goal 2 — Hidden-state extraction at layer L
 
@@ -107,6 +161,13 @@ agent rather than just shift its own internal vector.
 
 Strategic order: 1 → 2 → 3, but Goal 2's investigation can begin in
 parallel once Goal 1's binding surface is understood.
+
+## Working roadmap
+
+- **Cortex/cvec:** changes dynamics, not facts.
+- **Prefix/KV slot:** provides retrievable content.
+- **Hippocampus/replay:** decides what content/state deserves consolidation.
+- **Organs:** should become tensor consumers once the CortexAgent curriculum proves the loop.
 
 ## Non-goals (deferred until the loop closes)
 

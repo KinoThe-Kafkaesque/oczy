@@ -79,7 +79,7 @@ def test_skills_activate_on_trigger():
 def test_status_snapshot():
     cortex = SkillImmuneCortex()
     cortex.add_detector("You confused ORM guarantees with type safety.", "orm_guarantees", "Distinguish ORM and type safety.")
-    status = cortex.status()
+    status = cortex.status(include_size=True)
     assert status["ready"] is True
     assert status["detector_count"] == 1
     assert status["merged_count"] == 0
@@ -113,6 +113,6 @@ def test_status_reports_serialized_bytes_and_record_count():
         "Is this sqlx query safe?",
         "It looks fine to me.",
     )
-    status = cortex.status()
+    status = cortex.status(include_size=True)
     assert status["serialized_bytes"] > 0
     assert status["record_count"] >= 2

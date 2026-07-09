@@ -1,0 +1,1294 @@
+"""Full-stack Oczy organism agent.
+
+Wires six workspace organs together into a single agent that can answer,
+learn from corrections, consolidate raw traces, and report approximate memory
+use.
+"""
+
+from __future__ import annotations
+
+import pickle
+import warnings
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+if TYPE_CHECKING:
+    from oczy.experiments.cortex_agent import CortexAgent
+
+from experience_autoencoder import ExperienceAutoencoder
+from experience_autoencoder.autoencoder import OUTCOME_DIM
+from identity_hypernetwork import IdentityHypernetwork
+from neural_hippocampus import NeuralHippocampus
+from oczy.common import extract_expected_from_correction, tokenize
+from oczy.experiments.profiler import AgentProfiler
+from oczy.experiments.scope_selectivity_stressor import (
+    _RETRIEVE_THRESHOLD,
+    _cosine,
+    _slot_lookup,
+    _slot_retrieve,
+    _slot_write,
+)
+from plastic_cortex import PlasticCortex
+from skill_immune_cortex import SkillImmuneCortex
+from world_model_critic import WorldModelCritic
+
+# ``plastic_cortex.lm_cortex`` pulls in numba and a heavier compiled stack.
+# Let ImportError pass through (the LM backend simply isn't available on
+# stripped-down installs); any other error indicates a real problem and
+# should surface, not be silenced.  (Previously this was ``except Exception``
+# which masked AttributeError/typos/SyntaxError in the lm_cortex module.)
+try:
+    from plastic_cortex.lm_cortex import LMPlasticCortex
+except ImportError:
+    LMPlasticCortex = None
+
+def _update_slot_label(slot_keys, slot_labels, key, label, multi_label=False) -> None:
+    """Bind a corrected label to the nearest scope slot.
+
+    Mirrors the addressing logic of :func:`_slot_write`: the nearest slot
+    (by cosine) receives the label, or a fresh slot is appended when no slot
+    is close enough.  Must be called *after* :func:`_slot_write` so the slot
+    store already holds the (possibly newly allocated) key.
+
+    When *multi_label* is True, a new label is appended to the existing
+    slot's label string (joined by ``" | "``) instead of overwriting it,
+    so a single context slot can accumulate multiple corrected senses.
+    """
+    best_idx, _ = _slot_lookup(slot_keys, [], key)
+    if best_idx == -1 or best_idx >= len(slot_labels):
+        slot_labels.append(label)
+    elif multi_label and label:
+        existing = slot_labels[best_idx]
+        if label not in existing.split(" | "):
+            slot_labels[best_idx] = existing + " | " + label
+    else:
+        slot_labels[best_idx] = label
+
+class OrganismAgent:
+    """End-to-end plastic-world-model agent.
+
+    The six sub-modules are wired together without changing their internal
+    implementations; this class only orchestrates their public APIs.
+
+    For the LM-backend variant (which uses an :class:`LMPlasticCortex`
+    model rather than the small word-association :class:`PlasticCortex`),
+    use :class:`LMBackendAgent` --- it is kept as a separate class so the
+    fast-weight/critic/hippocampus replay pipeline cannot be silently
+    disabled by a config flag.
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        self.config = dict(config or {})
+        config = self.config
+
+        if config.get("backend") == "lm":
+            raise ValueError(
+                "OrganismAgent does not accept backend='lm' directly; "
+                "use LMBackendAgent so the LM-only pipeline is visible "
+                "in the type rather than a runtime config flag."
+            )
+        self.plastic_cortex = PlasticCortex(config.get("plastic_cortex"))
+        self.neural_hippocampus = NeuralHippocampus(config.get("neural_hippocampus"))
+        self.world_model_critic = WorldModelCritic(config.get("world_model_critic"))
+        self.identity_hypernetwork = IdentityHypernetwork(
+            **(config.get("identity_hypernetwork") or {})
+        )
+        self.skill_immune_cortex = SkillImmuneCortex(config.get("skill_immune_cortex"))
+        self.experience_autoencoder = ExperienceAutoencoder(
+            config.get("experience_autoencoder")
+        )
+        # Enable hidden-delta encoding so the autoencoder uses contextualized
+        # LM hidden states (when available from the cortex agent) instead of
+        # bag-of-words features.  Falls back to text path when no hidden_delta
+        # is provided in the episode.
+        self.experience_autoencoder.config["use_hidden_delta"] = True
+        self._last_request_hidden_state: np.ndarray | None = None
+        self.profiler = AgentProfiler(
+            [
+                "plastic_cortex",
+                "neural_hippocampus",
+                "world_model_critic",
+                "identity_hypernetwork",
+                "skill_immune_cortex",
+                "experience_autoencoder",
+            ]
+        )
+
+        self._last_request: str | None = None
+        self._last_answer: str | None = None
+        self._low_confidence_threshold = float(config.get("low_confidence_threshold", 0.6))
+        self._high_correction_threshold = float(config.get("high_correction_threshold", 0.4))
+        self._surprise_threshold = float(config.get("surprise_threshold", 0.5))
+        self._unk = "I don't know."
+
+        # Organ ablation flags — gate each organ so the ablation matrix can
+        # isolate individual contributions.  Every flag defaults to True
+        # (preserving current behavior); set to False to disable the organ.
+        self.use_neural_hippocampus = bool(config.get("use_neural_hippocampus", True))
+        self.use_world_model_critic = bool(config.get("use_world_model_critic", True))
+        self.use_identity_hypernetwork = bool(config.get("use_identity_hypernetwork", True))
+        self.use_skill_immune_cortex = bool(config.get("use_skill_immune_cortex", True))
+        self.use_experience_autoencoder = bool(config.get("use_experience_autoencoder", True))
+        self.use_diff_fact_index = bool(config.get("use_diff_fact_index", True))
+        self.use_cortex_lm_answer = bool(config.get("use_cortex_lm_answer", False))
+        self.use_cortex_policy = bool(config.get("use_cortex_policy", False))
+        self.use_value_baseline = bool(config.get("use_value_baseline", False))
+        self.cortex_policy_weight = float(config.get("cortex_policy_weight", 1.0))
+        self.policy_suppresses_fast_answer = bool(
+            config.get("policy_suppresses_fast_answer", False)
+        )
+        self.cortex_agent: CortexAgent | None = config.get("cortex_agent")
+        if self.use_cortex_lm_answer and self.cortex_agent is None:
+            warnings.warn(
+                "use_cortex_lm_answer=True but no cortex_agent provided; "
+                "falling back to the legacy PlasticCortex answer path.",
+                stacklevel=2,
+            )
+        if self.use_cortex_policy and self.cortex_agent is None:
+            warnings.warn(
+                "use_cortex_policy=True but no cortex_agent provided; "
+                "falling back to the legacy ranking path.",
+                stacklevel=2,
+            )
+        if self.use_value_baseline and self.cortex_agent is None:
+            warnings.warn(
+                "use_value_baseline=True but no cortex_agent provided; "
+                "policy updates will use baseline=0.0.",
+                stacklevel=2,
+            )
+        self.use_acceptance_policy_reward = bool(
+            config.get("use_acceptance_policy_reward", False)
+        )
+        if self.use_acceptance_policy_reward and self.cortex_agent is None:
+            warnings.warn(
+                "use_acceptance_policy_reward=True but no cortex_agent provided; "
+                "acceptance policy updates will be skipped.",
+                stacklevel=2,
+            )
+
+        # Context-addressed scope-slot store (Experiment 04).  Each slot binds
+        # a request-derived embedding key to the cortex warm_state captured at
+        # correction time and the corrected label learned for that context.
+        # The store is empty when no cortex_agent is attached, so the legacy
+        # answer/learn paths are unaffected.
+        self._scope_slot_keys: list[np.ndarray] = []
+        self._scope_slot_warm: list[np.ndarray] = []
+        self._scope_slot_label: list[str] = []
+        # Configurable scope-slot reranker improvements (A/B test knobs).
+        # Configurable scope-slot reranker improvements.
+        # topk=3 returns multiple candidate scope labels so the correct
+        # technical sense can be found even when a different slot is
+        # cosinely closer.  sense_split excludes the ambiguous word
+        # (shared between request and candidate) from the overlap
+        # computation, preventing cross-sense contamination.
+        self.scope_rerank_weight = float(config.get("scope_rerank_weight", 2.0))
+        self.scope_rerank_topk = int(config.get("scope_rerank_topk", 3))
+        self.scope_rerank_sense_split = bool(config.get("scope_rerank_sense_split", False))
+        self.scope_rerank_multi_label = bool(config.get("scope_rerank_multi_label", False))
+        # Integration smoke-test counters (S0.8): each mechanism increments
+        # these when it actually contributes to answer ranking.
+        self._scope_slot_fired: int = 0
+        self._hippocampus_replay_fired: int = 0
+        self._dsi_retrieval_fired: int = 0
+
+
+        # Differentiable Fact Index (DSI-style F matrix + LoRA adapter).
+        # Replaces the scope-slot reranker's cosine lookup with a learned
+        # embedding matrix where each fact gets a row in F, and the LoRA
+        # adapter ΔW = A·B accumulates experiential modulation from
+        # corrections.  Retrieval is a single inner product, fully
+        # differentiable and more robust than token-overlap heuristics.
+        d_model = 2048  # matches LFM2.5-1.2B hidden dim
+        # Use a smaller dimension when cortex_agent is absent (shim path).
+        if self.cortex_agent is not None:
+            driver = getattr(self.cortex_agent, "driver", None)
+            if driver is not None:
+                d_model = getattr(driver, "n_embd", d_model)
+        from oczy.experiments.differentiable_fact_index import (
+            DifferentiableFactIndex,
+        )
+
+        self.diff_fact_index = DifferentiableFactIndex(
+            n_facts=64,
+            d_model=d_model,
+            lora_rank=8,
+        )
+
+    def answer(self, request: str) -> str:
+        """Produce an answer using the full organ stack."""
+        if self.use_cortex_lm_answer and self.cortex_agent is not None:
+            # Context-addressed scope-slot restore: before articulating, load the
+            # warm_state bound to this request's context.  A scope miss zeros the
+            # cortex so an unrelated context is not steered by another slot.
+            self._apply_scope_slot_warm(request)
+            return self.cortex_agent.answer(request, max_tokens=12, temperature=0.0)[
+                "answer"
+            ]
+
+        # 1. Immune check: see if any previous mistake detector fires for the raw
+        # request.  We do not have a proposed answer yet, so pass an empty one.
+        if self.use_skill_immune_cortex:
+            with self.profiler.profile("skill_immune_cortex"):
+                immune_responses = self.skill_immune_cortex.check(request, "")
+            if immune_responses:
+                # Surface immune guidance in-line so downstream modules can see it.
+                meta = "[immune] " + " ".join(immune_responses)
+                request_with_meta = f"{meta} {request}"
+            else:
+                request_with_meta = request
+        else:
+            request_with_meta = request
+        # 2. Fast-weight / recurrent answer.
+        with self.profiler.profile("plastic_cortex"):
+            fast_answer = self.plastic_cortex.answer(request_with_meta)
+        # 3. World-model confidence check.
+        if self.use_world_model_critic:
+            with self.profiler.profile("world_model_critic"):
+                critic_pred = self.world_model_critic.predict_acceptance(
+                    query=request, proposed_answer=fast_answer
+                )
+            accepted_prob = float(critic_pred.get("accepted_prob", 0.0))
+            correction_likelihood = float(critic_pred.get("correction_likelihood", 0.0))
+            low_confidence = (
+                accepted_prob < self._low_confidence_threshold
+                or correction_likelihood > self._high_correction_threshold
+            )
+        else:
+            low_confidence = False
+        candidate_answers = list(self.plastic_cortex.labels)
+        replay_hint: str | None = None
+        if self.use_neural_hippocampus and low_confidence:
+            with self.profiler.profile("neural_hippocampus"):
+                replays = self.neural_hippocampus.reinforce(query=request, k=3)
+            if replays:
+                # Try to recover the corrected sense stored in the replay.
+                for episode in replays:
+                    corrected = episode.get("corrected_answer", "")
+                    if corrected:
+                        replay_hint = corrected
+                        candidate_answers.append(corrected)
+                        break
+
+        # Capture contextualized hidden state from the cortex agent for the
+        # hidden-delta autoencoder path.  This runs whenever a cortex agent
+        # is attached, regardless of whether the policy head is enabled.
+        if self.cortex_agent is not None:
+            try:
+                # Perceive the request to update _last_hidden, but only if
+                # the cortex agent supports it (the shim doesn't).
+                _last_utt = getattr(self.cortex_agent, "_last_utterance", None)
+                if _last_utt != request and hasattr(self.cortex_agent, "perceive"):
+                    self.cortex_agent.perceive(request)
+                _h = getattr(self.cortex_agent, "_last_hidden", None)
+                if _h is not None:
+                    _h_arr = np.asarray(_h, dtype=np.float64)
+                    # Only use hidden states from a real LM (dimension >= 64).
+                    # The cortex shim's tiny random vectors (n_embd=8) add
+                    # noise, not signal.
+                    if _h_arr.shape[0] >= 64:
+                        self._last_request_hidden_state = _h_arr
+            except Exception:
+                pass
+        # Restore the per-context corrected warm_state from the scope-slot
+        # store BEFORE policy scoring.  The perceive(request) above updated
+        # warm_state with the request's hidden; we want the correction's
+        # warm_state (stored during learn_from_correction) so the policy head
+        # sees the context-bound steering vector, not the request's.
+        if self.cortex_agent is not None and not self.use_cortex_lm_answer:
+            self._apply_scope_slot_warm(request)
+
+        # 4. Optional CortexAgent policy-head scoring of candidates.
+        policy_scores: dict[str, float] | None = None
+        if self.use_cortex_policy and self.cortex_agent is not None:
+            try:
+                raw_scores = self.cortex_agent.policy_score(candidate_answers)
+                policy_scores = {
+                    cand: float(raw_scores[i])
+                    for i, cand in enumerate(candidate_answers)
+                    if i < len(raw_scores)
+                }
+            except Exception:
+                policy_scores = None
+
+        # 5. Apply identity-hypernetwork concept-score deltas to rank the
+        # candidate labels.
+        if self.use_identity_hypernetwork:
+            with self.profiler.profile("identity_hypernetwork"):
+                # Encode the current request as a partial episode to get a
+                # residual that represents "what experience does this request
+                # remind me of?"  Pass it to generate_adapters so the
+                # residual-to-concept projection can bias concept scores.
+                _req_residual = None
+                # Only use the residual-to-concept projection when we have
+                # contextualized hidden states.  Bag-of-words residuals don't
+                # carry sense-discriminating signal and add noise.
+                if self.use_experience_autoencoder and self._last_request_hidden_state is not None:
+                    try:
+                        _req_episode = {
+                            "situation": request,
+                            "outcome": "unknown",
+                            "hidden_delta": self._last_request_hidden_state,
+                        }
+                        _req_dz = self.experience_autoencoder.encode(_req_episode)
+                        _req_residual = _req_dz[OUTCOME_DIM:]
+                    except Exception:
+                        pass
+                adapters = self.identity_hypernetwork.generate_adapters(
+                    residual=_req_residual
+                )
+            concept_scores = adapters.get("concept_scores", {})
+        else:
+            concept_scores: dict[str, float] = {}
+        final_answer = self._rank_answer(
+            request=request,
+            candidates=candidate_answers,
+            fast_answer=fast_answer,
+            replay_hint=replay_hint,
+            concept_scores=concept_scores,
+            policy_scores=policy_scores,
+        )
+
+        self._last_request = request
+        self._last_answer = final_answer
+        if (
+            self.use_acceptance_policy_reward
+            and self.cortex_agent is not None
+            and not low_confidence
+            and final_answer in candidate_answers
+        ):
+            try:
+                self._policy_update_with_baseline(
+                    request,
+                    candidate_answers,
+                    chosen_idx=candidate_answers.index(final_answer),
+                    reward=1.0,
+                )
+            except Exception:
+                pass
+        return final_answer
+
+    def _rank_answer(
+        self,
+        request: str,
+        candidates: list[str],
+        fast_answer: str,
+        replay_hint: str | None,
+        concept_scores: dict[str, float],
+        policy_scores: dict[str, float] | None = None,
+    ) -> str:
+        """Pick the best candidate by combining request overlap, immune hints,
+        identity-adapter concept deltas, and an optional cortex policy head."""
+        request_tokens = set(self._tokenize(request))
+        scope_labels = self._scope_label_for(request)
+
+        # Integration smoke-test counters (S0.8): track whether each
+        # retrieval-ish mechanism actually fired during this rank call.
+        scope_fired = scope_labels is not None and len(scope_labels) > 0
+        replay_fired = replay_hint is not None
+        dsi_fired = False
+
+        def _tokens(text: str) -> set[str]:
+            return set(self._tokenize(text))
+        def _score(label: str) -> float:
+            nonlocal dsi_fired
+            label_tokens = _tokens(label)
+            policy_delta = 0.0
+            if policy_scores is not None:
+                candidate_labels = candidates
+                if candidate_labels:
+                    raw = np.array(
+                        [float(policy_scores.get(c, 0.0)) for c in candidate_labels],
+                        dtype=np.float64,
+                    )
+                    max_raw = float(np.max(raw))
+                    centered = raw - max_raw
+                    exp = np.exp(centered)
+                    denom = float(np.sum(exp))
+                    if denom > 0.0:
+                        policy_probs = exp / denom
+                        idx = candidate_labels.index(label) if label in candidate_labels else -1
+                        if idx >= 0:
+                            policy_delta = self.cortex_policy_weight * float(policy_probs[idx])
+
+            # A policy head can still express a preference for a label that
+            # happens to have no usable tokens here.
+            if not label_tokens:
+                return policy_delta
+
+            # Start from strong preference for what the fast organ returned,
+            # unless policy signal is active and configured to suppress the bias.
+            fast_bias = (
+                0.0
+                if self.policy_suppresses_fast_answer and policy_scores is not None
+                else 1.0
+            )
+            score = fast_bias if label == fast_answer else 0.0
+
+            if replay_hint and label == replay_hint:
+                score += 0.5
+
+            # Token-overlap with the request (simple matching signal).
+            score += len(request_tokens & label_tokens) / max(len(label_tokens), len(request_tokens), 1)
+
+            # Identity-adapter token boosts: every matching concept token adds
+            # its delta to this label.
+            for token in label_tokens:
+                score += float(concept_scores.get(token, 0.0))
+
+            # Context-addressed scope-slot labels: per-context corrected labels
+            # dominate identity-adapter drift so cross-domain stage answers use
+            # the corrected sense bound to this request's slot.  Each of the
+            # top-k labels contributes a similarity-weighted token-overlap boost.
+            if scope_labels is not None:
+                for scope_label_text, scope_sim in scope_labels:
+                    scope_tokens = _tokens(scope_label_text)
+                    label_tokens_scoped = _tokens(label)
+                    if self.scope_rerank_sense_split:
+                        # Exclude tokens shared between request and all candidates
+                        # (the ambiguous word) from the overlap computation.
+                        shared = request_tokens & label_tokens_scoped
+                        scope_tokens = scope_tokens - shared
+                        label_tokens_scoped = label_tokens_scoped - shared
+                    if scope_tokens and label_tokens_scoped:
+                        overlap = len(scope_tokens & label_tokens_scoped) / max(
+                            len(scope_tokens), len(label_tokens_scoped), 1
+                        )
+                    else:
+                        overlap = 0.0
+                    score += self.scope_rerank_weight * scope_sim * overlap
+
+            # Differentiable Fact Index (DSI-style F + LoRA): boost labels
+            # that match facts retrieved from the learned embedding matrix.
+            # The index uses inner-product retrieval, making it more robust
+            # than token-overlap heuristics for cross-domain disambiguation.
+            if self.use_diff_fact_index:
+                try:
+                    req_key = self._scope_key(request)
+                    if req_key is not None:
+                        dfi_hits = self.diff_fact_index.retrieve(
+                            req_key, k=3, use_lora=True
+                        )
+                        if dfi_hits:
+                            dsi_fired = True
+                        for dfi_label, dfi_score in dfi_hits:
+                            if dfi_label == label or (
+                                _tokens(dfi_label) & label_tokens
+                            ):
+                                score += 1.5 * float(dfi_score)
+                except Exception:
+                    pass
+
+            # Optional CortexAgent policy-head score.
+            score += policy_delta
+
+            return score
+
+        best_label = fast_answer
+        best_score = _score(best_label)
+        for label in candidates:
+            if label == fast_answer:
+                continue
+            s = _score(label)
+            if s > best_score or (s == best_score and label == fast_answer):
+                best_label = label
+                best_score = s
+        if scope_fired:
+            self._scope_slot_fired += 1
+        if replay_fired:
+            self._hippocampus_replay_fired += 1
+        if dsi_fired:
+            self._dsi_retrieval_fired += 1
+        return best_label
+
+    @staticmethod
+    def _tokenize(text: str) -> list[str]:
+        # Thin wrapper over the shared glue-layer tokenizer.  Kept as a
+        # method so existing call sites (``self._tokenize(...)``) keep
+        # working; the shared :func:`oczy_common.tokenize` is the single
+        # source of truth for stopword filtering and minimum token length.
+        return tokenize(text)
+
+    # ------------------------------------------------------------------
+    # Context-addressed scope-slot store (Experiment 04)
+    # ------------------------------------------------------------------
+    def _scope_key(self, request: str) -> np.ndarray | None:
+        """Embed *request* via the cortex agent's driver for slot addressing.
+
+        Returns ``None`` when no cortex agent / driver is attached so the
+        legacy answer and learn paths are untouched.
+        """
+        if self.cortex_agent is None:
+            return None
+        driver = getattr(self.cortex_agent, "driver", None)
+        if driver is None or not hasattr(driver, "peek_embedding"):
+            return None
+        try:
+            # Use last_token_only=False so the embedding represents the
+            # whole request (mean-pooled), not just the last token (which
+            # is always "." for curriculum requests and collapses all
+            # slots into one).
+            return np.asarray(
+                driver.peek_embedding(request, last_token_only=False),
+                dtype=np.float32,
+            )
+        except Exception:
+            return None
+
+    def _scope_label_for(self, request: str) -> list[tuple[str, float]] | None:
+        """Return top-k (label, cosine_similarity) pairs for this request's scope slots.
+
+        Each stored slot label may itself be a multi-label string joined by
+        ``" | "``; the individual parts are emitted as separate entries so the
+        reranker can score each corrected sense independently.
+        """
+        if not self._scope_slot_keys or self.cortex_agent is None:
+            return None
+        key = self._scope_key(request)
+        if key is None:
+            return None
+        k = max(self.scope_rerank_topk, 1)
+        sims: list[tuple[str, float]] = []
+        for i, slot_key in enumerate(self._scope_slot_keys):
+            sim = _cosine(key, slot_key)
+            if sim >= _RETRIEVE_THRESHOLD and i < len(self._scope_slot_label):
+                label = self._scope_slot_label[i]
+                if label:  # skip empty labels
+                    for label_part in label.split(" | "):
+                        label_part = label_part.strip()
+                        if label_part:
+                            sims.append((label_part, float(sim)))
+        if not sims:
+            return None
+        sims.sort(key=lambda x: x[1], reverse=True)
+        return sims[:k]
+
+    def _apply_scope_slot_warm(self, request: str) -> None:
+        """Restore the matching scope slot's warm_state, or zero it on a miss.
+
+        Used by the cortex-LM answer branch so articulation sees the
+        per-context corrected warm_state.  Silently no-ops when the cortex
+        agent exposes no ``cortex`` surface (e.g. the minimal answer-only
+        mock), preserving the plain delegation behaviour.
+        """
+        cortex = getattr(self.cortex_agent, "cortex", None) if self.cortex_agent else None
+        if cortex is None:
+            return
+        key = self._scope_key(request)
+        warm = (
+            _slot_retrieve(self._scope_slot_keys, self._scope_slot_warm, key)
+            if key is not None
+            else None
+        )
+        if warm is not None:
+            cortex.warm_state = np.asarray(warm, dtype=cortex.warm_state.dtype).reshape(
+                cortex.warm_state.shape
+            )
+        else:
+            cortex.warm_state = np.zeros_like(cortex.warm_state)
+
+    def correct(self, correction: str, expected_answer: str) -> None:
+        """Learn from an explicit correction.
+
+        Also compatible with the eval-suite ``learn`` dispatch: that method
+        passes ``(request, correction)`` with no explicit expected answer.  We
+        surface a separate ``learn`` adapter for that path and treat the second
+        argument as the correction text.
+        """
+        return self._learn_from_correction(
+            request=self._last_request,
+            correction=correction,
+            expected_answer=expected_answer,
+        )
+
+    def learn(self, request: str, correction: str) -> None:
+        """Eval-suite compatible learning hook (request + correction only)."""
+        # Try to recover an explicit corrected label from the correction text.
+        expected_answer = self._extract_expected_from_correction(correction)
+        self._last_request = request
+        # Need a prior answer to compute critic surprise.
+        with self.profiler.profile("plastic_cortex"):
+            prior_answer = self.plastic_cortex.answer(request)
+        self._last_answer = prior_answer
+        self._learn_from_correction(request, correction, expected_answer)
+
+    def _policy_update_with_baseline(
+        self,
+        request: str | None,
+        candidates: list[str],
+        chosen_idx: int,
+        reward: float,
+    ) -> None:
+        """Policy update with optional value-head baseline."""
+        if self.cortex_agent is None:
+            return
+        baseline = 0.0
+        if self.use_value_baseline:
+            value_hidden = getattr(self.cortex_agent, "_prev_hidden", None)
+            if value_hidden is None:
+                value_hidden = getattr(self.cortex_agent, "_last_hidden", None)
+            if value_hidden is not None and hasattr(
+                self.cortex_agent.world_model_critic, "predict_value"
+            ):
+                try:
+                    baseline = self.cortex_agent.world_model_critic.predict_value(
+                        query=request or "",
+                        proposed_answer=candidates[chosen_idx],
+                        lm_hidden=value_hidden,
+                    )
+                except Exception:
+                    baseline = 0.0
+        self.cortex_agent.policy_update(
+            candidates,
+            chosen_idx=chosen_idx,
+            reward=reward,
+            baseline=baseline,
+        )
+
+    def _learn_from_correction(
+        self,
+        request: str | None,
+        correction: str,
+        expected_answer: str,
+    ) -> None:
+        if self._last_answer:
+            prior_answer = self._last_answer
+        else:
+            with self.profiler.profile("plastic_cortex"):
+                prior_answer = self.plastic_cortex.answer(request)
+
+        # a. Critic surprise / prediction error.
+        with self.profiler.profile("world_model_critic"):
+            pred = self.world_model_critic.predict_acceptance(
+                query=request, proposed_answer=prior_answer
+            )
+        accepted_prob = float(pred.get("accepted_prob", 0.0))
+        # The user corrected us, so the true outcome is "corrected" (accepted=0).
+        prediction_error = accepted_prob
+        # If no explicit expected answer was given, extract one from the correction text.
+        if not expected_answer:
+            expected_answer = self._extract_expected_from_correction(correction)
+
+        # b. Update the fast-weight organ.
+        with self.profiler.profile("plastic_cortex"):
+            self.plastic_cortex.correct(correction, expected_answer)
+
+        # Also update the world model with the observed correction.
+        with self.profiler.profile("world_model_critic"):
+            self.world_model_critic.record_outcome(
+                query=request, proposed_answer=prior_answer, correction=correction
+            )
+
+        # c. If prediction error is high, store the episode in slow memory and
+        # update long-term identity / immune structures.
+        if prediction_error > self._surprise_threshold:
+            with self.profiler.profile("neural_hippocampus"):
+                self.neural_hippocampus.store(
+                    query=request,
+                    answer=prior_answer,
+                    correction=correction,
+                    prediction_error=prediction_error,
+                    corrected_answer=expected_answer,
+                )
+
+            episode = {
+                "situation": request,
+                "model_answer": prior_answer,
+                "correction": correction,
+                "revised_answer": expected_answer,
+                "outcome": "corrected",
+                "source": "user_correction",
+                "corrected_answer": expected_answer,
+            }
+            if self._last_request_hidden_state is not None:
+                episode["hidden_delta"] = self._last_request_hidden_state
+            with self.profiler.profile("experience_autoencoder"):
+                delta_z = self.experience_autoencoder.encode(episode)
+                # Train the sensing matrix so future residuals preserve
+                # discriminative structure.  Without this, _A_hidden stays
+                # at its random init and residuals are random projections.
+                self.experience_autoencoder.train_step(episode)
+            # Extract the residual and pass it to the identity hypernetwork
+            # so the 1M-param sensing matrix shapes which concepts get
+            # boosted.  Only pass the residual when we have contextualized
+            # hidden states — bag-of-words residuals add noise.
+            _residual = delta_z[OUTCOME_DIM:]
+            _ih_residual = _residual if self._last_request_hidden_state is not None else None
+
+            with self.profiler.profile("identity_hypernetwork"):
+                self.identity_hypernetwork.update_identity(
+                    {
+                        "source": "user_correction",
+                        "correct_label": expected_answer,
+                        "token": expected_answer,
+                    },
+                    residual=_ih_residual,
+                )
+
+            with self.profiler.profile("skill_immune_cortex"):
+                self.skill_immune_cortex.add_detector(
+                    correction_text=correction,
+                    mistake_class="corrected_sense",
+                    response=expected_answer,
+                )
+
+        # d. Cortex policy update (REINFORCE): the policy head sees the
+        # answer-time hidden state, so this must run *before* we perceive the
+        # correction for the scope-slot store.
+        if (
+            self.use_cortex_policy
+            and self.cortex_agent is not None
+            and hasattr(self.cortex_agent, "policy_update")
+        ):
+            try:
+                labels = list(self.plastic_cortex.labels)
+                if expected_answer and expected_answer not in labels:
+                    labels.append(expected_answer)
+                if prior_answer and prior_answer not in labels:
+                    labels.insert(0, prior_answer)
+                chosen_idx = labels.index(prior_answer)
+                self._policy_update_with_baseline(
+                    request, labels, chosen_idx=chosen_idx, reward=-1.0
+                )
+                # Also reinforce the corrected expected action positively.
+                if expected_answer and expected_answer in labels:
+                    expected_idx = labels.index(expected_answer)
+                    self._policy_update_with_baseline(
+                        request, labels, chosen_idx=expected_idx, reward=1.0
+                    )
+            except Exception:
+                # Policy update is advisory; never break the correction path.
+                pass
+
+        # e. Context-addressed scope-slot store (Experiment 04).  Always
+        # bind the corrected label to a request-keyed embedding.  Always
+        # capture the correction's cortical warm_state (restoring the
+        # answer-time hidden state afterwards so policy/answer paths are not
+        # side-effected) — the policy head's bilinear term needs the
+        # warm_state to discriminate candidates, even when the LM
+        # articulation path (use_cortex_lm_answer) is off.
+        if self.cortex_agent is not None:
+            req_key = self._scope_key(request or self._last_request or "")
+            if req_key is not None:
+                _slot_write(
+                    self._scope_slot_keys,
+                    self._scope_slot_warm,
+                    req_key,
+                    None,  # overwritten below after perceive()
+                )
+                _update_slot_label(
+                    self._scope_slot_keys,
+                    self._scope_slot_label,
+                    req_key,
+                    expected_answer
+                    or self._extract_expected_from_correction(correction)
+                    or "",
+                    multi_label=self.scope_rerank_multi_label,
+                )
+
+            # Snapshot the current answer-time hidden state before
+            # perceiving the correction, then restore it afterwards.
+            _last_hidden_before = getattr(self.cortex_agent, "_last_hidden", None)
+            _prev_hidden_before = getattr(self.cortex_agent, "_prev_hidden", None)
+            _last_request_hidden_before = getattr(
+                self.cortex_agent, "_last_request_hidden", None
+            )
+            _last_utterance_before = getattr(
+                self.cortex_agent, "_last_utterance", None
+            )
+            _last_input_ids_before = getattr(
+                self.cortex_agent, "_last_input_ids", None
+            )
+            _last_answer_before = getattr(self.cortex_agent, "_last_answer", None)
+            _last_correction_signal_before = getattr(
+                self.cortex_agent, "_last_correction_signal", None
+            )
+            _cortex_warm_before = getattr(
+                getattr(self.cortex_agent, "cortex", None), "warm_state", None
+            )
+            try:
+                warm = self.cortex_agent.perceive(
+                    correction, correction_signal=1.0
+                )
+                observe = getattr(self.cortex_agent, "observe", None)
+                if callable(observe):
+                    try:
+                        observe()
+                    except Exception:
+                        pass
+                if req_key is not None and warm is not None:
+                    _slot_write(
+                        self._scope_slot_keys,
+                        self._scope_slot_warm,
+                        req_key,
+                        np.asarray(warm, dtype=np.float32),
+                    )
+                    # Store correction in differentiable fact index.
+                    # is_correction=True triggers LoRA ΔW update.
+                    expected = (
+                        expected_answer
+                        or self._extract_expected_from_correction(correction)
+                    )
+                    if expected and req_key is not None:
+                        self.diff_fact_index.store(
+                            req_key, expected, is_correction=True
+                        )
+            except Exception:
+                # Cortex correction path is advisory; never break learning.
+                pass
+            finally:
+                if _last_hidden_before is not None:
+                    self.cortex_agent._last_hidden = _last_hidden_before
+                if _prev_hidden_before is not None:
+                    self.cortex_agent._prev_hidden = _prev_hidden_before
+                if _last_request_hidden_before is not None:
+                    self.cortex_agent._last_request_hidden = (
+                        _last_request_hidden_before
+                    )
+                if _last_utterance_before is not None:
+                    self.cortex_agent._last_utterance = _last_utterance_before
+                if _last_input_ids_before is not None:
+                    self.cortex_agent._last_input_ids = _last_input_ids_before
+                if _last_answer_before is not None:
+                    self.cortex_agent._last_answer = _last_answer_before
+                if _last_correction_signal_before is not None:
+                    self.cortex_agent._last_correction_signal = (
+                        _last_correction_signal_before
+                    )
+                if _cortex_warm_before is not None and hasattr(
+                    self.cortex_agent, "cortex"
+                ):
+                    self.cortex_agent.cortex.warm_state = _cortex_warm_before
+
+    def teach_scope_sense(
+        self, teaching_text: str, scope_request: str, scope_label: str
+    ) -> None:
+        """Teach the DEFAULT/alternate sense of an ambiguous word.
+
+        Stores a scope-slot entry keyed by *scope_request* so that future
+        scope probes (which use the ambiguous word in its default domain
+        context) retrieve the correct default-sense label instead of the
+        corrected technical sense.
+
+        This mirrors the two-slot pattern from
+        :func:`scope_selectivity_stressor._measure_ssi`, extended to
+        Stage 5 cross-domain disambiguation.
+        """
+        if self.cortex_agent is None:
+            return
+        scope_key = self._scope_key(scope_request)
+        if scope_key is None:
+            return
+
+        # Register the scope label so it is available as a candidate
+        # during ranking.  _ensure_label initialises all internal
+        # structures (fast weights, recurrent gate, baseline) the
+        # plastic cortex needs to score the label.
+        if scope_label:
+            self.plastic_cortex._ensure_label(scope_label)
+
+        # Snapshot current cortex state so we can restore it.
+        cortex = getattr(self.cortex_agent, "cortex", None)
+        _warm_before = getattr(cortex, "warm_state", None) if cortex else None
+        _last_hidden_before = getattr(self.cortex_agent, "_last_hidden", None)
+        _last_utt_before = getattr(self.cortex_agent, "_last_utterance", None)
+
+        try:
+            # Perceive the teaching text with a correction signal so the
+            # cortex absorbs it into warm_state.
+            warm = self.cortex_agent.perceive(
+                teaching_text, correction_signal=1.0
+            )
+            observe = getattr(self.cortex_agent, "observe", None)
+            if callable(observe):
+                try:
+                    observe()
+                except Exception:
+                    pass
+            if warm is not None:
+                _slot_write(
+                    self._scope_slot_keys,
+                    self._scope_slot_warm,
+                    scope_key,
+                    np.asarray(warm, dtype=np.float32),
+                )
+                _update_slot_label(
+                    self._scope_slot_keys,
+                    self._scope_slot_label,
+                    scope_key,
+                    scope_label,
+                    multi_label=self.scope_rerank_multi_label,
+                )
+                # Store in the differentiable fact index as baseline.
+                self.diff_fact_index.store(
+                    scope_key, scope_label, is_correction=False
+                )
+        except Exception:
+            pass
+        finally:
+            if cortex is not None and _warm_before is not None:
+                cortex.warm_state = _warm_before
+            if _last_hidden_before is not None:
+                self.cortex_agent._last_hidden = _last_hidden_before
+            if _last_utt_before is not None:
+                self.cortex_agent._last_utterance = _last_utt_before
+
+    @staticmethod
+    def _extract_expected_from_correction(correction: str) -> str:
+        """Pull the corrected label out of a free-text correction.
+
+        Delegates to :func:`oczy_common.extract_expected_from_correction`,
+        which is the single source of truth shared with all baseline
+        ablation agents in ``experiments/baselines.py``.  Previously each
+        baseline carried its own byte-identical thin copy while this
+        class carried a richer version, and the two silently drifted.
+        """
+        return extract_expected_from_correction(correction)
+
+    def consolidate(self) -> None:
+        """Move hippocampal traces to slow updates and clear raw trace state.
+
+        Identity / hypernetwork adapters are retained; they are the consolidated
+        slow knowledge.
+        """
+        with self.profiler.profile("neural_hippocampus"):
+            self.neural_hippocampus.consolidate()
+        self._last_request = None
+        self._last_answer = None
+
+    def memory_bytes(self) -> int:
+        """Approximate total serialized size across all organs."""
+        total = 0
+        for module in (
+            self.plastic_cortex,
+            self.neural_hippocampus,
+            self.world_model_critic,
+            self.identity_hypernetwork,
+            self.skill_immune_cortex,
+            self.experience_autoencoder,
+        ):
+            total += self._module_bytes(module)
+
+        return total
+
+    def status(self) -> dict[str, Any]:
+        """Return a serializable snapshot of the organism state.
+
+        Includes S0.8 smoke-test fired counters for integration assertions.
+        """
+        return {
+            "memory_bytes": self.memory_bytes(),
+            "profile_summary": self.profile_summary(),
+            "scope_slot_fired": self._scope_slot_fired,
+            "hippocampus_replay_fired": self._hippocampus_replay_fired,
+            "dsi_retrieval_fired": self._dsi_retrieval_fired,
+            "scope_slot_count": len(self._scope_slot_keys),
+        }
+
+    def reset_state(self) -> None:
+        """Reset the plastic cortex session state and scratchpads."""
+        self.plastic_cortex.reset_state()
+        self._last_request = None
+        self._last_answer = None
+
+    def profile_summary(self) -> dict[str, Any]:
+        """Return per-component call counts, elapsed time, and peak memory."""
+        return self.profiler.summary()
+
+    def save(self, path: Path | str) -> None:
+        """Persist the full organism state to *path* using pickle."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with tmp.open("wb") as fh:
+            pickle.dump(self, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        tmp.replace(path)
+
+    @classmethod
+    def load(cls, path: Path | str) -> OrganismAgent:
+        """Load a previously saved organism state."""
+        with Path(path).open("rb") as fh:
+            return pickle.load(fh)
+
+    # ------------------------------------------------------------------
+    # Pickle support
+    # ------------------------------------------------------------------
+    # The ``AgentProfiler`` holds live timing state that is meaningless
+    # across a save/load round-trip (timers mid-flight, monotonic-clock
+    # references).  Drop it on the way out and rebuild a fresh one on the
+    # way back in so an unpickled organism starts with a clean profile.
+    def __getstate__(self) -> dict[str, Any]:
+        state = self.__dict__.copy()
+        state.pop("profiler", None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        # Backfill the context-addressed scope-slot store for pickles saved
+        # before the slot-store reranker existed.
+        if not hasattr(self, "_scope_slot_keys"):
+            self._scope_slot_keys = []
+        if not hasattr(self, "_scope_slot_warm"):
+            self._scope_slot_warm = []
+        if not hasattr(self, "_scope_slot_label"):
+            self._scope_slot_label = []
+        if not hasattr(self, "scope_rerank_weight"):
+            self.scope_rerank_weight = 2.0
+        if not hasattr(self, "scope_rerank_topk"):
+            self.scope_rerank_topk = 3
+        if not hasattr(self, "scope_rerank_sense_split"):
+            self.scope_rerank_sense_split = False
+        if not hasattr(self, "scope_rerank_multi_label"):
+            self.scope_rerank_multi_label = False
+        # S0.8 smoke-test counters: backfill for pickles from before they existed.
+        if not hasattr(self, "_scope_slot_fired"):
+            self._scope_slot_fired = 0
+        if not hasattr(self, "_hippocampus_replay_fired"):
+            self._hippocampus_replay_fired = 0
+        if not hasattr(self, "_dsi_retrieval_fired"):
+            self._dsi_retrieval_fired = 0
+        if not hasattr(self, "diff_fact_index"):
+            from oczy.experiments.differentiable_fact_index import (
+                DifferentiableFactIndex,
+            )
+
+            d_model = 2048
+            if self.cortex_agent is not None:
+                driver = getattr(self.cortex_agent, "driver", None)
+                if driver is not None:
+                    d_model = getattr(driver, "n_embd", d_model)
+            self.diff_fact_index = DifferentiableFactIndex(
+                n_facts=64, d_model=d_model, lora_rank=8
+            )
+        self.profiler = AgentProfiler(
+            [
+                "plastic_cortex",
+                "neural_hippocampus",
+                "world_model_critic",
+                "identity_hypernetwork",
+                "skill_immune_cortex",
+                "experience_autoencoder",
+            ]
+        )
+
+    @staticmethod
+    def _module_bytes(module: Any) -> int:
+        """Best-effort byte count for a module.
+
+        Every organ now exposes a standardized ``status()["serialized_bytes"]``
+        field (pickle.dumps of the organ at HIGHEST_PROTOCOL).  This is the
+        canonical cross-organ byte contract; the previous mixed
+        ``trace_bytes`` / ``bytes`` / JSON-length fallbacks are deprecated
+        and only kept as last-resort fallbacks for organs that have not
+        yet been updated.
+        """
+        try:
+            status = module.status(include_size=True)
+        except Exception:
+            try:
+                status = module.status()
+            except Exception:
+                status = None
+
+
+        if isinstance(status, dict):
+            # Canonical contract: every organ reports this.
+            if "serialized_bytes" in status:
+                return int(status["serialized_bytes"])
+            # Legacy preferred fields, kept for backwards compat.
+            if "trace_bytes" in status:
+                return int(status["trace_bytes"])
+            if "bytes" in status:
+                return int(status["bytes"])
+        # Final fallback: pickle the organ directly.  Matches the
+        # canonical definition without going through status().
+        try:
+            return len(pickle.dumps(module, protocol=pickle.HIGHEST_PROTOCOL))
+        except Exception:
+            return 0
+
+
+class LMBackendAgent:
+    """LM-backend variant of the Oczy agent.
+
+    Uses an :class:`LMPlasticCortex` (a real, numba-accelerated neural LM)
+    as the answer-generating surface instead of :class:`OrganismAgent`'s
+    small word-association :class:`PlasticCortex`.  Split out from
+    :class:`OrganismAgent` so the LM-only fast path is visible in the
+    type system rather than hidden behind a ``backend='lm'`` config flag
+    that silently short-circuited the critic/hippocampus/identity pipeline
+    in ``answer()`` while still running ``learn()`` against those organs.
+
+    The full organ stack is constructed so that ``learn()`` and
+    ``consolidate()`` still write to the hippocampus / critic / immune /
+    identity / autoencoder organs --- those counts and slow updates are
+    preserved --- but ``answer()`` only consults the LM (plus the immune
+    cortex for inline guidance).  Wiring replay back into the LM answer
+    path is tracked separately as the LM-replay feature; this class
+    only makes the existing half-wired LM path honest about what it does.
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        if LMPlasticCortex is None:
+            raise RuntimeError(
+                "LM backend not available: plastic_cortex.lm_cortex failed to import"
+            )
+        self.config = dict(config or {})
+        lm_cfg = self.config.get("lm", {})
+        checkpoint = self.config.get(
+            "lm_checkpoint", "plastic-cortex/checkpoints/lm/model.pkl"
+        )
+        if Path(checkpoint).exists():
+            self.plastic_cortex = LMPlasticCortex.load(checkpoint)
+        else:
+            self.plastic_cortex = LMPlasticCortex(lm_cfg)
+
+        # The slow-path organs are constructed even though ``answer()``
+        # doesn't consult them yet, so that ``learn()`` writes survive
+        # into the same structures an :class:`OrganismAgent` would read.
+        self.neural_hippocampus = NeuralHippocampus(self.config.get("neural_hippocampus"))
+        self.world_model_critic = WorldModelCritic(self.config.get("world_model_critic"))
+        self.identity_hypernetwork = IdentityHypernetwork(
+            **(self.config.get("identity_hypernetwork") or {})
+        )
+        self.skill_immune_cortex = SkillImmuneCortex(self.config.get("skill_immune_cortex"))
+        self.experience_autoencoder = ExperienceAutoencoder(
+            self.config.get("experience_autoencoder")
+        )
+        self.experience_autoencoder.config["use_hidden_delta"] = True
+        self.profiler = AgentProfiler(
+            [
+                "plastic_cortex",
+                "neural_hippocampus",
+                "world_model_critic",
+                "identity_hypernetwork",
+                "skill_immune_cortex",
+                "experience_autoencoder",
+            ]
+        )
+        self._last_request: str | None = None
+        self._last_answer: str | None = None
+        self._surprise_threshold = float(self.config.get("surprise_threshold", 0.5))
+
+    def answer(self, request: str) -> str:
+        """LM-backend answer path: immune check, then LM generation."""
+        with self.profiler.profile("skill_immune_cortex"):
+            immune_responses = self.skill_immune_cortex.check(request, "")
+        if immune_responses:
+            meta = "[immune] " + " ".join(immune_responses)
+            request_with_meta = f"{meta} {request}"
+        else:
+            request_with_meta = request
+        with self.profiler.profile("plastic_cortex"):
+            lm_answer = self.plastic_cortex.answer(
+                request_with_meta, max_tokens=100, temperature=1.0
+            )
+        self._last_request = request
+        self._last_answer = lm_answer
+        return lm_answer
+
+    def correct(self, correction: str, expected_answer: str) -> None:
+        """Learn from an explicit correction (same shape as OrganismAgent)."""
+        return self._learn_from_correction(
+            request=self._last_request,
+            correction=correction,
+            expected_answer=expected_answer,
+        )
+
+    def learn(self, request: str, correction: str) -> None:
+        """Eval-suite compatible learning hook."""
+        expected_answer = extract_expected_from_correction(correction)
+        self._last_request = request
+        with self.profiler.profile("plastic_cortex"):
+            prior_answer = self.plastic_cortex.answer(request, max_tokens=100, temperature=1.0)
+        self._last_answer = prior_answer
+        self._learn_from_correction(request, correction, expected_answer)
+
+    def _learn_from_correction(
+        self,
+        request: str | None,
+        correction: str,
+        expected_answer: str,
+    ) -> None:
+        prior_answer = self._last_answer or ""
+        with self.profiler.profile("world_model_critic"):
+            pred = self.world_model_critic.predict_acceptance(
+                query=request, proposed_answer=prior_answer
+            )
+        prediction_error = float(pred.get("accepted_prob", 0.0))
+        if not expected_answer:
+            expected_answer = extract_expected_from_correction(correction)
+
+        with self.profiler.profile("world_model_critic"):
+            self.world_model_critic.record_outcome(
+                query=request, proposed_answer=prior_answer, correction=correction
+            )
+
+        if prediction_error > self._surprise_threshold:
+            with self.profiler.profile("neural_hippocampus"):
+                self.neural_hippocampus.store(
+                    query=request,
+                    answer=prior_answer,
+                    correction=correction,
+                    prediction_error=prediction_error,
+                    corrected_answer=expected_answer,
+                )
+            episode = {
+                "situation": request,
+                "model_answer": prior_answer,
+                "correction": correction,
+                "revised_answer": expected_answer,
+                "outcome": "corrected",
+                "source": "user_correction",
+                "corrected_answer": expected_answer,
+            }
+            with self.profiler.profile("experience_autoencoder"):
+                delta_z = self.experience_autoencoder.encode(episode)
+                self.experience_autoencoder.train_step(episode)
+            _residual = delta_z[OUTCOME_DIM:]
+            # LMBackendAgent doesn't have contextualized hidden states, so
+            # don't pass the residual to avoid adding bag-of-words noise.
+            with self.profiler.profile("identity_hypernetwork"):
+                self.identity_hypernetwork.update_identity(
+                    {
+                        "source": "user_correction",
+                        "correct_label": expected_answer,
+                        "token": expected_answer,
+                    },
+                    residual=None,
+                )
+            with self.profiler.profile("skill_immune_cortex"):
+                self.skill_immune_cortex.add_detector(
+                    correction_text=correction,
+                    mistake_class="corrected_sense",
+                    response=expected_answer,
+                )
+
+    def consolidate(self) -> None:
+        with self.profiler.profile("neural_hippocampus"):
+            self.neural_hippocampus.consolidate()
+        self._last_request = None
+        self._last_answer = None
+
+    def memory_bytes(self) -> int:
+        return OrganismAgent._module_bytes(self.plastic_cortex) + sum(
+            OrganismAgent._module_bytes(m)
+            for m in (
+                self.neural_hippocampus,
+                self.world_model_critic,
+                self.identity_hypernetwork,
+                self.skill_immune_cortex,
+                self.experience_autoencoder,
+            )
+        )
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "backend": "lm",
+            "memory_bytes": self.memory_bytes(),
+            "profile_summary": self.profiler.summary(),
+        }
+
+    def profile_summary(self) -> dict[str, Any]:
+        return self.profiler.summary()

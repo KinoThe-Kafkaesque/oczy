@@ -4,10 +4,7 @@ import pytest
 
 from world_model_critic import WorldModelCritic
 
-
-AMBIGUOUS_QUERY = (
-    "What are some possible reasons the result is maybe unclear or ambiguous?"
-)
+AMBIGUOUS_QUERY = "What are some possible reasons the result is maybe unclear or ambiguous?"
 AMBIGUOUS_ANSWER = "It could be one of several things, perhaps likely unclear."
 
 
@@ -97,20 +94,25 @@ def test_prediction_error_with_no_prediction_is_maximal():
 
 
 def test_status_reported_fields():
-    """status() must expose the 6 cross-organ fields with correct types."""
+    """status() must expose the cross-organ fields with correct types."""
     critic = WorldModelCritic()
     critic.predict_acceptance(AMBIGUOUS_QUERY, AMBIGUOUS_ANSWER)
     critic.record_outcome(AMBIGUOUS_QUERY, AMBIGUOUS_ANSWER, None)
 
-    status = critic.status()
+    status = critic.status(include_size=True)
 
     assert set(status.keys()) == {
         "project",
         "ready",
         "record_count",
+        "record_capacity",
+        "records_pruned",
         "serialized_bytes",
         "weights",
         "ambiguous_word_count",
+        "use_value_head",
+        "last_value",
+        "last_td_error",
     }
     assert status["project"] == "world_model_critic"
     assert status["ready"] is True
@@ -122,3 +124,27 @@ def test_status_reported_fields():
     assert status["ambiguous_word_count"] == len(critic.ambiguous_words)
     # status() must be a snapshot, not a live reference into the critic.
     assert status["weights"] is not critic.weights
+
+
+def test_record_capacity_prunes_oldest_records_and_updates_status():
+    """Once records exceed max_records, the oldest fraction is dropped."""
+    critic = WorldModelCritic(config={"max_records": 5, "record_decay_fraction": 0.5})
+    for i in range(6):
+        critic.record_outcome(f"query {i}", f"answer {i}", None)
+
+    assert len(critic.records) <= critic.max_records
+    assert critic.records_pruned == 3
+
+    status = critic.status()
+    assert status["record_count"] == len(critic.records)
+    assert status["record_capacity"] == 5
+    assert status["records_pruned"] == 3
+
+    # Oldest retained record should no longer be query 0 (pruned).
+    assert not any(r["query"] == "query 0" for r in critic.records)
+
+    # Continued writes stay bounded and accumulate the prune counter.
+    for i in range(6, 12):
+        critic.record_outcome(f"query {i}", f"answer {i}", None)
+    assert len(critic.records) <= critic.max_records
+    assert critic.status()["records_pruned"] > 3

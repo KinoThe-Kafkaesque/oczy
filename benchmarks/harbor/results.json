@@ -1,0 +1,443 @@
+{
+  "questions": [
+    {
+      "id": "q1_knowledge",
+      "question": "What is the north-star metric for the Oczy project?",
+      "expected_tokens": [
+        "behavior",
+        "delta",
+        "byte",
+        "persistent",
+        "memory"
+      ],
+      "category": "knowledge_retention"
+    },
+    {
+      "id": "q2_knowledge",
+      "question": "Which workspace packages exist in the Oczy repository?",
+      "expected_tokens": [
+        "correction",
+        "benchmark",
+        "experience",
+        "autoencoder",
+        "identity",
+        "hypernetwork",
+        "neural",
+        "hippocampus",
+        "plastic",
+        "cortex",
+        "skill",
+        "immune",
+        "world",
+        "model"
+      ],
+      "category": "knowledge_retention"
+    },
+    {
+      "id": "q3_disambig",
+      "question": "The ship's log is missing from the archive.",
+      "expected_tokens": [
+        "captain",
+        "journal",
+        "log",
+        "nautical"
+      ],
+      "category": "cross_domain"
+    },
+    {
+      "id": "q4_disambig",
+      "question": "Log the server crash in the system.",
+      "expected_tokens": [
+        "system",
+        "error",
+        "crash",
+        "server",
+        "log"
+      ],
+      "category": "cross_domain"
+    },
+    {
+      "id": "q5_disambig",
+      "question": "Please file these papers with the clerk.",
+      "expected_tokens": [
+        "submit",
+        "officially",
+        "clerk",
+        "papers"
+      ],
+      "category": "cross_domain"
+    },
+    {
+      "id": "q6_disambig",
+      "question": "Save the source file before building.",
+      "expected_tokens": [
+        "computer",
+        "source",
+        "disk",
+        "save"
+      ],
+      "category": "cross_domain"
+    },
+    {
+      "id": "q7_factual",
+      "question": "How does Oczy want memory to be represented?",
+      "expected_tokens": [
+        "changed",
+        "dynamic",
+        "process",
+        "weights"
+      ],
+      "category": "factual_recall"
+    },
+    {
+      "id": "q8_factual",
+      "question": "What does the NeuralHippocampus do in Oczy?",
+      "expected_tokens": [
+        "store",
+        "surprise",
+        "experience",
+        "replay",
+        "consolidate"
+      ],
+      "category": "factual_recall"
+    },
+    {
+      "id": "q9_factual",
+      "question": "What is the role of the WorldModelCritic?",
+      "expected_tokens": [
+        "predict",
+        "error",
+        "surprise",
+        "acceptance",
+        "gate"
+      ],
+      "category": "factual_recall"
+    },
+    {
+      "id": "q10_general",
+      "question": "Explain the Oczy architecture thesis in one sentence.",
+      "expected_tokens": [
+        "memory",
+        "dynamic",
+        "weight",
+        "experience",
+        "trace"
+      ],
+      "category": "general_understanding"
+    }
+  ],
+  "oczy": {
+    "results": [
+      {
+        "id": "q1_knowledge",
+        "question": "What is the north-star metric for the Oczy project?",
+        "answer": "The north-star metric for the Oczy project is behavior_delta_per_byte_of_persistent_memory.\n</|user|>",
+        "score": {
+          "matched_tokens": [
+            "behavior",
+            "delta",
+            "byte",
+            "persistent",
+            "memory"
+          ],
+          "precision": 1.0,
+          "matched_count": 5,
+          "expected_count": 5
+        },
+        "elapsed_sec": 2.249
+      },
+      {
+        "id": "q2_knowledge",
+        "question": "Which workspace packages exist in the Oczy repository?",
+        "answer": "The workspace packages in the Oczy repository are: correction-benchmark, experience-autoencoder, identity-hypernetwork, neural-hippocampus, oczy.common, oczy.lm, plastic-cortex, skill-immune-cortex, and world-model-critic.\n</|user|>",
+        "score": {
+          "matched_tokens": [
+            "correction",
+            "benchmark",
+            "experience",
+            "autoencoder",
+            "identity",
+            "hypernetwork",
+            "neural",
+            "hippocampus",
+            "plastic",
+            "cortex",
+            "skill",
+            "immune",
+            "world",
+            "model"
+          ],
+          "precision": 1.0,
+          "matched_count": 14,
+          "expected_count": 14
+        },
+        "elapsed_sec": 3.521
+      },
+      {
+        "id": "q3_disambig",
+        "question": "The ship's log is missing from the archive.",
+        "answer": "The ship's log is indeed missing from the archive. This is a critical issue that needs immediate attention. The absence of the log could significantly impact our understanding of the events leading up to the incident. We should prioritize retrieving the log and analyzing its contents to ensure a comprehensive investigation. Let's proceed with caution and thoroughness.\n</|user|>",
+        "score": {
+          "matched_tokens": [
+            "log"
+          ],
+          "precision": 0.25,
+          "matched_count": 1,
+          "expected_count": 4
+        },
+        "elapsed_sec": 3.273
+      },
+      {
+        "id": "q4_disambig",
+        "question": "Log the server crash in the system.",
+        "answer": "I cannot directly log a server crash as I don't have access to the system's internal logs or crash reports. However, I can help you understand the process of logging such events or guide you on how to capture and analyze server crash data using appropriate tools or scripts. Let me know how you'd like to proceed!",
+        "score": {
+          "matched_tokens": [
+            "system",
+            "crash",
+            "server",
+            "log"
+          ],
+          "precision": 0.8,
+          "matched_count": 4,
+          "expected_count": 5
+        },
+        "elapsed_sec": 3.539
+      },
+      {
+        "id": "q5_disambig",
+        "question": "Please file these papers with the clerk.",
+        "answer": "I'm sorry, but I don't have the capability to file papers with a clerk. My functions are limited to providing information and assisting with tasks related to the data and models I have been trained on. If you need help with anything else, feel free to ask!",
+        "score": {
+          "matched_tokens": [
+            "clerk",
+            "papers"
+          ],
+          "precision": 0.5,
+          "matched_count": 2,
+          "expected_count": 4
+        },
+        "elapsed_sec": 4.119
+      },
+      {
+        "id": "q6_disambig",
+        "question": "Save the source file before building.",
+        "answer": "The repository contains the following key files:\n- oczy.common.py: Defines the Episode schema.\n- cvec_driver.py: Defines the default model used by the LlamaCVecDriver.\n- kvcortex_cold_state.py: Defines the KVCortex.cold_state.\n- kvcortex.py: The main repository file.\n</|user|>",
+        "score": {
+          "matched_tokens": [],
+          "precision": 0.0,
+          "matched_count": 0,
+          "expected_count": 4
+        },
+        "elapsed_sec": 3.34
+      },
+      {
+        "id": "q7_factual",
+        "question": "How does Oczy want memory to be represented?",
+        "answer": "Oczy's memory thesis proposes a dynamic, change-theory of memory. They reject the traditional view of memory as a static, vector-based database. Instead, Oczy suggests that memory should be represented as a sequence of states, where each state evolves through fast, fast, and slow dynamics. This means memory is not just stored as a collection of vectors but as a process of changing states.",
+        "score": {
+          "matched_tokens": [
+            "dynamic",
+            "process"
+          ],
+          "precision": 0.5,
+          "matched_count": 2,
+          "expected_count": 4
+        },
+        "elapsed_sec": 4.707
+      },
+      {
+        "id": "q8_factual",
+        "question": "What does the NeuralHippocampus do in Oczy?",
+        "answer": "The NeuralHippocampus in Oczy is responsible for storing high-surprise experiences and compressing them so the cortex can consolidate them. It plays a key role in memory formation and retrieval, particularly in the context of learning and adapting to new information.\n</|-->",
+        "score": {
+          "matched_tokens": [
+            "surprise",
+            "experience",
+            "consolidate"
+          ],
+          "precision": 0.6,
+          "matched_count": 3,
+          "expected_count": 5
+        },
+        "elapsed_sec": 4.23
+      },
+      {
+        "id": "q9_factual",
+        "question": "What is the role of the WorldModelCritic?",
+        "answer": "The WorldModelCritic is responsible for evaluating the accuracy of the world model predictions and updating the memory based on prediction errors. It plays a crucial role in the learning process by providing feedback to the Plastic World Model Agent, which then adjusts its predictions and updates the memory accordingly. The WorldModelCritic helps in refining the world model by comparing the predicted outcomes with the actual outcomes and adjusting the model's parameters to minimize prediction errors.\n</|user|>",
+        "score": {
+          "matched_tokens": [
+            "predict",
+            "error"
+          ],
+          "precision": 0.4,
+          "matched_count": 2,
+          "expected_count": 5
+        },
+        "elapsed_sec": 3.938
+      },
+      {
+        "id": "q10_general",
+        "question": "Explain the Oczy architecture thesis in one sentence.",
+        "answer": "The Oczy architecture thesis proposes that memory should be rewritten as a dynamic process involving fast states, fast weights, and slow forgetting. \n</|user|>",
+        "score": {
+          "matched_tokens": [
+            "memory",
+            "dynamic",
+            "weight"
+          ],
+          "precision": 0.6,
+          "matched_count": 3,
+          "expected_count": 5
+        },
+        "elapsed_sec": 2.984
+      }
+    ],
+    "total_precision": 5.6499999999999995,
+    "total_time_sec": 35.900000000000006,
+    "avg_precision": 0.565
+  },
+  "vanilla": {
+    "results": [
+      {
+        "id": "q1_knowledge",
+        "question": "What is the north-star metric for the Oczy project?",
+        "answer": "The Oczy project is a data science and machine learning initiative that aims to create a robust and scalable infrastructure for processing and analyzing large datasets. The north-star metric for the Oczy project is the ability to accurately and efficiently extract insights from complex data, enabling informed decision-making and driving business value. This is achieved through the development of advanced algorithms, data visualization tools, and a comprehensive data management system that can handle diverse data sources and formats.",
+        "score": {
+          "matched_tokens": [],
+          "precision": 0.0,
+          "matched_count": 0,
+          "expected_count": 5
+        },
+        "elapsed_sec": 2.918
+      },
+      {
+        "id": "q2_knowledge",
+        "question": "Which workspace packages exist in the Oczy repository?",
+        "answer": "The Oczy repository contains several workspace packages. Here are some of the notable ones:",
+        "score": {
+          "matched_tokens": [],
+          "precision": 0.0,
+          "matched_count": 0,
+          "expected_count": 14
+        },
+        "elapsed_sec": 1.34
+      },
+      {
+        "id": "q3_disambig",
+        "question": "The ship's log is missing from the archive.",
+        "answer": "I'm here to help you with your ship's log issue. Could you please provide more details about the situation? For example, what happened, and when did you notice the log was missing? This will help me understand better and assist you more effectively.",
+        "score": {
+          "matched_tokens": [
+            "log"
+          ],
+          "precision": 0.25,
+          "matched_count": 1,
+          "expected_count": 4
+        },
+        "elapsed_sec": 2.134
+      },
+      {
+        "id": "q4_disambig",
+        "question": "Log the server crash in the system.",
+        "answer": "The server crash has been logged in the system. Please ensure all affected services are monitored and restored as soon as possible. If you need further assistance, let me know!",
+        "score": {
+          "matched_tokens": [
+            "system",
+            "crash",
+            "server",
+            "log"
+          ],
+          "precision": 0.8,
+          "matched_count": 4,
+          "expected_count": 5
+        },
+        "elapsed_sec": 2.875
+      },
+      {
+        "id": "q5_disambig",
+        "question": "Please file these papers with the clerk.",
+        "answer": "Thank you for your request. I will file the papers with the clerk as instructed. If you need any further assistance or clarification, feel free to ask.",
+        "score": {
+          "matched_tokens": [
+            "clerk",
+            "papers"
+          ],
+          "precision": 0.5,
+          "matched_count": 2,
+          "expected_count": 4
+        },
+        "elapsed_sec": 1.683
+      },
+      {
+        "id": "q6_disambig",
+        "question": "Save the source file before building.",
+        "answer": "I see you're trying to save the source file before building. Let me clarify: if you're working on a project and want to save your changes before proceeding, I recommend saving your work first. If you're asking about the build process or need help with something else, feel free to ask! Just let me know what you need.",
+        "score": {
+          "matched_tokens": [
+            "source",
+            "save"
+          ],
+          "precision": 0.5,
+          "matched_count": 2,
+          "expected_count": 4
+        },
+        "elapsed_sec": 2.478
+      },
+      {
+        "id": "q7_factual",
+        "question": "How does Oczy want memory to be represented?",
+        "answer": "Oczy is a memory management system that uses a combination of reference counting and a custom memory allocator. It represents memory as a collection of blocks, each with a unique identifier and a size. The memory is divided into regions, and each region is allocated a fixed amount of memory. When a block is allocated, it is placed in a region, and the memory is divided into smaller blocks. When a block is freed, it is removed from the region, and the memory is reallocated to the freed block. Oczy also uses a garbage collector to automatically reclaim memory that is no longer in use.",
+        "score": {
+          "matched_tokens": [],
+          "precision": 0.0,
+          "matched_count": 0,
+          "expected_count": 4
+        },
+        "elapsed_sec": 3.701
+      },
+      {
+        "id": "q8_factual",
+        "question": "What does the NeuralHippocampus do in Oczy?",
+        "answer": "The NeuralHippocampus in Oczy is a specialized AI model designed to enhance the understanding of spatial memory and navigation in the game. It processes environmental data, player actions, and contextual cues to provide insights into how the player interacts with the game world. This model helps in analyzing patterns, predicting player behavior, and offering real-time feedback to improve the gaming experience. It is particularly useful for tasks like pathfinding, memory mapping, and adaptive learning. Let me know if you'd like a breakdown of its features!\n</|user|>>",
+        "score": {
+          "matched_tokens": [
+            "experience"
+          ],
+          "precision": 0.2,
+          "matched_count": 1,
+          "expected_count": 5
+        },
+        "elapsed_sec": 4.027
+      },
+      {
+        "id": "q9_factual",
+        "question": "What is the role of the WorldModelCritic?",
+        "answer": "The WorldModelCritic is a component responsible for evaluating the quality of the generated model outputs. It assesses the coherence, relevance, and accuracy of the model's responses, helping to identify areas for improvement and ensuring that the generated content meets the desired standards.",
+        "score": {
+          "matched_tokens": [],
+          "precision": 0.0,
+          "matched_count": 0,
+          "expected_count": 5
+        },
+        "elapsed_sec": 2.931
+      },
+      {
+        "id": "q10_general",
+        "question": "Explain the Oczy architecture thesis in one sentence.",
+        "answer": "The Oczy architecture thesis proposes that the O-architecture is a fundamental design principle for building scalable and efficient distributed systems.",
+        "score": {
+          "matched_tokens": [],
+          "precision": 0.0,
+          "matched_count": 0,
+          "expected_count": 5
+        },
+        "elapsed_sec": 1.792
+      }
+    ],
+    "total_precision": 2.25,
+    "total_time_sec": 25.879,
+    "avg_precision": 0.225
+  }
+}

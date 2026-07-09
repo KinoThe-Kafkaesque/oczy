@@ -26,6 +26,8 @@ from __future__ import annotations
 import pickle
 from typing import Any
 
+import numpy as np
+
 from .core import SurpriseGatedMemory
 
 
@@ -48,6 +50,8 @@ class NeuralHippocampus:
             replay_threshold=self.config.get("replay_threshold", 1),
             cluster_similarity=self.config.get("cluster_similarity", 0.65),
             seed=self.config.get("seed"),
+            max_episodes=self.config.get("max_episodes", 5000),
+            episode_decay_fraction=self.config.get("episode_decay_fraction", 0.25),
         )
         self.slow_updates: list[dict[str, Any]] = []
         self.decay_after_consolidation = self.config.get(
@@ -61,11 +65,16 @@ class NeuralHippocampus:
         correction: str,
         prediction_error: float,
         corrected_answer: str | None = None,
+        hidden: np.ndarray | None = None,
     ) -> str | None:
         """Store a high-surprise experience episode.
 
         Returns the episode id if the trace was written, or ``None`` if its
         surprise fell below the configured gate.
+
+        ``hidden`` is an optional LM hidden vector for the episode.  When
+        provided, it is passed through to ``SurpriseGatedMemory`` and later
+        surfaced as ``representative_hidden`` in consolidation summaries.
         """
         episode = {
             "query": query,
@@ -75,6 +84,8 @@ class NeuralHippocampus:
         }
         if corrected_answer is not None:
             episode["corrected_answer"] = corrected_answer
+        if hidden is not None:
+            episode["hidden"] = hidden
         return self.memory.write(episode)
 
     def reinforce(self, query: str, k: int = 3) -> list[dict[str, Any]]:
@@ -104,7 +115,7 @@ class NeuralHippocampus:
 
         return summaries
 
-    def status(self) -> dict[str, Any]:
+    def status(self, include_size: bool = False) -> dict[str, Any]:
         """Return a serializable status snapshot with byte/episode counts.
 
         Fields:
@@ -113,22 +124,28 @@ class NeuralHippocampus:
         - ``episode_count``: number of raw traces currently in fast memory.
         - ``record_count``: total episodes written (same as ``episode_count``
           for this organ; standardized key for cross-organ status consumers).
+        - ``max_episodes``: configured capacity of the raw trace buffer.
+        - ``episodes_pruned``: lifetime number of episodes pruned due to the cap.
         - ``slow_update_count``: number of consolidated slow-update summaries.
         - ``trace_bytes``: approximate size of the raw trace buffer (pickle).
-        - ``serialized_bytes``: pickle size of the entire organ object
-          (``pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)`` length).
+        - ``serialized_bytes``: only present when ``include_size=True``;
+          avoids expensive pickle calls in hot loops.
         """
-        return {
+        result = {
             "project": "neural_hippocampus",
             "ready": True,
             "episode_count": self.memory.episode_count(),
             "record_count": self.memory.episode_count(),
+            "max_episodes": self.memory.max_episodes,
+            "episodes_pruned": self.memory.episodes_pruned,
             "slow_update_count": len(self.slow_updates),
             "trace_bytes": self.memory.byte_count(),
-            "serialized_bytes": len(
-                pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
-            ),
         }
+        if include_size:
+            result["serialized_bytes"] = len(
+                pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
+            )
+        return result
 
     def forward(self, x: Any) -> Any:
         """Placeholder one-step forward call.

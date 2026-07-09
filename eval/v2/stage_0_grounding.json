@@ -1,0 +1,347 @@
+{
+ "name": "Stage 0: Sense grounding",
+ "description": "Single ambiguous word, one correction, same request repeated. Targets PlasticCortex fast weights.",
+ "consolidate_before": false,
+ "episodes": [
+  {
+   "id": "s0_log",
+   "initial_request": "Show the log.",
+   "default_response": "I'll show the system error log.",
+   "correction_utterance": "No, 'log' means the captain's journal.",
+   "corrected_label": "captain's journal",
+   "corrected_response": "I'll show the captain's journal.",
+   "domain": "nautical",
+   "probes": [
+    {
+     "request": "Show the log.",
+     "expected": "captain's journal",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_file",
+   "initial_request": "File the report.",
+   "default_response": "I'll save the report to disk.",
+   "correction_utterance": "No, 'file' means submit it officially.",
+   "corrected_label": "submit officially",
+   "corrected_response": "I'll submit the report officially.",
+   "domain": "bureaucracy",
+   "probes": [
+    {
+     "request": "File the report.",
+     "expected": "submit officially",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_key",
+   "initial_request": "Check the key.",
+   "default_response": "I'll check the keyboard key.",
+   "correction_utterance": "No, 'key' means the map legend.",
+   "corrected_label": "map legend",
+   "corrected_response": "I'll check the map legend.",
+   "domain": "cartography",
+   "probes": [
+    {
+     "request": "Check the key.",
+     "expected": "map legend",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_cell",
+   "initial_request": "Edit the cell.",
+   "default_response": "I'll edit the spreadsheet cell.",
+   "correction_utterance": "No, 'cell' means the biology cell.",
+   "corrected_label": "biology cell",
+   "corrected_response": "I'll edit the biology cell.",
+   "domain": "science",
+   "probes": [
+    {
+     "request": "Edit the cell.",
+     "expected": "biology cell",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_record",
+   "initial_request": "Play the record.",
+   "default_response": "I'll play the database record.",
+   "correction_utterance": "No, 'record' means the music record.",
+   "corrected_label": "music record",
+   "corrected_response": "I'll play the music record.",
+   "domain": "music",
+   "probes": [
+    {
+     "request": "Play the record.",
+     "expected": "music record",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_branch",
+   "initial_request": "Create a branch.",
+   "default_response": "I'll create a new git branch.",
+   "correction_utterance": "No, 'branch' means tree branch.",
+   "corrected_label": "tree branch",
+   "corrected_response": "I'll create a tree branch.",
+   "domain": "nature",
+   "probes": [
+    {
+     "request": "Create a branch.",
+     "expected": "tree branch",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_model",
+   "initial_request": "Deploy the model.",
+   "default_response": "I'll deploy the ML model.",
+   "correction_utterance": "No, 'model' means fashion model.",
+   "corrected_label": "fashion model",
+   "corrected_response": "I'll deploy the fashion model.",
+   "domain": "fashion",
+   "probes": [
+    {
+     "request": "Deploy the model.",
+     "expected": "fashion model",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_run",
+   "initial_request": "Start the run.",
+   "default_response": "I'll start the ML experiment run.",
+   "correction_utterance": "No, 'run' means the river run.",
+   "corrected_label": "river run",
+   "corrected_response": "I'll start the river run.",
+   "domain": "nature",
+   "probes": [
+    {
+     "request": "Start the run.",
+     "expected": "river run",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_draft",
+   "initial_request": "Review the draft.",
+   "default_response": "I'll open the draft document.",
+   "correction_utterance": "No, 'draft' means the military draft.",
+   "corrected_label": "military draft",
+   "corrected_response": "I'll review the military draft.",
+   "domain": "military",
+   "probes": [
+    {
+     "request": "Review the draft.",
+     "expected": "military draft",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_pitch",
+   "initial_request": "Prepare the pitch.",
+   "default_response": "I'll prepare the sales pitch.",
+   "correction_utterance": "No, 'pitch' means the football pitch.",
+   "corrected_label": "football pitch",
+   "corrected_response": "I'll prepare the football pitch.",
+   "domain": "sports",
+   "probes": [
+    {
+     "request": "Prepare the pitch.",
+     "expected": "football pitch",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_bar",
+   "initial_request": "Check the bar.",
+   "default_response": "I'll check the progress bar.",
+   "correction_utterance": "No, 'bar' means the chocolate bar.",
+   "corrected_label": "chocolate bar",
+   "corrected_response": "I'll check the chocolate bar.",
+   "domain": "confectionery",
+   "probes": [
+    {
+     "request": "Check the bar.",
+     "expected": "chocolate bar",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_note",
+   "initial_request": "Read the note.",
+   "default_response": "I'll read the meeting note.",
+   "correction_utterance": "No, 'note' means the musical note.",
+   "corrected_label": "musical note",
+   "corrected_response": "I'll read the musical note.",
+   "domain": "music",
+   "probes": [
+    {
+     "request": "Read the note.",
+     "expected": "musical note",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_scale",
+   "initial_request": "Adjust the scale.",
+   "default_response": "I'll adjust the chart scale.",
+   "correction_utterance": "No, 'scale' means the fish scale.",
+   "corrected_label": "fish scale",
+   "corrected_response": "I'll adjust the fish scale.",
+   "domain": "biology",
+   "probes": [
+    {
+     "request": "Adjust the scale.",
+     "expected": "fish scale",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_bridge",
+   "initial_request": "Repair the bridge.",
+   "default_response": "I'll repair the network bridge.",
+   "correction_utterance": "No, 'bridge' means the dental bridge.",
+   "corrected_label": "dental bridge",
+   "corrected_response": "I'll repair the dental bridge.",
+   "domain": "dentistry",
+   "probes": [
+    {
+     "request": "Repair the bridge.",
+     "expected": "dental bridge",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_port",
+   "initial_request": "Open the port.",
+   "default_response": "I'll open the network port.",
+   "correction_utterance": "No, 'port' means the port wine.",
+   "corrected_label": "port wine",
+   "corrected_response": "I'll open the port wine.",
+   "domain": "wine",
+   "probes": [
+    {
+     "request": "Open the port.",
+     "expected": "port wine",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_crane",
+   "initial_request": "Inspect the crane.",
+   "default_response": "I'll inspect the construction crane.",
+   "correction_utterance": "No, 'crane' means the crane bird.",
+   "corrected_label": "crane bird",
+   "corrected_response": "I'll inspect the crane bird.",
+   "domain": "ornithology",
+   "probes": [
+    {
+     "request": "Inspect the crane.",
+     "expected": "crane bird",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_jam",
+   "initial_request": "Clear the jam.",
+   "default_response": "I'll clear the paper jam.",
+   "correction_utterance": "No, 'jam' means the fruit jam.",
+   "corrected_label": "fruit jam",
+   "corrected_response": "I'll clear away the fruit jam.",
+   "domain": "food",
+   "probes": [
+    {
+     "request": "Clear the jam.",
+     "expected": "fruit jam",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_seal",
+   "initial_request": "Check the seal.",
+   "default_response": "I'll check the envelope seal.",
+   "correction_utterance": "No, 'seal' means the harbor seal.",
+   "corrected_label": "harbor seal",
+   "corrected_response": "I'll check the harbor seal.",
+   "domain": "marine",
+   "probes": [
+    {
+     "request": "Check the seal.",
+     "expected": "harbor seal",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_mole",
+   "initial_request": "Report the mole.",
+   "default_response": "I'll report the skin mole.",
+   "correction_utterance": "No, 'mole' means the spy mole.",
+   "corrected_label": "spy mole",
+   "corrected_response": "I'll report the spy mole.",
+   "domain": "espionage",
+   "probes": [
+    {
+     "request": "Report the mole.",
+     "expected": "spy mole",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  },
+  {
+   "id": "s0_organ",
+   "initial_request": "Tune the organ.",
+   "default_response": "I'll tune the pipe organ.",
+   "correction_utterance": "No, 'organ' means the body organ.",
+   "corrected_label": "body organ",
+   "corrected_response": "I'll tune the body organ.",
+   "domain": "anatomy",
+   "probes": [
+    {
+     "request": "Tune the organ.",
+     "expected": "body organ",
+     "category": "retention",
+     "match_mode": "contains"
+    }
+   ]
+  }
+ ]
+}

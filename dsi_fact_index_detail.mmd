@@ -1,0 +1,43 @@
+%% DifferentiableFactIndex — DSI-style learned knowledge index for Oczy
+%% Replaces KnowledgeStore._KeywordIndex (TF-IDF) with a learned embedding matrix
+
+flowchart TB
+    subgraph Current["Current: Non-Differentiable"]
+        direction LR
+        Q1["Query text<br/>'What is the north star metric?'"]
+        TK1["Tokenize +<br/>TF-IDF scoring"]
+        KW1["_KeywordIndex<br/>(hash table)"]
+        R1["Ranked facts<br/>(keyword overlap)"]
+        Q1 --> TK1 --> KW1 --> R1
+    end
+
+    subgraph Proposed["Proposed: DifferentiableFactIndex"]
+        direction LR
+        Q2["Query text<br/>'What is the north star metric?'"]
+        PE["peek_embedding()<br/>LM hidden state<br/>shape: (d_model,)"]
+        F["<b>Fact Embedding Matrix F</b><br/>shape: (n_facts × d_model)<br/>Each row = one learned fact embedding<br/>Trained with contrastive loss"]
+        SC["scores = query_hidden @ Fᵀ<br/>softmax → relevance distribution<br/>FULLY DIFFERENTIABLE"]
+        R2["Ranked facts<br/>+ gradient path<br/>back to LM"]
+        Q2 --> PE --> F --> SC --> R2
+    end
+
+    subgraph Training["Training Loop (DSI-style co-training)"]
+        direction TB
+        TR["Training pairs:<br/>(query_text, correct_fact_index)"]
+        LOSS["Contrastive loss:<br/>L = -log(exp(s_pos) / Σ exp(s_all))<br/>+ in-batch negatives"]
+        GRAD["Gradient flows through:<br/>LM hidden → F matrix → loss<br/>End-to-end differentiable"]
+        TR --> LOSS --> GRAD
+    end
+
+    Proposed -.-> Training
+
+    subgraph Addition["Fact Addition (IncDSI-style)"]
+        direction TB
+        NEW["New fact arrives<br/>via perceive()"]
+        OPT["Constrained optimization:<br/>min ||v_new||² s.t.<br/>① new queries → new fact<br/>② old queries NOT → new fact"]
+        LBFGS["L-BFGS optimizer<br/>~30 iterations<br/>&lt;50ms wall time"]
+        APPEND["Append v_new as<br/>new row in F matrix<br/>Old rows untouched"]
+        NEW --> OPT --> LBFGS --> APPEND
+    end
+
+    Proposed -.-> Addition

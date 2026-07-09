@@ -1,0 +1,12 @@
+{
+  "version": "v2.1",
+  "files": {
+    "__init__.py": "a785a712f65701d2ab970a084421e0e45a32355b0e11503e8424d9a8b50da4d7",
+    "stage_0_grounding.json": "11d446f67ace4955bf60618c3674977d3fe75abc62700c4ff38840bd6e8ed5f0",
+    "stage_1_transfer.json": "a991fbd2ff0d25625b7dc631a1a161f4b6906ea60948ced3cf42a5d7c015ac3e",
+    "stage_2_scope.json": "8cac31fd31407bea8b82cf9cbc58e275d05e1864fff9310365e630b2c8209794",
+    "stage_3_dialog.json": "2db214ac7c06a5a56e7e65217779736cdf4a3f2b893fbc11ff2e0c6986827f98",
+    "stage_4_consolidation.json": "77ae554395a705ba9385e7ba997d5bf4745d135f4628a1daf789b7336fbb92c0",
+    "stage_5_cross_domain.json": "d98b95fbb1f2e78b713caf8d79538577a1f1efcb773e7a92cb386b6d12bb2032"
+  }
+}

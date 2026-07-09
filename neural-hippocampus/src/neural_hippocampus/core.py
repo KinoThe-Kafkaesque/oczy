@@ -37,6 +37,8 @@ class SurpriseGatedMemory:
         replay_threshold: int = 1,
         cluster_similarity: float = 0.65,
         seed: int | None = None,
+        max_episodes: int = 5000,
+        episode_decay_fraction: float = 0.25,
     ) -> None:
         """Create a surprise-gated memory.
 
@@ -51,6 +53,9 @@ class SurpriseGatedMemory:
                 merged into an existing consolidation cluster.
             seed: Optional seed used only for tie-breaking, not for embedding
                 content.
+            max_episodes: Upper bound on the raw trace buffer.
+            episode_decay_fraction: Fraction of episodes to remove when the
+                buffer exceeds ``max_episodes``.
         """
         if dim < 2:
             raise ValueError("dim must be at least 2")
@@ -61,7 +66,11 @@ class SurpriseGatedMemory:
         self.cluster_similarity = cluster_similarity
         self._rng = np.random.default_rng(seed)
 
-        # Fast episodic store: uuid -> episode
+        self.max_episodes = max_episodes
+        self.episode_decay_fraction = episode_decay_fraction
+        self.episodes_pruned = 0
+
+        # Fast episodic store: uuid -> episode (insertion order = age order).
         self.traces: dict[str, dict[str, Any]] = {}
 
     # --------------------------------------------------------------------- #
@@ -74,12 +83,16 @@ class SurpriseGatedMemory:
         The supplied dict should contain at least ``query`` and
         ``prediction_error``.  The following fields are populated/written:
 
-        - ``id``: a v4-style UUID string.
-        - ``embedding``: a small synthetic unit vector derived from ``query``.
-        - ``novelty``: average cosine distance to existing traces.
-        - ``surprise``: blended function of ``prediction_error`` and novelty.
+          * ``id``: a v4-style UUID string.
+          * ``embedding``: a small synthetic unit vector derived from ``query``.
+          * ``novelty``: average cosine distance to existing traces.
+          * ``surprise``: blended function of ``prediction_error`` and novelty.
 
         Other fields (``answer``, ``correction``, etc.) are stored verbatim.
+        If the episode contains an optional ``hidden`` key, it is saved as
+        ``hidden_vec`` (a copy cast to ``float32``).  This lets downstream
+        consolidation replay the raw LM hidden vector instead of re-embedding
+        the text summary.
         """
         query = episode.get("query", "")
         prediction_error = float(episode.get("prediction_error", 0.0))
@@ -95,7 +108,7 @@ class SurpriseGatedMemory:
             return None
 
         episode_id = str(uuid.uuid4())
-        stored = {
+        stored: dict[str, Any] = {
             **episode,
             "id": episode_id,
             "embedding": embedding,
@@ -103,7 +116,22 @@ class SurpriseGatedMemory:
             "surprise": float(surprise),
             "replay_count": 0,
         }
+        hidden = episode.get("hidden")
+        if hidden is not None:
+            stored["hidden_vec"] = np.asarray(hidden, dtype=np.float32).copy()
+            stored.pop("hidden", None)
         self.traces[episode_id] = stored
+
+        # Bound the raw trace buffer by dropping oldest episodes (insertion
+        # order) when it exceeds the configured capacity.
+        if len(self.traces) > self.max_episodes:
+            n = len(self.traces)
+            remove = max(int(n * self.episode_decay_fraction), n - self.max_episodes)
+            remove = min(remove, n)
+            for old_id in list(self.traces.keys())[:remove]:
+                self.traces.pop(old_id, None)
+            self.episodes_pruned += remove
+
         return episode_id
 
     def read_relevant(self, query: str, k: int = 3) -> list[dict[str, Any]]:
@@ -172,7 +200,7 @@ class SurpriseGatedMemory:
 
             if best is not None and best_sim >= self.cluster_similarity:
                 best["traces"].append(trace)
-                best["center"] = self._center([c["center"] for c in best["traces"]])
+                best["center"] = self._center([t["embedding"] for t in best["traces"]])
             else:
                 clusters.append({
                     "traces": [trace],
@@ -189,11 +217,18 @@ class SurpriseGatedMemory:
             queries = [t.get("query", "") for t in traces]
             representative = queries[0]
 
+            hidden_vecs = [t["hidden_vec"] for t in traces if t.get("hidden_vec") is not None]
+            if hidden_vecs:
+                representative_hidden = np.mean(np.stack(hidden_vecs, axis=0), axis=0).astype(np.float32)
+            else:
+                representative_hidden = None
+
             summaries.append({
                 "id": f"slow_update_{idx}_{uuid.uuid4().hex[:8]}",
                 "n_episodes": count,
                 "trace_ids": [t["id"] for t in traces],
                 "representative_query": representative,
+                "representative_hidden": representative_hidden,
                 "summary_corrections": corrections,
                 "avg_surprise": round(avg_surprise, 4),
                 "total_replay": total_replay,
@@ -219,7 +254,7 @@ class SurpriseGatedMemory:
         try:
             return len(pickle.dumps(self.traces))
         except Exception as exc:  # pragma: no cover - defensive fallback
-            warnings.warn(f"Could not pickle traces for sizing: {exc}")
+            warnings.warn(f"Could not pickle traces for sizing: {exc}", stacklevel=2)
             return sum(sys.getsizeof(t) for t in self.traces.values())
 
     # --------------------------------------------------------------------- #

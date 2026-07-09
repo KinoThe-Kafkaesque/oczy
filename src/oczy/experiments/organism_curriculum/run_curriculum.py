@@ -1,0 +1,1047 @@
+#!/usr/bin/env python3
+"""Driver that feeds the organism curriculum to an Oczy agent.
+
+Usage:
+    python experiments/organism_curriculum/run_curriculum.py
+    python experiments/organism_curriculum/run_curriculum.py --agent OrganismAgent
+    python experiments/organism_curriculum/run_curriculum.py --lm
+    python experiments/organism_curriculum/run_curriculum.py --stages stage_0_grounding stage_1_transfer
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+import time
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from oczy.experiments.digestive_gate import DigestiveGateConfig
+from oczy.experiments.baselines import VanillaAgent
+from oczy.experiments.organism import LMBackendAgent, OrganismAgent
+from oczy.experiments.organism_curriculum.dataset import Episode, Probe, Stage, build_curriculum, split_probes
+from oczy.experiments.organism_curriculum.scoring import categorize_results, probe_matches
+from oczy.common import format_row, summarize
+from oczy.experiments.organism_curriculum.validation import validate_curriculum
+
+def _load_real_cortex_agent(config: dict[str, Any] | None = None) -> Any:
+    from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
+    from oczy.lm import CVecDriverConfig, LlamaCVecDriver
+    from plastic_cortex.kv_cortex import KVCortexConfig
+
+    print("Loading real LlamaCVecDriver...")
+    driver = LlamaCVecDriver.load(
+        CVecDriverConfig(n_ctx=128, n_threads=4, embedding=True)
+    )
+    cortex_seed = config.get("cortex_seed") if config else None
+    kv_kwargs: dict[str, Any] = {"d_cortex": 4}
+    if cortex_seed is not None:
+        kv_kwargs["seed"] = cortex_seed
+    cfg = CortexAgentConfig(
+        cortex=KVCortexConfig(**kv_kwargs),
+        use_policy_head=True,
+        policy_learning_rate=0.001,
+        policy_seed=cortex_seed,
+        use_ingestion_pipeline=bool(config and config.get("use_ingestion_pipeline", False)),
+    )
+    if config and config.get("ingestion"):
+        cfg.ingestion = dict(config["ingestion"])
+    if config and config.get("use_hybrid_consolidation"):
+        if cfg.digestive_gate is None:
+            cfg.digestive_gate = DigestiveGateConfig()
+        cfg.digestive_gate = cfg.digestive_gate.__class__(
+            **{**cfg.digestive_gate.__dict__, "use_hybrid_consolidation": True}
+        )
+    if config and config.get("use_policy_request_context"):
+        cfg.use_policy_request_context = True
+    cortex = CortexAgent(cfg, driver=driver)
+    cortex.boot()
+    print("Real CortexAgent loaded.")
+    return cortex
+
+
+class _DeterministicCortexShim:
+    """Lightweight deterministic policy-head stand-in for probe harness.
+
+    Implements the small subset of CortexAgent that OrganismAgent's gated
+    policy loop touches: policy_score, policy_update, and predict_value for
+    an optional value baseline. No LM is loaded.
+    """
+
+    def __init__(self, n_embd: int = 8, d_cortex: int = 4, seed: int = 0) -> None:
+        self.n_embd = n_embd
+        self.d_cortex = d_cortex
+        self.rng = np.random.default_rng(seed)
+        self._policy_W = self.rng.standard_normal(n_embd + d_cortex, dtype=np.float64)
+        self._policy_b = 0.0
+        self._warm = self.rng.standard_normal(d_cortex, dtype=np.float64)
+        self._last_hidden = self.rng.standard_normal(n_embd, dtype=np.float64)
+        self._prev_hidden = None
+        self.world_model_critic = self._ValueShim()
+
+    class _ValueShim:
+        def predict_value(self, **kwargs: Any) -> float:
+            return 0.5
+
+    def _hidden(self, text: str) -> np.ndarray:
+        h = np.zeros(self.n_embd, dtype=np.float64)
+        for i, ch in enumerate(text):
+            h[i % self.n_embd] += ord(ch) * 0.01
+        return h
+
+    def _policy_features(self, candidates: list[str]) -> np.ndarray:
+        hidden_matrix = np.asarray(
+            [self._hidden(c) for c in candidates], dtype=np.float64
+        )
+        warm_matrix = np.repeat(self._warm.reshape(1, -1), len(candidates), axis=0)
+        return np.hstack([warm_matrix, hidden_matrix])
+
+    def policy_score(self, candidates: list[str]) -> np.ndarray:
+        X = self._policy_features(candidates)
+        return X @ self._policy_W + self._policy_b
+
+    def policy_update(
+        self,
+        candidates: list[str],
+        chosen_idx: int,
+        reward: float,
+        baseline: float = 0.0,
+    ) -> None:
+        scores = self.policy_score(candidates)
+        X = self._policy_features(candidates)
+        max_score = np.max(scores)
+        exps = np.exp(scores - max_score)
+        probs = exps / np.sum(exps)
+        advantage = reward - baseline
+        self._policy_W += 0.05 * advantage * (X[chosen_idx] - probs @ X)
+        self._policy_b += 0.05 * advantage * (1.0 - probs[chosen_idx])
+
+
+
+class _MockDriver:
+    """Deterministic LM driver stand-in for probe harness.
+
+    Returns fixed-shape hidden vectors without loading a model.
+    """
+
+    def __init__(self, n_embd: int = 8, n_layers: int = 2) -> None:
+        self.n_embd = n_embd
+        self.n_layers = n_layers
+
+    def peek_embedding(
+        self, text: str, last_token_only: bool = True
+    ) -> np.ndarray:
+        del last_token_only
+        # Deterministic, nearly-orthogonal hidden vectors so the policy head
+        # learns a clear corrected-vs-wrong margin in the probe harness.
+        idx = sum(ord(c) for c in text) % self.n_embd
+        h = np.zeros(self.n_embd, dtype=np.float64)
+        h[idx] = 1.0
+        # Add a small length signal so repeated text still differs from others.
+        h[(idx + 1) % self.n_embd] = float(len(text)) * 0.05
+        return h
+
+    def generate(
+        self,
+        prompt: str,
+        max_tokens: int = 64,
+        temperature: float = 0.0,
+        stop: list[str] | str | None = None,
+    ) -> str:
+        del prompt, max_tokens, temperature, stop
+        return "mock"
+
+@dataclass
+class EpisodeResult:
+    id: str
+    initial_request: str
+    first_answer: str
+    second_answer: str
+    corrected_response: str
+    fixed: bool
+    lm_parse_ok: bool | None = None
+    policy_score_before: dict[str, float] | None = None
+    policy_score_after: dict[str, float] | None = None
+
+
+@dataclass
+class StageResult:
+    name: str
+    description: str
+    episode_results: list[EpisodeResult] = field(default_factory=list)
+    pre_probe_results: list[tuple[Any, str, bool]] = field(default_factory=list)
+    post_probe_results: list[tuple[Any, str, bool]] = field(default_factory=list)
+    memory_bytes_before: int = 0
+    memory_bytes_after: int = 0
+
+    def uptake_latency(self) -> float:
+        if not self.episode_results:
+            return 0.0
+        not_fixed = sum(1 for r in self.episode_results if not r.fixed)
+        return not_fixed / len(self.episode_results)
+
+
+def load_agent(agent_name: str, config: dict[str, Any]) -> OrganismAgent | LMBackendAgent:
+    """Construct the requested agent class."""
+    if agent_name == "LMBackendAgent":
+        return LMBackendAgent(config)
+    return OrganismAgent(config)
+
+def _agent_memory_bytes(agent: Any) -> int:
+    if hasattr(agent, "memory_bytes"):
+        return int(agent.memory_bytes())
+    return 0
+
+
+def _can_instrument_policy(agent: Any) -> bool:
+    cortex = getattr(agent, "cortex_agent", None)
+    if cortex is None:
+        return False
+    return callable(getattr(cortex, "policy_score", None))
+
+
+def _record_policy_scores(agent: Any, candidates: list[str]) -> dict[str, float] | None:
+    cortex = getattr(agent, "cortex_agent", None)
+    if cortex is None:
+        return None
+    try:
+        scores = cortex.policy_score(candidates)
+        return {
+            cand: float(scores[i])
+            for i, cand in enumerate(candidates)
+            if i < len(scores)
+        }
+    except Exception:
+        return None
+
+
+def run_battery(
+    agent: Any,
+    stage: Stage,
+    episodes: tuple[Episode, ...] | None,
+    semantic: bool = False,
+    split_ids: set[str] | None = None,
+) -> list[tuple[Any, str, bool]]:
+    """Run all probes from ``stage`` against ``agent``.
+
+    If ``episodes`` is supplied, only probes belonging to those episodes are
+    run (used for pre/post tests scoped to the current stage).
+
+    If ``split_ids`` is supplied, only probes whose identifier
+    ``"episode_id|probe_request|probe_category"`` is in the set are run.
+    """
+    results: list[tuple[Any, str, bool]] = []
+    episode_set = set(episodes) if episodes is not None else None
+    for ep in stage.episodes:
+        if episode_set is not None and ep not in episode_set:
+            continue
+        for probe in ep.probes:
+            if split_ids is not None:
+                probe_id = f"{ep.id}|{probe.request}|{probe.category}"
+                if probe_id not in split_ids:
+                    continue
+            answer = agent.answer(probe.request)
+            ok = probe_matches(answer, probe, ep, semantic=semantic)
+            results.append((probe, answer, ok))
+    return results
+
+
+def build_nl_utterance(episode: Episode) -> str:
+    """Compose a single natural-language utterance from request + correction."""
+    return "%s %s" % (episode.initial_request, episode.correction_utterance)
+
+
+def run_stage(
+    agent: Any,
+    stage: Stage,
+    adapter: Any | None,
+    instrument_policy: bool = False,
+    semantic: bool = False,
+    split_ids: set[str] | None = None,
+) -> StageResult:
+    """Present every episode in ``stage`` to ``agent`` and return metrics."""
+    result = StageResult(name=stage.name, description=stage.description)
+    result.memory_bytes_before = _agent_memory_bytes(agent)
+
+    result.pre_probe_results = run_battery(agent, stage, stage.episodes, semantic=semantic, split_ids=split_ids)
+
+    for ep in stage.episodes:
+        first_answer = agent.answer(ep.initial_request)
+
+        policy_before: dict[str, float] | None = None
+        policy_after: dict[str, float] | None = None
+        if instrument_policy and _can_instrument_policy(agent):
+            candidates = list(getattr(agent.plastic_cortex, "labels", []))
+            policy_before = _record_policy_scores(agent, candidates)
+
+        lm_parse_ok: bool | None = None
+        if adapter is not None:
+            nl = build_nl_utterance(ep)
+            parsed = adapter.nl_to_episode(nl)
+            parsed_corrected = parsed.get("corrected_answer", "")
+            lm_parse_ok = bool(
+                parsed_corrected
+                and parsed_corrected.lower() in ep.corrected_response.lower()
+            )
+            query = parsed.get("query") or ep.initial_request
+            correction = parsed.get("correction") or ep.correction_utterance
+            agent.learn(query, correction)
+        else:
+            agent.learn(ep.initial_request, ep.correction_utterance)
+
+        second_answer = agent.answer(ep.initial_request)
+        if instrument_policy and _can_instrument_policy(agent):
+            # The agent may have learned new labels during the episode, so the
+            # post-update score set includes any newly registered candidates in
+            # addition to the original ones.
+            after_candidates = list(
+                set(candidates)
+                | set(getattr(agent.plastic_cortex, "labels", []))
+            )
+            policy_after = _record_policy_scores(agent, after_candidates)
+
+        retention_probe = Probe(
+            ep.initial_request, ep.corrected_response, "retention", "sense"
+        )
+        fixed = probe_matches(second_answer, retention_probe, ep, semantic=semantic)
+
+        result.episode_results.append(
+            EpisodeResult(
+                id=ep.id,
+                initial_request=ep.initial_request,
+                first_answer=first_answer,
+                second_answer=second_answer,
+                corrected_response=ep.corrected_response,
+                fixed=fixed,
+                lm_parse_ok=lm_parse_ok,
+                policy_score_before=policy_before,
+                policy_score_after=policy_after,
+            )
+        )
+
+    # Post-test probes *after* acquisition.
+    result.post_probe_results = run_battery(agent, stage, stage.episodes, split_ids=split_ids)
+    result.memory_bytes_after = _agent_memory_bytes(agent)
+    return result
+
+
+def _shorten(text: str, width: int = 40) -> str:
+    text = text.replace("\n", " ")
+    if len(text) > width:
+        return text[: width - 3] + "..."
+    return text
+
+
+def _accuracy(items: list[bool]) -> float:
+    return sum(items) / len(items) if items else 0.0
+
+
+def _episode_asdict(er: EpisodeResult) -> dict[str, Any]:
+    d = asdict(er)
+    if d.get("policy_score_before") is None:
+        d.pop("policy_score_before", None)
+    if d.get("policy_score_after") is None:
+        d.pop("policy_score_after", None)
+    return d
+
+def print_summary(
+    results: list[StageResult],
+    vanilla_results: list[StageResult] | None = None,
+) -> None:
+    if vanilla_results:
+        header = "%-28s %8s %7s %6s %6s %10s | %7s" % (
+            "Stage", "Episodes", "Uptake", "Pre", "Post", "Mem d", "Vanilla"
+        )
+    else:
+        header = "%-28s %8s %7s %6s %6s %10s" % (
+            "Stage", "Episodes", "Uptake", "Pre", "Post", "Mem d"
+        )
+    print(header)
+    print("-" * len(header))
+    for i, sr in enumerate(results):
+        total = len(sr.episode_results)
+        fixed = sum(1 for r in sr.episode_results if r.fixed)
+        uptake = sr.uptake_latency()
+        pre_acc = categorize_results(sr.pre_probe_results)
+        post_acc = categorize_results(sr.post_probe_results)
+        pre_total = sum(v[1] for v in pre_acc.values())
+        pre_ok = sum(v[0] for v in pre_acc.values())
+        post_total = sum(v[1] for v in post_acc.values())
+        post_ok = sum(v[0] for v in post_acc.values())
+        pre = pre_ok / pre_total if pre_total else 0.0
+        post = post_ok / post_total if post_total else 0.0
+        mem_delta = sr.memory_bytes_after - sr.memory_bytes_before
+        if vanilla_results:
+            vr = vanilla_results[i]
+            v_acc = categorize_results(vr.post_probe_results)
+            v_total = sum(v[1] for v in v_acc.values())
+            v_ok = sum(v[0] for v in v_acc.values())
+            v_score = v_ok / v_total if v_total else 0.0
+            print(
+                "%-28s %3d/%-4d %6.2f %5.2f %5.2f %+9dB | %6.2f"
+                % (sr.name, fixed, total, uptake, pre, post, mem_delta, v_score)
+            )
+        else:
+            print(
+                "%-28s %3d/%-4d %6.2f %5.2f %5.2f %+9dB"
+                % (sr.name, fixed, total, uptake, pre, post, mem_delta)
+            )
+
+
+def print_per_stage(
+    results: list[StageResult],
+    vanilla_results: list[StageResult] | None = None,
+) -> None:
+    for sr in results:
+        print("\n%s" % sr.name)
+        if sr.description:
+            print("  %s" % sr.description)
+        for er in sr.episode_results:
+            marker = "OK" if er.fixed else ".."
+            lm_info = ""
+            if er.lm_parse_ok is not None:
+                lm_info = " (lm=%s)" % ("ok" if er.lm_parse_ok else "fail")
+            print(
+                "  [%s] %-25s 1st=%-25r 2nd=%-25r%s"
+                % (
+                    marker,
+                    er.id,
+                    _shorten(er.first_answer, 22),
+                    _shorten(er.second_answer, 22),
+                    lm_info,
+                )
+            )
+            if er.policy_score_before and er.policy_score_after:
+                best_before = max(er.policy_score_before, key=er.policy_score_before.get)
+                best_after = max(er.policy_score_after, key=er.policy_score_after.get)
+                print(
+                    "    policy best: before=%s(%.2f) after=%s(%.2f)"
+                    % (
+                        best_before,
+                        er.policy_score_before[best_before],
+                        best_after,
+                        er.policy_score_after[best_after],
+                    )
+                )
+        post_acc = categorize_results(sr.post_probe_results)
+        if post_acc:
+            parts = ", ".join(
+                "%s=%.2f" % (cat, acc) for cat, (_ok, _tot, acc) in sorted(post_acc.items())
+            )
+            print("  post-test accuracy: %s" % parts)
+        if vanilla_results:
+            vi = results.index(sr)
+            vr = vanilla_results[vi]
+            v_acc = categorize_results(vr.post_probe_results)
+            if v_acc:
+                v_parts = ", ".join(
+                    "%s=%.2f" % (cat, acc) for cat, (_ok, _tot, acc) in sorted(v_acc.items())
+                )
+                print("  vanilla accuracy: %s" % v_parts)
+
+
+def write_report(
+    results: list[StageResult],
+    agent_name: str,
+    use_lm: bool,
+    out_path: Path,
+    split: str = "dev",
+    vanilla_results: list[StageResult] | None = None,
+) -> None:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    serializable: list[dict[str, Any]] = []
+    for sr in results:
+        serializable.append(
+            {
+                "name": sr.name,
+                "description": sr.description,
+                "memory_bytes_before": sr.memory_bytes_before,
+                "memory_bytes_after": sr.memory_bytes_after,
+                "uptake_latency": sr.uptake_latency(),
+                "pre_accuracy": {k: v[2] for k, v in categorize_results(sr.pre_probe_results).items()},
+                "post_accuracy": _stage_accuracy(sr),
+                "episodes": [_episode_asdict(er) for er in sr.episode_results],
+            }
+        )
+    payload: dict[str, Any] = {
+        "agent": agent_name,
+        "use_lm": use_lm,
+        "split": split,
+        "stages": serializable,
+    }
+    if vanilla_results:
+        vanilla_serializable: list[dict[str, Any]] = []
+        for vsr in vanilla_results:
+            v_acc = categorize_results(vsr.post_probe_results)
+            vanilla_serializable.append(
+                {
+                    "name": vsr.name,
+                    "description": vsr.description,
+                    "post_accuracy": {k: v[2] for k, v in v_acc.items()},
+                }
+            )
+        payload["vanilla"] = vanilla_serializable
+    with out_path.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, default=str)
+
+
+
+
+def _regenerate_dashboard() -> None:
+    """Invoke the dashboard regeneration script."""
+    script = Path(__file__).resolve().parent.parent.parent.parent / "scripts" / "dashboard.py"
+    try:
+        subprocess.run(
+            [sys.executable, str(script)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        print("Dashboard regeneration failed: %s" % exc.stderr.strip(), file=sys.stderr)
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Run the Oczy organism curriculum.")
+    p.add_argument(
+        "--agent",
+        choices=["OrganismAgent", "LMBackendAgent"],
+        default="OrganismAgent",
+        help="Agent class to evaluate (default: OrganismAgent).",
+    )
+    p.add_argument(
+        "--config",
+        default="{}",
+        help=(
+            "JSON config passed to the agent constructor."
+            " CortexAgent fields such as use_policy_request_context are honored."
+        ),
+    )
+    p.add_argument(
+        "--lm",
+        action="store_true",
+        help="Feed episodes through the LM perception layer (LanguageAdapter).",
+    )
+    cortex_group = p.add_mutually_exclusive_group()
+    cortex_group.add_argument(
+        "--use-cortex-shim",
+        action="store_true",
+        help="Attach a deterministic hand-rolled CortexAgent shim.",
+    )
+    cortex_group.add_argument(
+        "--use-cortex-agent-mock",
+        action="store_true",
+        help="Attach a CortexAgent with a deterministic mock LM driver.",
+    )
+    cortex_group.add_argument(
+        "--use-real-driver",
+        action="store_true",
+        help="Attach a CortexAgent backed by the real LFM2.5 GGUF model.",
+    )
+    p.add_argument(
+        "--semantic",
+        action="store_true",
+        help="Use semantic neighbour fallback when scoring sense-mode probes.",
+    )
+    p.add_argument(
+        "--stages",
+        nargs="+",
+        help="Run only these stage files by basename (without .json).",
+    )
+    p.add_argument(
+        "--no-validate",
+        action="store_true",
+        help="Skip the curriculum validation smoke test.",
+    )
+    p.add_argument(
+        "--split",
+        choices=["dev", "holdout", "all"],
+        default="dev",
+        help="Which probe split to evaluate (default: dev).",
+    )
+    p.add_argument(
+        "--with-vanilla",
+        action="store_true",
+        default=True,
+        help="Run a vanilla (no-learning) baseline alongside the organism (default: True).",
+    )
+    p.add_argument(
+        "--no-vanilla",
+        action="store_false",
+        dest="with_vanilla",
+        help="Disable the vanilla baseline column.",
+    )
+    p.add_argument(
+        "--report-dir",
+        type=Path,
+        default=Path(__file__).resolve().parent / "reports",
+        help="Directory for the JSON report.",
+    )
+    p.add_argument(
+        "--report-name",
+        default="run.json",
+        help="Report filename.",
+    )
+    p.add_argument(
+        "--policy-log",
+        type=Path,
+        default=None,
+        help="Path to write additional machine-readable policy instrumentation.",
+    )
+    p.add_argument(
+        "--seeds",
+        type=int,
+        default=1,
+        help="Number of random seeds to evaluate (default: 1).",
+    )
+    p.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Regenerate DASHBOARD.md after writing the report.",
+    )
+    return p.parse_args(argv)
+
+
+def _print_policy_delta(results: list[StageResult]) -> None:
+    def _match_key(text: str, scores: dict[str, float]) -> str | None:
+        """Find the candidate key that corresponds to ``text``.
+
+        First tries an exact lookup, then a case-insensitive containment match,
+        then falls back to the key with the greatest token overlap.
+        """
+        if text in scores:
+            return text
+        lowered = text.lower()
+        for key in scores:
+            if key.lower() == lowered:
+                return key
+            if key.lower() in lowered or lowered in key.lower():
+                return key
+        text_tokens = set(re.findall(r"[a-z0-9']+", lowered))
+        best_key = None
+        best_overlap = 0.0
+        for key in scores:
+            key_tokens = set(re.findall(r"[a-z0-9']+", key.lower()))
+            if not key_tokens:
+                continue
+            overlap = len(text_tokens & key_tokens) / max(len(text_tokens), len(key_tokens))
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_key = key
+        return best_key
+
+    has_scores = any(
+        er.policy_score_before and er.policy_score_after
+        for sr in results
+        for er in sr.episode_results
+    )
+    if not has_scores:
+        return
+
+    absolute_deltas = []
+    margin_deltas = []
+    for sr in results:
+        for er in sr.episode_results:
+            if not (er.policy_score_before and er.policy_score_after):
+                continue
+            before = er.policy_score_before
+            after = er.policy_score_after
+            corrected = er.corrected_response
+            wrong = er.first_answer
+            corrected_key = _match_key(corrected, before) or _match_key(corrected, after)
+            if corrected_key is None and wrong in before and wrong in after:
+                other_keys = [k for k in set(before) | set(after) if k != wrong]
+                if len(other_keys) == 1:
+                    corrected_key = other_keys[0]
+
+            b_corrected = before.get(corrected_key) if corrected_key else None
+            a_corrected = after.get(corrected_key) if corrected_key else None
+            if b_corrected is not None and a_corrected is not None:
+                absolute_deltas.append(a_corrected - b_corrected)
+
+            b_wrong = before.get(wrong, 0.0)
+            a_wrong = after.get(wrong, 0.0)
+            b_margin = (before.get(corrected_key, b_wrong) - b_wrong) if corrected_key else 0.0
+            a_margin = (after.get(corrected_key, a_wrong) - a_wrong) if corrected_key else 0.0
+            margin_deltas.append(a_margin - b_margin)
+
+    print()
+    if absolute_deltas:
+        avg_absolute = sum(absolute_deltas) / len(absolute_deltas)
+        print("Average corrected-answer policy score delta: %.4f" % avg_absolute)
+    else:
+        print("Policy scores present but corrected-answer keys not found.")
+    if margin_deltas:
+        avg_margin = sum(margin_deltas) / len(margin_deltas)
+        print("Average corrected-answer policy margin delta: %.4f" % avg_margin)
+    if not absolute_deltas and not margin_deltas:
+        print("Policy scores present but deltas could not be computed.")
+
+def _build_agent_for_seed(
+    args: argparse.Namespace,
+    agent_config: dict[str, Any],
+    seed: int,
+) -> Any:
+    """Construct a fresh agent + cortex for a single seed evaluation.
+
+    Threads ``seed`` through whichever cortex backend was selected on the
+    command line so each seed gets a distinct, reproducible policy-head
+    initialization.
+    """
+    agent = load_agent(args.agent, dict(agent_config))
+
+    if args.use_cortex_shim and isinstance(agent, OrganismAgent):
+        shim = _DeterministicCortexShim(seed=seed)
+        if agent.cortex_agent is None:
+            agent.cortex_agent = shim
+            print("Deterministic CortexAgent shim attached (seed=%d)." % seed)
+        else:
+            print("CortexAgent already present; shim not attached.")
+
+    if args.use_cortex_agent_mock and isinstance(agent, OrganismAgent):
+        if agent.cortex_agent is None:
+            from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
+            from plastic_cortex.kv_cortex import KVCortexConfig
+
+            driver = _MockDriver()
+            cfg = CortexAgentConfig(
+                cortex=KVCortexConfig(d_cortex=4, seed=seed),
+                use_policy_head=True,
+                policy_seed=seed,
+                use_ingestion_pipeline=bool(agent_config.get("use_ingestion_pipeline", False)),
+            )
+            if agent_config.get("ingestion"):
+                cfg.ingestion = dict(agent_config["ingestion"])
+            if agent_config.get("use_hybrid_consolidation"):
+                if cfg.digestive_gate is None:
+                    cfg.digestive_gate = DigestiveGateConfig()
+                cfg.digestive_gate = cfg.digestive_gate.__class__(
+                    **{**cfg.digestive_gate.__dict__, "use_hybrid_consolidation": True}
+                )
+            if agent_config.get("use_policy_request_context"):
+                cfg.use_policy_request_context = True
+            cortex = CortexAgent(cfg, driver=driver)
+            cortex.boot()
+
+            # Work around OrganismAgent's array-valued ``_prev_hidden or _last_hidden``
+            # guard, which raises on numpy arrays. Masking _prev_hidden lets the
+            # value-baseline path fall through to _last_hidden.
+            orig_perceive = cortex.perceive
+
+            def _patched_perceive(
+                utterance: str, correction_signal: float | None = None
+            ) -> np.ndarray:
+                out = orig_perceive(utterance, correction_signal=correction_signal)
+                cortex._prev_hidden = None
+                return out
+
+            cortex.perceive = _patched_perceive.__get__(cortex, CortexAgent)
+
+            agent.cortex_agent = cortex
+            print("CortexAgent with mock driver attached (seed=%d)." % seed)
+            if getattr(agent.cortex_agent, "config", None):
+                ctx = bool(agent.cortex_agent.config.use_policy_request_context)
+                print("Policy request context: %s" % ctx)
+        else:
+            print("CortexAgent already present; mock driver not attached.")
+
+    if args.use_real_driver and isinstance(agent, OrganismAgent):
+        seed_config = dict(agent_config)
+        seed_config["cortex_seed"] = seed
+        if agent.cortex_agent is None:
+            agent.cortex_agent = _load_real_cortex_agent(config=seed_config)
+        else:
+            print("CortexAgent already present; real driver not attached.")
+        if getattr(getattr(agent, "cortex_agent", None), "config", None):
+            ctx = bool(agent.cortex_agent.config.use_policy_request_context)
+            print("Policy request context: %s" % ctx)
+
+    return agent
+
+
+def _run_stages(
+    agent: Any,
+    stages: list[Stage],
+    adapter: Any | None,
+    args: argparse.Namespace,
+    stage_splits: dict[str, Any] | None = None,
+) -> list[StageResult]:
+    """Run every stage against ``agent`` and return the per-stage results."""
+    results: list[StageResult] = []
+    for stage in stages:
+        if stage.consolidate_before:
+            print("Consolidating before %s..." % stage.name)
+            agent.consolidate()
+        print("Running %s..." % stage.name)
+        results.append(
+            run_stage(
+                agent,
+                stage,
+                adapter,
+                instrument_policy=(args.policy_log is not None),
+                semantic=args.semantic,
+                split_ids=stage_splits.get(stage.name) if stage_splits else None,
+            )
+        )
+        if stage.consolidate_after:
+            print("Consolidating after %s..." % stage.name)
+            agent.consolidate()
+    return results
+
+
+def _run_vanilla(
+    args: argparse.Namespace,
+    agent_config: dict[str, Any],
+    stages: list[Stage],
+    stage_splits: dict[str, Any] | None = None,
+) -> list[StageResult]:
+    """Evaluate the no-op-learning VanillaAgent over the same probes."""
+    vcfg: dict[str, Any] = dict(agent_config)
+    if args.lm:
+        vcfg["use_lm"] = True
+    vanilla = VanillaAgent(vcfg)
+    vanilla_results: list[StageResult] = []
+    for stage in stages:
+        vsr = StageResult(name=stage.name, description=stage.description)
+        vsr.post_probe_results = run_battery(
+            vanilla,
+            stage,
+            stage.episodes,
+            semantic=args.semantic,
+            split_ids=stage_splits.get(stage.name) if stage_splits else None,
+        )
+        vanilla_results.append(vsr)
+    return vanilla_results
+
+
+def _stage_accuracy(sr: StageResult) -> float:
+    """Post-test accuracy for a stage, matching print_summary's column."""
+    post_acc = categorize_results(sr.post_probe_results)
+    post_total = sum(v[1] for v in post_acc.values())
+    post_ok = sum(v[0] for v in post_acc.values())
+    return post_ok / post_total if post_total else 0.0
+
+def print_multi_seed_summary(
+    seed_results: list[list[StageResult]],
+    n_seeds: int,
+) -> None:
+    """Print a mean ± CI per-stage accuracy table across seeds."""
+    print("\n=== Multi-seed summary (%d seeds) ===" % n_seeds)
+    print("%-32s %s" % ("Stage", "Accuracy"))
+    print("-" * 39)
+    n_stages = len(seed_results[0]) if seed_results else 0
+    for i in range(n_stages):
+        accuracies = [_stage_accuracy(seed_results[s][i]) for s in range(len(seed_results))]
+        summary = summarize(accuracies)
+        print(format_row(seed_results[0][i].name, summary))
+
+
+def write_multi_seed_report(
+    seed_results: list[list[StageResult]],
+    agent_name: str,
+    use_lm: bool,
+    n_seeds: int,
+    out_path: Path,
+) -> None:
+    """Write a multi-seed report with per-seed results and aggregated summaries."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    per_seed_serializable: list[list[dict[str, Any]]] = []
+    for results in seed_results:
+        seed_stages: list[dict[str, Any]] = []
+        for sr in results:
+            seed_stages.append(
+                {
+                    "name": sr.name,
+                    "description": sr.description,
+                    "memory_bytes_before": sr.memory_bytes_before,
+                    "memory_bytes_after": sr.memory_bytes_after,
+                    "uptake_latency": sr.uptake_latency(),
+                    "accuracy": _stage_accuracy(sr),
+                    "pre_accuracy": {k: v[2] for k, v in categorize_results(sr.pre_probe_results).items()},
+                    "episodes": [_episode_asdict(er) for er in sr.episode_results],
+                }
+            )
+        per_seed_serializable.append(seed_stages)
+
+    n_stages = len(seed_results[0]) if seed_results else 0
+    aggregated: list[dict[str, Any]] = []
+    for i in range(n_stages):
+        accuracies = [_stage_accuracy(seed_results[s][i]) for s in range(len(seed_results))]
+        summary = summarize(accuracies)
+        aggregated.append(
+            {
+                "name": seed_results[0][i].name,
+                "accuracy": summary,
+            }
+        )
+
+    payload = {
+        "agent": agent_name,
+        "use_lm": use_lm,
+        "n_seeds": n_seeds,
+        "per_seed": per_seed_serializable,
+        "aggregated": aggregated,
+    }
+    with out_path.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, default=str)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+
+    agent_config: dict[str, Any] = json.loads(args.config)
+
+
+    if args.use_cortex_shim:
+        agent_config.setdefault("use_cortex_policy", True)
+        agent_config.setdefault("use_value_baseline", True)
+        agent_config.setdefault("use_acceptance_policy_reward", True)
+        agent_config.setdefault("policy_suppresses_fast_answer", True)
+        print("Enabled policy-loop gates for cortex shim.")
+    if args.use_cortex_agent_mock:
+        agent_config.setdefault("use_cortex_policy", True)
+        agent_config.setdefault("use_value_baseline", True)
+        agent_config.setdefault("use_acceptance_policy_reward", True)
+        agent_config.setdefault("policy_suppresses_fast_answer", True)
+        print("Enabled policy-loop gates for CortexAgent mock driver.")
+    if args.use_real_driver:
+        agent_config.setdefault("use_cortex_policy", True)
+        agent_config.setdefault("use_value_baseline", True)
+        agent_config.setdefault("use_acceptance_policy_reward", True)
+        agent_config.setdefault("policy_suppresses_fast_answer", True)
+        print("Enabled policy-loop gates for real LM driver.")
+
+    stage_names = tuple(args.stages) if args.stages else None
+    stages = build_curriculum(stage_names=stage_names)
+
+    if args.split != "all":
+        stage_splits = {
+            stage.name: (split_probes(stage)[0] if args.split == "dev" else split_probes(stage)[1])
+            for stage in stages
+        }
+    else:
+        stage_splits = {}
+
+    if not args.no_validate:
+        report = validate_curriculum(stages)
+        if not report.ok:
+            print("Curriculum validation failed:")
+            for e in report.errors:
+                print("  - %s" % e)
+            return 1
+        if report.warnings:
+            print("Curriculum validation warnings:")
+            for w in report.warnings:
+                print("  - %s" % w)
+
+    adapter = None
+    if args.lm:
+        try:
+            from oczy.lm import LanguageAdapter
+
+            adapter = LanguageAdapter()
+            adapter.load()
+            print("LM perception adapter loaded.")
+        except Exception as exc:  # noqa: BLE001
+            print("Could not load LM adapter; continuing in raw mode. (%s)" % exc)
+
+    report_path = args.report_dir / args.report_name
+
+    if args.split == "holdout":
+        print("\n*** [HELD-OUT] evaluating on held-out probes only ***")
+
+    if args.seeds <= 1:
+        print("\n\nWARNING: single-seed point estimate — not reportable")
+
+        agent = _build_agent_for_seed(args, agent_config, seed=0)
+        results = _run_stages(agent, stages, adapter, args, stage_splits)
+
+        vanilla_results: list[StageResult] | None = None
+        if args.with_vanilla:
+            vanilla_results = _run_vanilla(args, agent_config, stages, stage_splits)
+
+        print("\n=== Organism curriculum summary ===")
+        print_summary(results, vanilla_results)
+        print_per_stage(results, vanilla_results)
+        _print_policy_delta(results)
+
+        write_report(results, args.agent, args.lm, report_path, split=args.split, vanilla_results=vanilla_results)
+        if args.dashboard:
+            _regenerate_dashboard()
+        print("\nReport written to: %s" % report_path)
+
+        if args.policy_log is not None:
+            policy_payload = {
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "episodes": [
+                    {
+                        "stage": sr.name,
+                        "id": er.id,
+                        "policy_score_before": er.policy_score_before,
+                        "policy_score_after": er.policy_score_after,
+                    }
+                    for sr in results
+                    for er in sr.episode_results
+                ],
+            }
+            args.policy_log.parent.mkdir(parents=True, exist_ok=True)
+            with args.policy_log.open("w", encoding="utf-8") as fh:
+                json.dump(policy_payload, fh, indent=2, default=str)
+            print("Policy detail written to: %s" % args.policy_log)
+        return 0
+
+    # Multi-seed path.
+    print("Running %d seeds..." % args.seeds)
+    seed_results: list[list[StageResult]] = []
+    for seed in range(args.seeds):
+        print("\n--- Seed %d / %d ---" % (seed, args.seeds))
+        agent = _build_agent_for_seed(args, agent_config, seed=seed)
+        seed_results.append(_run_stages(agent, stages, adapter, args, stage_splits))
+
+    print_multi_seed_summary(seed_results, args.seeds)
+
+    if args.with_vanilla:
+        # VanillaAgent never learns, so one deterministic run suffices.
+        print("\n=== Vanilla baseline (single deterministic run) ===")
+        print_summary(_run_vanilla(args, agent_config, stages, stage_splits), None)
+
+    write_multi_seed_report(
+        seed_results, args.agent, args.lm, args.seeds, report_path
+    )
+    if args.dashboard:
+        _regenerate_dashboard()
+    print("\nReport written to: %s" % report_path)
+
+    if args.policy_log is not None:
+        policy_payload = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "seeds": [
+                {
+                    "seed": s,
+                    "episodes": [
+                        {
+                            "stage": sr.name,
+                            "id": er.id,
+                            "policy_score_before": er.policy_score_before,
+                            "policy_score_after": er.policy_score_after,
+                        }
+                        for sr in results
+                        for er in sr.episode_results
+                    ],
+                }
+                for s, results in enumerate(seed_results)
+            ],
+        }
+        args.policy_log.parent.mkdir(parents=True, exist_ok=True)
+        with args.policy_log.open("w", encoding="utf-8") as fh:
+            json.dump(policy_payload, fh, indent=2, default=str)
+        print("Policy detail written to: %s" % args.policy_log)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

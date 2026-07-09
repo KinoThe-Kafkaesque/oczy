@@ -47,8 +47,7 @@ def test_shapes() -> None:
     for layer_idx in range(cfg.n_layers):
         cvec = cortex.emit_cvec(layer_idx)
         assert cvec.shape == (cfg.d_embd,), (
-            "cvec shape mismatch at layer %d (got %s)"
-            % (layer_idx, cvec.shape)
+            "cvec shape mismatch at layer %d (got %s)" % (layer_idx, cvec.shape)
         )
 
     all_cvecs = cortex.emit_all_cvecs()
@@ -67,10 +66,12 @@ def test_warm_mutates_cold_does_not() -> None:
     for _ in range(10):
         cortex.observe(_rand_hidden(cortex.config.d_embd, rng))
 
-    assert np.array_equal(cortex.cold_state, cold_before), \
+    assert np.array_equal(cortex.cold_state, cold_before), (
         "cold_state mutated by observe()"
-    assert not np.array_equal(cortex.warm_state, warm_before), \
+    )
+    assert not np.array_equal(cortex.warm_state, warm_before), (
         "warm_state did not mutate"
+    )
 
 
 def test_consolidate_moves_warm_into_cold() -> None:
@@ -82,9 +83,40 @@ def test_consolidate_moves_warm_into_cold() -> None:
 
     cold_before = cortex.cold_state.copy()
     cortex.consolidate()
-    assert not np.array_equal(cortex.cold_state, cold_before), \
+    assert not np.array_equal(cortex.cold_state, cold_before), (
         "consolidate() did not move cold_state"
+    )
     assert cortex.consolidate_count == 1
+
+
+def test_consolidate_strength_scales_cold_movement() -> None:
+    """Higher strength moves cold_state farther in the same warm direction."""
+    low_cfg = _cfg()
+    high_cfg = _cfg()
+    low_cortex = KVCortex(low_cfg)
+    high_cortex = KVCortex(high_cfg)
+
+    rng = np.random.default_rng(42)
+    hidden = _rand_hidden(low_cfg.d_embd, rng)
+
+    low_cortex.observe(hidden, correction_signal=1.0)
+    high_cortex.observe(hidden, correction_signal=1.0)
+
+    low_cold_before = low_cortex.cold_state.copy()
+    high_cold_before = high_cortex.cold_state.copy()
+
+    low_cortex.consolidate(strength=1.0)
+    high_cortex.consolidate(strength=high_cfg.max_consolidation_strength)
+
+    low_move = np.linalg.norm(low_cortex.cold_state - low_cold_before)
+    high_move = np.linalg.norm(high_cortex.cold_state - high_cold_before)
+
+    assert high_move > low_move, (
+        f"max strength move {high_move:.6f} should exceed baseline {low_move:.6f}"
+    )
+
+    # Warm state itself should be unchanged; only cold moved.
+    assert np.allclose(low_cortex.warm_state, high_cortex.warm_state)
 
 
 def test_consolidate_replay_absorption() -> None:
@@ -98,8 +130,9 @@ def test_consolidate_replay_absorption() -> None:
 
     cortex.cold_state = cold_without.copy()
     cortex.consolidate(replays=replays)
-    assert not np.allclose(cortex.cold_state, cold_no_replays), \
+    assert not np.allclose(cortex.cold_state, cold_no_replays), (
         "replays had no effect on consolidation"
+    )
 
 
 def test_correction_signal_raises_plasticity() -> None:
@@ -115,8 +148,9 @@ def test_correction_signal_raises_plasticity() -> None:
     cortex_high.observe(h.copy(), correction_signal=1.0)
     high_norm = float(np.linalg.norm(cortex_high.warm_state))
 
-    assert high_norm > low_norm, \
+    assert high_norm > low_norm, (
         "correction_signal=1.0 did not raise plasticity over 0.0"
+    )
 
 
 def test_reset_warm_from_cold() -> None:
@@ -127,8 +161,9 @@ def test_reset_warm_from_cold() -> None:
         cortex.observe(_rand_hidden(cortex.config.d_embd, rng))
     cortex.consolidate()
     cortex.reset_warm_from_cold()
-    assert np.array_equal(cortex.warm_state, cortex.cold_state), \
+    assert np.array_equal(cortex.warm_state, cortex.cold_state), (
         "cold-boot did not sync warm to cold"
+    )
 
 
 def test_hebbian_training_changes_projector() -> None:
@@ -141,14 +176,15 @@ def test_hebbian_training_changes_projector() -> None:
     for _ in range(50):
         cortex.train_step(_rand_hidden(cortex.config.d_embd, rng), lr=0.01)
 
-    assert not np.allclose(cortex.proj_hidden, proj_before), \
+    assert not np.allclose(cortex.proj_hidden, proj_before), (
         "Hebbian training left proj_hidden unchanged"
+    )
 
     norms_after = np.linalg.norm(cortex.proj_hidden, axis=1)
-    assert np.allclose(norms_after, norms_after[0], rtol=1e-3), \
+    assert np.allclose(norms_after, norms_after[0], rtol=1e-3), (
         "Per-row projector norms diverged after training"
-    assert 0.9 < norms_after[0] < 1.1, \
-        "Renormalised norms drifted outside [0.9, 1.1]"
+    )
+    assert 0.9 < norms_after[0] < 1.1, "Renormalised norms drifted outside [0.9, 1.1]"
 
 
 def test_pickle_round_trip() -> None:
@@ -170,16 +206,115 @@ def test_pickle_round_trip() -> None:
     assert np.array_equal(loaded.proj_c, cortex.proj_c)
 
 
+def test_svd_init_proj_c_structure() -> None:
+    """init_proj_c_from_svd lands proj_c on the leading singular directions
+    of the supplied hiddens, broadcast identically across all layers, and
+    round-trips byte-for-byte through pickle (so SVD-init'd direction
+    survives cold boot -- the persistence fix this method exists for)."""
+    cfg = _cfg()
+    cortex = KVCortex(cfg)
+    rng = np.random.default_rng(11)
+
+    # Build hiddens with a strong rank-1 structure along a known direction
+    # so the leading right singular vector is well-defined and checkable.
+    leading = rng.standard_normal(cfg.d_embd).astype(np.float32)
+    leading /= np.linalg.norm(leading)
+    n = max(cfg.d_cortex * 2, 64)
+    hiddens = (
+        np.outer(rng.standard_normal(n), leading) * 10.0
+        + rng.standard_normal((n, cfg.d_embd)) * 0.1
+    ).astype(np.float32)
+
+    proj_before = cortex.proj_c.copy()
+    cortex.init_proj_c_from_svd(hiddens, shared=True)
+
+    # 1. shared projector produced and is different from previous random proj_c.
+    assert cortex.has_uniform_proj_c(), (
+        "init_proj_c_from_svd should set the shared/uniform projector"
+    )
+    assert cortex.proj_c is None, (
+        "uniform mode should not keep a legacy per-layer proj_c stack"
+    )
+    assert not np.allclose(cortex.proj_c_shared, proj_before[0]), (
+        "init_proj_c_from_svd left the shared projector unchanged"
+    )
+
+    # 2. emit_cvec returns the same vector for every layer (uniform path).
+    v0 = cortex.emit_cvec(0)
+    for i in range(1, cfg.n_layers):
+        assert np.array_equal(v0, cortex.emit_cvec(i)), (
+            "emit_cvec differs at layer %d under shared projector" % i
+        )
+
+    # 3. columns are the top-d_cortex right singular vectors of the
+    # centered hiddens, scaled by 1/sqrt(d_cortex). Recompute locally
+    # and compare. proj_c_shared has shape (d_embd, d_cortex); Vt[:d] has
+    # shape (d, d_embd), so proj_c_shared.T should match Vt/sqrt(d).
+    centered = hiddens - hiddens.mean(axis=0, keepdims=True)
+    _, _, Vt = np.linalg.svd(centered, full_matrices=False)
+    expected = (Vt[: cfg.d_cortex] / np.sqrt(cfg.d_cortex)).astype(np.float32)
+    assert np.allclose(cortex.proj_c_shared.T, expected, atol=1e-5), (
+        "proj_c_shared slab does not match the top-d_cortex right singular vectors"
+    )
+
+    # 4. column norms are 1/sqrt(d_cortex) (matches proj_random bound
+    # convention so emit_cvec magnitudes are comparable across modes).
+    col_norms = np.linalg.norm(cortex.proj_c_shared, axis=0)
+    expected_norm = 1.0 / np.sqrt(cfg.d_cortex)
+    assert np.allclose(col_norms, expected_norm, atol=1e-5), (
+        "column norms deviated from 1/sqrt(d_cortex)"
+    )
+
+    # 5. byte-for-byte round-trip: SVD-init'd projector survives
+    # save/load exactly (this is the persistence fix, exercised at the
+    # contract level -- CortexAgent.load restores proj_c unmodified).
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "cortex_svd.pkl"
+        cortex.save(path)
+        loaded = KVCortex.load(path)
+    assert np.array_equal(loaded.proj_c_shared, cortex.proj_c_shared), (
+        "SVD-init'd proj_c_shared did not round-trip through pickle"
+    )
+
+    # 6. emit_cvec still produces the expected shape after SVD-init.
+    cortex.observe(_rand_hidden(cfg.d_embd, rng), correction_signal=1.0)
+    for layer_idx in range(cfg.n_layers):
+        assert cortex.emit_cvec(layer_idx).shape == (cfg.d_embd,), (
+            "emit_cvec shape broke at layer %d after SVD-init" % layer_idx
+        )
+
+
+def test_svd_init_rejects_undersized_hiddens() -> None:
+    """SVD needs N >= d_cortex; fewer should raise, not silently degrade."""
+    cfg = _cfg()
+    cortex = KVCortex(cfg)
+    rng = np.random.default_rng(12)
+    too_few = rng.standard_normal((cfg.d_cortex - 1, cfg.d_embd)).astype(np.float32)
+    try:
+        cortex.init_proj_c_from_svd(too_few)
+    except ValueError:
+        return
+    raise AssertionError("init_proj_c_from_svd accepted N < d_cortex without error")
+
+
 def test_status_contract() -> None:
     cortex = KVCortex(_cfg())
     rng = np.random.default_rng(9)
     cortex.observe(_rand_hidden(cortex.config.d_embd, rng), correction_signal=1.0)
 
-    status = cortex.status()
+    status = cortex.status(include_size=True)
     for key in (
-        "project", "d_cortex", "n_layers", "warm_norm", "cold_norm",
-        "warm_cold_drift", "update_count", "correction_count",
-        "consolidate_count", "serialized_bytes", "record_count",
+        "project",
+        "d_cortex",
+        "n_layers",
+        "warm_norm",
+        "cold_norm",
+        "warm_cold_drift",
+        "update_count",
+        "correction_count",
+        "consolidate_count",
+        "serialized_bytes",
+        "record_count",
     ):
         assert key in status, "status() missing %s" % key
     assert status["project"] == "plastic_cortex.kv"
@@ -198,14 +333,14 @@ def test_emit_cvec_cached_until_observe() -> None:
     raw_first = v_first.tobytes()
     # Without intervening observe, second call must return the same buffer.
     v_again = cortex.emit_cvec(0)
-    assert v_again is v_first or v_again.tobytes() == raw_first, \
+    assert v_again is v_first or v_again.tobytes() == raw_first, (
         "emit_cvec re-derived without observe()"
+    )
 
     # After observe, cached payload must change.
     cortex.observe(_rand_hidden(cortex.config.d_embd, rng))
     v_after = cortex.emit_cvec(0)
-    assert v_after.tobytes() != raw_first, \
-        "emit_cvec did not update after observe()"
+    assert v_after.tobytes() != raw_first, "emit_cvec did not update after observe()"
 
 
 def main() -> int:
@@ -213,11 +348,23 @@ def main() -> int:
         ("shapes", test_shapes),
         ("warm_mutates_cold_does_not", test_warm_mutates_cold_does_not),
         ("consolidate_moves_warm_into_cold", test_consolidate_moves_warm_into_cold),
+        (
+            "consolidate_strength_scales_cold_movement",
+            test_consolidate_strength_scales_cold_movement,
+        ),
         ("consolidate_replay_absorption", test_consolidate_replay_absorption),
-        ("correction_signal_raises_plasticity", test_correction_signal_raises_plasticity),
+        (
+            "correction_signal_raises_plasticity",
+            test_correction_signal_raises_plasticity,
+        ),
         ("reset_warm_from_cold", test_reset_warm_from_cold),
         ("hebbian_training_changes_projector", test_hebbian_training_changes_projector),
         ("pickle_round_trip", test_pickle_round_trip),
+        ("svd_init_proj_c_structure", test_svd_init_proj_c_structure),
+        (
+            "svd_init_rejects_undersized_hiddens",
+            test_svd_init_rejects_undersized_hiddens,
+        ),
         ("status_contract", test_status_contract),
         ("emit_cvec_cached_until_observe", test_emit_cvec_cached_until_observe),
     ]

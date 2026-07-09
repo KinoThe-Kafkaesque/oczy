@@ -1,0 +1,1296 @@
+"""CortexAgent: the un-inverted organism.
+
+Wires ``KVCortex`` (live mutation surface) and ``LlamaCVecDriver`` (frozen
+LM articulator) together with the existing organ metabolism. The cortex
+is the centre: it observes LM hidden states on perceive(), mutates its
+warm_state, and emits per-layer cvecs that the driver injects into the
+LM's forward pass on articulate(). The LM never learns; every mutation
+lives in the cortex.
+
+This is Goal 3 from ``GOALS.md``: build the CortexAgent driver glue
+between cortex, driver, and organ metabolism.
+
+Lifecycle per turn:
+
+    perceive(utterance, correction_signal) -> hidden -> cortex.observe
+    metabolize()  -> fan organ metabolism off cortex.state
+                    (critic reads drift; hippocampus stores hidden;
+                     immune registers; autoencoder trains proj_hidden)
+    articulate()  -> cortex.emit_all_cvecs() -> driver.set_cvecs_per_layer
+                                                 -> driver.generate()
+                    (cortex steers the LM; LM is frozen)
+    (harness) consolidate() -> cortex.consolidate(hippocampus replays)
+                               + organ consolidate() fans out
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import pickle
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from experience_autoencoder import ExperienceAutoencoder
+from experience_autoencoder.autoencoder import HEBBIAN_LR
+from identity_hypernetwork import IdentityHypernetwork
+from neural_hippocampus import NeuralHippocampus
+from oczy.experiments.codebase_qa.knowledge_store import KnowledgeStore
+from oczy.experiments.digestive_gate import DigestiveGate, DigestiveGateConfig
+from oczy.experiments.ingestion import IngestionPipeline, TurnDigest
+from oczy.lm import CVecDriverConfig, LlamaCVecDriver, ReservedPosition
+from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
+from skill_immune_cortex import SkillImmuneCortex
+from world_model_critic import WorldModelCritic
+
+# Heuristic correction-signal detector. The cortex's neuromodulator needs
+# to know when to fire high plasticity; this is a stop-gap that will be
+# replaced by the WorldModelCritic's drift-based signal once Goal 3 fully
+# converts the critic to a tensor-input consumer.
+_CORRECTION_MARKERS = (
+    "no, ",
+    "no:",
+    "wrong, ",
+    "wrong:",
+    "correction:",
+    "correct:",
+    "expected:",
+    "not what i meant",
+    "i meant",
+    "actually,",
+    "rather than",
+)
+
+
+def _looks_like_correction(text: str) -> bool:
+    """Cheap lexical detector for correction_signal driving."""
+    lowered = text.strip().lower()
+    return any(marker in lowered for marker in _CORRECTION_MARKERS)
+
+
+
+def _softmax(x: np.ndarray) -> np.ndarray:
+    """Numerically stable softmax over a 1-D array."""
+    shifted = x - np.max(x)
+    e = np.exp(shifted)
+    return e / np.sum(e)
+
+
+_HIPPO_STOPWORDS = frozenset({
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "must", "shall", "can", "need", "dare", "ought",
+    "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
+    "as", "into", "through", "during", "before", "after", "above", "below",
+    "between", "under", "again", "further", "then", "once", "here", "there",
+    "when", "where", "why", "how", "all", "each", "few", "more", "most",
+    "other", "some", "such", "no", "nor", "not", "only", "own", "same", "so",
+    "than", "too", "very", "just", "and", "but", "if", "or", "because",
+    "until", "while", "that", "this", "these", "those", "i", "me", "my",
+    "we", "our", "you", "your", "he", "him", "his", "she", "her", "it",
+    "its", "they", "them", "their",
+})
+
+
+
+@dataclass
+class CortexAgentConfig:
+    """Sizes + LM loading settings for CortexAgent.
+
+    d_cortex defaults to 64 (small enough that the cvec projector memory
+    stays at ~2 MB for a 16-attention-layer / 2048-embd model) while
+    still being expressive enough to host a few distinct intent basins.
+    """
+
+    cortex: KVCortexConfig | None = None
+    driver: CVecDriverConfig | None = None
+
+    # Cvec amplitude applied at articulate() time. Determined empirically
+    # on LFM2.5-1.2B-Instruct Q4_K_M with steering_mode="raw_hidden":
+    #   scale < 0.0005  -> no effect on greedy decoding
+    #   scale 0.001     -> clean steering, output shifts toward correction
+    #   scale >= 0.005  -> off-manifold, falls into token-repetition garbage
+    # The amplifier is per-LM-residual-norm dependent: if the host LM or
+    # quant changes, re-sweep the scale before trusting this default.
+
+    # Drift threshold above which metabolize() considers the correction
+    # strong enough to force the WorldModelCritic's correction path even
+    # without a textual correction marker.
+    correction_drift_threshold: float = 0.05
+
+    # Optional scalar metabolic gate. When None, a backward-compatible
+    # default is derived from correction_drift_threshold so existing
+    # behavior is preserved.
+    digestive_gate: DigestiveGateConfig | None = None
+
+    # If True, turn() will call consolidate() automatically when the
+    # digestive gate reports pressure above threshold.
+    auto_consolidate: bool = True
+
+    articulate_scale: float = 0.001
+
+    # Optional learned response-policy head (Phase 2 REINFORCE policy).
+    use_policy_head: bool = False
+    use_policy_request_context: bool = False
+    policy_learning_rate: float = 0.05
+    # Optional ingestion pipeline (default off for benchmark compatibility).
+    use_ingestion_pipeline: bool = False
+    ingestion: dict[str, Any] | None = None
+    # If True and no explicit ReservedPosition is set by the knowledge store,
+    # articulate() will try to derive a ReservedPosition from hippocampal replay
+    # for the recall query.
+    use_hippocampus_prefix: bool = False
+    # If True, derive prefix_targets from the knowledge store's recalled facts
+    # when no explicit reserved position is found and use_hippocampus_prefix is
+    # enabled. Default off so the benchmark path is unchanged.
+    knowledge_store_supplies_prefix_targets: bool = False
+    # If True (default), apply the IdentityHypernetwork-generated state_adapter
+    # bias in metabolize(). Set False to isolate the adapter's behavioral effect.
+    use_identity_adapter: bool = True
+    # If True, articulate() will use direct logit biasing (post-forward logit
+    # space) for exact-token recall instead of the hippocampus-derived prefix.
+    # Logit biasing bypasses the residual stream entirely, so it composes with
+    # cvec steering (proven in run #139).  Default off for benchmark compat.
+    use_logit_bias: bool = False
+    # Bias strength for logit biasing.  Must be large enough to overcome the
+    # LM's prior (≥ 20.0 on LFM2.5-1.2B-Instruct Q4).
+    logit_bias_strength: float = 20.0
+    # Optional seed for the policy-head RNGs. When None, the RNG is seeded
+    # from id(self) for backward compatibility. When set, multi-seed
+    # evaluations get reproducible, distinct policy-head initializations.
+    policy_seed: int | None = None
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore missing fields for pickled configs from older versions."""
+        self.__dict__.update(state)
+        for field in dataclasses.fields(self):
+            if field.name not in self.__dict__:
+                object.__setattr__(self, field.name, field.default)
+
+
+class CortexAgent:
+    """Un-inverted organism: cortex mutates, LM articulates, organs metabolise.
+
+    The agent OWNS one driver (one frozen LM, one cvec adapter slot set).
+    Separate agents require separate drivers because ``llama_set_adapter_cvec``
+    writes per-context cortex state.
+    """
+
+    def __init__(
+        self,
+        config: CortexAgentConfig | None = None,
+        knowledge_store: KnowledgeStore | None = None,
+        driver: LlamaCVecDriver | None = None,
+    ) -> None:
+        self.config = config or CortexAgentConfig()
+        ccfg = self.config.cortex or KVCortexConfig()
+        dcfg = self.config.driver or CVecDriverConfig()
+
+        # Cortex must mirror driver shape: d_embd and n_layers come from
+        # the LM, not from config-only defaults. We instantiate the
+        # driver first to know its actual n_layers, then size the cortex.
+        # CortexAgent is constructed with whatever KVCortexConfig the
+        # caller passed -- but if d_embd or n_layers disagree with the
+        # actual LM, the first articulate() will raise a shape mismatch.
+        # To keep that contract honest we patch the cortex config here.
+        # When a driver is supplied we reuse it to avoid duplicate LM loads.
+        self.driver = driver if driver is not None else LlamaCVecDriver.load(dcfg)
+        # Cortex must mirror driver shape: d_embd and n_layers come from
+        # the LM, not from config-only defaults. We instantiate the
+        # driver first to know its actual n_layers, then size the cortex.
+        # CortexAgent is constructed with whatever KVCortexConfig the
+        # caller passed -- but if d_embd or n_layers disagree with the
+        # actual LM, the first articulate() will raise a shape mismatch.
+        # To keep that contract honest we patch the cortex config here.
+        # Mirror driver shape while preserving every caller-set field
+        # (steering_mode especially -- dropping it silently reverts the
+        # cortex to proj_random and the raw_hidden regime never engages).
+        patched = dataclasses.replace(
+            ccfg,
+            d_embd=self.driver.n_embd,
+            n_layers=self.driver.n_layers,
+        )
+        self.cortex = KVCortex(patched)
+
+        # Existing organ metabolism. The cortex drives them; they don't
+        # drive the cortex (no string-fed fast-weight replacement of the
+        # cortex's intent).
+        self.neural_hippocampus = NeuralHippocampus()
+        self.world_model_critic = WorldModelCritic(
+            {
+                "use_hidden": True,
+                "use_value_head": True,
+                "mlp_hidden_units": 16,
+                "value_learning_rate": 0.05,
+            }
+        )
+        self.identity_hypernetwork = IdentityHypernetwork()
+        self.skill_immune_cortex = SkillImmuneCortex()
+        self.experience_autoencoder = ExperienceAutoencoder(
+            config={"use_hidden_delta": True, "hidden_delta_lr": HEBBIAN_LR}
+        )
+        self._prev_hidden: np.ndarray | None = None
+        self._prev_correction_signal: float = 0.0
+
+        # Scalar metabolic gate sits downstream of all organs and decides
+        # per-organ update weights plus consolidation pressure. When no
+        # config is supplied, derive a backward-compatible default from
+        # the agent's correction_drift_threshold.
+        dg_cfg = self.config.digestive_gate or DigestiveGateConfig(
+            novelty_threshold=self.config.correction_drift_threshold,
+        )
+        self.digestive_gate = DigestiveGate(config=dg_cfg)
+        # Optional ingestion pipeline sits between perception and the scalar
+        # digestive gate; it produces chunked hippocampal signals and a
+        # TurnDigest that maps back onto the existing ingest() surface.
+        if self.config.use_ingestion_pipeline:
+            self.ingestion_pipeline = IngestionPipeline(
+                config=self.config.ingestion,
+                driver=self.driver,
+                cortex=self.cortex,
+            )
+        else:
+            self.ingestion_pipeline = None
+
+        self._last_digest: TurnDigest | None = None
+
+        # Optional codebase knowledge store; recalled facts can be injected
+        # into prompts during articulate() to ground the agent in repo facts.
+        self.knowledge_store = knowledge_store
+
+        self._last_utterance: str | None = None
+        self._last_hidden: np.ndarray | None = None
+        self._last_correction_signal: float = 0.0
+        self._last_drift: float = 0.0
+
+        # Lazy-initialized response-policy head weights.
+        # _policy_W: linear weights over [warm ; hidden] features.
+        # _policy_W_bilinear: (d_cortex, hidden_dim) bilinear interaction
+        #   matrix.  Lets warm_state modulate which candidate-hidden
+        #   features matter: score += warm @ W_bilinear @ hidden_i.
+        #   Without this, warm_state is repeated across all candidates
+        #   and can only add a constant bias — it cannot discriminate.
+        self._policy_W: np.ndarray | None = None
+        self._policy_W_bilinear: np.ndarray | None = None
+        self._policy_b: float = 0.0
+        self._last_request_hidden: np.ndarray | None = None
+
+
+    # ------------------------------------------------------------------
+    # Boot / cold path
+    # ------------------------------------------------------------------
+    def boot(self) -> None:
+        """Cold boot: warm_state := cold_state.copy().
+
+        Call once after construction (or after a long idle / topic change)
+        so the cortexes starts a session from its persisted identity rather
+        than the empty default that __init__ left it in.
+        """
+        self.cortex.reset_warm_from_cold()
+        self.digestive_gate.reset()
+        self._last_utterance = None
+        self._last_hidden = None
+        self._prev_hidden = None
+        self._last_digest = None
+        self._last_request_hidden = None
+        self._last_correction_signal = 0.0
+        self._prev_correction_signal = 0.0
+        self._last_drift = 0.0
+
+    # ------------------------------------------------------------------
+    # Reserved position (soft-prompt / literal-prefix steering surface)
+    # ------------------------------------------------------------------
+    def set_reserved_position(self, position: ReservedPosition | None) -> None:
+        """Delegate to the driver: set a reserved KV-position handle."""
+        self.driver.set_reserved_position(position)
+
+    def clear_reserved_position(self) -> None:
+        """Delegate to the driver: remove any reserved position."""
+        self.driver.clear_reserved_position()
+
+    @property
+    def reserved_position(self) -> ReservedPosition | None:
+        """Return the driver's current reserved position, if any."""
+        return self.driver.reserved_position
+
+    # Deprecated thin wrappers for the previous literal-text API.
+    def set_articulation_prefix(self, text: str) -> None:
+        """Deprecated: use ``set_reserved_position(ReservedPosition(text))``."""
+        self.driver.set_articulation_prefix(text)
+
+    def clear_articulation_prefix(self) -> None:
+        """Deprecated: use ``clear_reserved_position``."""
+        self.driver.clear_articulation_prefix()
+
+
+    def should_consolidate(self) -> bool:
+        """Return True when the digestive gate says consolidation pressure
+        has crossed the configured threshold.
+        """
+        return self.digestive_gate.should_consolidate()
+
+    # ------------------------------------------------------------------
+    # Warm path
+    # ------------------------------------------------------------------
+    def perceive(
+        self,
+        utterance: str,
+        correction_signal: float | None = None,
+    ) -> np.ndarray:
+        """Feed an utterance through the LM's perception side into the cortex.
+
+        Args:
+            utterance: the user's NL input.
+            correction_signal: optional explicit gate in [0, 1]. If None
+                (default), _looks_like_correction() provides a binary
+                proxy from lexical markers. Pass an explicit value when
+                the caller has independent signals (e.g., from the
+                WorldModelCritic's drift above threshold).
+
+        Returns:
+            The cortex's updated warm_state (ndarray, d_cortex,). Most
+            callers ignore the return and call articulate() next.
+        """
+        if correction_signal is None:
+            correction_signal = 1.0 if _looks_like_correction(utterance) else 0.0
+
+        # Driver.peek_embedding returns the model's final-layer summary of
+        # the prompt -- a (n_embd,) float32. This is Goal 2 staging; once
+        # layer-L intermediate extraction is wired in, peek_layer(L)
+        # replaces this call and the cortex sees deeper hidden signal.
+        hidden = self.driver.peek_embedding(utterance, last_token_only=False)
+
+        # Sequential observation mode: the ingestion pipeline observes each
+        # chunk's hidden in order during metabolize(), so perceive() must not
+        # call cortex.observe() on the full turn -- that would double-update
+        # warm_state and erase the per-chunk order dependence. We still cache
+        # the hidden and bookkeeping; the pipeline owns the cortex update.
+        skip_observe = (
+            self.ingestion_pipeline is not None
+            and self.ingestion_pipeline.config.get("observation_mode", "parallel")
+            == "sequential"
+        )
+        if skip_observe:
+            warm_now = self.cortex.warm_state
+            drift = 0.0
+        else:
+            warm_before = self.cortex.warm_state.copy()
+            warm_now = self.cortex.observe(hidden, correction_signal=correction_signal)
+            drift = float(np.linalg.norm(warm_now - warm_before))
+        if self._last_hidden is not None:
+            self._prev_hidden = self._last_hidden.copy()
+            self._prev_correction_signal = self._last_correction_signal
+
+        self._last_utterance = utterance
+        self._last_hidden = hidden
+        self._last_correction_signal = correction_signal
+        self._last_drift = drift
+        if self.config.use_policy_request_context:
+            h = self.driver.peek_embedding(utterance, last_token_only=False)
+            h = np.mean(h.reshape(-1, h.shape[-1]), axis=0)
+            self._last_request_hidden = np.tanh(
+                self.cortex.proj_hidden @ h
+            ).astype(np.float32)
+        return warm_now
+
+    def metabolize(self, utterance: str | None = None) -> dict[str, Any]:
+        """Fan organ metabolism off the cortex's current warm_state.
+
+        This is the cortex-driven adaption path. The organs consume:
+
+          * Cortex state norms (drift, warm/cold) -- as the surprise signal
+            that the WorldModelCritic's `_last_correction_prob` proxy
+            used to derive from string features. We attach the drift scalar
+            to the critic's last-correction-prob so its predict_acceptance
+            calls see a cortex-derived signal on subsequent turns.
+          * The hidden vector the cortex absorbed -- stored in the
+            hippocampus as a high-surprise episode keyed by the utterance.
+            Replay becomes a tensor bank instead of a string-keyed store.
+          * The autoencoder takes (utterance, hidden) as a learning step
+            on the cortex's perception projector.
+
+        Returns a status dict for inspection; the call is otherwise run
+        for side effects on the cortex and organs.
+        """
+        text = utterance if utterance is not None else (self._last_utterance or "")
+        hidden = self._last_hidden
+        if hidden is None:
+            # No perceive() has run yet -- nothing to metabolise.
+            return {"metabolized": False, "reason": "no hidden cached"}
+
+        correction_signal = self._last_correction_signal
+
+        # The digestive gate expects bounded scalars. For backward
+        # compatibility, treat any episode whose drift crossed the legacy
+        # threshold as a correction-like event when gating identity/immune.
+        gate_correction = float(
+            max(
+                correction_signal,
+                self._last_drift > self.config.correction_drift_threshold,
+            )
+        )
+        scores: dict[str, Any] | None = None
+
+
+        if self.ingestion_pipeline is not None:
+            ctx_state = {
+                "driver": self.driver,
+                "cortex": self.cortex,
+                "warm_state": self.cortex.warm_state.copy(),
+                "last_utterance": self._last_utterance,
+                "correction_signal": correction_signal,
+            }
+            signals, digest = self.ingestion_pipeline.process(text, ctx_state=ctx_state)
+            self._last_digest = digest
+            for signal in signals:
+                self.neural_hippocampus.store(
+                    query=signal.text,
+                    answer="",
+                    correction=signal.text if signal.is_correction else "",
+                    prediction_error=signal.drift or 0.0,
+                    corrected_answer="",
+                    hidden=signal.hidden.copy() if signal.hidden is not None else hidden,
+                )
+            scores = self.digestive_gate.ingest_digest(
+                digest,
+                identity_relevance=0.5,
+                immune_conflict=0.0,
+            )
+
+        # trains on the same latent signal the cortex saw, moving it from
+        # string heuristics toward tensor-input world modeling (GOALS.md
+        # Goal 3). record_outcome sets _last_correction_prob to the prior
+        # prediction (before the online update), which is the surprise signal
+        # we feed into the digestive gate below.
+        hidden_for_critic = self._last_hidden
+        value_hidden = (
+            self._prev_hidden if self._prev_hidden is not None else self._last_hidden
+        )
+        next_value_hidden = self._last_hidden
+        self.world_model_critic.predict_acceptance(
+            query=text,
+            proposed_answer="",
+            lm_hidden=hidden_for_critic,
+        )
+
+        record_kwargs: dict[str, Any] = {
+            "query": text,
+            "proposed_answer": "",
+            "correction": text if correction_signal > 0.5 else None,
+            "lm_hidden": hidden_for_critic,
+        }
+        if getattr(self.world_model_critic, "use_value_head", False):
+            record_kwargs["value_lm_hidden"] = value_hidden
+            record_kwargs["next_value_lm_hidden"] = next_value_hidden
+        self.world_model_critic.record_outcome(**record_kwargs)
+        last_prob = getattr(
+            self.world_model_critic, "_last_correction_prob", None
+        )
+
+        if scores is None:
+            scores = self.digestive_gate.ingest(
+                drift=float(np.clip(self._last_drift, 0.0, 1.0)),
+                correction_signal=gate_correction,
+                novelty=1.0,
+                identity_relevance=0.5,
+                immune_conflict=0.0,
+                critic_correction_prob=last_prob,
+            )
+            # High-drift episodes go to hippocampal storage as a replay bank
+            # item keyed by the LM's hidden representation. The text field is
+            # kept only for human debugging -- the cortex itself never reads
+            # it back.
+            if scores["hippocampus_weight"] > 0:
+                self.neural_hippocampus.store(
+                    query=text,
+                    answer="",
+                    correction=text,
+                    prediction_error=self._last_drift,
+                    corrected_answer="",
+                    hidden=self._last_hidden.copy(),
+                )
+
+        # Identity accepts a token / correct_label; use the utterance's
+        # first long alphanumeric token as the concept to update.
+        if scores["identity_weight"] > 0:
+            tokens = re.findall(r"[A-Za-z][A-Za-z0-9_]+", text)
+            label = tokens[0] if tokens else "unknown"
+            self.identity_hypernetwork.update_identity(
+                {
+                    "source": "user" if correction_signal < 0.5 else "user_correction",
+                    "correct_label": label,
+                    "token": label,
+                }
+            )
+            try:
+                bias = self.identity_hypernetwork.generate_state_adapter(
+                    self.cortex.config.d_cortex
+                )
+                if bias is not None and self.config.use_identity_adapter:
+                    self.cortex.set_state_bias(bias)
+            except AttributeError:
+                # Older IdentityHypernetwork implementations do not expose a
+                # state adapter; leave the cortex bias at its default zero.
+                pass
+
+        if scores["immune_weight"] > 0:
+            self.skill_immune_cortex.add_detector(
+                correction_text=text,
+                mistake_class="cortex_drift",
+                response="adjust_intent",
+            )
+
+        # Autoencoder gets every observation as a (passive) Hebbian-style
+        # train step on the cortex's perception projector, scaled by the
+        # gate's autoencoder weight so low-surprise steps learn less.
+        autoencoder_lr = HEBBIAN_LR * float(scores["autoencoder_weight"])
+        episode: dict[str, Any] = {
+            "situation": text,
+            "model_answer": "",
+            "correction": text if correction_signal > 0.5 else "",
+            "revised_answer": "",
+            "outcome": "corrected" if correction_signal > 0.5 else "accepted",
+        }
+        if self._prev_hidden is not None and self._last_hidden is not None:
+            episode["hidden_delta"] = self._last_hidden - self._prev_hidden
+        autoencoder_error = self.experience_autoencoder.train_step(
+            episode,
+            lr=autoencoder_lr,
+        )
+
+        return {
+            "metabolized": True,
+            "drift": self._last_drift,
+            "correction_signal": correction_signal,
+            "digestive_scores": scores,
+            "consolidation_pressure": scores["consolidation_pressure"],
+            "should_consolidate": self.digestive_gate.should_consolidate(),
+            "hippocampus_wrote": scores["hippocampus_weight"] > 0,
+            "autoencoder_error": autoencoder_error,
+            "critic_correction_prob": last_prob,
+        }
+
+    # ------------------------------------------------------------------
+    # Knowledge store methods
+    # ------------------------------------------------------------------
+    def learn_fact(
+        self,
+        key: str,
+        value: str,
+        metadata: dict | None = None,
+    ) -> None:
+        """Add a codebase fact to the attached knowledge store (no-op without one).
+
+        Example::
+
+            agent.learn_fact(
+                "plastic-cortex vocab_size bug",
+                "Clamp at vocab_size was removed so a 103-char tokenizer fits.",
+            )
+        """
+        if self.knowledge_store is not None:
+            self.knowledge_store.add_fact(key, value, metadata)
+
+    # ------------------------------------------------------------------
+    def _derive_reserved_position_from_hippocampus(
+        self,
+        query: str,
+        max_prefix_tokens: int = 128,
+        prefix_targets: list[str] | None = None,
+    ) -> ReservedPosition | None:
+        """Derive a ReservedPosition from hippocampal replay for ``query``.
+
+        Replays the top-k episodes for ``query`` and extracts keyword-window
+        snippets.  The keywords are the query tokens plus content words
+        (length >= 3, not stopwords).  When ``prefix_targets`` is provided,
+        each target string and its whitespace tokens are also added to the
+        keyword set so exact expected tokens can be surfaced even when the
+        query is paraphrased.  Snippets are limited to ``max_prefix_tokens``
+        total tokens to avoid polluting the prompt with filler context.
+
+        Returns ``None`` when no memory is available or no keyword matches.
+        """
+        if self.neural_hippocampus is None:
+            return None
+
+        episodes = self.neural_hippocampus.reinforce(query, k=3)
+        if not episodes:
+            return None
+
+        query_tokens = {tok.strip(".,!?;:\"'()[]{}").lower() for tok in query.split()}
+        keywords: set[str] = set(query_tokens)
+
+        for tok in query.lower().split():
+            stripped = re.sub(r"[^\w]", "", tok).lower()
+            if len(stripped) >= 3 and stripped not in _HIPPO_STOPWORDS:
+                keywords.add(stripped)
+
+        if prefix_targets:
+            for target in prefix_targets:
+                target_stripped = str(target).strip().lower()
+                if target_stripped:
+                    keywords.add(target_stripped)
+                    for tok in target_stripped.split():
+                        token_stripped = re.sub(r"[^\w]", "", tok).lower()
+                        if (
+                            len(token_stripped) >= 3
+                            and token_stripped not in _HIPPO_STOPWORDS
+                        ):
+                            keywords.add(token_stripped)
+
+        def _snippets(text: str, window: int = 5) -> list[str]:
+            words = text.split()
+            found: list[str] = []
+            seen: set[int] = set()
+            for i, word in enumerate(words):
+                stem = re.sub(r"[^\w]", "", word).lower()
+                if stem in keywords and i not in seen:
+                    start = max(0, i - window)
+                    end = min(len(words), i + window + 1)
+                    found.append(" ".join(words[start:end]))
+                    seen.update(range(start, end))
+            return found
+
+        all_snippets: list[str] = []
+        for episode in episodes:
+            for key in ("corrected_answer", "correction", "answer", "query"):
+                value = episode.get(key)
+                if value:
+                    all_snippets.extend(_snippets(str(value)))
+
+        if not all_snippets:
+            return None
+
+        # Deduplicate snippets by normalized text.
+        seen_texts: set[str] = set()
+        deduped: list[str] = []
+        for snippet in all_snippets:
+            norm = snippet.strip().lower()
+            if norm and norm not in seen_texts:
+                seen_texts.add(norm)
+                deduped.append(snippet)
+        all_snippets = deduped
+
+        words = " ".join(all_snippets).strip().split()[:max_prefix_tokens]
+        text = " ".join(words)
+        if not text:
+            return None
+
+        return ReservedPosition(text=text, source="hippocampus")
+
+    # Articulation (LM generation with cortex steering)
+    # ------------------------------------------------------------------
+    def articulate(
+        self,
+        prompt: str | None = None,
+        max_tokens: int = 64,
+        temperature: float = 0.0,
+        apply_steering: bool = True,
+        recall_query: str | None = None,
+        use_reserved_position: bool = True,
+        prefix_targets: list[str] | None = None,
+        stop: list[str] | str | None = None,
+    ) -> str:
+        """Generate text with the cortex's intent currently applied.
+
+        Args:
+            prompt: the prompt to feed the LM. If None, the last perceived
+                utterance is used (so perceive() -> articulate() chains
+                cleanly without re-stating the input).
+            max_tokens: max generation length.
+            temperature: LM sampling temperature. Defaults to 0.0
+                (greedy) for deterministic post-correction behaviour.
+            apply_steering: if True (default), apply the cortex's per-layer
+                cvecs before generation and clear them after. If False,
+                generate without cortex steering -- useful for baseline
+                comparisons and the test suite.
+            recall_query: optional query for the attached knowledge store.
+                If provided (or defaulted from ``self._last_utterance`` when
+                the store is present), retrieved facts are prepended to the
+            use_reserved_position: if True (default) and a knowledge store is
+                attached, try to map the recall query to a reserved token and
+                set it as a reserved position before generation.  Reserved
+                positions take precedence over cvec steering to avoid
+                interference.
+            prefix_targets: optional list of expected answer strings (e.g.
+                golden answers from a knowledge store or probe). When
+                ``use_hippocampus_prefix`` is enabled, these strings are added
+                to the snippet-extraction keyword set so the derived prefix
+                can surface exact target tokens even when the query is
+                paraphrased.
+            stop: optional stop sequence(s) forwarded to the driver's generate().
+        """
+        if prompt is None:
+            prompt = self._last_utterance or ""
+
+        reserved_position: ReservedPosition | None = None
+
+        if self.knowledge_store is not None:
+            query = recall_query if recall_query is not None else self._last_utterance
+            if query is not None:
+                prompt = self.knowledge_store.format_context(query) + prompt
+                if use_reserved_position:
+                    reserved_position = self.knowledge_store.get_reserved_position(query)
+                    if reserved_position is not None:
+                        self.set_reserved_position(reserved_position)
+
+                # If no explicit reserved token was found and the config asks
+                # the knowledge store to supply prefix targets, enrich the
+                # hippocampus-derived prefix keyword set with recalled fact
+                # values so even paraphrased queries can surface exact tokens.
+                if (
+                    reserved_position is None
+                    and self.config.use_hippocampus_prefix
+                    and self.config.knowledge_store_supplies_prefix_targets
+                ):
+                    ks_targets = self.knowledge_store.get_prefix_targets(query)
+                    if ks_targets:
+                        if prefix_targets:
+                            seen = set(prefix_targets)
+                            merged = list(prefix_targets)
+                            for target in ks_targets:
+                                if target not in seen:
+                                    merged.append(target)
+                                    seen.add(target)
+                            prefix_targets = merged
+                        else:
+                            prefix_targets = ks_targets
+
+        # If no knowledge-store reserved position is available, optionally
+        # derive one from hippocampal replay.  Hippocampus-derived prefix has
+        # lower precedence than an explicit knowledge-store reserved token.
+        if reserved_position is None and self.config.use_hippocampus_prefix:
+            query = recall_query if recall_query is not None else self._last_utterance
+            if query:
+                reserved_position = self._derive_reserved_position_from_hippocampus(
+                    query, prefix_targets=prefix_targets
+                )
+                if reserved_position is not None:
+                    self.set_reserved_position(reserved_position)
+
+        if not prompt:
+            # Avoid leaking a reserved position if we bail out early.
+            if reserved_position is not None:
+                self.clear_reserved_position()
+            raise ValueError("articulate() needs a prompt or a prior perceive()")
+
+        # Determine whether to use logit biasing for exact-token recall.
+        # Logit biasing operates in logit space (post-forward) and composes
+        # with cvec (residual stream, during forward) — proven in run #139.
+        # This is gated by use_logit_bias and requires prefix_targets to
+        # tokenize into target token IDs.
+        use_logit_bias = (
+            self.config.use_logit_bias
+            and prefix_targets is not None
+            and not reserved_position
+        )
+        target_token_ids: list[int] = []
+        if use_logit_bias:
+            for target_str in prefix_targets:
+                ids = self.driver._llm.tokenize(
+                    f" {target_str}".encode(), add_bos=False,
+                )
+                target_token_ids.extend(ids)
+
+        # Reserved positions handle exact-token recall via prefix context;
+        # applying a cvec at the same time causes the two steering surfaces to
+        # interfere.  Only apply the cortex's residual steering when no
+        # reserved position is active.  Logit biasing composes with cvec, so
+        # cvec stays active when use_logit_bias is on.
+        if apply_steering and (reserved_position is None or use_logit_bias):
+            if self.cortex.has_uniform_proj_c():
+                vec = self.cortex.emit_uniform_cvec()
+                self.driver.set_cvec_uniform(vec, scale=self.config.articulate_scale)
+            else:
+                self.driver.set_cvecs_per_layer(
+                    self.cortex.emit_all_cvecs(), scale=self.config.articulate_scale
+                )
+
+        try:
+            if use_logit_bias and target_token_ids:
+                return self.driver.logit_bias_generate(
+                    prompt,
+                    target_token_ids=target_token_ids,
+                    bias=self.config.logit_bias_strength,
+                    max_tokens=max_tokens,
+                    stop=stop,
+                )
+            return self.driver.generate(
+                prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stop=stop,
+            )
+        finally:
+            if apply_steering and (reserved_position is None or use_logit_bias):
+                self.driver.clear_cvec()
+            if reserved_position is not None:
+                self.clear_reserved_position()
+
+    # Convenience: perceive -> metabolize -> optionally consolidate -> articulate.
+    def turn(
+        self,
+        utterance: str,
+        correction_signal: float | None = None,
+        max_tokens: int = 64,
+        temperature: float = 0.0,
+        metabolize: bool = True,
+    ) -> dict[str, Any]:
+        warm = self.perceive(utterance, correction_signal=correction_signal)
+        meta = self.metabolize(utterance) if metabolize else {"metabolized": False}
+        consolidation = {"auto_consolidated": False}
+        if metabolize and self.config.auto_consolidate and self.should_consolidate():
+            pressure = self.digestive_gate._pressure
+            cfg = self.digestive_gate.config
+            threshold = cfg.consolidation_pressure_threshold
+            base_strength = 1.0 + (pressure / threshold) * 9.0 if threshold > 0 else 1.0
+            if (
+                self.ingestion_pipeline is not None
+                and cfg.use_hybrid_consolidation
+                and self._last_digest is not None
+            ):
+                base_strength = min(
+                    base_strength * (1.0 + self._last_digest.drift_max),
+                    10.0,
+                )
+            strength = float(
+                np.clip(base_strength, 1.0, self.cortex.config.max_consolidation_strength)
+            )
+            consolidation = {
+                "auto_consolidated": True,
+                "consolidation_strength": strength,
+                **self.consolidate(strength=strength),
+            }
+            self.digestive_gate.reset()
+
+        reply = self.articulate(
+            prompt=utterance, max_tokens=max_tokens, temperature=temperature
+        )
+        return {
+            "warm_norm": float(np.linalg.norm(warm)),
+            "drift": self._last_drift,
+            "correction_signal": self._last_correction_signal,
+            "metabolized": meta.get("metabolized", False),
+            "hippocampus_wrote": meta.get("hippocampus_wrote", False),
+            "consolidated": consolidation["auto_consolidated"],
+            "consolidation_summary": consolidation,
+            "reply": reply,
+        }
+
+    def answer(
+        self,
+        request: str,
+        max_tokens: int = 64,
+        temperature: float = 0.0,
+        metabolize: bool = False,
+    ) -> dict[str, Any]:
+        """One-shot answer generation through the LM with cortex steering.
+
+        This is the inverse of the old PlasticCortex.answer() path: the cortex
+        does not store labels; it perceives the request, optionally metabolises,
+        and lets the frozen LM render the response.
+        """
+        warm = self.perceive(request)
+        meta: dict[str, Any] = {"metabolized": False}
+        if metabolize:
+            meta = self.metabolize(request)
+
+        reply = self.articulate(
+            prompt=request,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        return {
+            "answer": reply,
+            "warm_norm": float(np.linalg.norm(warm)),
+            "drift": self._last_drift,
+            "correction_signal": self._last_correction_signal,
+            "metabolized": meta.get("metabolized", False),
+            "hippocampus_wrote": meta.get("hippocampus_wrote", False),
+            "autoencoder_error": meta.get("autoencoder_error", None),
+            "consolidation_pressure": meta.get("consolidation_pressure", 0.0),
+        }
+
+    # ------------------------------------------------------------------
+    # Response policy head (Phase 2 REINFORCE policy)
+    # ------------------------------------------------------------------
+    def _policy_rng(self, offset: int = 0) -> np.random.Generator:
+        """Return a policy-head RNG, optionally offset for a second stream.
+
+        When ``self.config.policy_seed`` is set, the RNG is reproducibly
+        seeded from it (plus ``offset`` for the bilinear stream) so
+        multi-seed evaluations get distinct, deterministic policy-head
+        initializations.  When it is None, fall back to ``id(self)`` for
+        backward compatibility.
+        """
+        s = self.config.policy_seed
+        base = id(self) if s is None else s
+        return np.random.default_rng(base + offset)
+
+    def _ensure_policy_head(self, candidate_hidden_dim: int) -> None:
+        """Lazy-initialize the policy head weights.
+
+        Creates both the linear weights (_policy_W) over concatenated
+        [warm ; hidden] features and the bilinear interaction matrix
+        (_policy_W_bilinear) of shape (d_cortex, hidden_dim) that lets
+        warm_state modulate which candidate-hidden features matter.
+        """
+        # Backward compat: old pickles may have _policy_W but not
+        # _policy_W_bilinear.  Create the bilinear matrix if missing.
+        if self._policy_W is not None:
+            if self._policy_W_bilinear is None:
+                rng_bc = self._policy_rng(offset=1)
+                self._policy_W_bilinear = (
+                    rng_bc.normal(
+                        0.0, 1.0 / np.sqrt(candidate_hidden_dim),
+                        size=(self.cortex.config.d_cortex, candidate_hidden_dim),
+                    ).astype(np.float64)
+                )
+            return
+        dim = self.cortex.config.d_cortex + candidate_hidden_dim
+        if self.config.use_policy_request_context:
+            dim += self.cortex.config.d_cortex
+        rng = self._policy_rng()
+        self._policy_W = rng.normal(0.0, 0.01, size=(dim,)).astype(
+            np.float64
+        )
+        # Bilinear interaction: warm (d_cortex) @ W_bilinear @ hidden (hidden_dim).
+        # Scaled by 1/sqrt(hidden_dim) so the bilinear score is comparable
+        # to the linear score at initialization.
+        self._policy_W_bilinear = (
+            rng.normal(0.0, 1.0 / np.sqrt(candidate_hidden_dim), size=(self.cortex.config.d_cortex, candidate_hidden_dim))
+            .astype(np.float64)
+        )
+
+    def _policy_features(self, candidates: list[str]) -> np.ndarray:
+        """Build feature matrix [warm_state ; candidate_hidden] for each candidate.
+
+        Each block (warm_state, request hidden, candidate hidden) is
+        L2-normalized to unit length before concatenation so the
+        d_cortex-dimensional warm_state is not drowned by the 2048-dim
+        LM hidden.
+        """
+        hiddens: list[np.ndarray] = []
+        hidden_dim = 0
+        for text in candidates:
+            hidden = self.driver.peek_embedding(
+                text, last_token_only=False
+            )
+            hiddens.append(hidden)
+            hidden_dim = max(hidden_dim, hidden.shape[0])
+
+        self._ensure_policy_head(hidden_dim)
+
+        def _l2_normalize(mat: np.ndarray) -> np.ndarray:
+            """L2-normalize each row to unit length; zero rows stay zero."""
+            norms = np.linalg.norm(mat, axis=1, keepdims=True)
+            norms = np.where(norms > 0, norms, 1.0)
+            return mat / norms
+
+        warm = self.cortex.warm_state.reshape(1, -1)
+        hidden_matrix = np.asarray(hiddens, dtype=np.float64)
+        warm_matrix = np.repeat(warm, hidden_matrix.shape[0], axis=0)
+        # Normalize each block to unit length so warm_state (d_cortex)
+        # and hidden (2048) contribute equally per-block to the dot
+        # product with policy_W.
+        warm_matrix = _l2_normalize(warm_matrix)
+        hidden_matrix = _l2_normalize(hidden_matrix)
+        if self.config.use_policy_request_context and self._last_request_hidden is not None:
+            req = self._last_request_hidden.reshape(1, -1)
+            req_matrix = np.repeat(req, hidden_matrix.shape[0], axis=0)
+            req_matrix = _l2_normalize(req_matrix)
+            return np.hstack([warm_matrix, req_matrix, hidden_matrix])
+        return np.hstack([warm_matrix, hidden_matrix])
+
+    def _policy_bilinear_score(self, candidates: list[str]) -> np.ndarray:
+        """Compute the bilinear interaction score for each candidate.
+
+        Returns ``warm @ W_bilinear @ hidden_i`` for each candidate — a
+        (N,) array.  This is the term that lets warm_state DISCRIMINATE
+        between candidates: different warm_states prefer different
+        candidate-hidden directions.  Without this term, warm_state is
+        repeated across all candidates and can only add a constant bias.
+        """
+        assert self._policy_W_bilinear is not None
+        warm = self.cortex.warm_state.astype(np.float64).reshape(-1)
+        hiddens: list[np.ndarray] = []
+        for text in candidates:
+            hidden = self.driver.peek_embedding(text, last_token_only=False)
+            hiddens.append(hidden)
+        hidden_matrix = np.asarray(hiddens, dtype=np.float64)  # (N, hidden_dim)
+        # L2-normalize for stable scale
+        warm_norm = np.linalg.norm(warm)
+        if warm_norm > 0:
+            warm = warm / warm_norm
+        hidden_norms = np.linalg.norm(hidden_matrix, axis=1, keepdims=True)
+        hidden_norms = np.where(hidden_norms > 0, hidden_norms, 1.0)
+        hidden_matrix = hidden_matrix / hidden_norms
+        # Bilinear: (warm @ W_bilinear) @ hidden^T -> (N,)
+        return (self._policy_W_bilinear.T @ warm) @ hidden_matrix.T
+
+    def policy_score(self, candidates: list[str]) -> np.ndarray:
+        """Score a list of candidate responses with the policy head.
+
+        Returns a 1-D float64 array of scores, one per candidate.
+        The score combines:
+        - Linear: [warm ; hidden] @ W + b (candidate-specific via hidden)
+        - Bilinear: warm @ W_bilinear @ hidden_i (warm modulates hidden)
+        """
+        if not self.config.use_policy_head:
+            raise RuntimeError("policy head is not enabled")
+        if not candidates:
+            raise RuntimeError("policy head is not enabled")
+
+        X = self._policy_features(candidates)
+        assert self._policy_W is not None
+        linear_score = X @ self._policy_W + self._policy_b
+        bilinear_score = self._policy_bilinear_score(candidates)
+        return linear_score + bilinear_score
+
+    def policy_select(
+        self, candidates: list[str], temperature: float = 0.0
+    ) -> dict[str, Any]:
+        """Choose the highest-scoring candidate, optionally with Gumbel noise."""
+        scores = self.policy_score(candidates)
+        logits = scores.copy()
+        if temperature > 0.0:
+            rng = np.random.default_rng(id(self))
+            logits = logits + rng.gumbel(0.0, 1.0, size=scores.shape) * temperature
+        chosen = int(np.argmax(logits))
+        return {
+            "candidate": candidates[chosen],
+            "index": chosen,
+            "scores": scores,
+            "logits": logits,
+            "temperature": temperature,
+        }
+
+    def policy_update(
+        self,
+        candidates: list[str],
+        chosen_idx: int,
+        reward: float,
+        baseline: float = 0.0,
+    ) -> None:
+        """REINFORCE update of the policy head toward the chosen candidate.
+
+        Updates both the linear weights (_policy_W) and the bilinear
+        interaction matrix (_policy_W_bilinear).  The bilinear gradient
+        is: d(score_i)/d(W_bilinear) = outer(warm, hidden_i), so the
+        REINFORCE gradient is advantage * (outer(warm, hidden_chosen) -
+        sum_i probs_i * outer(warm, hidden_i)).
+        """
+        scores = self.policy_score(candidates)
+        X = self._policy_features(candidates)
+        probs = _softmax(scores)
+        advantage = reward - baseline
+
+        grad_W = advantage * (X[chosen_idx] - probs @ X)
+        self._policy_W += self.config.policy_learning_rate * grad_W
+        self._policy_b += (
+            self.config.policy_learning_rate * advantage * (1.0 - probs[chosen_idx])
+        )
+
+        norm = float(np.linalg.norm(self._policy_W))
+        if norm > 10.0:
+            self._policy_W *= 10.0 / norm
+
+        # Bilinear REINFORCE update.
+        # d(score_i)/d(W_bilinear) = outer(warm, hidden_i)
+        # grad = advantage * (outer(warm, hidden_chosen) - sum_i probs_i * outer(warm, hidden_i))
+        #      = advantage * outer(warm, hidden_chosen - probs @ hiddens)
+        if self._policy_W_bilinear is not None:
+            hiddens = np.stack([
+                self.driver.peek_embedding(t, last_token_only=False)
+                for t in candidates
+            ], axis=0).astype(np.float64)  # (N, hidden_dim)
+            # Normalize hiddens (same as in _policy_bilinear_score)
+            h_norms = np.linalg.norm(hiddens, axis=1, keepdims=True)
+            h_norms = np.where(h_norms > 0, h_norms, 1.0)
+            hiddens_n = hiddens / h_norms
+            warm = self.cortex.warm_state.astype(np.float64).reshape(-1)
+            w_norm = np.linalg.norm(warm)
+            if w_norm > 0:
+                warm = warm / w_norm
+            # weighted average hidden: probs @ hiddens_n -> (hidden_dim,)
+            grad_bilinear = advantage * np.outer(
+                warm, hiddens_n[chosen_idx] - probs @ hiddens_n
+            )
+            self._policy_W_bilinear += (
+                self.config.policy_learning_rate * grad_bilinear
+            )
+            # Renormalize to prevent unbounded growth.
+            bnorm = float(np.linalg.norm(self._policy_W_bilinear))
+            if bnorm > 10.0:
+                self._policy_W_bilinear *= 10.0 / bnorm
+
+
+    # ------------------------------------------------------------------
+    # Cold path (consolidation + persistence)
+    # ------------------------------------------------------------------
+    def consolidate(self, strength: float = 1.0) -> dict[str, Any]:
+        """Move cortex warm into cold, plus organ consolidation fans.
+
+        Replays are pulled from the hippocampus and passed as a list of
+        d_embd vectors to cortex.consolidate().  When the hippocampus
+        summary carries a ``representative_hidden`` vector, we replay that
+        hidden directly; otherwise we fall back to re-embedding the summary
+        query string for backward compatibility.
+
+        ``strength`` is passed through to ``KVCortex.consolidate`` and
+        scales how aggressively warm state is written into cold state.
+        When called from ``turn()`` after the digestive gate crosses its
+        threshold, strength is derived from the current consolidation
+        pressure so high-pressure episodes leave a larger persistent trace.
+
+        Returns a summary of what consolidation did.
+        """
+        # Hippocampal consolidate produces slow-update summaries and
+        # decays the raw traces it owns.
+        summaries = self.neural_hippocampus.consolidate()
+
+        # Build replay tensors from the consolidated summaries.  Prefer the
+        # native LM hidden vector stored with the trace; only fall back to
+        # re-embedding the summary text when no hidden is available (e.g.
+        # traces written before this refactor).
+        replays: list[np.ndarray] = []
+        for s in summaries:
+            hidden = s.get("representative_hidden")
+            if (
+                isinstance(hidden, np.ndarray)
+                and hidden.ndim == 1
+                and hidden.shape[0] > 0
+            ):
+                replays.append(hidden.copy())
+                continue
+            q = s.get("representative_query") or ""
+            if not q:
+                continue
+            try:
+                replays.append(self.driver.peek_embedding(q, last_token_only=False))
+            except Exception:
+                continue
+
+        # Replay the hidden vectors through the cortex's perception projector
+        # as gradient-shaped SGD steps *before* moving warm into cold.  This is
+        # the first step toward differentiable hippocampal replay: summaries
+        # that carried corrections reinforce the response direction, neutral
+        # summaries suppress it.  The step size is gated by
+        # KVCortexConfig.replay_sgd_step and defaults to 0.0, so existing
+        # dynamics are unchanged unless explicitly enabled.
+        replay_losses: list[float] = []
+        replay_updated = 0
+        for s in summaries:
+            hidden = s.get("representative_hidden")
+            if not isinstance(hidden, np.ndarray) or hidden.ndim != 1:
+                continue
+            corrections = s.get("summary_corrections") or []
+            sign = 1.0 if corrections else -1.0
+            res = self.cortex.replay_train_step(hidden, target_response_sign=sign)
+            if res.get("updated"):
+                replay_updated += 1
+                replay_losses.append(res.get("loss", 0.0))
+
+        cortex_before = self.cortex.cold_state.copy()
+        self.cortex.consolidate(
+            replays=replays if replays else None,
+            strength=strength,
+        )
+        cortex_after = self.cortex.cold_state.copy()
+        cold_drift = float(np.linalg.norm(cortex_after - cortex_before))
+
+        return {
+            "summary_count": len(summaries),
+            "replay_count": len(replays),
+            "cold_drift": cold_drift,
+            "replay_sgd_updated": replay_updated,
+            "replay_sgd_losses": replay_losses,
+        }
+
+    # Persistence
+    # ------------------------------------------------------------------
+    def save(self, path: Path | str) -> None:
+        """Persist the cortex's cold state plus all organ state.
+
+        Warm state is intentionally NOT persisted: it is a session-level
+        ephemeraliser. Cold state plus organ state is the agent's identity.
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "cortex_cold": self.cortex.cold_state.copy(),
+            "cortex_proj_hidden": self.cortex.proj_hidden.copy(),
+            "cortex_proj_c": (
+                self.cortex.proj_c.copy() if self.cortex.proj_c is not None else None
+            ),
+            "cortex_proj_c_shared": (
+                self.cortex.proj_c_shared.copy()
+                if self.cortex.proj_c_shared is not None
+                else None
+            ),
+            "cortex_config": self.cortex.config,
+            "neural_hippocampus": self.neural_hippocampus,
+            "world_model_critic": self.world_model_critic,
+            "identity_hypernetwork": self.identity_hypernetwork,
+            "skill_immune_cortex": self.skill_immune_cortex,
+            "experience_autoencoder": self.experience_autoencoder,
+        }
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with tmp.open("wb") as fh:
+            pickle.dump(payload, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        tmp.replace(path)
+
+    @classmethod
+    def load(
+        cls, path: Path | str, config: CortexAgentConfig | None = None
+    ) -> CortexAgent:
+        """Reconstruct a CortexAgent from a saved state file.
+
+        The cortex's cold_state, proj_hidden, and proj_c are restored
+        from the saved payload; the driver and cortex wrapper are
+        reconstructed from ``config`` (default: CortexAgentConfig()).
+        """
+        with Path(path).open("rb") as fh:
+            payload = pickle.load(fh)
+
+        agent = cls(config or CortexAgentConfig())
+        # Restore learned cortex state. Overwrite whatever the freshly
+        # initialised cortex had in cold_state and projectors.
+        agent.cortex.cold_state = payload["cortex_cold"].astype(np.float32)
+        agent.cortex.proj_hidden = payload["cortex_proj_hidden"].astype(np.float32)
+        # Restore whichever projector representation was persisted:
+        # legacy per-layer stack, or the new shared/uniform slab.
+        proj_c = payload.get("cortex_proj_c")
+        agent.cortex.proj_c = proj_c.astype(np.float32) if proj_c is not None else None
+        proj_c_shared = payload.get("cortex_proj_c_shared")
+        agent.cortex.proj_c_shared = (
+            proj_c_shared.astype(np.float32) if proj_c_shared is not None else None
+        )
+        agent.cortex.reset_warm_from_cold()
+
+        agent.neural_hippocampus = payload["neural_hippocampus"]
+        agent.world_model_critic = payload["world_model_critic"]
+        agent.identity_hypernetwork = payload["identity_hypernetwork"]
+        agent.skill_immune_cortex = payload["skill_immune_cortex"]
+        agent.experience_autoencoder = payload["experience_autoencoder"]
+
+        return agent
+
+    # ------------------------------------------------------------------
+    # Introspection
+    # ------------------------------------------------------------------
+    def status(self) -> dict[str, Any]:
+        return {
+            "cortex": self.cortex.status(),
+            "driver": self.driver.status(),
+            "hippocampus": self.neural_hippocampus.status(),
+            "critic": self.world_model_critic.status(),
+            "identity": self.identity_hypernetwork.status(),
+            "immune": self.skill_immune_cortex.status(),
+            "autoencoder": self.experience_autoencoder.status(),
+            "last_drift": self._last_drift,
+            "last_correction_signal": self._last_correction_signal,
+        }

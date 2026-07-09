@@ -1,0 +1,61 @@
+%% IncDSI-style Fact Addition Pipeline for Oczy
+%% Shows the full lifecycle: perceive → metabolize → consolidate → articulate
+
+flowchart TB
+    subgraph Inputs["Inputs to Fact Addition"]
+        CORR["Correction utterance<br/>e.g. 'The north star metric is<br/>behavior_delta_per_byte'"]
+        QS["Associated queries<br/>(natural + generated)<br/>e.g. 'What metric measures<br/>memory efficiency?'"]
+        OLD["Existing fact index<br/>F ∈ R^(n×d)<br/>Z = cached query embeddings<br/>for old facts"]
+    end
+
+    subgraph Embed["1. Embed"]
+        PE_C["peek_embedding(correction)<br/>→ correction_hidden (d,)"]
+        PE_Q["peek_embedding(queries[i])<br/>→ query_hiddens (k × d)"]
+        Q_BAR["Representative query:<br/>q̄ = mean(query_hiddens, axis=0)<br/>→ (d,)"]
+    end
+
+    subgraph Opt["2. Constrained Optimization (L-BFGS)"]
+        INIT["Initialize v_new ~ N(0, 0.01) in R^d"]
+        L1["<b>Forward loss ℓ₁:</b><br/>Ensure q̄ retrieves v_new<br/>ℓ₁ = relu(max_old_score<br/>　　 - q̄ᵀv_new + γ₁)²"]
+        L2["<b>Backward loss ℓ₂:</b><br/>Old queries must NOT<br/>retrieve v_new<br/>ℓ₂ = Σ relu(zⱼᵀv_new<br/>　　 - zⱼᵀF[j] + γ₂)²"]
+        TOTAL["Total loss:<br/>L = λ₁ℓ₁ + (1-λ₁)ℓ₂ + λ₂||v_new||²"]
+        INIT --> L1
+        INIT --> L2
+        L1 --> TOTAL
+        L2 --> TOTAL
+    end
+
+    subgraph Append["3. Append to Index"]
+        F_NEW["F' = [F; v_new] ∈ R^((n+1)×d)<br/>Old rows: FROZEN, untouched"]
+        Z_NEW["Z' = [Z; q̄] ∈ R^((n+1)×d)<br/>Cache for future additions"]
+        METRIC["<b>Guarantee:</b> No catastrophic forgetting<br/>of old facts — old rows unchanged"]
+    end
+
+    subgraph Verify["4. Verify"]
+        RET["Retrieve(q̄, k=3) → <br/>top-1 must be new fact"]
+        ANTI["For each old query zⱼ:<br/>Retrieve(zⱼ, k=1) → <br/>must still be fact j"]
+        RET --> ANTI
+    end
+
+    CORR --> PE_C
+    QS --> PE_Q
+    PE_Q --> Q_BAR
+    OLD --> Opt
+
+    PE_C --> Opt
+    Q_BAR --> Opt
+    Opt --> F_NEW
+    Opt --> Z_NEW
+    F_NEW --> Verify
+    Z_NEW --> Verify
+
+    subgraph Lifecycle["Full Organism Lifecycle"]
+        direction LR
+        P["perceive()<br/>Ingest correction<br/>Run optimization"]
+        M["metabolize()<br/>Gate via critic<br/>Update proj_c"]
+        C["consolidate()<br/>Move to cold_state<br/>Fact embeddings persist"]
+        A["articulate()<br/>query_hidden @ Fᵀ<br/>Retrieve + steer LM"]
+        P --> M --> C --> A
+    end
+
+    Verify -.-> P
