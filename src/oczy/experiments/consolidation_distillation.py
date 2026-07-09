@@ -407,9 +407,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Research 18: consolidation as distillation")
     parser.add_argument("--seeds", type=int, default=1, help="number of random seeds")
     parser.add_argument("--max-steps", type=int, default=2, help="distillation steps per fact")
-    parser.add_argument("--lora-rank", type=int, default=2, help="LoRA rank")
-    parser.add_argument("--lora-alpha", type=float, default=4.0, help="LoRA alpha scaling")
-    parser.add_argument("--lora-lr", type=float, default=1e-3, help="LoRA learning rate")
+    parser.add_argument("--lora-rank", type=int, default=4, help="LoRA rank")
+    parser.add_argument("--lora-alpha", type=float, default=8.0, help="LoRA alpha scaling")
+    parser.add_argument("--lora-lr", type=float, default=0.001, help="LoRA learning rate")
     parser.add_argument("--stage", type=str, default="stage_0_grounding", help="target stage")
     args = parser.parse_args(argv)
 
