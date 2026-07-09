@@ -21,6 +21,7 @@ below name the module each spec asks you to create.
 | [05](05-metabolism-loop-closure/) | Metabolism loop closure | Do repeated corrections *compound* cold-state drift, and does that drift (not a label) drive the answer? | `oczy.experiments.metabolism_loop` |
 | [06](06-bounded-growth-consolidation/) | Bounded-growth consolidation | Can a trained encoder + hypernetwork raise `behavior_delta_per_byte` vs the random-projection baseline? | `oczy.experiments.bounded_growth.bounded_growth_eval` |
 | [07](07-conversation-world-model-rl/) | Conversation world model (RL Phase 0) | Can a self-supervised model predict acceptance / correction-type before answering, beating the lexical stop-gap? | `oczy.experiments.conversation_world_model` |
+| [08](08-oczy-pi-tool-calling-curriculum/) | Oczy Pi tool-calling curriculum | Can the plastic cortex teach a frozen 1.2B model to use Pi's tools (read/bash/write/edit) across multi-turn agentic tasks? | `oczy.experiments.tool_calling_curriculum` |
 | [09](09-meta-trained-cortex-frozen-language-organ/) | Meta-trained cortex over a frozen language organ | Can a cortex learn a reusable write/read/consolidate rule, then learn an unseen behavior without retrieval or online backprop? | `oczy.experiments.meta_cortex.run_meta_test` |
 
 ## How to run (once implemented)
@@ -66,8 +67,9 @@ what experiment **01** exists to fix.
 
 ## Status
 
-This directory now contains eight experiment specifications at different stages
+This directory now contains nine experiment specifications at different stages
 of implementation. The current cortex sequence is **19 → 20 → 21** in the
-research agenda: Experiment **09** operationalizes Research/20. See each
-`research/NN-*.md` for verdict gates and each experiment README for its
-build-out.
+research agenda: Experiment **09** operationalizes Research/20, while
+Experiment **08** remains an external tool-use battery until the core frozen-
+organ cortex condition succeeds. See each `research/NN-*.md` for verdict gates
+and each experiment README for its build-out.

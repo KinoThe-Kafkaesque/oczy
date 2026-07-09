@@ -14,7 +14,7 @@
           "name": "LFM2.5 + Oczy (Knowledge Augmented)",
           "reasoning": false,
           "input": ["text"],
-          "contextWindow": 4096,
+          "contextWindow": 16384,
           "maxTokens": 2048,
           "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
         },
@@ -23,7 +23,7 @@
           "name": "LFM2.5 Vanilla (No Augmentation)",
           "reasoning": false,
           "input": ["text"],
-          "contextWindow": 4096,
+          "contextWindow": 16384,
           "maxTokens": 2048,
           "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
         }

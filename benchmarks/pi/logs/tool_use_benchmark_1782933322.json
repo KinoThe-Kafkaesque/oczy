@@ -1,0 +1,32 @@
+{
+  "timestamp": 1782933322,
+  "model": "lfm-oczy",
+  "passed": 0,
+  "total": 3,
+  "results": [
+    {
+      "id": "read-file",
+      "passed": false,
+      "detail": "timed out after 180s",
+      "elapsed_sec": 180.1,
+      "output_preview": "",
+      "returncode": -1
+    },
+    {
+      "id": "find-file",
+      "passed": false,
+      "detail": "timed out after 180s",
+      "elapsed_sec": 180.1,
+      "output_preview": "",
+      "returncode": -1
+    },
+    {
+      "id": "edit-file",
+      "passed": false,
+      "detail": "timed out after 180s",
+      "elapsed_sec": 180.2,
+      "output_preview": "",
+      "returncode": -1
+    }
+  ]
+}
