@@ -1,0 +1,16 @@
+{
+  "id": "abdellahkadem/oczy-cortex-p100-smoke",
+  "title": "Oczy Cortex P100 Smoke",
+  "code_file": "../run_cortex_smoke.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "machine_shape": "NvidiaTeslaP100",
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}

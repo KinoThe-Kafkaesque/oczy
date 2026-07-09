@@ -18,6 +18,14 @@ invalidates the results of the run.
    claiming their wins as metabolism is the failure mode to avoid.
 6. **Every threshold gets a distribution check** against real data before it
    ships.
+7. **Remote compute is an executor, never the experiment authority.** Every
+   Kaggle research run must follow
+   `infrastructure/kaggle/RESEARCH_GUIDE.md`: clean commit-addressed source,
+   version-pinned model/instrument, private internet-off kernel, actual-hardware
+   and hash verification, and pulled provenance/results. Remote optimization
+   may not edit the measuring instrument, choose thresholds, or access
+   meta-test before human sign-off. CPU and 2×T4 are the only verified paths;
+   TPU, P100, and L4 remain unapproved until their admission gates pass.
 
 ## How to Change the Eval
 

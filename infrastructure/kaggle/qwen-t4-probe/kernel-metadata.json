@@ -1,0 +1,18 @@
+{
+  "id": "abdellahkadem/oczy-qwen-language-organ-t4-probe",
+  "title": "Oczy Qwen Language Organ T4 Probe",
+  "code_file": "../run_qwen_model_probe.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": [
+    "qwen-lm/qwen2.5/transformers/0.5b-instruct/1"
+  ]
+}
