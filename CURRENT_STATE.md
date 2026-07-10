@@ -232,38 +232,41 @@ side channel.
 | Research/19 direct cortex | Specification only | No dedicated implementation module yet |
 | Research/20 / Experiment 09 | Specification only | Planned module: `src/oczy/experiments/meta_cortex/` — currently absent |
 | Research/21 multi-organ router | Specification only | No implementation module yet |
-| Kaggle offline compute | CPU, 2×T4, and pinned Qwen model/gradient path remotely verified; source/kernel generators and required guide added; P100/L4 blocked, TPU not wired | [`infrastructure/kaggle/`](infrastructure/kaggle/) |
+| Kaggle offline compute | CPU-only profile active (`cpu-smoke` verified, `qwen-cpu-probe` local pass / remote pending); GPU (T4/P100/L4) archived under `infrastructure/kaggle/archive/gpu/`; TPU not wired | [`infrastructure/kaggle/`](infrastructure/kaggle/) |
 | Pi tool-use work / Experiment 08 | Unpublished local spec, proxy, runner, and two JSON logs; core curriculum package absent; result 0/3 | Existing [`benchmarks/pi/`](benchmarks/pi/) plus local `experiments/08-oczy-pi-tool-calling-curriculum/` |
 | Dashboard | Generator exists; canonical output absent | [`scripts/dashboard.py`](scripts/dashboard.py); planned `experiments_logs/DASHBOARD.md` |
 | Weekly external battery | Research spec exists; runner absent | [`research/16-s4-external-benchmark-battery.md`](research/16-s4-external-benchmark-battery.md); planned `scripts/weekly_battery.sh` |
 | Archived-code move | Not done | Planned `attic/` directory is absent |
 
-### Remote offline compute verified 2026-07-09
+### Remote offline compute — CPU-only cutover 2026-07-10
 
-The Kaggle CLI is authenticated and was upgraded to 2.2.3. Private version-3
-CPU and 2×Tesla-T4 kernels ran the same hash-identical infrastructure workload
-with a 64×64 cortex state and a width-896 frozen-organ interface. Both passed
-finite-gradient, held-out-improvement, and frozen-parameter hash checks. The
-CPU loop ran at 1,186.88 synthetic episodes/s; the data-parallel T4 loop ran at
-2,392.75 episodes/s, a 2.016× throughput gain. This is compute-path evidence,
-not evidence for cortex learning.
+The Kaggle CLI is authenticated (version 2.2.3). The active remote profile is
+**CPU only**. The `cpu-smoke` kernel
+(`abdellahkadem/oczy-cortex-cpu-smoke`) was verified remotely on 2026-07-09:
+it ran the 64×64 cortex / width-896 frozen-organ interface workload on a
+Kaggle x86_64 CPU, passed finite-gradient, held-out-improvement, and
+frozen-parameter hash checks, and reported `cuda_available: false`. The
+`qwen-cpu-probe` kernel (`abdellahkadem/oczy-qwen-cpu-probe`) passes locally;
+its remote acceptance is pending evidence from Main.
 
-The P100 run failed because Kaggle's current PyTorch 2.10.0+cu128 image omits
-sm_60 kernels. An `NvidiaL4X1` request also received a P100 despite retaining
-L4 in pulled metadata, so requested machine shape is not trusted without a
-runtime device report. Full commands, hashes, timings, quota, and nulls are in
-[`infrastructure/kaggle/RESULTS.md`](infrastructure/kaggle/RESULTS.md).
+GPU verification (T4, P100, L4, and the T4-based Qwen model probe) from
+2026-07-09 is preserved as historical evidence under
+[`infrastructure/kaggle/archive/gpu/`](infrastructure/kaggle/archive/gpu/).
+That material — including the 2×T4 throughput comparison and P100/L4
+compatibility nulls — is not active and must not be resubmitted. See
+[`infrastructure/kaggle/archive/gpu/RESULTS.md`](infrastructure/kaggle/archive/gpu/RESULTS.md)
+for the full historical record.
 
 The exact official Qwen source
-`qwen-lm/qwen2.5/transformers/0.5b-instruct/1` is also remotely verified on T4
-with internet disabled. The 494,032,768-parameter model loaded in FP16 with
-zero trainable parameters; a backward probe produced a finite input-embedding
-gradient, no model-parameter gradients, and no parameter-fingerprint change.
+`qwen-lm/qwen2.5/transformers/0.5b-instruct/1` remains version-pinned for all
+model-bearing CPU jobs. The active `qwen-cpu-probe` task re-verifies the same
+model hashes on CPU. See
+[`infrastructure/kaggle/RESULTS.md`](infrastructure/kaggle/RESULTS.md) for the
+current acceptance contract and
 [`infrastructure/kaggle/RESEARCH_GUIDE.md`](infrastructure/kaggle/RESEARCH_GUIDE.md)
-is now the required workflow. It is backed by commit-addressed source-bundle
-and provenance-checked kernel generators, but no real Research/20 job can be
-generated from current work until the `meta_cortex` module is implemented and
-the intended source is committed cleanly.
+for the required CPU-only workflow. No real Research/20 job can be generated
+from current work until the `meta_cortex` module is implemented and the
+intended source is committed cleanly.
 
 ## 7. Repository state at this snapshot
 
@@ -329,14 +332,14 @@ Required order:
    the task under oracle control, repair or kill the interface before training
    the cortex.
 4. Meta-train write, read, consolidation, and latent articulation across the
-   development task families. Use the verified Kaggle CPU path for instrument
-   and scoring work and the 2×T4 path for frozen-organ/outer-loop batches; pin
+   development task families. Use the verified Kaggle CPU path for instrument,
+   scoring, and frozen-organ/outer-loop batches; pin
    a clean source artifact with
    [`prepare_source_bundle.py`](infrastructure/kaggle/prepare_source_bundle.py)
    and generate the job with
-   [`prepare_research_kernel.py`](infrastructure/kaggle/prepare_research_kernel.py).
-   The pinned Qwen model path has already passed its remote frozen-gradient
-   probe.
+   [`prepare_research_kernel.py`](infrastructure/kaggle/prepare_research_kernel.py)
+   using `--profile cpu`. The pinned Qwen model source has passed its local
+   CPU frozen-gradient probe; remote acceptance is pending.
 5. Freeze all learned parameters and run one-shot held-out meta-test with only
    fast/slow cortex state mutable.
 6. Run all causal state and deletion controls, multiple seeds, trajectories,

@@ -1,4 +1,4 @@
-"""Verify the pinned Qwen language-organ artifact on a Kaggle accelerator.
+"""Verify the pinned Qwen language-organ artifact on a Kaggle CPU kernel.
 
 This is a model/infrastructure probe, not a research experiment. It discovers
 the attached Kaggle model without network access, hashes the artifact files,
@@ -125,27 +125,16 @@ def _parameter_fingerprint(model: torch.nn.Module) -> str:
 
 
 def _device_report(device: torch.device) -> dict[str, Any]:
-    report: dict[str, Any] = {
+    return {
         "selected": str(device),
-        "cuda_available": torch.cuda.is_available(),
-        "cuda_device_count": torch.cuda.device_count(),
+        "cuda_available": False,
+        "cuda_device_count": 0,
         "torch_cuda_version": torch.version.cuda,
+        "name": platform.processor() or platform.machine(),
     }
-    if device.type == "cuda":
-        properties = torch.cuda.get_device_properties(device)
-        report.update(
-            {
-                "name": properties.name,
-                "total_memory_bytes": properties.total_memory,
-                "compute_capability": f"{properties.major}.{properties.minor}",
-            }
-        )
-    else:
-        report["name"] = platform.processor() or platform.machine()
-    return report
 
 
-def run_probe(model_dir: Path, *, metadata_only: bool, allow_cpu: bool) -> dict[str, Any]:
+def run_probe(model_dir: Path, *, metadata_only: bool) -> dict[str, Any]:
     config = _read_config(model_dir / "config.json")
     files = artifact_manifest(model_dir)
     report: dict[str, Any] = {
@@ -184,16 +173,8 @@ def run_probe(model_dir: Path, *, metadata_only: bool, allow_cpu: bool) -> dict[
         report["passed"] = config_valid and bool(files)
         return report
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if device.type != "cuda" and not allow_cpu:
-        raise RuntimeError("the remote model probe requires CUDA; pass --allow-cpu only locally")
+    device = torch.device("cpu")
     report["device"] = _device_report(device)
-    if device.type == "cuda":
-        properties = torch.cuda.get_device_properties(device)
-        if properties.major < 7:
-            raise RuntimeError(
-                f"unsupported GPU compute capability {properties.major}.{properties.minor}"
-            )
 
     from transformers import (
         AutoModelForCausalLM,
@@ -203,7 +184,7 @@ def run_probe(model_dir: Path, *, metadata_only: bool, allow_cpu: bool) -> dict[
         __version__ as transformers_version,
     )
 
-    dtype = torch.float16 if device.type == "cuda" else torch.float32
+    dtype = torch.float32
     load_started = time.perf_counter()
     tokenizer = AutoTokenizer.from_pretrained(
         model_dir,
@@ -231,8 +212,6 @@ def run_probe(model_dir: Path, *, metadata_only: bool, allow_cpu: bool) -> dict[
         inputs_embeds = model.get_input_embeddings()(input_ids)
     inputs_embeds = inputs_embeds.detach().requires_grad_(True)
 
-    if device.type == "cuda":
-        torch.cuda.synchronize(device)
     forward_started = time.perf_counter()
     output = model(
         inputs_embeds=inputs_embeds,
@@ -242,8 +221,6 @@ def run_probe(model_dir: Path, *, metadata_only: bool, allow_cpu: bool) -> dict[
     )
     scalar = output.logits[:, -1, :128].float().square().mean()
     scalar.backward()
-    if device.type == "cuda":
-        torch.cuda.synchronize(device)
     forward_backward_seconds = time.perf_counter() - forward_started
 
     input_gradient = inputs_embeds.grad
@@ -299,7 +276,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-dir", type=Path)
     parser.add_argument("--output", type=Path, default=_default_output())
     parser.add_argument("--metadata-only", action="store_true")
-    parser.add_argument("--allow-cpu", action="store_true")
     return parser.parse_args()
 
 
@@ -311,7 +287,6 @@ def main() -> int:
         report = run_probe(
             model_dir,
             metadata_only=args.metadata_only,
-            allow_cpu=args.allow_cpu,
         )
     except Exception as error:
         report = {

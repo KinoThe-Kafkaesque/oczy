@@ -19,7 +19,6 @@ SCHEMA_VERSION = "oczy/kaggle-research-job/v1"
 DEFAULT_MODEL_SOURCE = "qwen-lm/qwen2.5/transformers/0.5b-instruct/1"
 PROFILES = {
     "cpu": {"enable_gpu": False, "machine_shape": ""},
-    "t4": {"enable_gpu": True, "machine_shape": "NvidiaTeslaT4"},
 }
 PHASES = ("instrument", "oracle", "development", "meta-test", "analysis")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -41,6 +40,15 @@ import tarfile
 import time
 import traceback
 from pathlib import Path
+
+# --- CPU-only offline contract: must be set before importing torch ---
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ["OMP_NUM_THREADS"] = "4"
+os.environ["MKL_NUM_THREADS"] = "4"
+os.environ["OCZY_REMOTE_CPU_ONLY"] = "1"
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import torch
 
@@ -128,33 +136,38 @@ def hardware() -> dict:
         "platform": platform.platform(),
         "python": sys.version.split()[0],
         "torch": torch.__version__,
-        "cuda_available": torch.cuda.is_available(),
-        "cuda_device_count": torch.cuda.device_count(),
+        "cuda_available": False,
+        "cuda_device_count": 0,
         "torch_cuda_version": torch.version.cuda,
     }
-    if torch.cuda.is_available():
-        data["devices"] = [
-            {
-                "index": index,
-                "name": torch.cuda.get_device_properties(index).name,
-                "compute_capability": (
-                    f"{torch.cuda.get_device_properties(index).major}."
-                    f"{torch.cuda.get_device_properties(index).minor}"
-                ),
-                "total_memory_bytes": torch.cuda.get_device_properties(index).total_memory,
-            }
-            for index in range(torch.cuda.device_count())
-        ]
     return data
 
 
 def main() -> int:
+    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+    profile = JOB_SPEC.get("profile")
+    if cuda_visible != "" or profile != "cpu":
+        raise RuntimeError(
+            "CPU-only contract violated: CUDA_VISIBLE_DEVICES must be empty "
+            "and profile must be 'cpu'. Refusing to run with GPU access."
+        )
+    cuda_available = False
     report = {
         "schema_version": JOB_SPEC["schema_version"],
         "job_spec": JOB_SPEC,
         "status": "starting",
         "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "hardware": hardware(),
+        "cpu_only_contract": {
+            "profile": JOB_SPEC.get("profile"),
+            "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+            "cuda_available": cuda_available,
+            "omp_num_threads": os.environ.get("OMP_NUM_THREADS"),
+            "mkl_num_threads": os.environ.get("MKL_NUM_THREADS"),
+            "oczy_remote_cpu_only": os.environ.get("OCZY_REMOTE_CPU_ONLY"),
+            "hf_hub_offline": os.environ.get("HF_HUB_OFFLINE"),
+            "transformers_offline": os.environ.get("TRANSFORMERS_OFFLINE"),
+        },
     }
     write_report(report)
     try:
@@ -164,9 +177,7 @@ def main() -> int:
         model_dir = find_model()
         if model_dir is not None:
             os.environ["OCZY_MODEL_DIR"] = str(model_dir)
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
         report.update(
             {
                 "status": "running",
@@ -176,6 +187,7 @@ def main() -> int:
             }
         )
         write_report(report)
+        os.chdir(source_root)
         sys.argv = [JOB_SPEC["module"], *JOB_SPEC["arguments"]]
         runpy.run_module(JOB_SPEC["module"], run_name="__main__", alter_sys=True)
     except SystemExit as error:
@@ -247,7 +259,6 @@ def prepare_kernel(
     if any(path.exists() for path in generated) and not force:
         raise FileExistsError(f"refusing to overwrite generated files in {output}")
 
-    profile_data = PROFILES[profile]
     effective_model_source = model_source
     if effective_model_source is None and phase in {"oracle", "development", "meta-test"}:
         effective_model_source = DEFAULT_MODEL_SOURCE
@@ -279,10 +290,10 @@ def prepare_kernel(
             "language": "python",
             "kernel_type": "script",
             "is_private": True,
-            "enable_gpu": profile_data["enable_gpu"],
+            "enable_gpu": False,
             "enable_tpu": False,
             "enable_internet": False,
-            "machine_shape": profile_data["machine_shape"],
+            "machine_shape": "",
             "dataset_sources": [source_dataset],
             "competition_sources": [],
             "kernel_sources": [],
@@ -298,7 +309,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kernel-id", required=True)
     parser.add_argument("--title", required=True)
     parser.add_argument("--phase", choices=PHASES, required=True)
-    parser.add_argument("--profile", choices=tuple(PROFILES), required=True)
+    parser.add_argument("--profile", choices=tuple(PROFILES), default="cpu")
     parser.add_argument("--source-dataset", required=True)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--source-archive-sha256", required=True)
