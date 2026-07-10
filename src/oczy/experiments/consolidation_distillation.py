@@ -131,6 +131,12 @@ class LoRAAdapter:
         for h in self.hooks:
             h.remove()
         self.hooks.clear()
+        for layer_idx, proj_name in tuple(self.A):
+            delattr(self.model, f"lora_A_{layer_idx}_{proj_name}")
+            delattr(self.model, f"lora_B_{layer_idx}_{proj_name}")
+        self.A.clear()
+        self.B.clear()
+        self._module_map.clear()
 
     def calibrate(
         self,
@@ -322,9 +328,7 @@ def _distill_correction(
     loss_sum = 0.0
     n_updates = 0
 
-    n_prompts = len(entries)
     for _ in range(max_steps):
-        optimizer.zero_grad()
         for p_idx, (prompt_count, student_ids, _teacher_ids) in enumerate(entries):
             start = prompt_count - 1
             end = start + answer_count
@@ -343,15 +347,16 @@ def _distill_correction(
                 F.softmax(t_logits, dim=-1),
                 reduction="batchmean",
                 log_target=False,
-            ) / n_prompts
+            )
 
+            optimizer.zero_grad()
             loss.backward()
-            loss_sum += float(loss.item()) * n_prompts
+            optimizer.step()
 
-        optimizer.step()
-        n_updates += 1
+            loss_sum += float(loss.item())
+            n_updates += 1
 
-    return {"loss_mean": loss_sum / max(n_updates * n_prompts, 1), "n_updates": n_updates}
+    return {"loss_mean": loss_sum / max(n_updates, 1), "n_updates": n_updates}
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +389,7 @@ def _score_stage(
 
 
 def _run_one_seed(
+    driver: HFDriver,
     seed: int,
     stage: Stage,
     dev_ids: set[str],
@@ -401,7 +407,6 @@ def _run_one_seed(
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    driver = HFDriver.load()
     tokenizer = driver._tokenizer
     model = driver._model
     model.requires_grad_(False)
@@ -482,10 +487,9 @@ def _run_one_seed(
     persistent_bytes = len(pickle.dumps(state, protocol=pickle.HIGHEST_PROTOCOL))
 
     adapter.remove()
-    driver.close()
+    driver.clear_reserved_position()
+    del state, adapter
     gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
 
     return {
         "seed": seed,
@@ -542,11 +546,13 @@ def main(argv: list[str] | None = None) -> int:
     other_names = tuple(n for n in STAGE_ORDER if n != args.stage)
     other_stages = build_curriculum(stage_names=other_names)
 
+    driver = HFDriver.load()
     results: list[dict[str, Any]] = []
     for seed in range(args.seeds):
         print(f"# seed {seed}", file=sys.stderr)
         t0 = time.monotonic()
         r = _run_one_seed(
+            driver=driver,
             seed=seed,
             stage=stage,
             dev_ids=dev_ids,
@@ -563,6 +569,9 @@ def main(argv: list[str] | None = None) -> int:
         results.append(r)
         for k, v in r.items():
             print(f"ASI seed_{seed}_{k}={v}", file=sys.stderr)
+        gc.collect()
+    driver.close()
+    gc.collect()
 
     deltas = [r["distill_delta_holdout"] for r in results]
     specificities = [r["specificity_delta"] for r in results]
