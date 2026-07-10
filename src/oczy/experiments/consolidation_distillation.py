@@ -54,6 +54,7 @@ class LoRAAdapter:
         self.A: dict[tuple[int, str], torch.nn.Parameter] = {}
         self.B: dict[tuple[int, str], torch.nn.Parameter] = {}
         self.hooks: list[torch.utils.hooks.RemovableHandle] = []
+        self._module_map: dict[tuple[int, str], torch.nn.Linear] = {}
         self._register_hooks()
 
     def _register_hooks(self) -> None:
@@ -90,6 +91,7 @@ class LoRAAdapter:
                 self.model.register_parameter(f"lora_B_{layer_idx}_{proj_name}", b)
                 self.A[key] = a
                 self.B[key] = b
+                self._module_map[key] = module
 
                 def hook(
                     module: torch.nn.Module,
@@ -125,6 +127,103 @@ class LoRAAdapter:
         for h in self.hooks:
             h.remove()
         self.hooks.clear()
+
+    def calibrate(
+        self,
+        driver: HFDriver,
+        tokenizer: Any,
+        dev_episodes: list[Any],
+        svd_target: float = 0.01,
+    ) -> None:
+        """Initialize A and B with the rank-r SVD of the distillation gradient.
+
+        For each dev episode, compute the gradient of the base model's weights
+        with respect to the KL loss against the prefix-conditioned teacher on
+        the answer positions.  The accumulated gradient is a (out, in) matrix
+        dW; we take the rank-r SVD of dW.T to produce A (in, rank) and B
+        (rank, out) so that A @ B approximates dW.T.  B is then scaled so the
+        LoRA effective matrix has Frobenius norm ``svd_target``.
+        """
+        self.set_enabled(False)
+
+        # Enable gradient for target weights only.
+        for key, module in self._module_map.items():
+            module.weight.requires_grad = True
+            if module.weight.grad is not None:
+                module.weight.grad.zero_()
+
+        n = 0
+        for ep in dev_episodes:
+            prefix = ep.correction_utterance
+            request = ep.initial_request
+            answer = ep.corrected_response
+            answer_text = " " + answer
+            prefix_count = _token_count(tokenizer, prefix)
+            answer_count = len(tokenizer.encode(answer_text, add_special_tokens=False))
+            if answer_count <= 0:
+                continue
+            for prompt in _distillation_prompts(request):
+                prompt_count = _token_count(tokenizer, prompt)
+                student_text = prompt + answer_text
+                teacher_text = prefix + " " + student_text
+                student_ids = tokenizer.encode(student_text, add_special_tokens=True)
+                teacher_ids = tokenizer.encode(teacher_text, add_special_tokens=True)
+
+                t_ids = torch.tensor([teacher_ids], dtype=torch.long, device="cpu")
+                s_ids = torch.tensor([student_ids], dtype=torch.long, device="cpu")
+
+                with torch.no_grad():
+                    t_out = driver._model(
+                        input_ids=t_ids, use_cache=False, output_hidden_states=False
+                    )
+                    t_start = prefix_count + prompt_count - 1
+                    t_end = t_start + answer_count
+                    t_logits = t_out.logits[:, t_start:t_end, :]
+
+                s_out = driver._model(
+                    input_ids=s_ids, use_cache=False, output_hidden_states=False
+                )
+                s_start = prompt_count - 1
+                s_end = s_start + answer_count
+                s_logits = s_out.logits[:, s_start:s_end, :]
+
+                loss = F.kl_div(
+                    F.log_softmax(s_logits, dim=-1),
+                    F.softmax(t_logits, dim=-1),
+                    reduction="batchmean",
+                    log_target=False,
+                )
+                loss.backward()
+                n += 1
+
+        with torch.no_grad():
+            n = max(n, 1)
+            for key, module in self._module_map.items():
+                a = self.A[key]
+                b = self.B[key]
+                dW = module.weight.grad / n
+                if dW is None:
+                    continue
+                try:
+                    U, S, Vt = torch.linalg.svd(dW.T, full_matrices=False)
+                except RuntimeError:
+                    # Fallback to the existing random init.
+                    continue
+                U_r = U[:, : self.rank]
+                Vt_r = Vt[: self.rank, :]
+                S_r = S[: self.rank]
+                a.copy_(U_r)
+                b.copy_(S_r.unsqueeze(1) * Vt_r)
+                # Scale the effective matrix to the target Frobenius norm.
+                eff_norm = float((a @ b).norm().item())
+                if eff_norm > 0:
+                    scale = svd_target / eff_norm
+                    b.mul_(scale)
+                if module.weight.grad is not None:
+                    module.weight.grad.zero_()
+                module.weight.requires_grad = False
+
+        self.set_enabled(True)
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +388,8 @@ def _run_one_seed(
     lora_rank: int,
     lora_lr: float,
     lora_alpha: float,
+    calibrate: bool = False,
+    svd_target: float = 0.01,
 ) -> dict[str, Any]:
     """Run research 18 for one random seed."""
     random.seed(seed)
@@ -305,6 +406,9 @@ def _run_one_seed(
 
     dev_episode_ids = {pid.split("|")[0] for pid in dev_ids}
     dev_episodes = [ep for ep in stage.episodes if ep.id in dev_episode_ids]
+
+    if calibrate:
+        adapter.calibrate(driver, tokenizer, dev_episodes, svd_target=svd_target)
 
     rng = random.Random(seed)
     teach_order = list(stage.episodes)
@@ -420,6 +524,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--lora-rank", type=int, default=8, help="LoRA rank")
     parser.add_argument("--lora-alpha", type=float, default=16.0, help="LoRA alpha scaling")
     parser.add_argument("--lora-lr", type=float, default=0.005, help="LoRA learning rate")
+    parser.add_argument("--calibrate", action="store_true", help="SVD-initialize LoRA from dev distillation gradient")
+    parser.add_argument("--svd-target", type=float, default=0.01, help="target Frobenius norm for calibrated LoRA effective matrix")
     parser.add_argument("--stage", type=str, default="stage_0_grounding", help="target stage")
     args = parser.parse_args(argv)
 
@@ -445,6 +551,8 @@ def main(argv: list[str] | None = None) -> int:
             lora_rank=args.lora_rank,
             lora_lr=args.lora_lr,
             lora_alpha=args.lora_alpha,
+            calibrate=args.calibrate,
+            svd_target=args.svd_target,
         )
         r["wall_s"] = time.monotonic() - t0
         results.append(r)
@@ -465,6 +573,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"ASI lora_alpha={args.lora_alpha}")
     print(f"ASI max_steps={args.max_steps}")
     print(f"ASI lora_lr={args.lora_lr}")
+    print(f"ASI calibrate={args.calibrate}")
+    print(f"ASI svd_target={args.svd_target}")
     print(f"ASI stage={args.stage}")
 
     return 0
