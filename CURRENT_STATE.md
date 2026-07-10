@@ -249,6 +249,13 @@ frozen-parameter hash checks, and reported `cuda_available: false`. The
 `qwen-cpu-probe` kernel (`abdellahkadem/oczy-qwen-cpu-probe`) completed
 remotely with `passed: true` on 2026-07-10 (v1).
 
+The `cpu-bootstrap-probe` kernel
+(`abdellahkadem/oczy-cpu-bootstrap-probe`) completed remotely with `passed: true`
+on 2026-07-10 (v4), verifying the full generated-job pipeline: source bundling,
+opaque archive extraction under `/tmp/`, the generated `run.py` bootstrap, and
+provenance logging. Two previously failing modes (v1 null JSON, v2 Kaggle
+auto-extraction) are diagnosed and covered by regression tests.
+
 GPU verification (T4, P100, L4, and the T4-based Qwen model probe) from
 2026-07-09 is preserved as historical evidence under
 [`infrastructure/kaggle/archive/gpu/`](infrastructure/kaggle/archive/gpu/).

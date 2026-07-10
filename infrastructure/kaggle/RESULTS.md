@@ -9,6 +9,7 @@
 | Task | Kernel slug | Profile | Local status | Remote status |
 |---|---|---|---|---|
 | Cortex smoke | `abdellahkadem/oczy-cortex-cpu-smoke` | `cpu` | PASS | verified 2026-07-10 (v4) |
+| Generated bootstrap probe | `abdellahkadem/oczy-cpu-bootstrap-probe` | `cpu` | PASS | verified 2026-07-10 (v4) |
 | Qwen CPU probe | `abdellahkadem/oczy-qwen-cpu-probe` | `cpu` | PASS | verified 2026-07-10 (v1) |
 
 The `cpu-smoke` task is the infrastructure plumbing verification: a synthetic
@@ -98,6 +99,51 @@ completed remotely on a Kaggle x86_64 CPU. The report recorded:
 - `passed: true`;
 - `cuda_available: false`;
 - runner SHA `3c8cddceea2d5ddd5e083db8e42af0d83bfffcf68d9d0363596c8c241d715fe2`.
+
+## Verified generated bootstrap probe result (2026-07-10)
+
+The generated research-bootstrap kernel
+[`oczy-cpu-bootstrap-probe` v4](https://www.kaggle.com/code/abdellahkadem/oczy-cpu-bootstrap-probe)
+completed remotely on a Kaggle x86_64 CPU. This kernel exercises the full
+`prepare_source_bundle.py` &#x2192; `prepare_research_kernel.py` pipeline: a
+commit-addressed private source dataset, opaque archive extraction under
+`/tmp/...` (not `/kaggle/working`), pinned Qwen model attachment, and the
+generated `run.py` bootstrap with hardware and environment provenance checks.
+
+Key evidence:
+
+- clean committed source `9dfa484dc5ea0d48f06673ad27a6b64678ce7619`;
+- source dataset `abdellahkadem/oczy-source-9dfa484dc5ea`;
+- opaque archive `source.tar.gz.bin`, SHA-256
+  `5a0d2990473ac35cf373be4af61f7c4066f113f73c5fc0874430cfd2ae7d77b1`,
+  dirty=false;
+- source extracted under a temporary directory (`/tmp/...`), not under
+  `/kaggle/working`;
+- pulled output contains exactly three files:
+  `qwen_model_probe.json`, `remote_run_provenance.json`, and the kernel log;
+- Qwen CPU probe within the bootstrap passed: float32 forward, finite
+  input-embedding gradient norm 357.657470703125, no model-parameter gradients,
+  parameter fingerprint unchanged;
+- `passed: true`;
+- `cuda_available: false`, `cuda_device_count: 0`;
+- `CUDA_VISIBLE_DEVICES=""` verified before torch import;
+- CPU profile with `OMP_NUM_THREADS=4`, `MKL_NUM_THREADS=4`,
+  `enable_gpu: false`, `enable_tpu: false`, `enable_internet: false`.
+
+**Failure history and regression tests.** v1 failed with a raw JSON null
+artifact (bootstrap serialization issue). v2 failed when Kaggle auto-extracted
+the source tarball, bypassing the private-dataset extraction path. Both failures
+are diagnosed, fixed, and covered by regression tests in the infrastructure
+test suite. v3 ran successfully but left the extracted source in the pulled
+output; v4 produces the compact three-file output documented above.
+
+The generated bootstrap probes the same pinned Qwen2.5-0.5B-Instruct model
+(hashes match the reference in the pinned model source section) and the same
+CPU-only contract as the `cpu-smoke` and `qwen-cpu-probe` tasks. It is the
+infrastructure proof that the full generated-job pipeline — source bundling,
+opaque archiving, kernel generation, extraction, model attachment, bootstrap
+execution, and provenance logging — works end to end on a remote CPU. It is
+not evidence for the cortex hypothesis; it is a verified compute substrate.
 
 ## Historical GPU evidence
 
