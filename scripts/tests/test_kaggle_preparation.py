@@ -533,6 +533,62 @@ def test_generated_bootstrap_changes_cwd_to_source_root(tmp_path: Path) -> None:
     assert chdir_pos < runpy_pos, "os.chdir(source_root) must happen before runpy.run_module"
 
 
+def test_generated_bootstrap_extracts_source_to_temp_not_persisted(tmp_path: Path) -> None:
+    """The bootstrap must extract the source archive into a temporary directory
+    under the system temp dir (``tempfile.mkdtemp``), never into a path below
+    ``/kaggle/working``.
+
+    Extracting into ``/kaggle/working/source`` caused ``kaggle kernels output``
+    to download every tracked source file alongside the run report.  A
+    ``tempfile.mkdtemp()`` directory lives outside ``/kaggle/working`` and is
+    not persisted as kernel output, so only the provenance report is
+    downloaded.
+
+    The bootstrap must still ``os.chdir(source_root)`` so the target module
+    runs from the extracted source root.
+    """
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=False,
+    )
+    source = (output / "run.py").read_text()
+
+    # Source must be extracted via tempfile.mkdtemp() — a non-persisted
+    # directory under the system temp dir, not /kaggle/working.
+    assert "import tempfile" in source, "bootstrap must import tempfile"
+    assert "tempfile.mkdtemp()" in source, (
+        "bootstrap must extract source via tempfile.mkdtemp()"
+    )
+    assert "/kaggle/working/source" not in source, (
+        "bootstrap must not extract source into /kaggle/working/source; "
+        "that path is persisted by kaggle kernels output and bloats downloads"
+    )
+
+    # The cwd-to-source-root contract is preserved: the temp path is still
+    # used as the working directory before runpy.run_module.
+    chdir_pos = source.find("os.chdir(source_root)")
+    runpy_pos = source.find("runpy.run_module")
+    assert chdir_pos != -1, "os.chdir(source_root) must remain in bootstrap"
+    assert runpy_pos != -1
+    assert chdir_pos < runpy_pos, (
+        "os.chdir(source_root) must happen before runpy.run_module"
+    )
+
+
+
 def test_generated_bootstrap_propagates_model_dir(tmp_path: Path) -> None:
     """The bootstrap must set OCZY_MODEL_DIR when a model is found."""
     output = tmp_path / "job"

@@ -37,6 +37,7 @@ import platform
 import runpy
 import sys
 import tarfile
+import tempfile
 import time
 import traceback
 from pathlib import Path
@@ -172,7 +173,7 @@ def main() -> int:
     write_report(report)
     try:
         archive, source_manifest = find_source()
-        source_root = safe_extract(archive, Path("/kaggle/working/source"))
+        source_root = safe_extract(archive, Path(tempfile.mkdtemp()))
         add_source_paths(source_root)
         model_dir = find_model()
         if model_dir is not None:
