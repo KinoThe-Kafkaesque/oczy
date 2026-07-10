@@ -96,6 +96,92 @@ A run counts as wired only when its JSON artifact has `passed: true`,
 `cuda_available: false`, and `cuda_device_count: 0`. See
 [`RESULTS.md`](RESULTS.md) for the full acceptance contract.
 
+## Parallel batch scheduling
+
+For many-jobs fan-out, the **parallel scheduler** (`parallel_scheduler.py`)
+manages a batch of private CPU-only Kaggle kernels with bounded concurrency,
+crash-safe durable state, and automatic resume.
+
+### Batch schema
+
+A batch manifest (``oczy/kaggle-parallel-batch/v1``) lists the jobs:
+
+```json
+{
+  "schema_version": "oczy/kaggle-parallel-batch/v1",
+  "jobs": [
+    {
+      "name": "smoke-seed-0",
+      "kernel_dir": "build/smoke-seed-0",
+      "output_dir": "reports/kaggle/smoke-seed-0"
+    },
+    {
+      "name": "smoke-seed-1",
+      "kernel_dir": "build/smoke-seed-1",
+      "output_dir": "reports/kaggle/smoke-seed-1"
+    }
+  ]
+}
+```
+
+Each ``kernel_dir`` must be a directory produced by
+``prepare_research_kernel.py`` containing ``kernel-metadata.json`` and
+``job_spec.json``. Validation rejects any kernel that is not private,
+CPU-only, or has a title that would create a different Kaggle slug than
+its ``id`` field (a real failure discovered and fixed during scheduler
+development).
+
+### Run and status
+
+```bash
+# Run the batch (default max 8 concurrent, max 10)
+uv run python infrastructure/kaggle/parallel_scheduler.py run \
+  infrastructure/kaggle/my-batch.json \
+  --state /tmp/parallel-state.json
+
+# Check status without submitting
+uv run python infrastructure/kaggle/parallel_scheduler.py status \
+  infrastructure/kaggle/my-batch.json \
+  --state /tmp/parallel-state.json
+```
+
+Use ``--max-parallel N`` to cap concurrent remote jobs (default 8, max 10,
+min 1). The ``--push-timeout`` and ``--job-timeout`` flags control the
+Kaggle run-time limit and maximum wall-clock wait per job (default 21,600 s
+each).
+
+The ``--state`` file is written atomically after every lifecycle transition:
+
+1. **pending** — ready to submit
+2. **submitting** — push in progress
+3. **running** — submitted, waiting for Kaggle
+4. **collecting** — complete, downloading output
+5. **succeeded** — output collected
+
+A job enters **failed** on push error, kernel error status, output
+collection failure, or timeout.
+
+Resume kills the process (or the machine reboots) and re-run the same
+command: interrupted ``submitting``/``collecting`` jobs are converted back
+to ``pending``/``running``, and already-``running`` kernels are never
+resubmitted. Only new jobs from an updated batch manifest are added.
+
+The JSON summary is printed on completion (exit code 0 if all succeeded,
+1 if any failed). The final state file is preserved for post-hoc
+inspection.
+
+### Verified concurrent execution
+
+Two CPU smoke kernels
+(``abdellahkadem/oczy-scheduler-cpu-smoke-1`` and
+``abdellahkadem/oczy-scheduler-cpu-smoke-2``) were submitted with
+``max_parallel=2`` on 2026-07-10. Both succeeded in one attempt and
+reported ``passed: true``, ``cuda_available: false``. The scheduler
+recorded submission timestamps differing by approximately 1.85 s while
+completion times overlapped, confirming genuine concurrent remote
+execution on Kaggle CPU. See [`RESULTS.md`](RESULTS.md) for the
+complete evidence.
+
 ## Source bundling and kernel generation
 
 The source and kernel preparation commands used by the full workflow are:

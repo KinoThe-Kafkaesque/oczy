@@ -25,6 +25,16 @@ SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
+def _title_slug(title: str) -> str:
+    """Kaggle clean-URL title slug.
+
+    Lowercase, collapse each run of non-ASCII-alphanumeric characters to a
+    single hyphen, and strip leading/trailing hyphens.  This mirrors how
+    Kaggle derives the final path component of a kernel URL from its title.
+    """
+    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+
+
 BOOTSTRAP_TEMPLATE = '''\
 """Generated Oczy Kaggle research bootstrap. Do not edit by hand."""
 
@@ -253,6 +263,14 @@ def prepare_kernel(
         raise ValueError("meta-test generation requires manifest hash and human sign-off ID")
     if instrument_manifest_sha256 and not SHA256_PATTERN.fullmatch(instrument_manifest_sha256):
         raise ValueError("instrument manifest hash must be a lowercase SHA-256")
+    title_slug = _title_slug(title)
+    id_slug = kernel_id.rsplit("/", 1)[-1]
+    if title_slug != id_slug:
+        raise ValueError(
+            f"title {title!r} resolves to slug {title_slug!r} but kernel_id "
+            f"{kernel_id!r} ends with {id_slug!r}; Kaggle would create the "
+            f"kernel under a different slug and polling the requested id would fail"
+        )
 
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)

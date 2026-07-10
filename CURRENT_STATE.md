@@ -271,11 +271,13 @@ model hashes on CPU. See
 [`infrastructure/kaggle/RESULTS.md`](infrastructure/kaggle/RESULTS.md) for the
 current acceptance contract and
 [`infrastructure/kaggle/RESEARCH_GUIDE.md`](infrastructure/kaggle/RESEARCH_GUIDE.md)
-for the required CPU-only workflow. No real Research/20 job can be generated
-from current work until the `meta_cortex` module is implemented and the
-intended source is committed cleanly.
-
-## 7. Repository state at this snapshot
+for the required CPU-only workflow. A durable parallel scheduler
+(`parallel_scheduler.py`, batch schema `oczy/kaggle-parallel-batch/v1`) was
+verified on 2026-07-10 with two concurrently submitted CPU smoke kernels,
+proving bounded-parallel submission, lifecycle state, and crash-safe resume.
+No real Research/20 job can be generated from current work until the
+`meta_cortex` module is implemented and the intended source is committed
+cleanly.
 
 - Branch: `autoresearch/session-20260625`.
 - The historical local branch was fast-forward published to

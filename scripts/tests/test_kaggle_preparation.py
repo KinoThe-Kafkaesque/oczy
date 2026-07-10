@@ -393,6 +393,72 @@ def test_meta_test_kernel_succeeds_with_signoff(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 2b. Title/id slug consistency — regression for Kaggle clean-URL mismatch
+# ---------------------------------------------------------------------------
+
+
+def test_prepare_kernel_rejects_title_id_slug_mismatch(tmp_path: Path) -> None:
+    """Regression: Kaggle derives the kernel URL slug from the *title*, not
+    the metadata ``id``.  When the title-derived slug differs from the
+    ``id``'s final component, Kaggle creates the kernel under an unexpected
+    slug and subsequent polling of the requested ``id`` fails.
+
+    Real failure: id ``abdellahkadem/oczy-scheduler-smoke-1`` with title
+    ``Oczy Scheduler CPU Smoke 1`` was created as
+    ``abdellahkadem/oczy-scheduler-cpu-smoke-1``, so polling the requested
+    id never found the kernel.
+
+    Generation must reject this *before* producing any files.
+    """
+    with pytest.raises(ValueError, match="resolves to slug"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="abdellahkadem/oczy-scheduler-smoke-1",
+            title="Oczy Scheduler CPU Smoke 1",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="run_cortex_smoke",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=False,
+        )
+    # No generated files should exist.
+    assert not (tmp_path / "job" / "kernel-metadata.json").exists()
+    assert not (tmp_path / "job" / "run.py").exists()
+    assert not (tmp_path / "job" / "job_spec.json").exists()
+
+
+def test_prepare_kernel_accepts_matching_title_id_slug(tmp_path: Path) -> None:
+    """When the title-derived slug equals the ``id``'s final component,
+    generation succeeds and the metadata records both verbatim."""
+    job_spec = prepare_kernel(
+        output=tmp_path / "job",
+        kernel_id="abdellahkadem/oczy-scheduler-smoke-1",
+        title="Oczy Scheduler Smoke 1",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="run_cortex_smoke",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=False,
+    )
+    assert job_spec["phase"] == "development"
+    meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text())
+    assert meta["id"] == "abdellahkadem/oczy-scheduler-smoke-1"
+    assert meta["title"] == "Oczy Scheduler Smoke 1"
+
+
+# ---------------------------------------------------------------------------
 # 3. Generated bootstrap compiles and sets CPU/offline/thread env before torch
 # ---------------------------------------------------------------------------
 

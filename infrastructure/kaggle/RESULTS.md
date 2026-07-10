@@ -145,6 +145,53 @@ opaque archiving, kernel generation, extraction, model attachment, bootstrap
 execution, and provenance logging — works end to end on a remote CPU. It is
 not evidence for the cortex hypothesis; it is a verified compute substrate.
 
+
+## Verified parallel scheduler result (2026-07-10)
+
+The durable parallel scheduler
+(``parallel_scheduler.py``, batch schema ``oczy/kaggle-parallel-batch/v1``)
+was verified with two CPU smoke kernels submitted concurrently at
+``max_parallel=2`` on 2026-07-10. This test validates the full scheduler
+pipeline: batch loading, CPU-only validation, title/slug guard, bounded
+concurrent submission, polling, output collection, durable state, and
+lifecycle transitions.
+
+**Evidence:**
+
+| Kernel | State | Attempts | ``passed`` | ``cuda_available`` | ``submitted_at`` | ``completed_at`` |
+|---|---|---|---|---|---|---|
+| ``abdellahkadem/oczy-scheduler-cpu-smoke-1`` | succeeded | 1 | ``true`` | ``false`` | 2026-07-10 23:20:17.60 UTC | 2026-07-10 23:21:05.00 UTC |
+| ``abdellahkadem/oczy-scheduler-cpu-smoke-2`` | succeeded | 1 | ``true`` | ``false`` | 2026-07-10 23:20:19.45 UTC | 2026-07-10 23:21:05.95 UTC |
+
+**Concurrent execution proof.** The submission timestamps differ by
+approximately 1.85 s (both submitted within one poll cycle at
+``max_parallel=2``). Both remained active over the same approximately
+45-second interval and completed approximately 0.96 s apart. This is the
+expected pattern for two jobs running concurrently on separate remote CPU
+machines. It confirms the scheduler submits multiple kernels before polling
+the first and that Kaggle dispatched both during the same active interval.
+
+**Lifecycle verification.** Both jobs flowed through the full lifecycle:
+pending -> submitting -> running -> collecting -> succeeded, in one
+attempt each. The durable state file was written atomically after every
+transition and could be inspected with the ``status`` subcommand at any
+point.
+
+**Contract enforcement.** The scheduler rejected the original kernel
+directories because the title "Oczy Scheduler CPU Smoke 1" generated the
+Kaggle slug ``oczy-scheduler-cpu-smoke-1`` while the kernel metadata ``id``
+was set to ``abdellahkadem/oczy-scheduler-smoke-1`` — a mismatch that
+would have caused Kaggle to create the kernel under a different slug and
+all subsequent polling to fail. This guard was discovered, fixed, and
+verified during the same session. See
+`prepare_research_kernel.py` ``_title_slug()`` and
+``parallel_scheduler.py`` ``_validate_kernel()``.
+
+The state file and pulled kernel output are not checked into the
+repository — they are transient operator artifacts in a temporary
+directory, preserved only as session log evidence. The scheduler
+verification is infrastructure proof, not a scientific result.
+
 ## Historical GPU evidence
 
 GPU verification results (T4, P100, L4) from 2026-07-09 are preserved under
