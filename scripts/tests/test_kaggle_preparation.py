@@ -32,6 +32,7 @@ import os
 import runpy
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -78,7 +79,7 @@ def test_source_bundle_is_commit_addressed_and_rejects_dirty_worktree(tmp_path: 
         force=False,
     )
 
-    archive = output / "source.tar.gz"
+    archive = output / "source.tar.gz.bin"
     assert manifest["commit"]
     assert manifest["dataset_id"].endswith(manifest["commit"][:12])
     assert manifest["worktree_dirty_at_packaging"] is False
@@ -97,6 +98,56 @@ def test_source_bundle_is_commit_addressed_and_rejects_dirty_worktree(tmp_path: 
             allow_dirty_worktree=False,
             force=False,
         )
+
+
+def test_source_bundle_archive_name_is_opaque_to_kaggle_auto_extraction(tmp_path: Path) -> None:
+    """Kaggle auto-extracts recognized archive suffixes (``.tar.gz``, ``.zip``,
+    ``.tar``) at mount time, which would remove the sibling archive the manifest
+    declares. The bundle must ship under an opaque filename Kaggle mounts
+    unchanged, while remaining a valid gzip tar readable via ``tarfile``.
+
+    This test would fail if the archive were named ``source.tar.gz`` (a
+    Kaggle-recognized suffix) and passes for the opaque ``source.tar.gz.bin``.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "test@example.invalid")
+    _git(repo, "config", "user.name", "Test User")
+    (repo / "pyproject.toml").write_text("[project]\nname='fixture'\n", encoding="utf-8")
+    _git(repo, "add", "pyproject.toml")
+    _git(repo, "commit", "-m", "fixture")
+
+    output = tmp_path / "bundle"
+    manifest = prepare_bundle(
+        repo_root=repo,
+        revision="HEAD",
+        output=output,
+        dataset_id=None,
+        allow_dirty_worktree=False,
+        force=False,
+    )
+
+    archive_filename = manifest["archive"]["filename"]
+    archive_path = output / archive_filename
+
+    # Kaggle-recognized archive suffixes that trigger auto-extraction at mount.
+    kaggle_auto_extract_suffixes = (".tar.gz", ".tar.bz2", ".tar.xz", ".zip", ".tar")
+    assert not archive_filename.endswith(kaggle_auto_extract_suffixes), (
+        f"archive filename {archive_filename!r} ends with a Kaggle-recognized "
+        f"archive suffix and would be auto-extracted, removing the sibling "
+        f"the manifest declares"
+    )
+
+    # SHA-256 provenance from the manifest must match the actual file bytes.
+    assert manifest["archive"]["sha256"] == hashlib.sha256(archive_path.read_bytes()).hexdigest()
+
+    # Despite the opaque extension, the file must be a valid gzip tar.
+    with tarfile.open(str(archive_path), "r:gz") as tf:
+        members = tf.getnames()
+    assert "oczy/pyproject.toml" in members, (
+        f"oczy/pyproject.toml not found in archive; members={members[:10]}..."
+    )
 
 
 def test_generator_rejects_t4_profile(tmp_path: Path) -> None:
