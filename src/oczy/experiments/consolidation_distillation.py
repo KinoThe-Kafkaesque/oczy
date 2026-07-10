@@ -75,39 +75,43 @@ class LoRAAdapter:
             raise RuntimeError("Cannot find decoder layers for LoRA")
 
         for layer_idx, layer in enumerate(layers):
-            attn = getattr(layer, "self_attn", None)
-            if attn is None:
-                continue
-            for proj_name in ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"):
-                module = getattr(attn, proj_name, None)
-                if not isinstance(module, torch.nn.Linear):
+            proj_groups = [
+                (getattr(layer, "self_attn", None), ["q_proj", "k_proj", "v_proj", "o_proj"]),
+                (getattr(layer, "mlp", None), ["gate_proj", "up_proj", "down_proj"]),
+            ]
+            for group, proj_names in proj_groups:
+                if group is None:
                     continue
-                key = (layer_idx, proj_name)
-                a_init = torch.randn(module.in_features, self.rank) / math.sqrt(module.in_features)
-                b_init = torch.zeros(self.rank, module.out_features)
-                a = torch.nn.Parameter(a_init, requires_grad=True)
-                b = torch.nn.Parameter(b_init, requires_grad=True)
-                self.model.register_parameter(f"lora_A_{layer_idx}_{proj_name}", a)
-                self.model.register_parameter(f"lora_B_{layer_idx}_{proj_name}", b)
-                self.A[key] = a
-                self.B[key] = b
-                self._module_map[key] = module
+                for proj_name in proj_names:
+                    module = getattr(group, proj_name, None)
+                    if not isinstance(module, torch.nn.Linear):
+                        continue
+                    key = (layer_idx, proj_name)
+                    a_init = torch.randn(module.in_features, self.rank) / math.sqrt(module.in_features)
+                    b_init = torch.zeros(self.rank, module.out_features)
+                    a = torch.nn.Parameter(a_init, requires_grad=True)
+                    b = torch.nn.Parameter(b_init, requires_grad=True)
+                    self.model.register_parameter(f"lora_A_{layer_idx}_{proj_name}", a)
+                    self.model.register_parameter(f"lora_B_{layer_idx}_{proj_name}", b)
+                    self.A[key] = a
+                    self.B[key] = b
+                    self._module_map[key] = module
 
-                def hook(
-                    module: torch.nn.Module,
-                    args: tuple[torch.Tensor],
-                    output: torch.Tensor,
-                    A: torch.nn.Parameter = a,
-                    B: torch.nn.Parameter = b,
-                    adapter: LoRAAdapter = self,
-                ) -> torch.Tensor:
-                    if not adapter.enabled:
-                        return output
-                    x = args[0]
-                    delta = (x @ A.to(x.device) @ B.to(x.device)) * adapter.scaling
-                    return output + delta
+                    def hook(
+                        module: torch.nn.Module,
+                        args: tuple[torch.Tensor],
+                        output: torch.Tensor,
+                        A: torch.nn.Parameter = a,
+                        B: torch.nn.Parameter = b,
+                        adapter: LoRAAdapter = self,
+                    ) -> torch.Tensor:
+                        if not adapter.enabled:
+                            return output
+                        x = args[0]
+                        delta = (x @ A.to(x.device) @ B.to(x.device)) * adapter.scaling
+                        return output + delta
 
-                self.hooks.append(module.register_forward_hook(hook))
+                    self.hooks.append(module.register_forward_hook(hook))
 
         if not self.A:
             raise RuntimeError("No LoRA target modules found")
