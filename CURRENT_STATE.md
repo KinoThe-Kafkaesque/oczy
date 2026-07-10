@@ -232,7 +232,7 @@ side channel.
 | Research/19 direct cortex | Specification only | No dedicated implementation module yet |
 | Research/20 / Experiment 09 | Specification only | Planned module: `src/oczy/experiments/meta_cortex/` — currently absent |
 | Research/21 multi-organ router | Specification only | No implementation module yet |
-| Kaggle offline compute | CPU-only profile active (`cpu-smoke` verified, `qwen-cpu-probe` local pass / remote pending); GPU (T4/P100/L4) archived under `infrastructure/kaggle/archive/gpu/`; TPU not wired | [`infrastructure/kaggle/`](infrastructure/kaggle/) |
+| Kaggle offline compute | CPU-only profile active (`cpu-smoke` v4 verified, `qwen-cpu-probe` v1 verified); GPU (T4/P100/L4) archived under `infrastructure/kaggle/archive/gpu/`; TPU not wired | [`infrastructure/kaggle/`](infrastructure/kaggle/) |
 | Pi tool-use work / Experiment 08 | Unpublished local spec, proxy, runner, and two JSON logs; core curriculum package absent; result 0/3 | Existing [`benchmarks/pi/`](benchmarks/pi/) plus local `experiments/08-oczy-pi-tool-calling-curriculum/` |
 | Dashboard | Generator exists; canonical output absent | [`scripts/dashboard.py`](scripts/dashboard.py); planned `experiments_logs/DASHBOARD.md` |
 | Weekly external battery | Research spec exists; runner absent | [`research/16-s4-external-benchmark-battery.md`](research/16-s4-external-benchmark-battery.md); planned `scripts/weekly_battery.sh` |
@@ -242,12 +242,12 @@ side channel.
 
 The Kaggle CLI is authenticated (version 2.2.3). The active remote profile is
 **CPU only**. The `cpu-smoke` kernel
-(`abdellahkadem/oczy-cortex-cpu-smoke`) was verified remotely on 2026-07-09:
+(`abdellahkadem/oczy-cortex-cpu-smoke`) was re-verified remotely on 2026-07-10 (v4):
 it ran the 64×64 cortex / width-896 frozen-organ interface workload on a
 Kaggle x86_64 CPU, passed finite-gradient, held-out-improvement, and
 frozen-parameter hash checks, and reported `cuda_available: false`. The
-`qwen-cpu-probe` kernel (`abdellahkadem/oczy-qwen-cpu-probe`) passes locally;
-its remote acceptance is pending evidence from Main.
+`qwen-cpu-probe` kernel (`abdellahkadem/oczy-qwen-cpu-probe`) completed
+remotely with `passed: true` on 2026-07-10 (v1).
 
 GPU verification (T4, P100, L4, and the T4-based Qwen model probe) from
 2026-07-09 is preserved as historical evidence under
@@ -339,7 +339,7 @@ Required order:
    and generate the job with
    [`prepare_research_kernel.py`](infrastructure/kaggle/prepare_research_kernel.py)
    using `--profile cpu`. The pinned Qwen model source has passed its local
-   CPU frozen-gradient probe; remote acceptance is pending.
+   CPU frozen-gradient probe and was verified remotely (v1, 2026-07-10).
 5. Freeze all learned parameters and run one-shot held-out meta-test with only
    fast/slow cortex state mutable.
 6. Run all causal state and deletion controls, multiple seeds, trajectories,

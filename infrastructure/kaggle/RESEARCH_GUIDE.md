@@ -18,7 +18,7 @@ As of 2026-07-10:
 | Resource | Status | Fixed reference |
 |---|---|---|
 | Kaggle CPU | Verified | private CPU kernel path in [`cpu-smoke/`](cpu-smoke/) |
-| Qwen CPU probe | Local pass; remote pending | [`qwen-cpu-probe/`](qwen-cpu-probe/) |
+| Qwen CPU probe | Verified (v1) | [`qwen-cpu-probe/`](qwen-cpu-probe/) |
 | GPU (T4/P100/L4) | Archived — not active | [`archive/gpu/`](archive/gpu/) |
 | TPU | Not wired | no XLA/JAX parity probe or runner exists |
 | Language organ | Version pinned | `qwen-lm/qwen2.5/transformers/0.5b-instruct/1` |
@@ -39,7 +39,7 @@ experiment version. It is not a compute-only substitution.
 
 The historical T4-based model probe is preserved in
 [`archive/gpu/RESULTS.md`](archive/gpu/RESULTS.md). The active `qwen-cpu-probe`
-task re-verifies the same model hashes on CPU; its remote result is pending.
+task confirmed the same model hashes on CPU (v1, 2026-07-10).
 
 ## Prepared building blocks
 
