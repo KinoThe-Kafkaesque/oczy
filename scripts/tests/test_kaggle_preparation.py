@@ -532,6 +532,105 @@ def test_generated_bootstrap_records_error_provenance(tmp_path: Path) -> None:
     assert '"error"' in source or "'error'" in source
     assert 'exit_code' in source
 
+def test_generated_bootstrap_job_spec_round_trips_with_none_optional_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The generated run.py JOB_SPEC must be valid executable Python that
+    round-trips exactly, even when optional fields are None and arguments
+    contain characters that are unsafe in raw JSON-as-Python.
+
+    Raw JSON ``null`` is not a Python identifier, so the uncorrected renderer
+    (``JOB_SPEC = {... null ...}``) raises ``NameError`` before provenance is
+    written.  The corrected renderer (``JOB_SPEC = json.loads(<repr>)``)
+    safely quotes the canonical JSON string and lets ``json.loads`` handle
+    ``null`` → ``None``, ``true`` → ``True``, etc.
+
+    This test executes the generated run.py top level (import torch, define
+    JOB_SPEC and helpers) without entering ``main()``, so no Kaggle, network,
+    or model access occurs.
+    """
+    # Arguments with characters that break raw JSON-as-Python or require
+    # careful quoting: quotes, backslashes, newlines, tabs, unicode, empty.
+    special_args = [
+        "--name", "O'Brien",
+        "--quote", 'say "hello"',
+        "--path", "back\\slash",
+        "--multiline", "line1\nline2\ttab",
+        "--unicode", "café—résumé",
+        "--empty", "",
+    ]
+    output = tmp_path / "job"
+    expected_spec = prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="analysis",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=special_args,
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=False,
+    )
+
+    # The bootstrap sets env vars at top level; save originals for teardown.
+    for var in (
+        "CUDA_VISIBLE_DEVICES", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+        "OCZY_REMOTE_CPU_ONLY", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE",
+        "TOKENIZERS_PARALLELISM",
+    ):
+        monkeypatch.setenv(var, os.environ.get(var, ""))
+
+    # Execute the top level without entering main().  run_name != "__main__"
+    # skips the ``if __name__ == "__main__"`` guard, so no Kaggle/network/model
+    # access occurs — only imports, env setup, and JOB_SPEC assignment.
+    namespace = runpy.run_path(str(output / "run.py"), run_name="_test_import")
+
+    job_spec = namespace["JOB_SPEC"]
+    assert job_spec == expected_spec
+    # None optional fields must survive as Python None, not JSON null.
+    assert job_spec["model_source"] is None
+    assert job_spec["instrument_manifest_sha256"] is None
+    assert job_spec["human_signoff_id"] is None
+    # Special argument strings must survive byte-for-byte.
+    assert job_spec["arguments"] == special_args
+
+
+def test_job_spec_rendering_safely_quotes_all_json_value_types() -> None:
+    """The JOB_SPEC rendering approach must handle every JSON value type,
+    not just strings and None.  Booleans (``true``/``false``) and nested lists
+    are invalid as raw JSON-as-Python (NameError) but round-trip correctly
+    through ``json.loads(repr(canonical_json))``.
+
+    The job_spec has no boolean fields, so this test verifies the rendering
+    mechanism directly with a synthetic spec containing True, False, None,
+    lists, and strings with quotes/backslashes/newlines.
+    """
+    synthetic = {
+        "flag_true": True,
+        "flag_false": False,
+        "none_value": None,
+        "nested_list": [1, "two", True, None, False, ["inner"]],
+        "special_string": 'quote\'s and "double" and \\back and\nnewline',
+        "unicode": "café—résumé",
+    }
+    canonical = json.dumps(synthetic, sort_keys=True)
+
+    # Corrected renderer: JOB_SPEC = json.loads(<repr of canonical JSON>).
+    # repr() safely quotes any string content; json.loads handles all JSON
+    # types (null→None, true→True, false→False).
+    namespace: dict[str, object] = {}
+    exec(f"import json; JOB_SPEC = json.loads({repr(canonical)})", namespace)
+    assert namespace["JOB_SPEC"] == synthetic
+
+    # Uncorrected renderer: JOB_SPEC = <raw JSON>.  JSON true/false/null are
+    # not Python identifiers, so this raises NameError — the bootstrap bug.
+    with pytest.raises(NameError):
+        exec(f"JOB_SPEC = {canonical}", {})
 
 # ---------------------------------------------------------------------------
 # 4. Active checked-in metadata includes only CPU; GPU is archived

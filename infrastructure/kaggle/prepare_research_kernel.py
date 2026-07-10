@@ -53,7 +53,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import torch
 
 
-JOB_SPEC = __JOB_SPEC__
+JOB_SPEC = json.loads(__JOB_SPEC__)
 
 
 def sha256_file(path: Path) -> str:
@@ -277,7 +277,7 @@ def prepare_kernel(
     }
     rendered_spec = json.dumps(job_spec, sort_keys=True)
     (output / "run.py").write_text(
-        BOOTSTRAP_TEMPLATE.replace("__JOB_SPEC__", rendered_spec),
+        BOOTSTRAP_TEMPLATE.replace("__JOB_SPEC__", repr(rendered_spec)),
         encoding="utf-8",
     )
     _write_json(output / "job_spec.json", job_spec)
