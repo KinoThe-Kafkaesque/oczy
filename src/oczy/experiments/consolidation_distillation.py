@@ -322,7 +322,9 @@ def _distill_correction(
     loss_sum = 0.0
     n_updates = 0
 
+    n_prompts = len(entries)
     for _ in range(max_steps):
+        optimizer.zero_grad()
         for p_idx, (prompt_count, student_ids, _teacher_ids) in enumerate(entries):
             start = prompt_count - 1
             end = start + answer_count
@@ -341,16 +343,15 @@ def _distill_correction(
                 F.softmax(t_logits, dim=-1),
                 reduction="batchmean",
                 log_target=False,
-            )
+            ) / n_prompts
 
-            optimizer.zero_grad()
             loss.backward()
-            optimizer.step()
+            loss_sum += float(loss.item()) * n_prompts
 
-            loss_sum += float(loss.item())
-            n_updates += 1
+        optimizer.step()
+        n_updates += 1
 
-    return {"loss_mean": loss_sum / max(n_updates, 1), "n_updates": n_updates}
+    return {"loss_mean": loss_sum / max(n_updates * n_prompts, 1), "n_updates": n_updates}
 
 
 # ---------------------------------------------------------------------------
