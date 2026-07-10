@@ -276,9 +276,10 @@ def _distill_correction(
     """Distill one per-fact prefix into the LoRA adapter.
 
     Teacher = base model with the correction prefix; student = base model plus
-    LoRA.  Both are shown a prompt followed by the answer, and the student is
-    trained with token-level KL on the answer positions.  At test time the
-    student is given only the prompt, so the LoRA must encode the prefix.
+    LoRA. Both are shown a prompt followed by the answer. The student is
+    trained with token-level KL on both the prompt positions and the answer
+    positions (equal weight). At test time the student is given only the
+    prompt, so the LoRA must encode the prefix.
     """
     prefix = episode.correction_utterance
     request = episode.initial_request
@@ -288,7 +289,7 @@ def _distill_correction(
     # Prepend a space so the answer token merges with the prompt naturally.
     answer_text = " " + answer
 
-    # Token counts for slicing the answer-position logits.
+    # Token counts for slicing the prompt- and answer-position logits.
     prefix_count = _token_count(tokenizer, prefix)
     answer_count = len(tokenizer.encode(answer_text, add_special_tokens=False))
     if answer_count <= 0:
@@ -306,15 +307,24 @@ def _distill_correction(
 
     # Teacher logits are computed once with the base model, adapter disabled.
     adapter.set_enabled(False)
-    teacher_logits_list: list[torch.Tensor] = []
+    teacher_answer_logits_list: list[torch.Tensor] = []
+    teacher_prompt_logits_list: list[torch.Tensor] = []
     with torch.no_grad():
         for prompt_count, _student_ids, teacher_ids in entries:
             t = torch.tensor([teacher_ids], dtype=torch.long, device="cpu")
             out = driver._model(input_ids=t, use_cache=False, output_hidden_states=False)
-            # Slice logits for the answer positions.
-            start = prefix_count + prompt_count - 1
-            end = start + answer_count
-            teacher_logits_list.append(out.logits[:, start:end, :])
+
+            # Answer-position logits (unchanged).
+            answer_start = prefix_count + prompt_count - 1
+            answer_end = answer_start + answer_count
+            teacher_answer_logits_list.append(out.logits[:, answer_start:answer_end, :])
+
+            # Prompt-position logits: the teacher's prompt starts after the prefix.
+            prompt_end = prefix_count + prompt_count - 1
+            if prompt_end > prefix_count:
+                teacher_prompt_logits_list.append(out.logits[:, prefix_count:prompt_end, :])
+            else:
+                teacher_prompt_logits_list.append(torch.empty(1, 0, out.logits.size(-1)))
 
     # Train student with adapter enabled.
     adapter.set_enabled(True)
@@ -324,24 +334,41 @@ def _distill_correction(
 
     for _ in range(max_steps):
         for p_idx, (prompt_count, student_ids, _teacher_ids) in enumerate(entries):
-            start = prompt_count - 1
-            end = start + answer_count
-            if start < 0 or end <= start:
+            # Answer positions.
+            answer_start = prompt_count - 1
+            answer_end = answer_start + answer_count
+            if answer_start < 0 or answer_end <= answer_start:
+                continue
+
+            # Prompt positions: positions before the answer start.
+            prompt_end = prompt_count - 1
+            if prompt_end <= 0:
                 continue
 
             s_ids = torch.tensor([student_ids], dtype=torch.long, device="cpu")
             out = driver._model(input_ids=s_ids, use_cache=False, output_hidden_states=False)
-            s_logits = out.logits[:, start:end, :].reshape(-1, out.logits.size(-1))
 
-            t_logits = teacher_logits_list[p_idx]
-            t_logits = t_logits.reshape(-1, t_logits.size(-1))
-
-            loss = F.kl_div(
-                F.log_softmax(s_logits, dim=-1),
-                F.softmax(t_logits, dim=-1),
+            s_answer_logits = out.logits[:, answer_start:answer_end, :].reshape(-1, out.logits.size(-1))
+            t_answer_logits = teacher_answer_logits_list[p_idx]
+            t_answer_logits = t_answer_logits.reshape(-1, t_answer_logits.size(-1))
+            loss_answer = F.kl_div(
+                F.log_softmax(s_answer_logits, dim=-1),
+                F.softmax(t_answer_logits, dim=-1),
                 reduction="batchmean",
                 log_target=False,
             )
+
+            s_prompt_logits = out.logits[:, 0:prompt_end, :].reshape(-1, out.logits.size(-1))
+            t_prompt_logits = teacher_prompt_logits_list[p_idx]
+            t_prompt_logits = t_prompt_logits.reshape(-1, t_prompt_logits.size(-1))
+            loss_prompt = F.kl_div(
+                F.log_softmax(s_prompt_logits, dim=-1),
+                F.softmax(t_prompt_logits, dim=-1),
+                reduction="batchmean",
+                log_target=False,
+            )
+
+            loss = loss_answer + loss_prompt
 
             optimizer.zero_grad()
             loss.backward()

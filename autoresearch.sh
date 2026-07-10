@@ -2,4 +2,4 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 python scripts/eval_guard.py c9ad5e74c999..HEAD
-exec uv run python -m oczy.experiments.consolidation_distillation --stage stage_4_consolidation --lora-rank 16 --lora-alpha 32 --seeds 2
+exec uv run python -m oczy.experiments.consolidation_distillation --stage stage_0_grounding --seeds 2
