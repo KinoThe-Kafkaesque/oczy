@@ -185,6 +185,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import platform
 import subprocess
 import sys
@@ -493,6 +494,44 @@ def install_llama_cpp() -> dict:
     return result
 
 
+def _emit_stderr_diagnostic(error: Exception) -> None:
+    """Print a bounded, sanitized diagnostic to stderr before nonzero exit.
+
+    Emits the exception type/message and a bounded traceback so that
+    bootstrap failures are observable through the Colab CLI stderr stream
+    even when the remote provenance file is inaccessible after session stop.
+    Secrets are redacted; output is length-bounded.
+    """
+    prefix = "bootstrap:"
+    exc_type = type(error).__name__
+    raw_msg = str(error)
+    raw_tb = traceback.format_exc()
+    # Redact common secret-bearing patterns from both message and traceback.
+    _REDACT_PATTERNS = [
+        re.compile(r"(token=)[^\\s&'\\\"]+"),
+        re.compile(r"(key=)[^\\s&'\\\"]+"),
+        re.compile(r"(password=)[^\\s&'\\\"]+"),
+        re.compile(r"(Authorization:\\s*)[^\\r\\n]+"),
+        re.compile(r"(Bearer\\s+)[A-Za-z0-9._\\-]+"),
+    ]
+
+    def _redact(text: str) -> str:
+        for pat in _REDACT_PATTERNS:
+            text = pat.sub(lambda m: m.group(1) + "***", text)
+        return text
+
+    msg = _redact(raw_msg)
+    # Bound the message to the last 500 chars to avoid unbounded stderr.
+    if len(msg) > 500:
+        msg = "...[truncated]..." + msg[-500:]
+    tb = _redact(raw_tb)
+    # Bound the traceback to the last 4000 chars to avoid unbounded stderr.
+    if len(tb) > 4000:
+        tb = "...[truncated]...\\n" + tb[-4000:]
+    print(f"{prefix} EXCEPTION {exc_type}: {msg}", file=sys.stderr)
+    for line in tb.rstrip("\\n").splitlines():
+        print(f"{prefix} {line}", file=sys.stderr)
+
 def main() -> int:
     report: dict = {
         "schema_version": "oczy/colab-bootstrap-provenance/v1",
@@ -591,6 +630,7 @@ def main() -> int:
             }
         )
         write_provenance(report)
+        _emit_stderr_diagnostic(error)
         return 1
 
 

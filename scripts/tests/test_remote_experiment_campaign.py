@@ -1118,9 +1118,18 @@ class TestColabExactCommit:
         source = (out / "colab_bootstrap.py").read_text()
         # No tokens, passwords, or SSH keys in the bootstrap.
         assert "ghp_" not in source
-        assert "password" not in source.lower()
+        # "password" may appear as a redaction pattern name (password=***),
+        # but no actual credential value may be embedded.
         assert "BEGIN OPENSSH" not in source
         assert "BEGIN RSA" not in source
+        # Verify no hardcoded credential values anywhere.
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                val = node.value.lower()
+                assert "ghp_" not in val
+                assert "begin openssh" not in val
+                assert "begin rsa" not in val
 
     def test_no_shell_true_in_bootstrap(self, tmp_path: Path) -> None:
         out = tmp_path / "colab-job"
@@ -4471,3 +4480,334 @@ class TestDirectGGUFProvisioning:
                     os.environ[k] = v
                 elif k in os.environ:
                     del os.environ[k]
+
+# ===========================================================================
+# 24. Colab bootstrap stderr diagnostics on failure
+# ===========================================================================
+
+
+class TestBootstrapStderrDiagnostics:
+    """Bootstrap exceptions print bounded actionable diagnostics to stderr,
+    redact secrets, attempt provenance, and exit nonzero.
+
+    The generated bootstrap except Exception block must:
+    - print a bounded traceback/error to sys.stderr with a bootstrap: prefix
+    - redact secret-like substrings (token=, key=, password=, Authorization:)
+    - still call write_provenance with status=error
+    - return exit code 1
+
+    These tests exec the generated bootstrap, patch the failure boundary,
+    call main(), and assert on the captured stderr / provenance / exit.
+    """
+
+    _SECRET = "sk-secret_abc123DEF456"
+    _STDERR_BOUND = 8192
+
+    def _generate_and_exec(
+        self, tmp_path: Path, **kwargs: Any
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Generate bootstrap, exec it, install spies. Returns (ns, prov_calls)."""
+        out = tmp_path / "diag_out"
+        defaults: dict[str, Any] = dict(
+            output=out,
+            job_name="cb-diag",
+            repo_url=REPO_URL,
+            source_commit=COMMIT,
+            module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[],
+            phase="development",
+            claim_class="scientific",
+            output_path="out/cb-diag",
+        )
+        defaults.update(kwargs)
+        prepare_colab_experiment(**defaults)
+        source = (out / "colab_bootstrap.py").read_text()
+        ns = _exec_bootstrap(source)
+
+        # Provenance spy records every write_provenance call.
+        provenance_calls: list[dict[str, Any]] = []
+
+        def _spy_provenance(payload: dict) -> None:
+            provenance_calls.append(dict(payload))
+
+        ns["write_provenance"] = _spy_provenance
+
+        # Avoid real git / sys.path / chdir side effects.
+        fake_repo = tmp_path / "fake_repo"
+        fake_repo.mkdir(exist_ok=True)
+        ns["clone_at_commit"] = lambda *a, **kw: fake_repo
+        ns["add_source_paths"] = lambda repo_root: None
+
+        return ns, provenance_calls
+
+    @staticmethod
+    def _call_main_captured(ns: dict[str, Any]) -> tuple[int, str]:
+        """Call ns main() with stderr captured; restore cwd/sys.path."""
+        err_buf = io.StringIO()
+        orig_cwd = os.getcwd()
+        orig_path = list(sys.path)
+        try:
+            with patch.object(sys, "stderr", new=err_buf):
+                exit_code = ns["main"]()
+        finally:
+            os.chdir(orig_cwd)
+            sys.path[:] = orig_path
+        return exit_code, err_buf.getvalue()
+
+    def test_model_download_failure_stderr_diagnostic(self, tmp_path: Path) -> None:
+        """Forced GGUF download failure prints bounded diagnostic to stderr."""
+        artifact = _valid_gguf_artifact()
+        ns, prov = self._generate_and_exec(tmp_path, model_artifact=artifact)
+
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE",
+                "OCZY_HF_CACHE_DIR", "OCZY_MODEL_PATH",
+            )
+        }
+        os.environ["OCZY_HF_CACHE_DIR"] = str(tmp_path / "hf_cache")
+        try:
+            with patch(
+                "urllib.request.urlopen",
+                side_effect=RuntimeError(
+                    f"connection refused token={self._SECRET}"
+                ),
+            ):
+                exit_code, stderr = self._call_main_captured(ns)
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+        assert exit_code == 1
+        assert "bootstrap: EXCEPTION" in stderr
+        assert "RuntimeError" in stderr
+        assert "Traceback" in stderr or "traceback" in stderr.lower()
+        assert len(stderr) < self._STDERR_BOUND
+        # Secret must be redacted.
+        assert self._SECRET not in stderr
+        assert "***" in stderr
+        # Provenance was attempted.
+        assert len(prov) > 0
+        assert prov[-1].get("status") == "error"
+
+    def test_hash_mismatch_failure_stderr_diagnostic(self, tmp_path: Path) -> None:
+        """Forced SHA-256 mismatch prints bounded diagnostic to stderr."""
+        wrong_content = b"this is not the right model content"
+        artifact = _valid_gguf_artifact(sha256="0" * 64)
+        ns, prov = self._generate_and_exec(tmp_path, model_artifact=artifact)
+
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE",
+                "OCZY_HF_CACHE_DIR", "OCZY_MODEL_PATH",
+            )
+        }
+        os.environ["OCZY_HF_CACHE_DIR"] = str(tmp_path / "hf_cache")
+        try:
+            with patch(
+                "urllib.request.urlopen",
+                return_value=_FakeHTTPResponse(wrong_content),
+            ):
+                exit_code, stderr = self._call_main_captured(ns)
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+        assert exit_code == 1
+        assert "bootstrap: EXCEPTION" in stderr
+        assert "RuntimeError" in stderr
+        assert "mismatch" in stderr.lower() or "SHA" in stderr
+        assert len(stderr) < self._STDERR_BOUND
+        assert len(prov) > 0
+        assert prov[-1].get("status") == "error"
+
+    def test_install_failure_stderr_diagnostic(self, tmp_path: Path) -> None:
+        """Forced llama-cpp install failure prints bounded diagnostic to stderr."""
+        ns, prov = self._generate_and_exec(tmp_path, install_llama_cpp=True)
+
+        def fake_run(argv, **kwargs):
+            return subprocess.CompletedProcess(
+                args=argv,
+                returncode=1,
+                stdout="",
+                stderr=f"error: auth key={self._SECRET} denied",
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            exit_code, stderr = self._call_main_captured(ns)
+
+        assert exit_code == 1
+        assert "bootstrap: EXCEPTION" in stderr
+        assert "RuntimeError" in stderr
+        assert "install" in stderr.lower()
+        assert len(stderr) < self._STDERR_BOUND
+        # Secret must be redacted.
+        assert self._SECRET not in stderr
+        assert "***" in stderr
+        assert len(prov) > 0
+        assert prov[-1].get("status") == "error"
+
+    def test_runner_exception_stderr_diagnostic(self, tmp_path: Path) -> None:
+        """Forced runner subprocess exception prints bounded diagnostic to stderr."""
+        ns, prov = self._generate_and_exec(tmp_path)
+
+        def fake_run(argv, **kwargs):
+            raise FileNotFoundError(
+                "[Errno 2] No such file or directory: 'python'"
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            exit_code, stderr = self._call_main_captured(ns)
+
+        assert exit_code == 1
+        assert "bootstrap: EXCEPTION" in stderr
+        assert "FileNotFoundError" in stderr
+        assert len(stderr) < self._STDERR_BOUND
+        assert len(prov) > 0
+        assert prov[-1].get("status") == "error"
+
+    def test_secret_redaction_multiple_patterns(self, tmp_path: Path) -> None:
+        """Multiple secret patterns (token=, key=, password=, Authorization:) are redacted."""
+        artifact = _valid_gguf_artifact()
+        ns, prov = self._generate_and_exec(tmp_path, model_artifact=artifact)
+
+        secret_msg = (
+            "failed: token=sk-token-xyz key=sk-key-abc "
+            "password=hunter2 Authorization: Bearer s3cr3t"
+        )
+
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE",
+                "OCZY_HF_CACHE_DIR", "OCZY_MODEL_PATH",
+            )
+        }
+        os.environ["OCZY_HF_CACHE_DIR"] = str(tmp_path / "hf_cache")
+        try:
+            with patch(
+                "urllib.request.urlopen",
+                side_effect=RuntimeError(secret_msg),
+            ):
+                exit_code, stderr = self._call_main_captured(ns)
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+        assert exit_code == 1
+        assert "sk-token-xyz" not in stderr
+        assert "sk-key-abc" not in stderr
+        assert "hunter2" not in stderr
+        assert "s3cr3t" not in stderr
+        assert "***" in stderr
+
+    def test_stderr_diagnostic_is_bounded(self, tmp_path: Path) -> None:
+        """Stderr diagnostic traceback is bounded even with deep call stacks."""
+        ns, prov = self._generate_and_exec(tmp_path)
+
+        # Create a deep call stack to produce a very long traceback.
+        def raise_deep(depth: int) -> None:
+            if depth <= 0:
+                raise RuntimeError("deep failure")
+            raise_deep(depth - 1)
+
+        def fake_run(argv, **kwargs):
+            raise_deep(200)
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            exit_code, stderr = self._call_main_captured(ns)
+
+        assert exit_code == 1
+        assert "bootstrap: EXCEPTION" in stderr
+        # The traceback must be bounded (last ~4000 chars) so that 200
+        # frames do not flood stderr.
+        assert len(stderr) < 10000, f"stderr is unbounded: {len(stderr)} bytes"
+
+    def test_stderr_message_truncation(self, tmp_path: Path) -> None:
+        """Very long exception messages are truncated with a marker."""
+        ns, prov = self._generate_and_exec(tmp_path)
+
+        long_msg = "x" * 100000
+
+        def fake_run(argv, **kwargs):
+            raise RuntimeError(long_msg)
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            exit_code, stderr = self._call_main_captured(ns)
+
+        assert exit_code == 1
+        assert "bootstrap: EXCEPTION" in stderr
+        # The first line (EXCEPTION line) must be bounded.
+        first_line = stderr.splitlines()[0] if stderr else ""
+        assert len(first_line) < 600, (
+            f"EXCEPTION line is unbounded: {len(first_line)} chars"
+        )
+        # Truncation marker must appear when message exceeds the bound.
+        assert "...[truncated]..." in stderr
+
+    def test_provenance_attempted_on_exception(self, tmp_path: Path) -> None:
+        """Provenance is written with status=error on exception."""
+        artifact = _valid_gguf_artifact()
+        ns, prov = self._generate_and_exec(tmp_path, model_artifact=artifact)
+
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE",
+                "OCZY_HF_CACHE_DIR", "OCZY_MODEL_PATH",
+            )
+        }
+        os.environ["OCZY_HF_CACHE_DIR"] = str(tmp_path / "hf_cache")
+        try:
+            with patch(
+                "urllib.request.urlopen",
+                side_effect=RuntimeError("download failed"),
+            ):
+                exit_code, stderr = self._call_main_captured(ns)
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+        assert exit_code == 1
+        # Provenance was attempted multiple times (initial + running + error).
+        assert len(prov) >= 2
+        last = prov[-1]
+        assert last["status"] == "error"
+        assert "error" in last or "traceback" in last
+
+    def test_runner_nonzero_no_bootstrap_diagnostic(self, tmp_path: Path) -> None:
+        """Runner nonzero exit does NOT emit bootstrap: stderr diagnostic.
+
+        The stderr diagnostic is reserved for bootstrap-level exceptions.
+        A runner nonzero exit is a normal return path: the bootstrap writes
+        provenance with status=error and forwards the runner exit code.
+        """
+        ns, prov = self._generate_and_exec(tmp_path)
+
+        def fake_run(argv, **kwargs):
+            return subprocess.CompletedProcess(
+                args=argv, returncode=42, stdout="", stderr="runner error"
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            exit_code, stderr = self._call_main_captured(ns)
+
+        assert exit_code == 42
+        assert "bootstrap: EXCEPTION" not in stderr
+        assert len(prov) > 0
+        assert prov[-1].get("status") == "error"
+        assert prov[-1].get("exit_code") == 42
