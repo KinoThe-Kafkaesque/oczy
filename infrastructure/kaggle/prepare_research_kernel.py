@@ -137,9 +137,13 @@ def find_model() -> Path | None:
 def add_source_paths(root: Path) -> None:
     paths = [root, root / "src"]
     paths.extend(sorted(root.glob("*/src")))
-    for path in reversed(paths):
-        if path.is_dir():
-            sys.path.insert(0, str(path))
+    valid = [str(p) for p in paths if p.is_dir()]
+    for path in reversed(valid):
+        sys.path.insert(0, path)
+    # Propagate to PYTHONPATH so subprocesses (e.g. python -m invoked by the
+    # run module) inherit the same src-layout search paths remotely.
+    existing = os.environ.get("PYTHONPATH", "")
+    os.environ["PYTHONPATH"] = os.pathsep.join(valid + ([existing] if existing else []))
 
 
 def hardware() -> dict:
