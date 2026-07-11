@@ -1,6 +1,6 @@
 """Curriculum dataset: grouped Correction Benchmark episodes by skill chapter.
 
-This module layers a curriculum taxonomy over
+This module layers a topical taxonomy, not a difficulty ladder, over
 `correction_benchmark.dataset`.  It is self-contained so that it can be
 imported from `experiments.curriculum` or executed directly as a smoke test.
 """
@@ -187,7 +187,7 @@ if __name__ == "__main__":
         counts = count_probes(group)
         tokens = [_token_from_episode(ep) for ep in group.acquisition_episodes]
         print(
-            f"Level {level_num}: {chapter} "
+            f"Chapter {level_num}: {chapter} "
             f"(tokens={', '.join(tokens)}) "
             f"transfer={counts['transfer']} "
             f"scope={counts['scope']} "
@@ -196,4 +196,4 @@ if __name__ == "__main__":
         )
         total_probes += counts["total"]
         level_num += 1
-    print(f"Cumulative probe count across all levels: {total_probes}")
+    print(f"Cumulative probe count across all chapters: {total_probes}")

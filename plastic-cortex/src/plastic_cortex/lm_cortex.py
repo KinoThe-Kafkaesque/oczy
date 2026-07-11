@@ -451,7 +451,9 @@ class LMPlasticCortex:
             scores.append(-math.log10(freq + eps))
 
         raw = sum(scores) / len(scores)
-        return 1.0 / (1.0 + raw)
+        # Surprisal grows as tokens/bigrams become rarer. Map it monotonically
+        # into [0, 1): unseen text approaches 1, familiar text approaches 0.
+        return raw / (1.0 + raw)
 
     def wonder(self, top_k: int = 5) -> dict[str, Any]:
         """Return curiosity summary: most uncertain bigrams and recent novel items."""

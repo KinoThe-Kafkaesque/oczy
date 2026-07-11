@@ -13,11 +13,11 @@ every existing checkpoint (`lm_bpe_500_full` plateaued at 5.28, etc.).
 # Result
 
 The 40K-parameter LM (`LMPlasticCortex`, hidden_dim=128, char tokenizer,
-103-token vocab) climbed all 6 stages of the graduated curriculum
-(`plastic-cortex/data/progression/`) and reached the project's actual
-goal: quoted-word disambiguation.
+103-token vocab) completed the training-stability guard on all 6 stages of the
+graduated corpus (`plastic-cortex/data/progression/`). This is evidence of
+teacher-forced character prediction, not proof of behavioral mastery.
 
-| Stage | Best loss | Top-1 next-char | Promoted |
+| Stage | Best loss | Top-1 next-char | Guard passed |
 |---|---:|---:|---|
 | 0 char n-gram calibration | 0.595 | 0.777 | yes |
 | 1 copula "X is Y" | 0.950 | 0.690 | yes |
@@ -46,8 +46,9 @@ chance).
    10,000x difficulty spread.  Replaced with a 6-stage cumulative
    ladder where vocab grows monotonically: 18 -> 29 -> 41 -> 48 -> 63
    -> 86 words.  Stages 0-2 are bigram/template drills; stage 3 is
-   clause-level syllogism chaining; stage 4 is simple turn-taking;
-   stage 5 is the actual project goal (quoted-word disambiguation).
+   clause-shaped sequence modeling; stage 4 is dialogue-shaped text; stage 5
+   is quoted-word mapping text. These labels describe corpus form, not
+   independently demonstrated reasoning abilities.
 
 3. **Training instability.**  `lm_assistant_1k_stable` had logged a
    blow-up (3.13 -> 3.58 -> 125 -> 341).  Driver now has: strict

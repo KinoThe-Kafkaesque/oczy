@@ -124,7 +124,7 @@ Primary historical locations:
 The remediation work delivered:
 
 - a hash-checked, frozen `eval/v2` instrument, currently manifest version
-  **v2.1**;
+  **v2.2**;
 - removal of episode-ID and expected-answer leakage;
 - held-out splits, vanilla and retrieval baselines, confidence intervals,
   trajectories, seed requirements, and pre-registered acceptance/kill rules;
@@ -151,7 +151,7 @@ The table below separates useful mechanisms from evidence for the thesis.
 
 | Test or claim | Current verdict | Important evidence |
 |---|---|---|
-| Honest curriculum baseline | Reference point, not a cortex win | Real-driver stages 0–5: **0.88, 0.75, 0.69, 0.38, 0.90, 0.92** |
+| Legacy v2 curriculum baseline | Historical reference, not a v2.2 curve or cortex win | Real-driver v2 stages 0–5: **0.88, 0.75, 0.69, 0.38, 0.90, 0.92**; v2.2 baseline pending |
 | Stage-2 scope = 1.00 | Superseded by leakage removal | **1.00 → 0.69** |
 | Stage-5 cross-domain = 1.00 | Superseded by leakage removal | **1.00 → 0.92** |
 | Exact-token residual cvec | Refuted | Target remained around rank 47k; best contrastive result lifted rank but did not reach rank 1 |
@@ -303,7 +303,7 @@ side channel.
 
 | Surface | Implementation state | Location |
 |---|---|---|
-| Frozen curriculum eval v2.1 | Implemented; manifest verified | [`eval/v2/`](eval/v2/) |
+| Frozen curriculum eval v2.2 | Implemented; manifest verified after human-approved protocol repair | [`eval/v2/`](eval/v2/) |
 | Eval guard/version tooling | Implemented | [`scripts/eval_guard.py`](scripts/eval_guard.py), [`scripts/bump_eval_version.py`](scripts/bump_eval_version.py) |
 | Original organism and organs | Implemented; most answer-time organs archived by evidence, not deleted | [`src/oczy/`](src/oczy/) |
 | HF driver and S1 probes | Implemented and run | [`src/oczy/lm/hf_driver.py`](src/oczy/lm/hf_driver.py), [`src/oczy/experiments/hf_kv_slot_experiment.py`](src/oczy/experiments/hf_kv_slot_experiment.py), [`src/oczy/experiments/hf_layer_probe.py`](src/oczy/experiments/hf_layer_probe.py) |
@@ -313,7 +313,7 @@ side channel.
 | Research/20 / Experiment 09 | Specification only; meta-test blocked on human sign-off | Planned module: `src/oczy/experiments/meta_cortex/` — currently absent |
 | Research/21 multi-organ router | Specification only | No implementation module yet |
 | Remote compute pool | Mixed Kaggle/Colab CPU; Kaggle verified v4 smoke/probe/bootstrap; Colab CLI 0.6.0 verified v2 queue-starvation fix; GPU (T4/P100/L4) archived; TPU not wired | [`infrastructure/kaggle/`](infrastructure/kaggle/) |
-| Pi tool-use work / Experiment 08 | Unpublished local spec, proxy, runner, and two JSON logs; core curriculum package absent; result 0/3 | Existing [`benchmarks/pi/`](benchmarks/pi/) plus local `experiments/08-oczy-pi-tool-calling-curriculum/` |
+| Pi tool-use work / Experiment 08 | Code-backed 6-stage dataset/scorer/validator implemented; live augmented run still pending; external result remains 0/3 | [`src/oczy/experiments/tool_calling_curriculum/`](src/oczy/experiments/tool_calling_curriculum/) plus [`benchmarks/pi/`](benchmarks/pi/) |
 | Dashboard | Generator exists; canonical output absent | [`scripts/dashboard.py`](scripts/dashboard.py); planned `experiments_logs/DASHBOARD.md` |
 | Weekly external battery | Research spec exists; runner absent | [`research/16-s4-external-benchmark-battery.md`](research/16-s4-external-benchmark-battery.md); planned `scripts/weekly_battery.sh` |
 | Archived-code move | Not done | Planned `attic/` directory is absent |

@@ -307,6 +307,13 @@ C6 is the control (must match benchmark 0/3).
 
 ## Acceptance & kill criteria
 
+> **Calibration status (2026-07-11): INACTIVE.** These values are design
+> targets from the original specification, not shipping decision thresholds.
+> The code-backed curriculum intentionally emits descriptive metrics only.
+> Activate or revise these targets only after real-driver baseline and
+> augmented distributions have been recorded and a human-approved instrument
+> version names the chosen thresholds.
+
 - **Stage 0 ACCEPT:** `tool_format_rate ≥ 0.875` (7/8) post-correction.
 - **Stage 1 ACCEPT:** `tool_selection_accuracy ≥ 0.75` (9/12) AND
   `param_extraction_accuracy ≥ 0.75` post-correction.
@@ -346,27 +353,33 @@ C6 is the control (must match benchmark 0/3).
   warm_state conflates them. Mitigation: use separate cortex slots
   per stage, or consolidate only after Stage 4.
 
-## Artifacts to add
+## Implemented measurement substrate (2026-07-11)
 
-- `src/oczy/experiments/tool_calling_curriculum/` — new package:
-  - `dataset.py` — `ToolEpisode`, `ToolProbe`, `ToolStage` dataclasses
-  - `stages/stage_0_format.json` through `stage_5_pi_integration.json`
-  - `scoring.py` — `tool_call_matches`, `param_matches`,
-    `answer_contains_result`
-  - `run_curriculum.py` — driver that runs episodes through
-    `LFMEngine` + `CortexAgent`, applies corrections, scores probes
-- `src/oczy/experiments/tests/test_tool_calling_curriculum.py` —
-  regression tests for scoring + data model
+- `src/oczy/experiments/tool_calling_curriculum/` now provides the complete
+  8/12/8/6/8/3 code-backed dataset, strict JSON/bracket parsing, ordered-chain,
+  parameter, and result-integration scoring, schema validation, and a runner
+  for recorded raw outputs. Thresholds are deliberately absent pending the
+  distribution audit above.
+- `src/oczy/experiments/tests/test_tool_calling_curriculum.py` provides
+  regression coverage for the data and scoring contract.
 - `benchmarks/pi/run_tool_use_benchmark.py` — already exists; Stage 5
   reuses it directly
-- `experiments_logs/YYYY-MM-DD_tool_calling_curriculum.md` — run notes
+
+Live Cvec/correction execution remains an executor concern of the proxy and Pi
+surfaces; it must write raw outputs first and then pass them into this frozen
+scorer. This keeps the optimizing path from editing or selecting its own
+measurement rules.
 
 ## Reproduce
 
 ```bash
-# Stages 0–4 (direct, no Pi):
+# Validate the complete code-backed instrument:
+uv run python -m oczy.experiments.tool_calling_curriculum
+
+# Score executor-produced raw outputs without letting the executor alter the
+# instrument. JSON shape: {"episode_id": ["ordered raw output", ...]}.
 uv run python -m oczy.experiments.tool_calling_curriculum \
-  --driver real --stages stage_0,stage_1,stage_2,stage_3,stage_4
+  --outputs /path/to/raw_tool_curriculum_outputs.json
 
 # Stage 5 (through Pi):
 # 1. Start proxy with cortex-augmented model:

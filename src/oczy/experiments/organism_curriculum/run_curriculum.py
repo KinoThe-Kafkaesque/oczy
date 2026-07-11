@@ -266,10 +266,24 @@ def run_stage(
     split_ids: set[str] | None = None,
 ) -> StageResult:
     """Present every episode in ``stage`` to ``agent`` and return metrics."""
+    if stage.consolidate_after and stage.probe_timing == "after_episode":
+        raise ValueError(
+            "consolidate_after requires probe_timing='after_stage' so every "
+            "post-test is measured from the consolidated artifact"
+        )
     result = StageResult(name=stage.name, description=stage.description)
     result.memory_bytes_before = _agent_memory_bytes(agent)
 
     result.pre_probe_results = run_battery(agent, stage, stage.episodes, semantic=semantic, split_ids=split_ids)
+
+    # Probe-only stages are genuine transfer batteries: they measure what the
+    # prior stages taught without delivering their own correction exemplars.
+    # Reuse the already-recorded battery rather than asking every probe twice;
+    # answer() may itself update stateful policies and counters.
+    if not stage.teach_episodes:
+        result.post_probe_results = list(result.pre_probe_results)
+        result.memory_bytes_after = _agent_memory_bytes(agent)
+        return result
 
     for ep in stage.episodes:
         first_answer = agent.answer(ep.initial_request)
@@ -325,8 +339,33 @@ def run_stage(
             )
         )
 
-    # Post-test probes *after* acquisition.
-    result.post_probe_results = run_battery(agent, stage, stage.episodes, split_ids=split_ids)
+        if stage.probe_timing == "after_episode":
+            result.post_probe_results.extend(
+                run_battery(
+                    agent,
+                    stage,
+                    (ep,),
+                    semantic=semantic,
+                    split_ids=split_ids,
+                )
+            )
+
+    if stage.consolidate_after:
+        print("Consolidating before post-test for %s..." % stage.name)
+        agent.consolidate()
+
+    # Default stages run one post-test battery after all acquisition (and,
+    # when requested, after consolidation). Dialog stages instead append each
+    # episode's probes immediately above so the follow-up remains adjacent to
+    # the correction that established its context.
+    if stage.probe_timing == "after_stage":
+        result.post_probe_results = run_battery(
+            agent,
+            stage,
+            stage.episodes,
+            semantic=semantic,
+            split_ids=split_ids,
+        )
     result.memory_bytes_after = _agent_memory_bytes(agent)
     return result
 
@@ -787,9 +826,6 @@ def _run_stages(
                 split_ids=stage_splits.get(stage.name) if stage_splits else None,
             )
         )
-        if stage.consolidate_after:
-            print("Consolidating after %s..." % stage.name)
-            agent.consolidate()
     return results
 
 

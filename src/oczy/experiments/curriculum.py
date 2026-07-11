@@ -1,16 +1,17 @@
-"""Curriculum and eval scaffold for the Oczy Plastic World Model Agent.
+"""Topical correction chapters for the Oczy Plastic World Model Agent.
 
 This module wraps the grouped benchmark data from
-`oczy.experiments.data.curriculum_dataset` into a leveled `Curriculum` object that
+`oczy.experiments.data.curriculum_dataset` into an ordered `Curriculum` object that
 exposes acquisition episodes, transfer/scope/forgetting probes, and a
 pre/post stability battery.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Iterable
+
+from correction_benchmark.dataset import Probe
 
 from oczy.experiments.data.curriculum_dataset import (
     Chapter,
@@ -21,12 +22,9 @@ from oczy.experiments.data.curriculum_dataset import (
     _chapter_order,
 )
 
-from correction_benchmark.dataset import Episode, Probe
-
-
 @dataclass(frozen=True)
 class CurriculumLevel:
-    """One leveled chapter in the curriculum."""
+    """One topical chapter; the legacy class name preserves API compatibility."""
 
     name: str
     prompt_template: str
@@ -35,7 +33,7 @@ class CurriculumLevel:
 
 
 class Curriculum:
-    """An ordered set of `CurriculumLevel`s derived from correction episodes."""
+    """An ordered set of topical chapters derived from correction episodes."""
 
     def __init__(self, seed: int = 0) -> None:
         grouped = build_grouped_dataset(seed=seed)
@@ -67,8 +65,8 @@ class Curriculum:
 
 
 def _level_name(chapter: Chapter, number: int) -> str:
-    """Return a human-readable level name."""
-    return f"Level {number}: {chapter.replace('_', ' ').title()}"
+    """Return a chapter name without implying later chapters are harder."""
+    return f"Chapter {number}: {chapter.replace('_', ' ').title()}"
 
 
 def build_curriculum(seed: int = 0) -> Curriculum:
@@ -77,7 +75,7 @@ def build_curriculum(seed: int = 0) -> Curriculum:
 
 
 def make_pre_post_battery(curriculum: Curriculum) -> tuple[Probe, ...]:
-    """Return the union of all forgetting probes across all levels.
+    """Return the union of all forgetting probes across all chapters.
 
     These probes are used for pre-training and post-training stability scoring:
     the agent should answer them correctly both before and after it learns the
@@ -106,4 +104,4 @@ if __name__ == "__main__":
             f"forgetting={n_forgetting} total={n_total}"
         )
     print(f"Pre/post stability battery size: {len(make_pre_post_battery(curriculum))}")
-    print(f"Total probes across all levels: {total_probes}")
+    print(f"Total probes across all chapters: {total_probes}")

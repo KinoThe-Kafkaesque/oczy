@@ -1,9 +1,10 @@
 """eval/v2 — Frozen, versioned evaluation data for the Oczy curriculum.
 
-Current data version: v2.1 (2026-07-03 expansion — 12 new ambiguous words
-threaded through stages 0/1/2, extra stage-1 paraphrase probes, adversarial
-stage-2 scope probes; see experiments_logs/2026-07-03_eval_v2_1_expansion.md).
-Existing episodes and probes were not modified or removed.
+Current data version: v2.2 (2026-07-11 protocol repair — Stage 1 is probe-only,
+Stage 3 probes are episode-interleaved, Stage 4 consolidation precedes its
+post-test, and the default split is category-stratified; see
+experiments_logs/2026-07-11_eval_v2_2_protocol_repair.md). Existing episode
+and probe text remains unchanged.
 
 This package contains the canonical stage JSONs, scoring, and validation code.
 The MANIFEST.json file holds SHA-256 hashes of every asset; `verify_manifest()`
@@ -80,7 +81,7 @@ def recompute_manifest() -> dict:
             continue
         if fpath.is_file():
             files[fpath.name] = _sha256(fpath)
-    return {"version": "v2.1", "files": files}
+    return {"version": "v2.2", "files": files}
 
 
 def write_manifest() -> None:

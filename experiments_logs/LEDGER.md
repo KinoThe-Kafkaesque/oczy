@@ -21,9 +21,11 @@ invalidation events:
    `2026-06-28_lane_05_metabolism_status.md`, and the audit in
    `2026-07-01_remediation_audit.md`.
 
-**Current reference point:** `2026-07-01_honest_post_leakage_baseline.md` —
-these are the numbers all future work must beat. The 13.5x drift claim
-(`044cb51`) is retracted (`2026-07-01_s2_4_breakthrough_ablation.md`).
+**Legacy v2 reference point:** `2026-07-01_honest_post_leakage_baseline.md`.
+Eval v2.2 repairs the runner protocol and split policy, so a new real-driver
+multi-seed baseline is pending. The legacy numbers must not be presented as a
+v2.2 difficulty curve. The 13.5x drift claim (`044cb51`) remains retracted
+(`2026-07-01_s2_4_breakthrough_ablation.md`).
 
 ## Classification Key
 
@@ -101,6 +103,7 @@ these are the numbers all future work must beat. The 13.5x drift claim
 | 2026-07-02 | `2026-07-02_s3_m2_retrieval_ablation.md` | VALID | S3.M2 additive retrieval ablation (HF driver, eval v2 holdout, 3 seeds). Scope-slot reranker zero-variance positive (S0 +0.667, S4 +0.250); hippocampus-at-answer Δ=0.000 exactly; DSI unsupported. Post-reranker-fix, post-leakage-removal. | — |
 | 2026-07-03 | `2026-07-03_s3_organ_triage_adjudication.md` | VALID | S3 organ triage adjudication — combines M1+M2 into KEEP/RETRIEVAL-BASELINE/ARCHIVE verdicts. ScopeSlotReranker=RETRIEVAL-BASELINE; all other organs=ARCHIVE. research/15 declared VACUOUS. No reranker, leakage, or gameable metric. | — |
 | 2026-07-03 | `2026-07-03_eval_v2_1_expansion.md` | VALID | Eval v2→v2.1 curriculum expansion (S0.6 growth path). +12 new ambiguous words across stages 0/1/2; stage-1 holdout 1→9 probes. Existing episodes/probes never modified. Regression locks updated. No reranker, leakage, or gameable metric. | — |
+| 2026-07-11 | `2026-07-11_eval_v2_2_protocol_repair.md` | VALID | Human-approved protocol repair: Stage 1 probe-only, Stage 3 episode-interleaved, Stage 4 consolidate-before-post-test, consistent semantic scoring, category-stratified v2.2 split; legacy `salt="v2"` preserved. New baseline pending. | — |
 | 2026-07-11 | `2026-07-11_campaign_0d48130.md` | VALID | **Campaign 0d48130 curated evidence log.** 10 experiment outcomes across 3 commits and 2 providers (kaggle CPU-only, colab). Scientific outcomes: 2 POSITIVE (Exp04, Exp06), 1 POSITIVE+NULL (Exp07), 3 NULL (Exp01, Exp05, R14 M2B metricless), 1 REFUTATION (Exp02), 2 BLOCKED at teacher validity gate / diagnostic only (R18 gate, R18 full), 1 INFRASTRUCTURE BLOCKED (Exp03, original campaign). Exp03 reproducibility closure appended 2026-07-11 (commit `ad77e93`): real-driver rerun exit 0, `layer_l_silhouette_gap=0.10925446726657728` (> +0.10, threshold unchanged) → positive/accept for this single closure; S1.4 not reopened. See the log and `2026-07-11_exp03_real_driver_closure.json`. | — |
 | 2026-07-11 | `2026-07-11_exp03_real_driver_closure.json` | VALID | **Exp03 real-driver reproducibility closure.** Durable execution report object: commit `ad77e93`, `--driver real`, Colab, exit 0, `layer_l_silhouette_gap=0.10925446726657728` (> +0.10 registered threshold, unchanged), all ASI scores, model provenance (`LiquidAI/LFM2.5-1.2B-Instruct` rev `868df74d…`, manifest `infrastructure/kaggle/model_manifests/lfm2_5-1_2b-instruct.json`), infrastructure fix description. Single run on one architecture; does not reopen S1.4. | — |
 | 2026-07-11 | `2026-07-11_live_runner_queue.json` | VALID | **Live runner queue launch provenance and completion record.** Durable record of the live experiment queue at implementation commit `5b5e93c63d769fea7854073a4e6c359e5d36606f`. Records UTC launch date, live local state paths under `/tmp/oczy-live-queue/` (batch, state, campaign, campaign_manifest — explicitly labeled as non-tracked live local state), scheduler flags (`--watch-batch --watch-interval 30`), additive provider capacity contract (10 Kaggle hard-cap + AIMD-learned Colab X, no global cap), source dataset/archive provenance (`abdellahkadem/oczy-source-5b5e93c63d76`, sha256 `bc1ff926…`), and the first job `r18-distillation-5seed-diagnostic` (Kaggle, kernel `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, module `oczy.experiments.consolidation_distillation`, args `--seeds 5 --max-steps 10 --stage stage_0_grounding`). **Job completed** (exit 0, state=succeeded, completed 2026-07-11T15:04:52Z, collected 2026-07-11T15:04:54Z). Scientific classification: **BLOCKED** at teacher validity gate (`teacher_dev_delta=0.17647058823529413` < 0.2, identical across all 5 seeds). No positive scientific verdict claimed. Full adjudication in `2026-07-11_r18_five_seed_diagnostic.json`. | — |
@@ -122,8 +125,9 @@ documentation).
 
 ## Reference Point
 
-The **honest post-leakage baseline** (`2026-07-01_honest_post_leakage_baseline.md`)
-is the current reference point. Key honest numbers (real driver, semantic scoring):
+The **honest post-leakage v2 baseline**
+(`2026-07-01_honest_post_leakage_baseline.md`) is retained for historical
+comparison only. It is not the current v2.2 reference. Key legacy numbers:
 
 | Stage | Post Accuracy |
 |-------|---------------|
@@ -134,7 +138,8 @@ is the current reference point. Key honest numbers (real driver, semantic scorin
 | Stage 4: Consolidation | 0.90 |
 | Stage 5: Cross-domain | 0.92 |
 
-These supersede all prior Stage-2 and Stage-5 claims in the ledger.
+These supersede earlier leakage-era Stage-2 and Stage-5 claims, but a new v2.2
+baseline is required before current stage-to-stage comparisons are made.
 
 ## Retracted headline claims (session `f645e4af`)
 

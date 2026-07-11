@@ -2,6 +2,7 @@
  "name": "Stage 1: Transfer within domain",
  "description": "New requests that use the corrected sense learned in Stage 0. Targets NeuralHippocampus replay when fast weights are weak.",
  "consolidate_before": false,
+ "teach_episodes": false,
  "episodes": [
   {
    "id": "s1_log",

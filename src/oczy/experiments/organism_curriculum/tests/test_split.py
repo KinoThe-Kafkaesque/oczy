@@ -20,6 +20,7 @@ from __future__ import annotations
 import math
 
 from oczy.experiments.organism_curriculum.dataset import (
+    DEFAULT_SPLIT_SALT,
     Episode,
     Probe,
     Stage,
@@ -79,6 +80,22 @@ def test_split_stability() -> None:
     dev_v2, _ = split_probes(stage, fraction=0.3, salt="v2")
     dev_v3, _ = split_probes(stage, fraction=0.3, salt="v3")
     assert dev_v2 != dev_v3, "salt change must move at least one probe between splits"
+
+
+def test_v2_2_split_is_category_stratified() -> None:
+    """Every multi-probe capability category appears in dev and holdout."""
+    for stage in build_curriculum():
+        dev, holdout = split_probes(stage)
+        by_category: dict[str, set[str]] = {}
+        for ep in stage.episodes:
+            for probe in ep.probes:
+                by_category.setdefault(probe.category, set()).add(
+                    f"{ep.id}|{probe.request}|{probe.category}"
+                )
+        for category, ids in by_category.items():
+            if len(ids) >= 2:
+                assert ids & dev, f"{stage.name}/{category} missing from dev"
+                assert ids & holdout, f"{stage.name}/{category} missing from holdout"
 
 
 def test_split_min_holdout() -> None:
@@ -173,7 +190,7 @@ def test_split_guarantee_engages_for_unlucky_large_stage() -> None:
     assert len(dev) + len(holdout) == 8
 
 
-def test_split_counts_locked_to_eval_v2_1() -> None:
+def test_legacy_split_counts_locked_to_eval_v2_1() -> None:
     """Lock the bundled dev/holdout counts at the pre-registered params.
 
     Updated for the human-approved eval v2.1 expansion (2026-07-03): stages
@@ -190,10 +207,23 @@ def test_split_counts_locked_to_eval_v2_1() -> None:
         assert len(holdout) == count, f"stage {idx} holdout count changed"
 
 
+def test_split_counts_locked_to_eval_v2_2() -> None:
+    """Lock the human-approved category-stratified v2.2 split counts."""
+    expected = {0: 6, 1: 12, 2: 10, 3: 4, 4: 3, 5: 4}
+    stages = build_curriculum()
+    for idx, count in expected.items():
+        _, holdout = split_probes(
+            stages[idx], fraction=0.3, salt=DEFAULT_SPLIT_SALT
+        )
+        assert len(holdout) == count, f"stage {idx} holdout count changed"
+
+
 def test_validate_split_healthy_at_preregistered_fraction() -> None:
     """The Sprint-2 pre-registered split params (fraction=0.3, salt="v2") must
     validate cleanly across the whole bundled curriculum.
     """
-    report = validate_split(build_curriculum(), fraction=0.3, salt="v2")
+    report = validate_split(
+        build_curriculum(), fraction=0.3, salt=DEFAULT_SPLIT_SALT
+    )
     assert report.ok
     assert report.errors == []

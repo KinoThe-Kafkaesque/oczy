@@ -133,7 +133,8 @@ def _score_item(
     prompt_text = full_text[: len(full_text) - len(target)] if len(target) <= len(full_text) else full_text
     prompt_uncertainty = float(model.uncertainty(prompt_text))
 
-    # ZPD score: moderate uncertainty and moderate novelty are best.
+    # ZPD score: uncertainty is capped so unreachable items do not dominate;
+    # novelty is monotonic (rare/unseen text has the larger score).
     zpd = (
         uncertainty_weight * min(uncertainty, 4.0) / 4.0
         + novelty_weight * novelty

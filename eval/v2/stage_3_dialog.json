@@ -2,6 +2,7 @@
   "name": "Stage 3: Dialog",
   "description": "Multi-turn interactions: a correction followed by a context-dependent follow-up. Tests the full organ metabolism across turns.",
   "consolidate_before": false,
+  "probe_timing": "after_episode",
   "episodes": [
     {
       "id": "s3_ship_log",
