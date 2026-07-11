@@ -191,6 +191,8 @@ import sys
 import time
 import traceback
 from pathlib import Path
+import urllib.request
+from urllib.parse import quote as _url_quote
 
 # --- CPU-only offline contract: set before any heavy imports ---
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -312,6 +314,44 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _gguf_resolve_url(repo_id: str, revision: str, filename: str) -> str:
+    """Build the exact public HF resolve URL for a pinned GGUF file."""
+    return (
+        f"https://huggingface.co/{repo_id}/resolve/{revision}/"
+        f"{_url_quote(filename)}?download=true"
+    )
+
+
+def _download_gguf_stream(url: str, dest: Path, timeout: float = 600.0) -> None:
+    """Stream *url* to *dest* in 1 MiB chunks via urllib, then atomically replace.
+
+    Writes to a sibling ``*.tmp`` file and uses ``os.replace`` so a partial
+    download never appears at *dest*.  Raises ``RuntimeError`` on HTTP error
+    or timeout.  The temp file is cleaned up on any failure.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".tmp")
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            status = getattr(resp, "status", None) or resp.getcode()
+            if status != 200:
+                raise RuntimeError(f"HTTP {status} fetching {url}")
+            with open(tmp, "wb") as f:
+                while True:
+                    chunk = resp.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+        os.replace(tmp, dest)
+    except Exception:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        raise
+
+
 def provision_model_artifact(artifact: dict) -> dict:
     """Download and verify a model artifact from Hugging Face.
 
@@ -319,13 +359,15 @@ def provision_model_artifact(artifact: dict) -> dict:
     verifies the SHA-256 of the downloaded file(s), sets the appropriate
     model environment variable, then forces offline mode back on.
 
-    For ``kind=="gguf"``: downloads a single file via ``hf_hub_download``
-    at the exact revision, verifies its SHA-256, and sets
-    ``OCZY_MODEL_PATH``.
+    For ``kind=="gguf"``: streams a single file from the exact public
+    resolve URL via ``urllib`` (no HF library dependency), writes
+    to a deterministic cache path with atomic temp replacement, verifies
+    SHA-256, and sets ``OCZY_MODEL_PATH``.
 
-    For ``kind=="hf_snapshot"``: downloads a snapshot at the exact revision
-    via ``snapshot_download``, verifies the named file's SHA-256, and sets
-    ``OCZY_HF_MODEL_DIR``.
+    For ``kind=="hf_snapshot"``: disables Xet transport
+    (``HF_HUB_DISABLE_XET=1``) before importing the HF library, downloads
+    a snapshot at the exact revision via ``snapshot_download(token=False)``,
+    verifies the named file's SHA-256, and sets ``OCZY_HF_MODEL_DIR``.
 
     Fails closed on any hash mismatch or download error.
     """
@@ -339,29 +381,26 @@ def provision_model_artifact(artifact: dict) -> dict:
     os.environ["HF_HUB_OFFLINE"] = "0"
     os.environ["TRANSFORMERS_OFFLINE"] = "0"
     os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
-    try:
-        from huggingface_hub import hf_hub_download, snapshot_download
-    except ImportError as exc:
-        raise RuntimeError(
-            f"huggingface_hub is required for model_artifact provisioning "
-            f"but is not installed: {exc}"
-        ) from exc
 
     try:
         if kind == "gguf":
-            local_path = hf_hub_download(
-                repo_id=repo_id,
-                revision=revision,
-                filename=filename,
-                token=False,
+            cache_base = os.environ.get("OCZY_HF_CACHE_DIR", "/content/hf_models")
+            cache_path = (
+                Path(cache_base)
+                / repo_id.replace("/", "_")
+                / revision
+                / filename
             )
-            actual_sha = _sha256_file(Path(local_path))
+            url = _gguf_resolve_url(repo_id, revision, filename)
+            _download_gguf_stream(url, cache_path)
+            actual_sha = _sha256_file(cache_path)
             if actual_sha != expected_sha:
+                cache_path.unlink(missing_ok=True)
                 raise RuntimeError(
                     f"SHA-256 mismatch for {filename}: expected {expected_sha}, "
                     f"got {actual_sha}. Refusing to proceed."
                 )
-            os.environ["OCZY_MODEL_PATH"] = str(local_path)
+            os.environ["OCZY_MODEL_PATH"] = str(cache_path)
             return {
                 "kind": "gguf",
                 "repo_id": repo_id,
@@ -369,10 +408,21 @@ def provision_model_artifact(artifact: dict) -> dict:
                 "filename": filename,
                 "sha256": actual_sha,
                 "sha256_verified": True,
-                "model_path": str(local_path),
+                "model_path": str(cache_path),
                 "env_var": "OCZY_MODEL_PATH",
+                "download_url": url,
             }
         else:  # hf_snapshot
+            # Disable Xet transport before importing huggingface_hub.
+            os.environ["HF_HUB_DISABLE_XET"] = "1"
+            os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+            try:
+                from huggingface_hub import snapshot_download
+            except ImportError as exc:
+                raise RuntimeError(
+                    f"huggingface_hub is required for hf_snapshot provisioning "
+                    f"but is not installed: {exc}"
+                ) from exc
             local_dir = snapshot_download(
                 repo_id=repo_id,
                 revision=revision,

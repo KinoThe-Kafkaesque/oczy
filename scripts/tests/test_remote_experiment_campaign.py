@@ -2692,7 +2692,7 @@ class TestModelArtifactValidation:
 class TestBootstrapProvisioningInjection:
     """The generated bootstrap contains hash-verified provisioning code."""
 
-    def test_gguf_bootstrap_has_hf_hub_download_and_sha_verify(self, tmp_path: Path) -> None:
+    def test_gguf_bootstrap_uses_direct_streaming_and_sha_verify(self, tmp_path: Path) -> None:
         out = tmp_path / "out"
         prepare_colab_experiment(
             output=out, job_name="cb-a", repo_url=REPO_URL,
@@ -2701,11 +2701,39 @@ class TestBootstrapProvisioningInjection:
             output_path="out/cb-a", model_artifact=_valid_gguf_artifact(),
         )
         source = (out / "colab_bootstrap.py").read_text()
-        assert "hf_hub_download" in source
-        assert "OCZY_MODEL_PATH" in source
-        assert "_sha256_file" in source
-        # SHA-256 mismatch must raise RuntimeError (fail closed).
-        assert "SHA-256 mismatch" in source or "sha256" in source.lower()
+        tree = ast.parse(source)
+        prov_func = next(
+            (
+                node for node in ast.walk(tree)
+                if isinstance(node, ast.FunctionDef)
+                and node.name == "provision_model_artifact"
+            ),
+            None,
+        )
+        assert prov_func is not None, "provision_model_artifact not defined in bootstrap"
+        calls = {
+            node.func.id
+            for node in ast.walk(prov_func)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        assert "_gguf_resolve_url" in calls
+        assert "_download_gguf_stream" in calls
+        assert "_sha256_file" in calls
+        assignments = [
+            node for node in ast.walk(prov_func)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Attribute)
+                and isinstance(target.value.value, ast.Name)
+                and target.value.value.id == "os"
+                and target.value.attr == "environ"
+                and isinstance(target.slice, ast.Constant)
+                and target.slice.value == "OCZY_MODEL_PATH"
+                for target in node.targets
+            )
+        ]
+        assert assignments, "GGUF provisioning must set OCZY_MODEL_PATH after SHA verification"
 
     def test_hf_snapshot_bootstrap_has_snapshot_download_and_sha_verify(self, tmp_path: Path) -> None:
         out = tmp_path / "out"
@@ -2846,8 +2874,7 @@ class TestBootstrapProvisioningInjection:
         assert 'report["llama_cpp_install"]' in source or "report['llama_cpp_install']" in source
 
 
-# ===========================================================================
-# 16. Colab provision_model_artifact runtime (mocked huggingface_hub)
+# 16. Colab provision_model_artifact runtime (mocked network)
 # ===========================================================================
 
 
@@ -2855,8 +2882,8 @@ class TestProvisionModelArtifactRuntime:
     """provision_model_artifact downloads, verifies SHA-256, and sets env vars.
 
     The function is defined inside the bootstrap template, so tests exec the
-    generated bootstrap source and call the function with mocked
-    huggingface_hub.  No real network is invoked.
+    generated bootstrap source and call the function with mocked network
+    boundaries.  No real network is invoked.
     """
 
     def _generate_bootstrap(self, tmp_path: Path, artifact: dict[str, Any] | None = None) -> str:
@@ -2870,30 +2897,62 @@ class TestProvisionModelArtifactRuntime:
         )
         return (out / "colab_bootstrap.py").read_text()
 
+    @staticmethod
+    def _fake_hf_that_fails_gguf_download() -> types.ModuleType:
+        fake_hf = types.ModuleType("huggingface_hub")
+
+        def _unexpected_hf_hub_download(**kw: object) -> str:
+            raise AssertionError(
+                "GGUF provisioning must use direct urllib streaming, not hf_hub_download"
+            )
+
+        fake_hf.hf_hub_download = _unexpected_hf_hub_download
+        fake_hf.snapshot_download = lambda **kw: ""
+        return fake_hf
+
     def test_gguf_download_verifies_sha_and_sets_path(self, tmp_path: Path) -> None:
-        """GGUF provisioning: hf_hub_download → SHA verify → OCZY_MODEL_PATH set."""
-        model_file = tmp_path / "model.gguf"
+        """GGUF provisioning: direct stream → SHA verify → OCZY_MODEL_PATH set."""
         model_content = b"fake gguf model bytes"
-        model_file.write_bytes(model_content)
         expected_sha = hashlib.sha256(model_content).hexdigest()
 
         artifact = _valid_gguf_artifact(sha256=expected_sha)
         source = self._generate_bootstrap(tmp_path, artifact)
         ns = _exec_bootstrap(source)
 
-        fake_hf = types.ModuleType("huggingface_hub")
-        fake_hf.hf_hub_download = lambda **kw: str(model_file)
-        fake_hf.snapshot_download = lambda **kw: str(tmp_path)
-
-        old_env = {k: os.environ.get(k) for k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_MODEL_PATH")}
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_MODEL_PATH",
+                "OCZY_HF_CACHE_DIR",
+            )
+        }
+        cache_dir = tmp_path / "hf_cache"
+        os.environ["OCZY_HF_CACHE_DIR"] = str(cache_dir)
+        fake_hf = self._fake_hf_that_fails_gguf_download()
         try:
-            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+            with (
+                patch.dict(sys.modules, {"huggingface_hub": fake_hf}),
+                patch("urllib.request.urlopen", return_value=_FakeHTTPResponse(model_content)),
+            ):
                 result = ns["provision_model_artifact"](artifact)
+            expected_path = (
+                cache_dir
+                / artifact["repo_id"].replace("/", "_")
+                / artifact["revision"]
+                / artifact["filename"]
+            )
             assert result["kind"] == "gguf"
             assert result["sha256_verified"] is True
             assert result["sha256"] == expected_sha
             assert result["env_var"] == "OCZY_MODEL_PATH"
-            assert os.environ.get("OCZY_MODEL_PATH") == str(model_file)
+            assert result["model_path"] == str(expected_path)
+            assert result["download_url"] == (
+                "https://huggingface.co/"
+                f"{artifact['repo_id']}/resolve/{artifact['revision']}/"
+                f"{artifact['filename']}?download=true"
+            )
+            assert os.environ.get("OCZY_MODEL_PATH") == str(expected_path)
+            assert expected_path.read_bytes() == model_content
         finally:
             for k, v in old_env.items():
                 if v is not None:
@@ -2936,20 +2995,26 @@ class TestProvisionModelArtifactRuntime:
 
     def test_hash_mismatch_raises_runtime_error(self, tmp_path: Path) -> None:
         """SHA-256 mismatch must raise RuntimeError (fail closed)."""
-        model_file = tmp_path / "model.gguf"
-        model_file.write_bytes(b"actual content")
-
         artifact = _valid_gguf_artifact(sha256="0" * 64)  # wrong SHA
         source = self._generate_bootstrap(tmp_path, artifact)
         ns = _exec_bootstrap(source)
 
-        fake_hf = types.ModuleType("huggingface_hub")
-        fake_hf.hf_hub_download = lambda **kw: str(model_file)
-        fake_hf.snapshot_download = lambda **kw: str(tmp_path)
-
-        old_env = {k: os.environ.get(k) for k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")}
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_HF_CACHE_DIR",
+            )
+        }
+        os.environ["OCZY_HF_CACHE_DIR"] = str(tmp_path / "hf_cache")
+        fake_hf = self._fake_hf_that_fails_gguf_download()
         try:
-            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+            with (
+                patch.dict(sys.modules, {"huggingface_hub": fake_hf}),
+                patch(
+                    "urllib.request.urlopen",
+                    return_value=_FakeHTTPResponse(b"actual content"),
+                ),
+            ):
                 with pytest.raises(RuntimeError, match="SHA-256 mismatch|mismatch"):
                     ns["provision_model_artifact"](artifact)
         finally:
@@ -2961,22 +3026,27 @@ class TestProvisionModelArtifactRuntime:
 
     def test_env_forced_offline_after_download(self, tmp_path: Path) -> None:
         """After provisioning, HF_HUB_OFFLINE and TRANSFORMERS_OFFLINE must be '1'."""
-        model_file = tmp_path / "model.gguf"
         model_content = b"offline test"
-        model_file.write_bytes(model_content)
         expected_sha = hashlib.sha256(model_content).hexdigest()
 
         artifact = _valid_gguf_artifact(sha256=expected_sha)
         source = self._generate_bootstrap(tmp_path, artifact)
         ns = _exec_bootstrap(source)
 
-        fake_hf = types.ModuleType("huggingface_hub")
-        fake_hf.hf_hub_download = lambda **kw: str(model_file)
-        fake_hf.snapshot_download = lambda **kw: str(tmp_path)
-
-        old_env = {k: os.environ.get(k) for k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_MODEL_PATH")}
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_MODEL_PATH",
+                "OCZY_HF_CACHE_DIR",
+            )
+        }
+        os.environ["OCZY_HF_CACHE_DIR"] = str(tmp_path / "hf_cache")
+        fake_hf = self._fake_hf_that_fails_gguf_download()
         try:
-            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+            with (
+                patch.dict(sys.modules, {"huggingface_hub": fake_hf}),
+                patch("urllib.request.urlopen", return_value=_FakeHTTPResponse(model_content)),
+            ):
                 ns["provision_model_artifact"](artifact)
             # After provisioning, offline mode must be forced back on.
             assert os.environ.get("HF_HUB_OFFLINE") == "1"
@@ -3609,12 +3679,12 @@ class TestArgumentTransportOptionLike:
 
 
 class TestPublicHFDownloadNoImplicitToken:
-    """Generated bootstrap disables implicit HF token lookup and passes
-    token=False to both hf_hub_download and snapshot_download, while
-    retaining revision pinning and SHA-256 verification.
+    """Generated bootstrap disables implicit HF token lookup for public
+    downloads, while the HF snapshot branch retains token=False, revision
+    pinning, and SHA-256 verification.
 
-    These tests fail on the old behavior (no HF_HUB_DISABLE_IMPLICIT_TOKEN,
-    no token=False kwarg) and pass once the fix is applied.
+    GGUF artifacts are direct-streamed from the public resolve URL instead of
+    using a token-bearing huggingface_hub download call.
     """
 
     def _generate_bootstrap(
@@ -3671,27 +3741,6 @@ class TestPublicHFDownloadNoImplicitToken:
             "importing huggingface_hub"
         )
 
-    # --- AST inspection: token=False on both download calls ---
-
-    def test_gguf_hf_hub_download_has_token_false(self, tmp_path: Path) -> None:
-        """The hf_hub_download call in the gguf branch passes token=False."""
-        source = self._generate_bootstrap(tmp_path, _valid_gguf_artifact())
-        prov_func = self._find_func(source, "provision_model_artifact")
-        assert prov_func is not None
-        calls = [
-            n for n in ast.walk(prov_func)
-            if isinstance(n, ast.Call)
-            and isinstance(n.func, ast.Name)
-            and n.func.id == "hf_hub_download"
-        ]
-        assert calls, "hf_hub_download call not found in provision_model_artifact"
-        kw_args = {kw.arg: kw.value for kw in calls[0].keywords}
-        assert "token" in kw_args, "hf_hub_download must pass token=False"
-        token_val = kw_args["token"]
-        assert isinstance(token_val, ast.Constant) and token_val.value is False, (
-            "hf_hub_download token kwarg must be literal False"
-        )
-
     def test_snapshot_download_has_token_false(self, tmp_path: Path) -> None:
         """The snapshot_download call in the hf_snapshot branch passes token=False."""
         source = self._generate_bootstrap(tmp_path, _valid_hf_snapshot_artifact())
@@ -3713,24 +3762,6 @@ class TestPublicHFDownloadNoImplicitToken:
 
     # --- AST inspection: revision pinning retained ---
 
-    def test_gguf_download_retains_revision(self, tmp_path: Path) -> None:
-        """hf_hub_download still passes revision=revision (pinned)."""
-        source = self._generate_bootstrap(tmp_path, _valid_gguf_artifact())
-        tree = ast.parse(source)
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "hf_hub_download"
-            ):
-                kw_args = {kw.arg for kw in node.keywords}
-                assert "revision" in kw_args, (
-                    "hf_hub_download must still pass revision for pinning"
-                )
-                assert "repo_id" in kw_args
-                assert "filename" in kw_args
-                return
-        pytest.fail("hf_hub_download call not found")
 
     def test_snapshot_download_retains_revision(self, tmp_path: Path) -> None:
         """snapshot_download still passes revision=revision (pinned)."""
@@ -3752,49 +3783,6 @@ class TestPublicHFDownloadNoImplicitToken:
 
     # --- Runtime: token=False and revision passed to mocked HF ---
 
-    def test_gguf_runtime_token_false_and_revision(self, tmp_path: Path) -> None:
-        """Exec bootstrap, mock huggingface_hub, call provision_model_artifact:
-        hf_hub_download receives token=False and the pinned revision."""
-        model_file = tmp_path / "model.gguf"
-        model_content = b"fake gguf bytes"
-        model_file.write_bytes(model_content)
-        expected_sha = hashlib.sha256(model_content).hexdigest()
-
-        artifact = _valid_gguf_artifact(sha256=expected_sha)
-        source = self._generate_bootstrap(tmp_path, artifact)
-        ns = _exec_bootstrap(source)
-
-        captured: dict[str, Any] = {}
-
-        def fake_hf_hub_download(**kw):
-            captured["hf_hub_download"] = kw
-            return str(model_file)
-
-        fake_hf = types.ModuleType("huggingface_hub")
-        fake_hf.hf_hub_download = fake_hf_hub_download
-        fake_hf.snapshot_download = lambda **kw: str(tmp_path)
-
-        old_env = {
-            k: os.environ.get(k)
-            for k in (
-                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_MODEL_PATH",
-                "HF_HUB_DISABLE_IMPLICIT_TOKEN",
-            )
-        }
-        try:
-            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
-                result = ns["provision_model_artifact"](artifact)
-            assert captured["hf_hub_download"]["token"] is False
-            assert captured["hf_hub_download"]["revision"] == MODEL_REVISION
-            assert captured["hf_hub_download"]["repo_id"] == artifact["repo_id"]
-            assert captured["hf_hub_download"]["filename"] == artifact["filename"]
-            assert result["sha256_verified"] is True
-        finally:
-            for k, v in old_env.items():
-                if v is not None:
-                    os.environ[k] = v
-                elif k in os.environ:
-                    del os.environ[k]
 
     def test_snapshot_runtime_token_false_and_revision(self, tmp_path: Path) -> None:
         """Exec bootstrap, mock huggingface_hub, call provision_model_artifact:
@@ -3860,41 +3848,615 @@ class TestPublicHFDownloadNoImplicitToken:
             elif "HF_HUB_DISABLE_IMPLICIT_TOKEN" in os.environ:
                 del os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"]
 
-    # --- Runtime: SHA-256 verification still enforced with token=False ---
 
-    def test_sha_mismatch_still_raises_with_token_false(self, tmp_path: Path) -> None:
-        """SHA-256 mismatch still raises RuntimeError even with token=False.
-        Proves the fix doesn't weaken verification."""
-        model_file = tmp_path / "model.gguf"
-        model_file.write_bytes(b"actual content")
+
+# ===========================================================================
+# 23. Direct GGUF provisioning: exact revision URL, chunked streaming,
+#     atomic temp replacement, SHA mismatch cleanup, HF snapshot Xet disable
+# ===========================================================================
+
+
+class _FakeHTTPResponse:
+    """Minimal fake HTTP response for urllib streaming tests.
+
+    Tracks ``read()`` calls so tests can verify chunked streaming.
+    """
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self._pos = 0
+        self.status = 200
+        self.read_calls: list[int] = []
+
+    def read(self, n: int = -1) -> bytes:
+        self.read_calls.append(n)
+        if n is None or n < 0:
+            chunk = self._data[self._pos:]
+        else:
+            chunk = self._data[self._pos:self._pos + n]
+        self._pos += len(chunk)
+        return chunk
+
+    def getcode(self) -> int:
+        return 200
+
+    def __enter__(self) -> "_FakeHTTPResponse":
+        return self
+
+    def __exit__(self, *args: object) -> bool:
+        return False
+
+
+class TestDirectGGUFProvisioning:
+    """Direct GGUF streaming provisioning bypasses huggingface_hub for GGUF
+    files, using the exact public revision resolve URL with urllib streaming.
+
+    These tests fail on the old ``hf_hub_download`` implementation (no
+    ``_gguf_resolve_url`` / ``_download_gguf_stream`` helpers, no
+    ``HF_HUB_DISABLE_XET``) and pass on the direct streaming implementation.
+    """
+
+    def _generate_bootstrap(
+        self, tmp_path: Path, artifact: dict[str, Any] | None = None
+    ) -> str:
+        out = tmp_path / "out"
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a",
+            model_artifact=artifact or _valid_gguf_artifact(),
+        )
+        return (out / "colab_bootstrap.py").read_text()
+
+    @staticmethod
+    def _find_func(source: str, name: str) -> ast.FunctionDef | None:
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == name:
+                return node
+        return None
+
+    @staticmethod
+    def _make_fake_hf(
+        hf_hub_download_return: str = "",
+        snapshot_download_return: str = "",
+        captured: dict[str, Any] | None = None,
+    ) -> types.ModuleType:
+        """Build a fake huggingface_hub module for safety (prevents real
+        network calls on old code)."""
+        fake_hf = types.ModuleType("huggingface_hub")
+
+        def _hf_hub_download(**kw):
+            if captured is not None:
+                captured["hf_hub_download"] = kw
+            return hf_hub_download_return
+
+        def _snapshot_download(**kw):
+            if captured is not None:
+                captured["snapshot_download"] = kw
+            return snapshot_download_return
+
+        fake_hf.hf_hub_download = _hf_hub_download
+        fake_hf.snapshot_download = _snapshot_download
+        return fake_hf
+
+    # ------------------------------------------------------------------
+    # URL construction: exact revision URL and filename quoting
+    # ------------------------------------------------------------------
+
+    def test_gguf_resolve_url_exact_format(self, tmp_path: Path) -> None:
+        """``_gguf_resolve_url`` builds the exact public resolve URL:
+        ``https://huggingface.co/{repo_id}/resolve/{revision}/{filename}?download=true``"""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+        resolve = ns.get("_gguf_resolve_url")
+        assert resolve is not None, (
+            "_gguf_resolve_url must be defined in bootstrap for direct GGUF download"
+        )
+        url = resolve("org/model-repo", "abc123def", "model.gguf")
+        assert url == (
+            "https://huggingface.co/org/model-repo/resolve/abc123def/model.gguf"
+            "?download=true"
+        ), f"resolve URL must match exact public format, got: {url}"
+
+    def test_gguf_resolve_url_quotes_filename(self, tmp_path: Path) -> None:
+        """Filename with special characters is URL-quoted in the resolve URL."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+        resolve = ns.get("_gguf_resolve_url")
+        assert resolve is not None
+        url = resolve("org/model", "rev1", "my model file.gguf")
+        # Spaces must be percent-encoded (not appear raw in the path).
+        assert "%20" in url or "+" in url, (
+            "filename spaces must be URL-encoded in resolve URL"
+        )
+        # The raw unquoted filename must not appear after the revision segment.
+        path_part = url.split("resolve/rev1/", 1)[1]
+        assert "my model file.gguf" not in path_part, (
+            "raw filename with spaces must not appear unquoted in URL path"
+        )
+
+    def test_gguf_resolve_url_uses_pinned_revision(self, tmp_path: Path) -> None:
+        """The resolve URL embeds the exact pinned revision, not 'main'."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+        resolve = ns.get("_gguf_resolve_url")
+        assert resolve is not None
+        url = resolve("org/model", MODEL_REVISION, "file.gguf")
+        assert f"/resolve/{MODEL_REVISION}/" in url, (
+            "resolve URL must embed the exact pinned revision"
+        )
+        assert "/resolve/main/" not in url, (
+            "resolve URL must not fall back to 'main' revision"
+        )
+
+    # ------------------------------------------------------------------
+    # Chunked streaming
+    # ------------------------------------------------------------------
+
+    def test_gguf_download_streams_in_chunks(self, tmp_path: Path) -> None:
+        """``_download_gguf_stream`` reads the response in bounded-size chunks,
+        not in a single ``read()`` call."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+        download = ns.get("_download_gguf_stream")
+        assert download is not None, (
+            "_download_gguf_stream must be defined for chunked streaming"
+        )
+
+        # 3 MiB + 17 bytes of data — must require multiple 1 MiB chunks.
+        data = b"\x00" * (3 * 1024 * 1024 + 17)
+        response = _FakeHTTPResponse(data)
+
+        dest = tmp_path / "model.gguf"
+        with patch("urllib.request.urlopen", return_value=response):
+            download("https://example.com/model.gguf", dest)
+
+        assert dest.read_bytes() == data, "downloaded content must match exactly"
+        # At least 4 read calls (3 full 1 MiB chunks + 1 partial).
+        assert len(response.read_calls) >= 4, (
+            f"expected chunked reads (>=4 calls), got {len(response.read_calls)}"
+        )
+        # No single read should request the entire file at once.
+        assert all(
+            n is None or n <= 1024 * 1024 + 1 for n in response.read_calls
+        ), "each read must request a bounded chunk, not the whole file"
+
+    # ------------------------------------------------------------------
+    # Atomic temp replacement
+    # ------------------------------------------------------------------
+
+    def test_gguf_download_atomic_temp_replacement(self, tmp_path: Path) -> None:
+        """``_download_gguf_stream`` writes to a ``.tmp`` file then atomically
+        ``os.replace`` to the final path — no ``.tmp`` file remains."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+        download = ns.get("_download_gguf_stream")
+        assert download is not None
+
+        data = b"gguf atomic test payload"
+        response = _FakeHTTPResponse(data)
+        dest = tmp_path / "model.gguf"
+        tmp_file = dest.with_name(dest.name + ".tmp")
+
+        with patch("urllib.request.urlopen", return_value=response):
+            download("https://example.com/model.gguf", dest)
+
+        assert dest.exists(), "final file must exist after download"
+        assert dest.read_bytes() == data
+        assert not tmp_file.exists(), (
+            ".tmp file must not remain after atomic os.replace"
+        )
+
+    def test_gguf_download_cleans_up_tmp_on_failure(self, tmp_path: Path) -> None:
+        """On download error, the ``.tmp`` file is cleaned up."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+        download = ns.get("_download_gguf_stream")
+        assert download is not None
+
+        dest = tmp_path / "model.gguf"
+        tmp_file = dest.with_name(dest.name + ".tmp")
+
+        def failing_urlopen(*a: object, **kw: object) -> object:
+            raise OSError("network error")
+
+        with patch("urllib.request.urlopen", side_effect=failing_urlopen):
+            with pytest.raises(OSError, match="network error"):
+                download("https://example.com/model.gguf", dest)
+
+        assert not dest.exists(), "dest must not exist on download failure"
+        assert not tmp_file.exists(), ".tmp file must be cleaned up on failure"
+
+    # ------------------------------------------------------------------
+    # SHA mismatch: cleanup + failure
+    # ------------------------------------------------------------------
+
+    def test_gguf_sha_mismatch_raises_runtime_error(self, tmp_path: Path) -> None:
+        """SHA-256 mismatch raises RuntimeError (fail closed)."""
+        model_content = b"actual gguf content for mismatch test"
+        model_file = tmp_path / "hf_cache.gguf"
+        model_file.write_bytes(model_content)
 
         artifact = _valid_gguf_artifact(sha256="0" * 64)  # wrong SHA
         source = self._generate_bootstrap(tmp_path, artifact)
         ns = _exec_bootstrap(source)
 
-        captured: dict[str, Any] = {}
+        def fake_download(url: str, dest: object, timeout: float = 600.0) -> None:
+            p = Path(dest)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(model_content)
 
-        def fake_hf_hub_download(**kw):
-            captured["hf_hub_download"] = kw
-            return str(model_file)
-
-        fake_hf = types.ModuleType("huggingface_hub")
-        fake_hf.hf_hub_download = fake_hf_hub_download
-        fake_hf.snapshot_download = lambda **kw: str(tmp_path)
+        ns["_download_gguf_stream"] = fake_download
+        fake_hf = self._make_fake_hf(hf_hub_download_return=str(model_file))
 
         old_env = {
             k: os.environ.get(k)
             for k in (
-                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE",
-                "HF_HUB_DISABLE_IMPLICIT_TOKEN",
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_MODEL_PATH",
+                "OCZY_HF_CACHE_DIR",
+            )
+        }
+        os.environ["OCZY_HF_CACHE_DIR"] = str(tmp_path / "hf_cache")
+        try:
+            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+                with pytest.raises(RuntimeError, match="SHA-256 mismatch|mismatch"):
+                    ns["provision_model_artifact"](artifact)
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+    def test_gguf_sha_mismatch_cleans_up_downloaded_file(self, tmp_path: Path) -> None:
+        """On SHA mismatch, the downloaded GGUF file is removed (cleanup)."""
+        model_content = b"actual gguf content for cleanup test"
+        model_file = tmp_path / "hf_cache.gguf"
+        model_file.write_bytes(model_content)
+        downloaded_paths: list[Path] = []
+
+        artifact = _valid_gguf_artifact(sha256="0" * 64)
+        source = self._generate_bootstrap(tmp_path, artifact)
+        ns = _exec_bootstrap(source)
+
+        def fake_download(url: str, dest: object, timeout: float = 600.0) -> None:
+            p = Path(dest)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(model_content)
+            downloaded_paths.append(p)
+
+        ns["_download_gguf_stream"] = fake_download
+        fake_hf = self._make_fake_hf(hf_hub_download_return=str(model_file))
+
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_MODEL_PATH",
+                "OCZY_HF_CACHE_DIR",
+            )
+        }
+        os.environ["OCZY_HF_CACHE_DIR"] = str(tmp_path / "hf_cache")
+        try:
+            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+                with pytest.raises(RuntimeError):
+                    ns["provision_model_artifact"](artifact)
+            # _download_gguf_stream must have been called (fails on old code).
+            assert downloaded_paths, "_download_gguf_stream must have been called"
+            # The downloaded file must be cleaned up after SHA mismatch.
+            assert not downloaded_paths[0].exists(), (
+                "downloaded file must be removed after SHA mismatch"
+            )
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+    # ------------------------------------------------------------------
+    # Successful provisioning: OCZY_MODEL_PATH set
+    # ------------------------------------------------------------------
+
+    def test_gguf_success_sets_oczy_model_path(self, tmp_path: Path) -> None:
+        """Successful GGUF download + SHA verify sets OCZY_MODEL_PATH and
+        returns the correct result dict."""
+        model_content = b"fake gguf model bytes for success test"
+        expected_sha = hashlib.sha256(model_content).hexdigest()
+        model_file = tmp_path / "hf_cache.gguf"
+        model_file.write_bytes(model_content)
+
+        artifact = _valid_gguf_artifact(sha256=expected_sha)
+        source = self._generate_bootstrap(tmp_path, artifact)
+        ns = _exec_bootstrap(source)
+
+        captured_url: list[str] = []
+
+        def fake_download(url: str, dest: object, timeout: float = 600.0) -> None:
+            captured_url.append(url)
+            p = Path(dest)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(model_content)
+
+        ns["_download_gguf_stream"] = fake_download
+        fake_hf = self._make_fake_hf(hf_hub_download_return=str(model_file))
+
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_MODEL_PATH",
+                "OCZY_HF_CACHE_DIR",
+            )
+        }
+        os.environ["OCZY_HF_CACHE_DIR"] = str(tmp_path / "hf_cache")
+        try:
+            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+                result = ns["provision_model_artifact"](artifact)
+            # _download_gguf_stream must have been called with the resolve URL.
+            assert captured_url, "_download_gguf_stream must have been called"
+            assert "huggingface.co" in captured_url[0]
+            assert "/resolve/" in captured_url[0]
+            assert "?download=true" in captured_url[0]
+            # Result dict.
+            assert result["kind"] == "gguf"
+            assert result["sha256_verified"] is True
+            assert result["sha256"] == expected_sha
+            assert result["env_var"] == "OCZY_MODEL_PATH"
+            # OCZY_MODEL_PATH env var set to the downloaded file.
+            assert os.environ.get("OCZY_MODEL_PATH") == result["model_path"]
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+    def test_gguf_success_forces_offline_after(self, tmp_path: Path) -> None:
+        """After successful GGUF provisioning, offline env vars are forced on."""
+        model_content = b"offline gguf test payload"
+        expected_sha = hashlib.sha256(model_content).hexdigest()
+        model_file = tmp_path / "hf_cache.gguf"
+        model_file.write_bytes(model_content)
+
+        artifact = _valid_gguf_artifact(sha256=expected_sha)
+        source = self._generate_bootstrap(tmp_path, artifact)
+        ns = _exec_bootstrap(source)
+
+        def fake_download(url: str, dest: object, timeout: float = 600.0) -> None:
+            p = Path(dest)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(model_content)
+
+        ns["_download_gguf_stream"] = fake_download
+        fake_hf = self._make_fake_hf(hf_hub_download_return=str(model_file))
+
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_MODEL_PATH",
+                "OCZY_HF_CACHE_DIR",
+            )
+        }
+        os.environ["OCZY_HF_CACHE_DIR"] = str(tmp_path / "hf_cache")
+        try:
+            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+                ns["provision_model_artifact"](artifact)
+            assert os.environ.get("HF_HUB_OFFLINE") == "1"
+            assert os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+    # ------------------------------------------------------------------
+    # No hf_hub_download in GGUF branch (direct streaming instead)
+    # ------------------------------------------------------------------
+
+    def test_gguf_branch_no_hf_hub_download_call(self, tmp_path: Path) -> None:
+        """The GGUF provisioning branch must not call ``hf_hub_download`` —
+        it uses direct urllib streaming instead."""
+        source = self._generate_bootstrap(tmp_path, _valid_gguf_artifact())
+        prov_func = self._find_func(source, "provision_model_artifact")
+        assert prov_func is not None, "provision_model_artifact not defined"
+
+        has_hf_hub_download = any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "hf_hub_download"
+            for node in ast.walk(prov_func)
+        )
+        assert not has_hf_hub_download, (
+            "GGUF branch must not call hf_hub_download — use direct streaming"
+        )
+
+    def test_gguf_branch_has_resolve_url_and_stream_helpers(self, tmp_path: Path) -> None:
+        """The bootstrap defines ``_gguf_resolve_url`` and ``_download_gguf_stream``."""
+        source = self._generate_bootstrap(tmp_path, _valid_gguf_artifact())
+        assert "_gguf_resolve_url" in source, (
+            "bootstrap must define _gguf_resolve_url for direct GGUF download"
+        )
+        assert "_download_gguf_stream" in source, (
+            "bootstrap must define _download_gguf_stream for chunked streaming"
+        )
+
+    # ------------------------------------------------------------------
+    # HF snapshot: HF_HUB_DISABLE_XET=1
+    # ------------------------------------------------------------------
+
+    def test_hf_snapshot_sets_disable_xet_in_source(self, tmp_path: Path) -> None:
+        """The HF snapshot branch sets ``HF_HUB_DISABLE_XET=1`` to bypass
+        Xet provisioning."""
+        source = self._generate_bootstrap(tmp_path, _valid_hf_snapshot_artifact())
+        prov_func = self._find_func(source, "provision_model_artifact")
+        assert prov_func is not None
+        func_source = ast.unparse(prov_func)
+        assert "HF_HUB_DISABLE_XET" in func_source, (
+            "provision_model_artifact must set HF_HUB_DISABLE_XET=1 for "
+            "hf_snapshot to bypass Xet provisioning"
+        )
+
+    def test_hf_snapshot_disable_xet_before_snapshot_download(
+        self, tmp_path: Path
+    ) -> None:
+        """``HF_HUB_DISABLE_XET`` must be set before ``snapshot_download`` is called."""
+        source = self._generate_bootstrap(tmp_path, _valid_hf_snapshot_artifact())
+        prov_func = self._find_func(source, "provision_model_artifact")
+        assert prov_func is not None
+        func_source = ast.unparse(prov_func)
+        idx_xet = func_source.find("HF_HUB_DISABLE_XET")
+        idx_snapshot = func_source.find("snapshot_download")
+        assert idx_xet != -1, "HF_HUB_DISABLE_XET must appear in provision function"
+        assert idx_snapshot != -1, "snapshot_download must appear in provision function"
+        assert idx_xet < idx_snapshot, (
+            "HF_HUB_DISABLE_XET must be set before snapshot_download is called"
+        )
+
+    def test_hf_snapshot_runtime_sets_disable_xet_env(self, tmp_path: Path) -> None:
+        """After provisioning an hf_snapshot, ``HF_HUB_DISABLE_XET=1`` is set
+        in the process environment."""
+        snapshot_dir = tmp_path / "snapshot"
+        snapshot_dir.mkdir()
+        config_file = snapshot_dir / "config.json"
+        config_content = b'{"model_type":"lfm"}'
+        config_file.write_bytes(config_content)
+        expected_sha = hashlib.sha256(config_content).hexdigest()
+
+        artifact = _valid_hf_snapshot_artifact(sha256=expected_sha)
+        source = self._generate_bootstrap(tmp_path, artifact)
+        ns = _exec_bootstrap(source)
+
+        fake_hf = self._make_fake_hf(snapshot_download_return=str(snapshot_dir))
+
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_HF_MODEL_DIR",
+                "HF_HUB_DISABLE_XET", "HF_HUB_DISABLE_IMPLICIT_TOKEN",
+            )
+        }
+        try:
+            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+                ns["provision_model_artifact"](artifact)
+            assert os.environ.get("HF_HUB_DISABLE_XET") == "1", (
+                "HF_HUB_DISABLE_XET must be set to '1' for hf_snapshot provisioning"
+            )
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+    # ------------------------------------------------------------------
+    # HF snapshot: retains token=False / revision / hash verification
+    # ------------------------------------------------------------------
+
+    def test_hf_snapshot_retains_token_false(self, tmp_path: Path) -> None:
+        """``snapshot_download`` still receives ``token=False``."""
+        snapshot_dir = tmp_path / "snapshot"
+        snapshot_dir.mkdir()
+        config_file = snapshot_dir / "config.json"
+        config_content = b'{"model_type":"lfm"}'
+        config_file.write_bytes(config_content)
+        expected_sha = hashlib.sha256(config_content).hexdigest()
+
+        artifact = _valid_hf_snapshot_artifact(sha256=expected_sha)
+        source = self._generate_bootstrap(tmp_path, artifact)
+        ns = _exec_bootstrap(source)
+
+        captured: dict[str, Any] = {}
+        fake_hf = self._make_fake_hf(
+            snapshot_download_return=str(snapshot_dir), captured=captured
+        )
+
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_HF_MODEL_DIR",
+                "HF_HUB_DISABLE_XET", "HF_HUB_DISABLE_IMPLICIT_TOKEN",
+            )
+        }
+        try:
+            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+                ns["provision_model_artifact"](artifact)
+            assert "snapshot_download" in captured
+            assert captured["snapshot_download"]["token"] is False, (
+                "snapshot_download must still receive token=False"
+            )
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+    def test_hf_snapshot_retains_revision(self, tmp_path: Path) -> None:
+        """``snapshot_download`` still receives the pinned revision."""
+        snapshot_dir = tmp_path / "snapshot"
+        snapshot_dir.mkdir()
+        config_file = snapshot_dir / "config.json"
+        config_content = b'{"model_type":"lfm"}'
+        config_file.write_bytes(config_content)
+        expected_sha = hashlib.sha256(config_content).hexdigest()
+
+        artifact = _valid_hf_snapshot_artifact(sha256=expected_sha)
+        source = self._generate_bootstrap(tmp_path, artifact)
+        ns = _exec_bootstrap(source)
+
+        captured: dict[str, Any] = {}
+        fake_hf = self._make_fake_hf(
+            snapshot_download_return=str(snapshot_dir), captured=captured
+        )
+
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_HF_MODEL_DIR",
+                "HF_HUB_DISABLE_XET", "HF_HUB_DISABLE_IMPLICIT_TOKEN",
+            )
+        }
+        try:
+            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+                ns["provision_model_artifact"](artifact)
+            assert "snapshot_download" in captured
+            assert captured["snapshot_download"]["revision"] == MODEL_REVISION, (
+                "snapshot_download must still receive the pinned revision"
+            )
+            assert captured["snapshot_download"]["repo_id"] == artifact["repo_id"]
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+    def test_hf_snapshot_retains_sha_verification(self, tmp_path: Path) -> None:
+        """SHA-256 verification is still enforced for hf_snapshot."""
+        snapshot_dir = tmp_path / "snapshot"
+        snapshot_dir.mkdir()
+        config_file = snapshot_dir / "config.json"
+        config_file.write_bytes(b'{"model_type":"lfm"}')
+
+        artifact = _valid_hf_snapshot_artifact(sha256="0" * 64)  # wrong SHA
+        source = self._generate_bootstrap(tmp_path, artifact)
+        ns = _exec_bootstrap(source)
+
+        fake_hf = self._make_fake_hf(snapshot_download_return=str(snapshot_dir))
+
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_HF_MODEL_DIR",
+                "HF_HUB_DISABLE_XET", "HF_HUB_DISABLE_IMPLICIT_TOKEN",
             )
         }
         try:
             with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
                 with pytest.raises(RuntimeError, match="SHA-256 mismatch|mismatch"):
                     ns["provision_model_artifact"](artifact)
-            # Even on failure, token=False was passed to the download call.
-            assert captured["hf_hub_download"]["token"] is False
         finally:
             for k, v in old_env.items():
                 if v is not None:
