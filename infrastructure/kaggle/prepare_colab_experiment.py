@@ -44,7 +44,7 @@ SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _VALID_MODEL_ARTIFACT_KINDS = frozenset({"gguf", "hf_snapshot"})
 
 #: Pinned llama-cpp-python version for CPU wheel installation.
-_LLAMA_CPP_VERSION = "0.3.31"
+_LLAMA_CPP_VERSION = "0.3.33"
 
 #: CPU-only wheel index for llama-cpp-python (abetlen).
 _LLAMA_CPP_WHEEL_INDEX = "https://abetlen.github.io/llama-cpp-python/whl/cpu"
@@ -461,20 +461,24 @@ def install_llama_cpp() -> dict:
     """Install the pinned CPU llama-cpp-python wheel via explicit argv.
 
     Uses ``[sys.executable, '-m', 'pip', 'install',
-    'llama-cpp-python==0.3.31', '--extra-index-url',
+    'llama-cpp-python==0.3.33', '--only-binary=:all:',
+    '--extra-index-url',
     'https://abetlen.github.io/llama-cpp-python/whl/cpu']`` — no shell
-    invocation, no arbitrary pip args.  Fails closed on install error.
+    invocation, no arbitrary pip args.  ``--only-binary=:all:`` forces pip
+    to use a prebuilt wheel from the CPU index and fails fast instead of
+    falling back to source compilation.  Fails closed on install error.
     """
     argv = [
         sys.executable, "-m", "pip", "install",
-        "llama-cpp-python==0.3.31",
+        "llama-cpp-python==0.3.33",
+        "--only-binary=:all:",
         "--extra-index-url",
         "https://abetlen.github.io/llama-cpp-python/whl/cpu",
     ]
     proc = _run(argv, timeout=600)
     result = {
         "package": "llama-cpp-python",
-        "version": "0.3.31",
+        "version": "0.3.33",
         "wheel_index": "https://abetlen.github.io/llama-cpp-python/whl/cpu",
         "install_command": argv,
         "exit_code": proc.returncode,
@@ -670,9 +674,9 @@ def prepare_colab_experiment(
         NumPy jobs are unchanged.
     install_llama_cpp:
         If True, the generated bootstrap installs
-        ``llama-cpp-python==0.3.31`` from the abetlen CPU wheel index via
-        explicit argv (no shell invocation, no arbitrary pip args).  Default
-        False.
+        ``llama-cpp-python==0.3.33`` from the abetlen CPU wheel index via
+        explicit argv with ``--only-binary=:all:`` (no shell invocation, no
+        arbitrary pip args).  Default False.
 
     Returns
     -------
@@ -790,7 +794,7 @@ def parse_args() -> argparse.Namespace:
         "--install-llama-cpp",
         action="store_true",
         default=False,
-        help="Install pinned llama-cpp-python==0.3.31 from abetlen CPU wheel index.",
+        help="Install pinned llama-cpp-python==0.3.33 (binary-only) from abetlen CPU wheel index.",
     )
     return parser.parse_args()
 

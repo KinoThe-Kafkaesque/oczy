@@ -101,7 +101,7 @@ ColabPrepValueError = _colab_prep_mod["ColabPrepValueError"]
 _VALID_MODEL_ARTIFACT_KINDS = _colab_prep_mod.get(
     "_VALID_MODEL_ARTIFACT_KINDS", frozenset({"gguf", "hf_snapshot"})
 )
-_LLAMA_CPP_VERSION: str = _colab_prep_mod.get("_LLAMA_CPP_VERSION", "0.3.31")
+_LLAMA_CPP_VERSION: str = _colab_prep_mod.get("_LLAMA_CPP_VERSION", "0.3.33")
 _LLAMA_CPP_WHEEL_INDEX: str = _colab_prep_mod.get(
     "_LLAMA_CPP_WHEEL_INDEX",
     "https://abetlen.github.io/llama-cpp-python/whl/cpu",
@@ -2796,6 +2796,9 @@ class TestBootstrapProvisioningInjection:
         func_source = ast.unparse(install_func)
         # Must use the exact pinned version.
         assert f"llama-cpp-python=={_LLAMA_CPP_VERSION}" in func_source
+        # Binary-only: pip must fail fast instead of falling back to source builds.
+        assert "--only-binary=:all:" in func_source
+        assert "--prefer-binary" not in func_source
         # Must use the abetlen CPU wheel index.
         assert _LLAMA_CPP_WHEEL_INDEX in func_source
         # Must use sys.executable -m pip install (no shell=True).
@@ -3130,6 +3133,10 @@ class TestInstallLlamaCppRuntime:
         assert captured_argv[2] == "pip"
         assert captured_argv[3] == "install"
         assert captured_argv[4] == f"llama-cpp-python=={_LLAMA_CPP_VERSION}"
+        # Binary-only: pip must fail fast instead of falling back to source builds.
+        assert "--only-binary=:all:" in captured_argv
+        assert "--prefer-binary" not in captured_argv
+        assert "--no-binary" not in captured_argv
         assert "--extra-index-url" in captured_argv
         idx_pos = captured_argv.index("--extra-index-url")
         assert captured_argv[idx_pos + 1] == _LLAMA_CPP_WHEEL_INDEX
@@ -3160,6 +3167,7 @@ class TestInstallLlamaCppRuntime:
         assert result["exit_code"] == 0
         assert isinstance(result["install_command"], list)
         assert f"llama-cpp-python=={_LLAMA_CPP_VERSION}" in result["install_command"]
+        assert "--only-binary=:all:" in result["install_command"]
 
     def test_install_failure_raises_runtime_error(self, tmp_path: Path) -> None:
         """Nonzero exit from pip install raises RuntimeError."""
