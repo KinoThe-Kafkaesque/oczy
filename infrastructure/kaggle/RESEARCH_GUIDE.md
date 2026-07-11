@@ -52,7 +52,7 @@ task confirmed the same model hashes on CPU (v1, 2026-07-10).
 | [`run_qwen_model_probe.py`](run_qwen_model_probe.py) | Locate and hash the attached Qwen artifact; verify frozen-parameter and input-gradient behavior on CPU |
 | [`prepare_source_bundle.py`](prepare_source_bundle.py) | Create a commit-addressed source archive and private Kaggle dataset metadata |
 | [`prepare_research_kernel.py`](prepare_research_kernel.py) | Generate a private, internet-off CPU kernel with source/model/provenance checks |
-| [`parallel_scheduler.py`](parallel_scheduler.py) | Durable mixed-provider scheduler (Kaggle + Colab) with bounded concurrency, AIMD Colab admission, and crash-safe resume |
+| [`parallel_scheduler.py`](parallel_scheduler.py) | Durable mixed-provider scheduler (Kaggle + Colab) with additive provider capacity, AIMD Colab admission, and crash-safe resume |
 | [`colab_provider.py`](colab_provider.py) | Colab CLI 0.6.0 adapter: `run --keep --session`, `collect`, `stop`, `sessions`, capacity rejection classification |
 | [`RESULTS.md`](RESULTS.md) | Verified CPU results and acceptance contract |
 ## Which compute to use
@@ -64,7 +64,7 @@ task confirmed the same model hashes on CPU (v1, 2026-07-10).
 | Oracle articulation and frozen-Qwen interface checks | Kaggle CPU | model forward/backward runs on CPU; Kaggle's private kernel isolation preferred |
 | Developmental outer-loop training | Kaggle CPU or Colab CPU | one developmental seed per CPU job; Colab good for ad-hoc runs |
 | Immutable meta-test | Kaggle CPU | compute changes must not become an unregistered variable; Kaggle's pinned image/dataset guarantees preferred |
-| Batch parallel fan-out | Kaggle + Colab mixed via `parallel_scheduler.py` | scheduler handles both providers with bounded concurrency and AIMD admission |
+| Batch parallel fan-out | Kaggle + Colab mixed via `parallel_scheduler.py` | scheduler handles both providers with additive provider capacity and AIMD admission |
 | TPU | Do not schedule | no XLA/JAX implementation or parity run exists |
 
 All active remote work uses the CPU profile. The generated Kaggle bootstrap

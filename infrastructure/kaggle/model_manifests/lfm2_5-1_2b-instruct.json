@@ -1,0 +1,45 @@
+{
+  "schema_version": "oczy/model-artifact-manifest/v1",
+  "kind": "hf_snapshot",
+  "repo_id": "LiquidAI/LFM2.5-1.2B-Instruct",
+  "revision": "868df74dd56ff8a0c2ac5dbf281690c2dbebe4c9",
+  "filename": "config.json",
+  "sha256": "15d6157fb6df3f8272e2fe90e18f57727ccf02a125c94469198b0f3281510185",
+  "files": [
+    {
+      "filename": "config.json",
+      "size_bytes": 1224,
+      "sha256": "15d6157fb6df3f8272e2fe90e18f57727ccf02a125c94469198b0f3281510185"
+    },
+    {
+      "filename": "generation_config.json",
+      "size_bytes": 132,
+      "sha256": "5ffd97da1dec4308543894569662d96e923ed01f7a9d8c7ff5aea7f800738cbd"
+    },
+    {
+      "filename": "model.safetensors",
+      "size_bytes": 2340697936,
+      "sha256": "1ba63d9adb03ae43581db0e136e4416febe0441aff7296397bd455fb6017f73a"
+    },
+    {
+      "filename": "tokenizer.json",
+      "size_bytes": 4733389,
+      "sha256": "df1d8d5ec5d091b460562ffd545e4a5e91d17d4a0db7ebe733be34ed374377bd"
+    },
+    {
+      "filename": "tokenizer_config.json",
+      "size_bytes": 92225,
+      "sha256": "2a52ec012d3df831ba434b081bef3726a6ee22501f062ad8353c557a0cfa0d01"
+    },
+    {
+      "filename": "special_tokens_map.json",
+      "size_bytes": 434,
+      "sha256": "742aefe2b7dec496e8caffdba03a75d0c1a9925d53bd3f3e0d388c96b591b6f4"
+    },
+    {
+      "filename": "chat_template.jinja",
+      "size_bytes": 1783,
+      "sha256": "f05bf4b967dc993bdc7a2fe6e43759ee218eb0eb340d68b063e1c4f8ad148176"
+    }
+  ]
+}

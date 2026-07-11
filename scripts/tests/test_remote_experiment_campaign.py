@@ -80,6 +80,9 @@ validate_campaign = _prep_mod["validate_campaign"]
 prepare_experiment_campaign = _prep_mod["prepare_experiment_campaign"]
 CampaignValidationError = _prep_mod["CampaignValidationError"]
 _build_runner_arguments = _prep_mod["_build_runner_arguments"]
+_validate_model_artifact_campaign = _prep_mod.get("_validate_model_artifact")
+_validate_model_artifact_files_campaign = _prep_mod.get("_validate_model_artifact_files")
+_validate_safe_relative_filename_campaign = _prep_mod.get("_validate_safe_relative_filename")
 
 classify_job_result = _coll_mod["classify_job_result"]
 collect_experiment_campaign = _coll_mod["collect_experiment_campaign"]
@@ -106,6 +109,10 @@ _LLAMA_CPP_WHEEL_INDEX: str = _colab_prep_mod.get(
     "_LLAMA_CPP_WHEEL_INDEX",
     "https://abetlen.github.io/llama-cpp-python/whl/cpu",
 )
+_validate_model_artifact_colab = _colab_prep_mod.get("_validate_model_artifact")
+_validate_model_artifact_files_colab = _colab_prep_mod.get("_validate_model_artifact_files")
+_validate_safe_relative_filename_colab = _colab_prep_mod.get("_validate_safe_relative_filename")
+_sha256_file_colab = _colab_prep_mod.get("_sha256_file")
 
 BATCH_SCHEMA_V2: str = _sched_mod["BATCH_SCHEMA_V2"]
 load_batch = _sched_mod["load_batch"]
@@ -5531,3 +5538,772 @@ class TestAddSourcePathsPythonpath:
             f"subprocess exit {result.returncode}: {result.stderr.strip()}"
         )
         assert "propagated_ok" in result.stdout
+
+
+# ===========================================================================
+# 27. HF manifest validation: safe paths, duplicates, size/hash, primary match
+# ===========================================================================
+
+
+LFM_REPO_ID = "LiquidAI/LFM2.5-1.2B-Instruct"
+LFM_REVISION = "868df74dd56ff8a0c2ac5dbf281690c2dbebe4c9"
+
+LFM_SEVEN_FILES = [
+    {"filename": "config.json", "size_bytes": 1224,
+     "sha256": "15d6157fb6df3f8272e2fe90e18f57727ccf02a125c94469198b0f3281510185"},
+    {"filename": "generation_config.json", "size_bytes": 132,
+     "sha256": "5ffd97da1dec4308543894569662d96e923ed01f7a9d8c7ff5aea7f800738cbd"},
+    {"filename": "model.safetensors", "size_bytes": 2340697936,
+     "sha256": "1ba63d9adb03ae43581db0e136e4416febe0441aff7296397bd455fb6017f73a"},
+    {"filename": "tokenizer.json", "size_bytes": 4733389,
+     "sha256": "df1d8d5ec5d091b460562ffd545e4a5e91d17d4a0db7ebe733be34ed374377bd"},
+    {"filename": "tokenizer_config.json", "size_bytes": 92225,
+     "sha256": "2a52ec012d3df831ba434b081bef3726a6ee22501f062ad8353c557a0cfa0d01"},
+    {"filename": "special_tokens_map.json", "size_bytes": 434,
+     "sha256": "742aefe2b7dec496e8caffdba03a75d0c1a9925d53bd3f3e0d388c96b591b6f4"},
+    {"filename": "chat_template.jinja", "size_bytes": 1783,
+     "sha256": "f05bf4b967dc993bdc7a2fe6e43759ee218eb0eb340d68b063e1c4f8ad148176"},
+]
+
+
+def _valid_hf_files_artifact(
+    *,
+    repo_id: str = LFM_REPO_ID,
+    revision: str = LFM_REVISION,
+    filename: str = "config.json",
+    sha256: str = "15d6157fb6df3f8272e2fe90e18f57727ccf02a125c94469198b0f3281510185",
+    files: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build a valid hf_snapshot artifact with a seven-file manifest."""
+    return {
+        "kind": "hf_snapshot",
+        "repo_id": repo_id,
+        "revision": revision,
+        "filename": filename,
+        "sha256": sha256,
+        "files": files if files is not None else [dict(f) for f in LFM_SEVEN_FILES],
+    }
+
+
+class TestHFManifestValidationColab:
+    """prepare_colab_experiment._validate_model_artifact validates the
+    optional ``files`` manifest for hf_snapshot artifacts."""
+
+    def test_valid_seven_file_manifest_accepted(self, tmp_path: Path) -> None:
+        """A valid seven-file manifest with matching primary file is accepted."""
+        artifact = _valid_hf_files_artifact()
+        _validate_model_artifact_colab(artifact)  # should not raise
+
+    def test_files_rejected_on_gguf_kind(self) -> None:
+        """files is only supported on hf_snapshot, not gguf."""
+        artifact = _valid_gguf_artifact()
+        artifact["files"] = [dict(LFM_SEVEN_FILES[0])]
+        with pytest.raises(ColabPrepValueError, match="files.*hf_snapshot"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_files_must_be_non_empty_list(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        artifact["files"] = []
+        with pytest.raises(ColabPrepValueError, match="non-empty list"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_files_must_be_list_not_dict(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        artifact["files"] = {"filename": "config.json"}
+        with pytest.raises(ColabPrepValueError, match="non-empty list"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_file_entry_must_be_dict(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        artifact["files"] = ["config.json"]
+        with pytest.raises(ColabPrepValueError, match="files\\[0\\].*object"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_file_entry_missing_filename(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        del entry["filename"]
+        artifact["files"] = [entry]
+        with pytest.raises(ColabPrepValueError, match="missing required field.*filename"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_file_entry_missing_size_bytes(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        del entry["size_bytes"]
+        artifact["files"] = [entry]
+        with pytest.raises(ColabPrepValueError, match="missing required field.*size_bytes"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_file_entry_missing_sha256(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        del entry["sha256"]
+        artifact["files"] = [entry]
+        with pytest.raises(ColabPrepValueError, match="missing required field.*sha256"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_rejects_absolute_filename(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        entry["filename"] = "/etc/passwd"
+        artifact["files"] = [entry]
+        with pytest.raises(ColabPrepValueError, match="absolute"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_rejects_dotdot_traversal(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        entry["filename"] = "../../etc/passwd"
+        artifact["files"] = [entry]
+        with pytest.raises(ColabPrepValueError, match="\\.\\."):
+            _validate_model_artifact_colab(artifact)
+
+    def test_rejects_backslash_in_filename(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        entry["filename"] = "dir\\config.json"
+        artifact["files"] = [entry]
+        with pytest.raises(ColabPrepValueError, match="backslash"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_rejects_null_byte_in_filename(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        entry["filename"] = "config\x00.json"
+        artifact["files"] = [entry]
+        with pytest.raises(ColabPrepValueError, match="null"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_rejects_whitespace_filename(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        entry["filename"] = " config.json "
+        artifact["files"] = [entry]
+        with pytest.raises(ColabPrepValueError, match="whitespace"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_rejects_duplicate_filenames(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        artifact["files"] = [entry, dict(entry)]
+        with pytest.raises(ColabPrepValueError, match="duplicate filename"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_rejects_zero_size_bytes(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        entry["size_bytes"] = 0
+        artifact["files"] = [entry]
+        with pytest.raises(ColabPrepValueError, match="positive"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_rejects_negative_size_bytes(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        entry["size_bytes"] = -1
+        artifact["files"] = [entry]
+        with pytest.raises(ColabPrepValueError, match="positive"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_rejects_bool_size_bytes(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        entry["size_bytes"] = True
+        artifact["files"] = [entry]
+        with pytest.raises(ColabPrepValueError, match="positive"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_rejects_short_sha256_in_file_entry(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        entry["sha256"] = "a" * 32
+        artifact["files"] = [entry]
+        with pytest.raises(ColabPrepValueError, match="64-character"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_rejects_primary_sha256_mismatch(self) -> None:
+        """The file entry matching the primary filename must have the same sha256."""
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        entry["sha256"] = "b" * 64
+        artifact["files"] = [entry]
+        with pytest.raises(ColabPrepValueError, match="sha256 for primary.*must match"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_rejects_missing_primary_file_in_files(self) -> None:
+        """The files list must contain an entry for the primary filename."""
+        artifact = _valid_hf_files_artifact()
+        # Replace config.json entry with a different file
+        entry = dict(LFM_SEVEN_FILES[1])  # generation_config.json
+        artifact["files"] = [entry]
+        with pytest.raises(ColabPrepValueError, match="primary.*filename"):
+            _validate_model_artifact_colab(artifact)
+
+    def test_valid_artifact_accepted_by_prepare_colab(self, tmp_path: Path) -> None:
+        """A valid seven-file artifact is accepted by prepare_colab_experiment."""
+        out = tmp_path / "out"
+        artifact = _valid_hf_files_artifact()
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a", model_artifact=artifact,
+        )
+        spec = json.loads((out / "job_spec.json").read_text())
+        assert spec["model_artifact"]["files"] == artifact["files"]
+
+
+class TestHFManifestValidationCampaign:
+    """prepare_experiment_campaign._validate_model_artifact validates the
+    optional ``files`` manifest for hf_snapshot artifacts."""
+
+    def test_valid_seven_file_manifest_accepted(self) -> None:
+        """A valid seven-file manifest passes campaign validation."""
+        artifact = _valid_hf_files_artifact()
+        _validate_model_artifact_campaign("cb-a", artifact)  # should not raise
+
+    def test_files_rejected_on_gguf_kind(self) -> None:
+        artifact = _valid_gguf_artifact()
+        artifact["files"] = [dict(LFM_SEVEN_FILES[0])]
+        with pytest.raises(CampaignValidationError, match="files.*hf_snapshot"):
+            _validate_model_artifact_campaign("cb-a", artifact)
+
+    def test_rejects_duplicate_filenames(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        artifact["files"] = [entry, dict(entry)]
+        with pytest.raises(CampaignValidationError, match="duplicate"):
+            _validate_model_artifact_campaign("cb-a", artifact)
+
+    def test_rejects_absolute_filename(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        entry["filename"] = "/etc/passwd"
+        artifact["files"] = [entry]
+        with pytest.raises(CampaignValidationError, match="absolute"):
+            _validate_model_artifact_campaign("cb-a", artifact)
+
+    def test_rejects_dotdot_traversal(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        entry["filename"] = "../../etc/passwd"
+        artifact["files"] = [entry]
+        with pytest.raises(CampaignValidationError, match="\\.\\."):
+            _validate_model_artifact_campaign("cb-a", artifact)
+
+    def test_rejects_primary_sha256_mismatch(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        entry["sha256"] = "b" * 64
+        artifact["files"] = [entry]
+        with pytest.raises(CampaignValidationError, match="primary.*sha256"):
+            _validate_model_artifact_campaign("cb-a", artifact)
+
+    def test_rejects_missing_primary_file(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[1])
+        artifact["files"] = [entry]
+        with pytest.raises(CampaignValidationError, match="primary"):
+            _validate_model_artifact_campaign("cb-a", artifact)
+
+    def test_rejects_zero_size_bytes(self) -> None:
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        entry["size_bytes"] = 0
+        artifact["files"] = [entry]
+        with pytest.raises(CampaignValidationError, match="positive"):
+            _validate_model_artifact_campaign("cb-a", artifact)
+
+    def test_campaign_validates_files_through_validate_campaign(
+        self, tmp_path: Path
+    ) -> None:
+        """validate_campaign accepts a Colab job with a valid files manifest."""
+        job = _valid_campaign_job(provider=PROVIDER_COLAB)
+        job["model_artifact"] = _valid_hf_files_artifact()
+        campaign = _valid_campaign(jobs=[job])
+        validate_campaign(campaign)  # should not raise
+
+    def test_campaign_rejects_invalid_files_through_validate_campaign(
+        self, tmp_path: Path
+    ) -> None:
+        """validate_campaign rejects a Colab job with duplicate filenames in files."""
+        job = _valid_campaign_job(provider=PROVIDER_COLAB)
+        artifact = _valid_hf_files_artifact()
+        entry = dict(LFM_SEVEN_FILES[0])
+        artifact["files"] = [entry, dict(entry)]
+        job["model_artifact"] = artifact
+        campaign = _valid_campaign(jobs=[job])
+        with pytest.raises(CampaignValidationError, match="duplicate"):
+            validate_campaign(campaign)
+
+
+class TestHFManifestFileOnDisk:
+    """The pinned manifest file on disk matches the seven-file inventory."""
+
+    def test_manifest_file_exists_and_matches(self) -> None:
+        manifest_path = (
+            REPO_ROOT / "infrastructure" / "kaggle" / "model_manifests"
+            / "lfm2_5-1_2b-instruct.json"
+        )
+        if not manifest_path.exists():
+            pytest.skip(f"manifest file not found at {manifest_path}")
+        data = json.loads(manifest_path.read_text())
+        assert data["repo_id"] == LFM_REPO_ID
+        assert data["revision"] == LFM_REVISION
+        assert data["kind"] == "hf_snapshot"
+        files = data.get("files", [])
+        assert len(files) == 7, f"expected 7 files, got {len(files)}"
+        expected_names = {f["filename"] for f in LFM_SEVEN_FILES}
+        actual_names = {f["filename"] for f in files}
+        assert actual_names == expected_names
+        for expected, actual in zip(LFM_SEVEN_FILES, files):
+            assert actual["size_bytes"] == expected["size_bytes"], (
+                f"size mismatch for {actual['filename']}: "
+                f"expected {expected['size_bytes']}, got {actual['size_bytes']}"
+            )
+            assert actual["sha256"] == expected["sha256"], (
+                f"sha256 mismatch for {actual['filename']}"
+            )
+
+
+# ===========================================================================
+# 28. Direct seven-file HF streaming: URL, atomic cleanup, reuse, mismatch
+# ===========================================================================
+
+
+class TestHFDirectStreaming:
+    """_provision_hf_snapshot_files streams each file from the exact revision
+    URL, verifies size+SHA-256, reuses valid existing files, and fails closed
+    on mismatch.
+
+    Tests exec the generated bootstrap to get the real functions, then mock
+    urllib to avoid network calls.
+    """
+
+    def _generate_bootstrap(self, tmp_path: Path) -> str:
+        out = tmp_path / "out"
+        artifact = _valid_hf_files_artifact()
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a", model_artifact=artifact,
+        )
+        return (out / "colab_bootstrap.py").read_text()
+
+    def test_hf_resolve_url_exact_revision(self, tmp_path: Path) -> None:
+        """_hf_resolve_url builds the exact public resolve URL with the pinned
+        revision and no ?download=true query."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+        url = ns["_hf_resolve_url"](
+            LFM_REPO_ID, LFM_REVISION, "config.json"
+        )
+        assert url == (
+            f"https://huggingface.co/{LFM_REPO_ID}/resolve/{LFM_REVISION}/"
+            f"config.json"
+        )
+        assert "?download=true" not in url
+
+    def test_hf_resolve_url_quotes_special_chars(self, tmp_path: Path) -> None:
+        """_hf_resolve_url URL-quotes filenames with special characters."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+        url = ns["_hf_resolve_url"](
+            LFM_REPO_ID, LFM_REVISION, "chat template.jinja"
+        )
+        assert "chat%20template.jinja" in url
+
+    def test_download_hf_file_atomic_temp_and_replace(self, tmp_path: Path) -> None:
+        """_download_hf_file writes to a .tmp file then os.replace to dest."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+        dest = tmp_path / "cache" / "config.json"
+        data = b'{"test": true}'
+
+        fake_resp = _FakeHTTPResponse(data)
+        with patch("urllib.request.urlopen", return_value=fake_resp):
+            ns["_download_hf_file"]("http://example.com/config.json", dest)
+
+        assert dest.exists()
+        assert dest.read_bytes() == data
+        # Temp file must be cleaned up after successful replace.
+        assert not dest.with_name(dest.name + ".tmp").exists()
+
+    def test_download_hf_file_cleans_temp_on_failure(self, tmp_path: Path) -> None:
+        """_download_hf_file cleans up the .tmp file on non-transient errors."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+        dest = tmp_path / "cache" / "config.json"
+
+        def _raise(*a, **kw):
+            raise RuntimeError("HTTP 404")
+
+        with patch("urllib.request.urlopen", side_effect=_raise):
+            with pytest.raises(RuntimeError, match="HTTP 404"):
+                ns["_download_hf_file"]("http://example.com/config.json", dest)
+
+        assert not dest.exists()
+        assert not dest.with_name(dest.name + ".tmp").exists()
+
+    def test_provision_hf_snapshot_files_reuse_existing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_provision_hf_snapshot_files reuses existing files that match
+        size+SHA-256 without re-downloading."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+
+        cache_dir = tmp_path / "cache" / LFM_REPO_ID.replace("/", "_") / LFM_REVISION
+        cache_dir.mkdir(parents=True)
+
+        # Create a valid config.json that matches the manifest.
+        config_entry = LFM_SEVEN_FILES[0]
+        config_data = b"x" * config_entry["size_bytes"]
+        config_path = cache_dir / "config.json"
+        config_path.write_bytes(config_data)
+        # Patch sha256 to match expected.
+        # Patch sha256 and download directly on the exec namespace (dict, not module).
+        sha_map = {e["filename"]: e["sha256"] for e in LFM_SEVEN_FILES}
+        ns["_sha256_file"] = lambda p: sha_map.get(p.name, "0" * 64)
+        monkeypatch.setenv("OCZY_HF_CACHE_DIR", str(tmp_path / "cache"))
+
+        # Mock _download_hf_file to fail if called (should not be called for reuse).
+        download_called: list = []
+        def _fail_download(url, dest, **kw):
+            download_called.append((url, dest))
+            raise AssertionError("should not download when file is valid")
+        ns["_download_hf_file"] = _fail_download
+
+        # Create all files with correct size so reuse path is taken.
+        for entry in LFM_SEVEN_FILES:
+            fpath = cache_dir / entry["filename"]
+            fpath.parent.mkdir(parents=True, exist_ok=True)
+            fpath.write_bytes(b"x" * entry["size_bytes"])
+
+        artifact = _valid_hf_files_artifact()
+        result = ns["_provision_hf_snapshot_files"](artifact)
+
+        assert result["provisioning_mode"] == "direct_stream"
+        assert result["sha256_verified"] is True
+        assert all(f["reused"] is True for f in result["files"])
+        assert download_called == []
+        assert os.environ.get("OCZY_HF_MODEL_DIR") == str(cache_dir)
+
+    def test_provision_hf_snapshot_files_size_mismatch_deletes_and_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """On size mismatch, the bad file is deleted and RuntimeError raised."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+
+        cache_dir = tmp_path / "cache" / LFM_REPO_ID.replace("/", "_") / LFM_REVISION
+        cache_dir.mkdir(parents=True)
+        monkeypatch.setenv("OCZY_HF_CACHE_DIR", str(tmp_path / "cache"))
+
+        # Create a config.json with wrong size.
+        config_path = cache_dir / "config.json"
+        config_path.write_bytes(b"too short")
+
+        # Mock _download_hf_file to write wrong-size data too.
+        def _bad_download(url, dest, **kw):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"still wrong size")
+        ns["_download_hf_file"] = _bad_download
+        artifact = _valid_hf_files_artifact()
+        with pytest.raises(RuntimeError, match="size mismatch"):
+            ns["_provision_hf_snapshot_files"](artifact)
+        # The bad file must be deleted.
+        assert not config_path.exists()
+
+    def test_provision_hf_snapshot_files_sha_mismatch_deletes_and_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """On SHA-256 mismatch, the bad file is deleted and RuntimeError raised."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+
+        cache_dir = tmp_path / "cache" / LFM_REPO_ID.replace("/", "_") / LFM_REVISION
+        cache_dir.mkdir(parents=True)
+        monkeypatch.setenv("OCZY_HF_CACHE_DIR", str(tmp_path / "cache"))
+
+        config_entry = LFM_SEVEN_FILES[0]
+        config_path = cache_dir / "config.json"
+        # Write correct size but wrong content.
+        config_path.write_bytes(b"x" * config_entry["size_bytes"])
+
+        # Mock _download_hf_file to also write correct-size wrong content.
+        def _bad_download(url, dest, **kw):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"y" * config_entry["size_bytes"])
+        ns["_download_hf_file"] = _bad_download
+
+        # _sha256_file returns a wrong hash.
+        ns["_sha256_file"] = lambda p: "0" * 64
+
+        artifact = _valid_hf_files_artifact()
+        with pytest.raises(RuntimeError, match="SHA-256 mismatch"):
+            ns["_provision_hf_snapshot_files"](artifact)
+
+        assert not config_path.exists()
+
+    def test_provision_hf_snapshot_files_provenance(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_provision_hf_snapshot_files returns per-file provenance with
+        download_url, reused flag, and sha256_verified."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+
+        cache_dir = tmp_path / "cache" / LFM_REPO_ID.replace("/", "_") / LFM_REVISION
+        cache_dir.mkdir(parents=True)
+        monkeypatch.setenv("OCZY_HF_CACHE_DIR", str(tmp_path / "cache"))
+
+        # Pre-create all files with correct size and mocked SHA.
+        sha_map = {e["filename"]: e["sha256"] for e in LFM_SEVEN_FILES}
+        for entry in LFM_SEVEN_FILES:
+            fpath = cache_dir / entry["filename"]
+            fpath.parent.mkdir(parents=True, exist_ok=True)
+            fpath.write_bytes(b"x" * entry["size_bytes"])
+        ns["_sha256_file"] = lambda p: sha_map.get(p.name, "0" * 64)
+        # Should not download.
+        ns["_download_hf_file"] = lambda url, dest, **kw: None
+
+        artifact = _valid_hf_files_artifact()
+        result = ns["_provision_hf_snapshot_files"](artifact)
+
+        assert result["kind"] == "hf_snapshot"
+        assert result["repo_id"] == LFM_REPO_ID
+        assert result["revision"] == LFM_REVISION
+        assert result["model_dir"] == str(cache_dir)
+        assert result["env_var"] == "OCZY_HF_MODEL_DIR"
+        assert len(result["files"]) == 7
+        for i, entry in enumerate(LFM_SEVEN_FILES):
+            pf = result["files"][i]
+            assert pf["filename"] == entry["filename"]
+            assert pf["size_bytes"] == entry["size_bytes"]
+            assert pf["sha256"] == entry["sha256"]
+            assert pf["sha256_verified"] is True
+            assert pf["reused"] is True
+            assert pf["download_url"] == ns["_hf_resolve_url"](
+                LFM_REPO_ID, LFM_REVISION, entry["filename"]
+            )
+
+    def test_provision_model_artifact_uses_direct_stream_when_files_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """provision_model_artifact routes to _provision_hf_snapshot_files
+        when files is present, bypassing snapshot_download."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+
+        cache_dir = tmp_path / "cache" / LFM_REPO_ID.replace("/", "_") / LFM_REVISION
+        cache_dir.mkdir(parents=True)
+        monkeypatch.setenv("OCZY_HF_CACHE_DIR", str(tmp_path / "cache"))
+
+        # Pre-create all files with correct size and mocked SHA.
+        sha_map = {e["filename"]: e["sha256"] for e in LFM_SEVEN_FILES}
+        for entry in LFM_SEVEN_FILES:
+            fpath = cache_dir / entry["filename"]
+            fpath.parent.mkdir(parents=True, exist_ok=True)
+            fpath.write_bytes(b"x" * entry["size_bytes"])
+        ns["_sha256_file"] = lambda p: sha_map.get(p.name, "0" * 64)
+        ns["_download_hf_file"] = lambda url, dest, **kw: None
+
+        artifact = _valid_hf_files_artifact()
+        result = ns["provision_model_artifact"](artifact)
+
+        assert result["provisioning_mode"] == "direct_stream"
+        assert "files" in result
+        assert len(result["files"]) == 7
+
+
+# ===========================================================================
+# 29. required_arguments enforcement in validate_campaign
+# ===========================================================================
+
+
+class TestRequiredArguments:
+    """validate_campaign enforces required_arguments: each required token
+    must appear as an exact, case-insensitive token in the job's arguments list."""
+
+    def test_valid_required_arguments_accepted(self) -> None:
+        """required_arguments present and all found in arguments — accepted."""
+        job = _valid_campaign_job(
+            provider=PROVIDER_COLAB,
+            arguments=["--driver", "real", "--seed", "0"],
+        )
+        job["required_arguments"] = ["--driver", "real"]
+        campaign = _valid_campaign(jobs=[job])
+        validate_campaign(campaign)  # should not raise
+
+    def test_missing_required_argument_rejected(self) -> None:
+        """A required argument not in arguments is rejected."""
+        job = _valid_campaign_job(
+            provider=PROVIDER_COLAB,
+            arguments=["--seed", "0"],
+        )
+        job["required_arguments"] = ["--driver", "real"]
+        campaign = _valid_campaign(jobs=[job])
+        with pytest.raises(CampaignValidationError, match="required argument.*--driver"):
+            validate_campaign(campaign)
+
+    def test_partial_required_argument_rejected(self) -> None:
+        """Only one of two required arguments present — rejected."""
+        job = _valid_campaign_job(
+            provider=PROVIDER_COLAB,
+            arguments=["--driver", "mock"],
+        )
+        job["required_arguments"] = ["--driver", "real"]
+        campaign = _valid_campaign(jobs=[job])
+        with pytest.raises(CampaignValidationError, match="required argument.*real"):
+            validate_campaign(campaign)
+
+    def test_required_arguments_case_insensitive(self) -> None:
+        """required_arguments matching is case-insensitive."""
+        job = _valid_campaign_job(
+            provider=PROVIDER_COLAB,
+            arguments=["--Driver", "REAL"],
+        )
+        job["required_arguments"] = ["--driver", "real"]
+        campaign = _valid_campaign(jobs=[job])
+        validate_campaign(campaign)  # should not raise
+
+    def test_required_arguments_order_independent(self) -> None:
+        """required_arguments can appear in any order in arguments."""
+        job = _valid_campaign_job(
+            provider=PROVIDER_COLAB,
+            arguments=["real", "--driver"],
+        )
+        job["required_arguments"] = ["--driver", "real"]
+        campaign = _valid_campaign(jobs=[job])
+        validate_campaign(campaign)  # should not raise
+
+    def test_required_arguments_must_be_list_of_strings(self) -> None:
+        """required_arguments must be a list of strings."""
+        job = _valid_campaign_job(provider=PROVIDER_COLAB)
+        job["required_arguments"] = ["--driver", 42]
+        campaign = _valid_campaign(jobs=[job])
+        with pytest.raises(CampaignValidationError, match="list of strings"):
+            validate_campaign(campaign)
+
+    def test_required_arguments_not_list_rejected(self) -> None:
+        """required_arguments that is not a list is rejected."""
+        job = _valid_campaign_job(provider=PROVIDER_COLAB)
+        job["required_arguments"] = "--driver"
+        campaign = _valid_campaign(jobs=[job])
+        with pytest.raises(CampaignValidationError, match="list of strings"):
+            validate_campaign(campaign)
+
+    def test_required_arguments_applies_to_kaggle_too(self) -> None:
+        """required_arguments is enforced on Kaggle jobs as well."""
+        job = _valid_campaign_job(provider=PROVIDER_KAGGLE)
+        job["arguments"] = ["--seed", "0"]
+        job["required_arguments"] = ["--driver", "real"]
+        campaign = _valid_campaign(jobs=[job])
+        with pytest.raises(CampaignValidationError, match="required argument"):
+            validate_campaign(campaign)
+
+    def test_required_arguments_empty_list_accepted(self) -> None:
+        """An empty required_arguments list is accepted (no requirements)."""
+        job = _valid_campaign_job(provider=PROVIDER_COLAB)
+        job["required_arguments"] = []
+        campaign = _valid_campaign(jobs=[job])
+        validate_campaign(campaign)  # should not raise
+
+    def test_required_arguments_none_not_checked(self) -> None:
+        """When required_arguments is absent, no checking occurs."""
+        job = _valid_campaign_job(provider=PROVIDER_COLAB)
+        # No required_arguments key — should pass regardless of arguments.
+        campaign = _valid_campaign(jobs=[job])
+        validate_campaign(campaign)  # should not raise
+
+    def test_required_arguments_rejects_non_exact_token_match(self) -> None:
+        """A required token is not satisfied by a longer argument token."""
+        job = _valid_campaign_job(
+            provider=PROVIDER_COLAB,
+            arguments=["--driver-mode", "real"],
+        )
+        job["required_arguments"] = ["--driver"]
+        campaign = _valid_campaign(jobs=[job])
+        with pytest.raises(CampaignValidationError, match="required argument.*--driver"):
+            validate_campaign(campaign)
+
+
+# ===========================================================================
+# 30. Exp03 job propagation: --driver real + required_arguments
+# ===========================================================================
+
+
+class TestExp03JobPropagation:
+    """Campaign jobs for Exp03 with --driver real propagate the argument
+    through to the generated job_spec and scheduler batch."""
+
+    def test_colab_job_with_driver_real_propagates_to_job_spec(
+        self, tmp_path: Path
+    ) -> None:
+        """A Colab job with --driver real in arguments gets it in job_spec."""
+        out = tmp_path / "out"
+        prepare_colab_experiment(
+            output=out, job_name="cb-exp03", repo_url=REPO_URL,
+            source_commit=COMMIT,
+            module="src.oczy.experiments.layer_l_probe",
+            arguments=["--driver", "real"],
+            phase="development", claim_class="scientific",
+            output_path="out/cb-exp03",
+            model_artifact=_valid_hf_files_artifact(),
+        )
+        spec = json.loads((out / "job_spec.json").read_text())
+        assert "--driver" in spec["arguments"]
+        assert "real" in spec["arguments"]
+        assert spec["model_artifact"]["kind"] == "hf_snapshot"
+        assert "files" in spec["model_artifact"]
+
+    def test_campaign_with_required_arguments_driver_real_propagates(
+        self, tmp_path: Path
+    ) -> None:
+        """A campaign with required_arguments=['--driver','real'] and matching
+        arguments validates and propagates to the generated batch."""
+        job = _valid_campaign_job(
+            provider=PROVIDER_COLAB,
+            module="src.oczy.experiments.layer_l_probe",
+            arguments=["--driver", "real"],
+        )
+        job["model_artifact"] = _valid_hf_files_artifact()
+        job["required_arguments"] = ["--driver", "real"]
+        campaign = _valid_campaign(jobs=[job])
+        validate_campaign(campaign)
+
+        campaign_path = _write_campaign(tmp_path, campaign)
+        out_dir = tmp_path / "generated"
+        prepare_experiment_campaign(campaign_path, out_dir, force=False)
+
+        # The generated batch must load via load_batch.
+        batch_files = list(out_dir.glob("*batch*.json"))
+        assert len(batch_files) >= 1
+        batch_jobs = load_batch(batch_files[0])
+        colab_jobs = [j for j in batch_jobs if j.get("provider") == PROVIDER_COLAB]
+        assert len(colab_jobs) >= 1
+        # Check the generated job_spec.json for the Colab job (nested under colab/).
+        for spec_file in out_dir.rglob("job_spec.json"):
+            spec = json.loads(spec_file.read_text())
+            if spec.get("module") == "src.oczy.experiments.layer_l_probe":
+                assert "--driver" in spec["arguments"]
+                assert "real" in spec["arguments"]
+                assert "files" in spec.get("model_artifact", {})
+                return
+        pytest.fail("No Colab job_spec.json with layer_l_probe module found")
+
+    def test_campaign_rejects_exp03_job_without_driver_real(self) -> None:
+        """A campaign job with required_arguments=['--driver','real'] but
+        arguments lacking them is rejected."""
+        job = _valid_campaign_job(
+            provider=PROVIDER_COLAB,
+            module="src.oczy.experiments.layer_l_probe",
+            arguments=["--seed", "0"],
+        )
+        job["required_arguments"] = ["--driver", "real"]
+        campaign = _valid_campaign(jobs=[job])
+        with pytest.raises(CampaignValidationError, match="required argument"):
+            validate_campaign(campaign)

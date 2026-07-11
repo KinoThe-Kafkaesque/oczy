@@ -59,7 +59,7 @@ PROVIDER_COLAB: str = _mod["PROVIDER_COLAB"]
 
 # Concurrency defaults
 DEFAULT_MAX_PARALLEL: int = _mod["DEFAULT_MAX_PARALLEL"]
-HARD_MAX_PARALLEL: int = _mod["HARD_MAX_PARALLEL"]
+HARD_MAX_PARALLEL: int | None = _mod.get("HARD_MAX_PARALLEL")  # removed in additive-capacity refactor
 DEFAULT_KAGGLE_MAX: int = _mod["DEFAULT_KAGGLE_MAX"]
 HARD_KAGGLE_MAX: int = _mod["HARD_KAGGLE_MAX"]
 DEFAULT_COLAB_MAX: int = _mod["DEFAULT_COLAB_MAX"]

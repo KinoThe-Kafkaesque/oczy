@@ -161,7 +161,112 @@ def _validate_model_artifact(artifact: dict[str, Any]) -> None:
             "model_artifact sha256 must be a 64-character lowercase hex digest "
             f"(got {sha256!r})."
         )
+    # Validate optional files manifest (hf_snapshot only).
+    files = artifact.get("files")
+    if files is not None:
+        if kind != "hf_snapshot":
+            raise ColabPrepValueError(
+                f"model_artifact 'files' is only supported for hf_snapshot, "
+                f"not kind {kind!r}."
+            )
+        _validate_model_artifact_files(filename, sha256, files)
 
+
+def _validate_safe_relative_filename(filename: str) -> None:
+    """Validate that *filename* is a safe relative path within a cache dir.
+
+    Rejects empty strings, absolute paths, ``..`` traversal, backslashes,
+    null bytes, and leading/trailing whitespace.
+    """
+    if not isinstance(filename, str) or not filename:
+        raise ColabPrepValueError(
+            "model_artifact files entry filename must be a non-empty string."
+        )
+    if filename != filename.strip():
+        raise ColabPrepValueError(
+            f"model_artifact files entry filename must not have leading/trailing "
+            f"whitespace (got {filename!r})."
+        )
+    if "\x00" in filename or "\\" in filename:
+        raise ColabPrepValueError(
+            f"model_artifact files entry filename must not contain null bytes "
+            f"or backslashes (got {filename!r})."
+        )
+    p = Path(filename)
+    if p.is_absolute():
+        raise ColabPrepValueError(
+            f"model_artifact files entry filename must be relative, not absolute "
+            f"(got {filename!r})."
+        )
+    if any(part == ".." for part in p.parts):
+        raise ColabPrepValueError(
+            f"model_artifact files entry filename must not contain '..' "
+            f"traversal (got {filename!r})."
+        )
+
+
+def _validate_model_artifact_files(
+    primary_filename: str, primary_sha256: str, files: Any
+) -> None:
+    """Validate the ``files`` manifest of an hf_snapshot model_artifact.
+
+    Each entry must have a safe relative ``filename``, a positive integer
+    ``size_bytes``, and a 64-char lowercase hex ``sha256``.  Filenames must
+    be unique.  The top-level ``filename``/``sha256`` must match one entry.
+    """
+    if not isinstance(files, list) or not files:
+        raise ColabPrepValueError(
+            "model_artifact 'files' must be a non-empty list."
+        )
+    seen: set[str] = set()
+    primary_matched = False
+    for i, entry in enumerate(files):
+        if not isinstance(entry, dict):
+            raise ColabPrepValueError(
+                f"model_artifact files[{i}] must be an object."
+            )
+        for field in ("filename", "size_bytes", "sha256"):
+            if field not in entry:
+                raise ColabPrepValueError(
+                    f"model_artifact files[{i}] missing required field "
+                    f"{field!r}."
+                )
+        fname = entry["filename"]
+        _validate_safe_relative_filename(fname)
+        if fname in seen:
+            raise ColabPrepValueError(
+                f"model_artifact files[{i}] duplicate filename {fname!r}."
+            )
+        seen.add(fname)
+        size_bytes = entry["size_bytes"]
+        if (
+            not isinstance(size_bytes, int)
+            or isinstance(size_bytes, bool)
+            or size_bytes <= 0
+        ):
+            raise ColabPrepValueError(
+                f"model_artifact files[{i}] size_bytes must be a positive "
+                f"integer (got {size_bytes!r})."
+            )
+        fsha = entry["sha256"]
+        if not isinstance(fsha, str) or not SHA256_PATTERN.fullmatch(fsha):
+            raise ColabPrepValueError(
+                f"model_artifact files[{i}] sha256 must be a 64-character "
+                f"lowercase hex digest (got {fsha!r})."
+            )
+        if fname == primary_filename:
+            if fsha != primary_sha256:
+                raise ColabPrepValueError(
+                    f"model_artifact files[{i}] sha256 for primary file "
+                    f"{fname!r} must match top-level sha256 "
+                    f"(got {fsha!r}, expected {primary_sha256!r})."
+                )
+            primary_matched = True
+    if not primary_matched:
+        raise ColabPrepValueError(
+            f"model_artifact 'files' must contain an entry for the primary "
+            f"filename {primary_filename!r} with matching sha256."
+        )
 
 # ---------------------------------------------------------------------------
 # Bootstrap template
@@ -366,6 +471,161 @@ def _download_gguf_stream(url: str, dest: Path, timeout: float = 600.0) -> None:
                 pass
         raise
 
+def _hf_resolve_url(repo_id: str, revision: str, filename: str) -> str:
+    """Build the exact public HF resolve URL for a pinned snapshot file.
+
+    Unlike ``_gguf_resolve_url``, no ``?download=true`` query is appended —
+    the bare resolve URL is used for direct file streaming.
+    """
+    return (
+        f"https://huggingface.co/{repo_id}/resolve/{revision}/"
+        f"{_url_quote(filename)}"
+    )
+
+
+def _download_hf_file(
+    url: str,
+    dest: Path,
+    timeout: float = 600.0,
+    retries: int = 3,
+) -> None:
+    """Stream *url* to *dest* in 1 MiB chunks with retry, then atomically replace.
+
+    Writes to a sibling ``*.tmp`` file and uses ``os.replace`` so a partial
+    download never appears at *dest*.  Retries on transient network errors
+    (``URLError`` / timeout) with exponential backoff (1s, 2s, 4s).  Raises
+    ``RuntimeError`` on HTTP error or non-transient failure.  The temp file
+    is cleaned up on every failure attempt.
+    """
+    import urllib.error
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".tmp")
+    last_exc: Exception | None = None
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as resp:
+                status = getattr(resp, "status", None) or resp.getcode()
+                if status != 200:
+                    raise RuntimeError(f"HTTP {status} fetching {url}")
+                with open(tmp, "wb") as f:
+                    while True:
+                        chunk = resp.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+            os.replace(tmp, dest)
+            return
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_exc = exc
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)
+                continue
+            raise RuntimeError(
+                f"Failed to download {url} after {retries} attempts: {exc}"
+            ) from exc
+        except Exception:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+            raise
+    # Unreachable, but satisfy type checkers.
+    raise RuntimeError(
+        f"Failed to download {url} after {retries} attempts: {last_exc}"
+    )
+
+
+def _provision_hf_snapshot_files(artifact: dict) -> dict:
+    """Provision an hf_snapshot artifact by streaming each file directly.
+
+    Bypasses ``snapshot_download`` entirely — no whole-snapshot or Xet
+    dependency.  For each file in ``artifact["files"]``:
+
+    1. If the file already exists at the deterministic cache path and its
+       size + SHA-256 match the manifest, reuse it (no re-download).
+    2. Otherwise, stream the exact resolve URL from the pinned revision via
+       ``_download_hf_file`` (urllib, chunked, atomic temp, retry).
+    3. Verify ``size_bytes`` and ``sha256`` after download/reuse.
+    4. On any mismatch, delete the offending file and fail closed.
+
+    Sets ``OCZY_HF_MODEL_DIR`` to the cache directory and records per-file
+    provenance.  Forces offline mode back on via the caller's ``finally``.
+    """
+    repo_id = artifact["repo_id"]
+    revision = artifact["revision"]
+    files = artifact["files"]
+    cache_base = os.environ.get("OCZY_HF_CACHE_DIR", "/content/hf_models")
+    cache_dir = (
+        Path(cache_base) / repo_id.replace("/", "_") / revision
+    )
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    provenance_files: list[dict] = []
+    for entry in files:
+        fname = entry["filename"]
+        expected_size = entry["size_bytes"]
+        expected_sha = entry["sha256"]
+        dest = cache_dir / fname
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        url = _hf_resolve_url(repo_id, revision, fname)
+        reused = False
+        # Reuse existing file only after full size + SHA verification.
+        if dest.is_file():
+            actual_size = dest.stat().st_size
+            if actual_size == expected_size:
+                actual_sha = _sha256_file(dest)
+                if actual_sha == expected_sha:
+                    reused = True
+        if not reused:
+            _download_hf_file(url, dest)
+        # Verify after download (or reuse).
+        actual_size = dest.stat().st_size
+        if actual_size != expected_size:
+            try:
+                dest.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise RuntimeError(
+                f"size mismatch for {fname}: expected {expected_size}, "
+                f"got {actual_size}. Refusing to proceed."
+            )
+        actual_sha = _sha256_file(dest)
+        if actual_sha != expected_sha:
+            try:
+                dest.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise RuntimeError(
+                f"SHA-256 mismatch for {fname}: expected {expected_sha}, "
+                f"got {actual_sha}. Refusing to proceed."
+            )
+        provenance_files.append({
+            "filename": fname,
+            "size_bytes": actual_size,
+            "sha256": actual_sha,
+            "sha256_verified": True,
+            "download_url": url,
+            "reused": reused,
+        })
+    os.environ["OCZY_HF_MODEL_DIR"] = str(cache_dir)
+    return {
+        "kind": "hf_snapshot",
+        "repo_id": repo_id,
+        "revision": revision,
+        "filename": artifact["filename"],
+        "sha256": artifact["sha256"],
+        "sha256_verified": True,
+        "model_dir": str(cache_dir),
+        "env_var": "OCZY_HF_MODEL_DIR",
+        "files": provenance_files,
+        "provisioning_mode": "direct_stream",
+    }
+
 
 def provision_model_artifact(artifact: dict) -> dict:
     """Download and verify a model artifact from Hugging Face.
@@ -379,12 +639,20 @@ def provision_model_artifact(artifact: dict) -> dict:
     to a deterministic cache path with atomic temp replacement, verifies
     SHA-256, and sets ``OCZY_MODEL_PATH``.
 
-    For ``kind=="hf_snapshot"``: disables Xet transport
-    (``HF_HUB_DISABLE_XET=1``) before importing the HF library, downloads
-    a snapshot at the exact revision via ``snapshot_download(token=False)``,
-    verifies the named file's SHA-256, and sets ``OCZY_HF_MODEL_DIR``.
+    For ``kind=="hf_snapshot"`` with a ``files`` manifest: bypasses the
+    HF library entirely — streams each exact resolve URL from the pinned
+    revision via ``_download_hf_file`` (urllib, chunked, atomic temp,
+    retry), verifies size + SHA-256 for every file, reuses valid existing
+    files, records per-file provenance, sets ``OCZY_HF_MODEL_DIR``, and
+    forces offline.  No whole-snapshot or Xet dependency.
 
-    Fails closed on any hash mismatch or download error.
+    For ``kind=="hf_snapshot"`` without ``files`` (legacy): disables Xet
+    transport (``HF_HUB_DISABLE_XET=1``) before importing the HF library,
+    downloads a snapshot at the exact revision, verifies the named file's
+    SHA-256, and sets ``OCZY_HF_MODEL_DIR``.  Retained for backward
+    compatibility.
+
+    Fails closed on any hash/size mismatch or download error.
     """
     kind = artifact["kind"]
     repo_id = artifact["repo_id"]
@@ -428,9 +696,15 @@ def provision_model_artifact(artifact: dict) -> dict:
                 "download_url": url,
             }
         else:  # hf_snapshot
-            # Disable Xet transport before importing huggingface_hub.
+            # Disable Xet transport up front — needed by both the legacy
+            # snapshot path and harmless for direct streaming.
             os.environ["HF_HUB_DISABLE_XET"] = "1"
             os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+            # If a files manifest is present, bypass the HF library entirely
+            # and stream each file directly from the pinned revision URL.
+            if artifact.get("files"):
+                return _provision_hf_snapshot_files(artifact)
+            # Legacy path: no files manifest — use the HF library.
             try:
                 from huggingface_hub import snapshot_download
             except ImportError as exc:
@@ -465,6 +739,7 @@ def provision_model_artifact(artifact: dict) -> dict:
                 "sha256_verified": True,
                 "model_dir": str(local_dir),
                 "env_var": "OCZY_HF_MODEL_DIR",
+                "provisioning_mode": "snapshot_download",
             }
     finally:
         # Force offline mode back on after download.

@@ -117,8 +117,7 @@ _VALID_PROVIDERS = frozenset({PROVIDER_KAGGLE, PROVIDER_COLAB})
 # ---------------------------------------------------------------------------
 # Concurrency defaults and limits.
 # ---------------------------------------------------------------------------
-DEFAULT_MAX_PARALLEL = 8
-HARD_MAX_PARALLEL = 10
+DEFAULT_MAX_PARALLEL = 8  # legacy default; max_parallel now defaults to None
 MIN_PARALLEL = 1
 
 DEFAULT_KAGGLE_MAX = 8
@@ -734,14 +733,17 @@ def load_state(state_path: str | Path) -> dict[str, Any]:
 
 
 class ParallelScheduler:
-    """Bounded-parallel mixed-provider scheduler with durable state.
+    """Mixed-provider scheduler with durable state and additive capacity.
 
-    Concurrency model: at most ``max_parallel`` remote jobs are active at
-    once globally.  Within that, Kaggle jobs are bounded by ``kaggle_max``
-    (fixed) and Colab jobs by an AIMD controller (``colab_max`` ceiling).
-    The scheduler is single-threaded and synchronous — remote submissions
-    are asynchronous work, so parallelism means N remote slots, not N local
-    threads.
+    Concurrency model: provider caps are additive.  Kaggle jobs are bounded
+    by ``kaggle_max`` (hard-capped at 10) and Colab jobs by an AIMD
+    controller (``colab_max`` ceiling).  When ``max_parallel`` is ``None``
+    (the default), there is no global cap — total concurrency is the sum of
+    independent provider capacities (e.g. 10 Kaggle + learned Colab X).
+    When ``max_parallel`` is an explicit int, it caps total concurrency
+    globally for backward compatibility.  The scheduler is single-threaded
+    and synchronous — remote submissions are asynchronous work, so
+    parallelism means N remote slots, not N local threads.
 
     Constructor injects the Kaggle client, optional Colab client, clock,
     and sleeper for deterministic testing.  The default clock is wall-clock
@@ -1232,7 +1234,7 @@ class ParallelScheduler:
         batch_path: str | Path,
         state_path: str | Path,
         *,
-        max_parallel: int = DEFAULT_MAX_PARALLEL,
+        max_parallel: int | None = None,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
         push_timeout: float = DEFAULT_PUSH_TIMEOUT,
         job_timeout: float = DEFAULT_JOB_TIMEOUT,
@@ -1242,12 +1244,18 @@ class ParallelScheduler:
     ) -> dict[str, Any]:
         """Run the full scheduling loop until all jobs reach a terminal state.
 
+        When *max_parallel* is ``None`` (default), there is no global
+        concurrency cap — Kaggle and Colab fill their independent provider
+        capacities additively (kaggle_max Kaggle + learned Colab X).
+        When *max_parallel* is an explicit int, it caps total concurrency
+        globally for backward compatibility.
+
         Returns a summary dict with per-job status, per-provider breakdown,
         and overall success flag.
         """
-        if max_parallel < MIN_PARALLEL or max_parallel > HARD_MAX_PARALLEL:
+        if max_parallel is not None and max_parallel < MIN_PARALLEL:
             raise ValueError(
-                f"max_parallel must be {MIN_PARALLEL}..{HARD_MAX_PARALLEL}, "
+                f"max_parallel must be >= {MIN_PARALLEL} when provided, "
                 f"got {max_parallel}"
             )
         if kaggle_max < MIN_KAGGLE_MAX or kaggle_max > HARD_KAGGLE_MAX:
@@ -1361,7 +1369,7 @@ class ParallelScheduler:
             # so calling it per pending Colab job is wasteful (F8).
             cached_external_active: int | None = None
             for job in jobs.values():
-                if active >= max_parallel:
+                if max_parallel is not None and active >= max_parallel:
                     break
                 if job.state != PENDING:
                     continue
@@ -1539,9 +1547,13 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--max-parallel",
         type=int,
-        default=DEFAULT_MAX_PARALLEL,
-        help=f"Max concurrent remote jobs globally (default {DEFAULT_MAX_PARALLEL}, "
-        f"max {HARD_MAX_PARALLEL}).",
+        default=None,
+        help=(
+            "Max concurrent remote jobs globally. Omit for additive provider "
+            "capacity (kaggle_max + learned Colab). Explicit --max-parallel N "
+            "caps total concurrency for backward compatibility. Must be >= 1 "
+            "when provided."
+        ),
     )
     run_p.add_argument(
         "--poll-interval",
@@ -1614,9 +1626,9 @@ def main(
     args = parser.parse_args(argv)
 
     if args.command == "run":
-        if args.max_parallel < MIN_PARALLEL or args.max_parallel > HARD_MAX_PARALLEL:
+        if args.max_parallel is not None and args.max_parallel < MIN_PARALLEL:
             parser.error(
-                f"--max-parallel must be {MIN_PARALLEL}..{HARD_MAX_PARALLEL}"
+                f"--max-parallel must be >= {MIN_PARALLEL} when provided"
             )
         if args.kaggle_max < MIN_KAGGLE_MAX or args.kaggle_max > HARD_KAGGLE_MAX:
             parser.error(

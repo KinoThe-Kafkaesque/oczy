@@ -26,7 +26,7 @@ import argparse
 import json
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath as _PurePath
 from typing import Any
 
 # --- Co-located imports (same directory) -----------------------------------
@@ -177,6 +177,26 @@ def validate_campaign(campaign: dict[str, Any]) -> None:
                 f"job {name!r}: arguments must be a list of strings"
             )
 
+        # Generic required_arguments enforcement: each required token must
+        # appear exactly in the job's arguments list (case-insensitive and
+        # order-independent). Applies to all providers.
+        required_arguments = job.get("required_arguments")
+        if required_arguments is not None:
+            if not isinstance(required_arguments, list) or not all(
+                isinstance(a, str) for a in required_arguments
+            ):
+                raise CampaignValidationError(
+                    f"job {name!r}: required_arguments must be a list of strings"
+                )
+            args_lower = [a.lower() for a in arguments]
+            for req in required_arguments:
+                req_lower = req.lower()
+                if req_lower not in args_lower:
+                    raise CampaignValidationError(
+                        f"job {name!r}: required argument {req!r} not found "
+                        f"in arguments {arguments!r}"
+                    )
+
         output_path = job.get("output_path")
         if not output_path or not isinstance(output_path, str):
             raise CampaignValidationError(f"job {name!r} missing string 'output_path'")
@@ -264,8 +284,13 @@ def _validate_model_artifact(name: str, model_artifact: Any) -> None:
 
     The artifact must specify a Hugging Face repo, an exact 40-hex revision,
     a filename, and a 64-hex SHA-256 of the downloaded file.  ``kind``
-    determines whether a single GGUF file is fetched via
-    ``hf_hub_download`` or a full snapshot via ``snapshot_download``.
+    determines whether a single GGUF file is fetched via direct streaming
+    or a full snapshot via ``snapshot_download``.
+
+    For ``hf_snapshot`` with a ``files`` manifest: validates non-empty list
+    of entries with safe relative filenames, positive integer sizes, exact
+    64-hex SHA-256 hashes, unique filenames, and requires the top-level
+    ``filename``/``sha256`` to match one entry (the primary file).
     """
     if not isinstance(model_artifact, dict):
         raise CampaignValidationError(
@@ -306,6 +331,108 @@ def _validate_model_artifact(name: str, model_artifact: Any) -> None:
         raise CampaignValidationError(
             f"colab job {name!r}: model_artifact sha256 must be a "
             f"64-character lowercase hex SHA-256"
+        )
+    # Validate optional files manifest (hf_snapshot only).
+    files = model_artifact.get("files")
+    if files is not None:
+        if kind != "hf_snapshot":
+            raise CampaignValidationError(
+                f"colab job {name!r}: model_artifact 'files' is only "
+                f"supported for hf_snapshot, not kind {kind!r}"
+            )
+        _validate_model_artifact_files(name, filename, sha256, files)
+
+
+def _validate_safe_relative_filename(name: str, filename: str) -> None:
+    """Validate that *filename* is a safe relative path within a cache dir."""
+    if not isinstance(filename, str) or not filename:
+        raise CampaignValidationError(
+            f"colab job {name!r}: model_artifact files entry filename "
+            f"must be a non-empty string"
+        )
+    if filename != filename.strip():
+        raise CampaignValidationError(
+            f"colab job {name!r}: model_artifact files entry filename "
+            f"must not have leading/trailing whitespace (got {filename!r})"
+        )
+    if "\x00" in filename or "\\" in filename:
+        raise CampaignValidationError(
+            f"colab job {name!r}: model_artifact files entry filename "
+            f"must not contain null bytes or backslashes (got {filename!r})"
+        )
+    p = _PurePath(filename)
+    if p.is_absolute():
+        raise CampaignValidationError(
+            f"colab job {name!r}: model_artifact files entry filename "
+            f"must be relative, not absolute (got {filename!r})"
+        )
+    if any(part == ".." for part in p.parts):
+        raise CampaignValidationError(
+            f"colab job {name!r}: model_artifact files entry filename "
+            f"must not contain '..' traversal (got {filename!r})"
+        )
+
+
+def _validate_model_artifact_files(
+    name: str, primary_filename: str, primary_sha256: str, files: Any
+) -> None:
+    """Validate the ``files`` manifest of an hf_snapshot model_artifact."""
+    if not isinstance(files, list) or not files:
+        raise CampaignValidationError(
+            f"colab job {name!r}: model_artifact 'files' must be a "
+            f"non-empty list"
+        )
+    seen: set[str] = set()
+    primary_matched = False
+    for i, entry in enumerate(files):
+        if not isinstance(entry, dict):
+            raise CampaignValidationError(
+                f"colab job {name!r}: model_artifact files[{i}] must be "
+                f"an object"
+            )
+        for field in ("filename", "size_bytes", "sha256"):
+            if field not in entry:
+                raise CampaignValidationError(
+                    f"colab job {name!r}: model_artifact files[{i}] "
+                    f"missing required field {field!r}"
+                )
+        fname = entry["filename"]
+        _validate_safe_relative_filename(name, fname)
+        if fname in seen:
+            raise CampaignValidationError(
+                f"colab job {name!r}: model_artifact files[{i}] "
+                f"duplicate filename {fname!r}"
+            )
+        seen.add(fname)
+        size_bytes = entry["size_bytes"]
+        if (
+            not isinstance(size_bytes, int)
+            or isinstance(size_bytes, bool)
+            or size_bytes <= 0
+        ):
+            raise CampaignValidationError(
+                f"colab job {name!r}: model_artifact files[{i}] size_bytes "
+                f"must be a positive integer (got {size_bytes!r})"
+            )
+        fsha = entry["sha256"]
+        if not isinstance(fsha, str) or not SHA256_PATTERN.fullmatch(fsha):
+            raise CampaignValidationError(
+                f"colab job {name!r}: model_artifact files[{i}] sha256 "
+                f"must be a 64-character lowercase hex digest (got {fsha!r})"
+            )
+        if fname == primary_filename:
+            if fsha != primary_sha256:
+                raise CampaignValidationError(
+                    f"colab job {name!r}: model_artifact files[{i}] sha256 "
+                    f"for primary file {fname!r} must match top-level sha256 "
+                    f"(got {fsha!r}, expected {primary_sha256!r})"
+                )
+            primary_matched = True
+    if not primary_matched:
+        raise CampaignValidationError(
+            f"colab job {name!r}: model_artifact 'files' must contain an "
+            f"entry for the primary filename {primary_filename!r} with "
+            f"matching sha256"
         )
 
 

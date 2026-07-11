@@ -54,12 +54,21 @@ _mod = _load_scheduler_module()
 
 BATCH_SCHEMA_VERSION: str = _mod["BATCH_SCHEMA_VERSION"]
 STATE_SCHEMA_VERSION: str = _mod["STATE_SCHEMA_VERSION"]
+BATCH_SCHEMA_V2: str = _mod["BATCH_SCHEMA_V2"]
+STATE_SCHEMA_V2: str = _mod["STATE_SCHEMA_V2"]
 classify_status = _mod["classify_status"]
 load_batch = _mod["load_batch"]
 BatchValidationError = _mod["BatchValidationError"]
 ParallelScheduler = _mod["ParallelScheduler"]
 main = _mod["main"]
 KaggleCliClient = _mod["KaggleCliClient"]
+
+PROVIDER_KAGGLE: str = _mod["PROVIDER_KAGGLE"]
+PROVIDER_COLAB: str = _mod["PROVIDER_COLAB"]
+DEFAULT_KAGGLE_MAX: int = _mod["DEFAULT_KAGGLE_MAX"]
+HARD_KAGGLE_MAX: int = _mod["HARD_KAGGLE_MAX"]
+DEFAULT_COLAB_MAX: int = _mod["DEFAULT_COLAB_MAX"]
+ColabAimdController = _mod["ColabAimdController"]
 
 PENDING = _mod.get("PENDING", "pending")
 SUBMITTING = _mod.get("SUBMITTING", "submitting")
@@ -557,7 +566,7 @@ def test_load_batch_accepts_matching_title_id_slug(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 6. Concurrency bounds: default 8, hard cap 10, minimum 1
+# 6. Concurrency bounds: explicit cap, additive default, minimum 1
 # ---------------------------------------------------------------------------
 
 
@@ -637,20 +646,28 @@ def test_run_respects_custom_max_parallel(tmp_path: Path) -> None:
     assert client.max_concurrent <= 3
 
 
-def test_run_rejects_max_parallel_above_hard_cap(tmp_path: Path) -> None:
-    """max_parallel > 10 must be rejected."""
-    manifest, _ = _make_batch_with_kernels(tmp_path, 1)
+def test_run_accepts_max_parallel_above_old_hard_cap(tmp_path: Path) -> None:
+    """max_parallel=11 (above the former hard cap of 10) must now be accepted.
+
+    The global cap is optional and has no upper bound; only max_parallel=0
+    (or negative) is rejected.  This replaces the old test that asserted
+    max_parallel > 10 raises.
+    """
+    manifest, _ = _make_batch_with_kernels(tmp_path, 11)
     state = tmp_path / "state.json"
     holder, clock = _make_clock()
     sleeper = CountingSleeper(holder)
-    client = FakeKaggleClient()
+    client = FakeKaggleClient(
+        status_sequences={f"owner/k{i}": ["complete"] for i in range(11)},
+    )
     sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
-    with pytest.raises((ValueError, RuntimeError)):
-        sched.run(manifest, state, max_parallel=11)
+    summary = sched.run(manifest, state, max_parallel=11, poll_interval=1)
+    assert summary is not None
+    assert summary["total"] == 11
 
 
 def test_run_rejects_max_parallel_below_minimum(tmp_path: Path) -> None:
-    """max_parallel < 1 must be rejected."""
+    """max_parallel=0 must be rejected (minimum is 1 when provided)."""
     manifest, _ = _make_batch_with_kernels(tmp_path, 1)
     state = tmp_path / "state.json"
     holder, clock = _make_clock()
@@ -661,8 +678,23 @@ def test_run_rejects_max_parallel_below_minimum(tmp_path: Path) -> None:
         sched.run(manifest, state, max_parallel=0)
 
 
-def test_run_accepts_max_parallel_at_hard_cap(tmp_path: Path) -> None:
-    """max_parallel=10 (the hard cap) must be accepted."""
+def test_run_accepts_max_parallel_none(tmp_path: Path) -> None:
+    """max_parallel=None (the default) must be accepted — no global cap."""
+    manifest, _ = _make_batch_with_kernels(tmp_path, 3)
+    state = tmp_path / "state.json"
+    holder, clock = _make_clock()
+    sleeper = CountingSleeper(holder)
+    client = FakeKaggleClient(
+        status_sequences={f"owner/k{i}": ["complete"] for i in range(3)},
+    )
+    sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
+    summary = sched.run(manifest, state, max_parallel=None, poll_interval=1)
+    assert summary is not None
+    assert summary["all_succeeded"]
+
+
+def test_run_accepts_max_parallel_at_10(tmp_path: Path) -> None:
+    """max_parallel=10 must be accepted (no longer a hard cap, just a value)."""
     manifest, _ = _make_batch_with_kernels(tmp_path, 10)
     state = tmp_path / "state.json"
     holder, clock = _make_clock()
@@ -673,7 +705,6 @@ def test_run_accepts_max_parallel_at_hard_cap(tmp_path: Path) -> None:
     sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
     summary = sched.run(manifest, state, max_parallel=10, poll_interval=1)
     assert summary is not None
-
 
 def test_run_accepts_max_parallel_one(tmp_path: Path) -> None:
     """max_parallel=1 (the minimum) must be accepted and serialize jobs."""
@@ -687,6 +718,56 @@ def test_run_accepts_max_parallel_one(tmp_path: Path) -> None:
     sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
     summary = sched.run(manifest, state, max_parallel=1, poll_interval=1)
     assert summary is not None
+
+
+def test_run_rejects_kaggle_max_above_hard_cap(tmp_path: Path) -> None:
+    """kaggle_max=11 must be rejected — HARD_KAGGLE_MAX=10 is still enforced."""
+    manifest, _ = _make_batch_with_kernels(tmp_path, 1)
+    state = tmp_path / "state.json"
+    holder, clock = _make_clock()
+    sleeper = CountingSleeper(holder)
+    client = FakeKaggleClient()
+    sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
+    with pytest.raises((ValueError, RuntimeError)):
+        sched.run(manifest, state, kaggle_max=11)
+
+
+def test_run_default_kaggle_max_is_8(tmp_path: Path) -> None:
+    """The default kaggle_max is 8 (DEFAULT_KAGGLE_MAX), unchanged."""
+    manifest, _ = _make_batch_with_kernels(tmp_path, 12)
+    state = tmp_path / "state.json"
+
+    class ConcurrencyClient(FakeKaggleClient):
+        def __init__(self) -> None:
+            super().__init__(
+                status_sequences={
+                    f"owner/k{i}": ["running", "complete"] for i in range(12)
+                },
+            )
+            self._active: set[str] = set()
+            self.max_concurrent = 0
+
+        def push(self, kernel_dir: str, *, timeout: float | None = None) -> str:
+            kid = super().push(kernel_dir, timeout=timeout)
+            self._active.add(kid)
+            self.max_concurrent = max(self.max_concurrent, len(self._active))
+            return kid
+
+        def status(self, kernel_id: str, *, timeout: float | None = None) -> str:
+            result = super().status(kernel_id, timeout=timeout)
+            if result in ("complete", "error"):
+                self._active.discard(kernel_id)
+            return result
+
+    holder, clock = _make_clock()
+    sleeper = CountingSleeper(holder)
+    client = ConcurrencyClient()
+    sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
+    # max_parallel=None (no global cap), default kaggle_max=8
+    sched.run(manifest, state, max_parallel=None, poll_interval=1)
+    assert client.max_concurrent <= DEFAULT_KAGGLE_MAX, (
+        f"exceeded default kaggle_max: {client.max_concurrent}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1266,8 +1347,12 @@ def test_cli_status_prints_json(
     assert rc == 0
 
 
-def test_cli_run_default_max_parallel_is_8(tmp_path: Path) -> None:
-    """The CLI --max-parallel should default to 8."""
+def test_cli_run_default_is_additive(tmp_path: Path) -> None:
+    """The CLI --max-parallel should default to None (additive provider capacity).
+
+    With 12 Kaggle jobs and no --max-parallel, concurrency is bounded only by
+    the default kaggle_max=8, not by a global cap.
+    """
     manifest, _ = _make_batch_with_kernels(tmp_path, 12)
     state = tmp_path / "state.json"
     holder, clock = _make_clock()
@@ -1302,11 +1387,31 @@ def test_cli_run_default_max_parallel_is_8(tmp_path: Path) -> None:
         clock=clock,
         sleeper=sleeper,
     )
-    assert client.max_concurrent <= 8
+    # No global cap — bounded only by default kaggle_max=8
+    assert client.max_concurrent <= DEFAULT_KAGGLE_MAX
 
 
-def test_cli_run_rejects_max_parallel_above_10(tmp_path: Path) -> None:
-    """CLI --max-parallel 11 should fail via SystemExit (parser.error)."""
+def test_cli_run_accepts_max_parallel_above_10(tmp_path: Path) -> None:
+    """CLI --max-parallel 11 must now be accepted (no hard upper bound)."""
+    manifest, _ = _make_batch_with_kernels(tmp_path, 11)
+    state = tmp_path / "state.json"
+    holder, clock = _make_clock()
+    sleeper = CountingSleeper(holder)
+    client = FakeKaggleClient(
+        status_sequences={f"owner/k{i}": ["complete"] for i in range(11)},
+    )
+    rc = main(
+        ["run", str(manifest), "--state", str(state),
+         "--max-parallel", "11", "--poll-interval", "1"],
+        client=client,
+        clock=clock,
+        sleeper=sleeper,
+    )
+    assert rc == 0
+
+
+def test_cli_run_rejects_max_parallel_zero(tmp_path: Path) -> None:
+    """CLI --max-parallel 0 should still fail via SystemExit (parser.error)."""
     manifest, _ = _make_batch_with_kernels(tmp_path, 1)
     state = tmp_path / "state.json"
     holder, clock = _make_clock()
@@ -1314,7 +1419,23 @@ def test_cli_run_rejects_max_parallel_above_10(tmp_path: Path) -> None:
     client = FakeKaggleClient()
     with pytest.raises(SystemExit):
         main(
-            ["run", str(manifest), "--state", str(state), "--max-parallel", "11"],
+            ["run", str(manifest), "--state", str(state), "--max-parallel", "0"],
+            client=client,
+            clock=clock,
+            sleeper=sleeper,
+        )
+
+
+def test_cli_run_rejects_kaggle_max_above_10(tmp_path: Path) -> None:
+    """CLI --kaggle-max 11 should fail via SystemExit (parser.error)."""
+    manifest, _ = _make_batch_with_kernels(tmp_path, 1)
+    state = tmp_path / "state.json"
+    holder, clock = _make_clock()
+    sleeper = CountingSleeper(holder)
+    client = FakeKaggleClient()
+    with pytest.raises(SystemExit):
+        main(
+            ["run", str(manifest), "--state", str(state), "--kaggle-max", "11"],
             client=client,
             clock=clock,
             sleeper=sleeper,

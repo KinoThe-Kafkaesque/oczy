@@ -106,23 +106,52 @@ def test_run_mock_returns_silhouettes() -> None:
     )
 
 
-def test_real_driver_falls_back_gracefully(monkeypatch, capsys) -> None:
+def test_real_driver_fail_closed_on_exception(monkeypatch, capsys) -> None:
+    """When _hf_probe raises, --driver real must exit 1 and emit no METRIC."""
     def _raise():
         raise RuntimeError("no model")
 
     monkeypatch.setattr(layer_l_probe, "_hf_probe", _raise)
-    assert layer_l_probe.main(["--driver", "real"]) == 0
+    assert layer_l_probe.main(["--driver", "real"]) == 1
     out = capsys.readouterr().out
     assert "ASI real_driver=failed" in out
-    assert "METRIC layer_l_silhouette_gap=" in out
+    assert "ASI real_driver_error_type=RuntimeError" in out
+    assert "METRIC layer_l_silhouette_gap=" not in out
 
 
-def test_real_driver_falls_back_on_none(monkeypatch, capsys) -> None:
+def test_real_driver_fail_closed_on_none(monkeypatch, capsys) -> None:
+    """When _hf_probe returns None, --driver real must exit 1 and emit no METRIC."""
     monkeypatch.setattr(layer_l_probe, "_hf_probe", lambda: None)
-    assert layer_l_probe.main(["--driver", "real"]) == 0
+    assert layer_l_probe.main(["--driver", "real"]) == 1
     out = capsys.readouterr().out
     assert "ASI real_driver=failed" in out
+    assert "returned no result" in out
+    assert "METRIC layer_l_silhouette_gap=" not in out
+
+
+def test_real_driver_success_prints_metrics(monkeypatch, capsys) -> None:
+    """When _hf_probe returns valid silhouettes, --driver real exits 0 with metrics."""
+    fake_sils = {"R_random": 0.0, "mean_L14": 0.55}
+    monkeypatch.setattr(layer_l_probe, "_hf_probe", lambda: fake_sils)
+    assert layer_l_probe.main(["--driver", "real"]) == 0
+    out = capsys.readouterr().out
     assert "METRIC layer_l_silhouette_gap=" in out
+    assert "ASI warm_sep_silhouette_mean_L14=0.55" in out
+
+
+def test_real_driver_fail_closed_no_mock_fallback(monkeypatch, capsys) -> None:
+    """A real-driver failure must never emit mock METRIC lines."""
+    def _raise():
+        raise ImportError("transformers not found")
+
+    monkeypatch.setattr(layer_l_probe, "_hf_probe", _raise)
+    rc = layer_l_probe.main(["--driver", "real"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    # No mock silhouette values should appear — only the failure diagnostic.
+    assert "METRIC" not in out
+    assert "ASI warm_sep_silhouette_" not in out
+    assert "ASI real_driver=failed" in out
 
 
 def test_main_default_driver_is_mock(capsys) -> None:

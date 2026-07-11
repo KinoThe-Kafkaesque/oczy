@@ -11,8 +11,10 @@ Modes:
   - ``--driver real``: loads ``LiquidAI/LFM2.5-1.2B-Instruct`` via transformers
     and computes layer-L silhouettes.
 
-On any real-driver failure, the module falls back to mock mode and emits
-``ASI real_driver=failed``.
+On any real-driver failure, the probe fails closed: it emits an actionable
+``ASI real_driver=failed`` diagnostic (error type, message, traceback, and a
+remediation hint) and exits nonzero rather than falling back to mock metrics.
+Use ``--driver mock`` explicitly for the deterministic floor.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ import argparse
 import math
 import os
 import sys
+import traceback
 from typing import Any
 
 import numpy as np
@@ -317,6 +320,38 @@ def _compute_gap(silhouettes: dict[str, float]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _report_real_driver_failure(
+    exc: Exception | None, tb: str | None
+) -> None:
+    """Emit an actionable diagnostic when the real HF driver cannot produce metrics.
+
+    Called only on the ``--driver real`` path when ``_hf_probe`` raises or
+    returns ``None``.  Prints structured ``ASI`` lines so a caller can
+    distinguish a genuine real-driver failure from a completed scientific run,
+    plus a remediation hint.  Never falls back to mock metrics.
+    """
+    print("ASI real_driver=failed")
+    if exc is not None:
+        print(f"ASI real_driver_error_type={type(exc).__name__}")
+        msg = str(exc).strip().replace("\n", " ")
+        if msg:
+            print(f"ASI real_driver_error_message={msg}")
+        if tb and tb.strip() != "NoneType: None":
+            print("ASI real_driver_traceback:")
+            for line in tb.rstrip().splitlines():
+                print(f"  {line}")
+    else:
+        print(
+            "ASI real_driver_error_message=_hf_probe returned no result "
+            "(hidden-state length/shape mismatch or missing layers)"
+        )
+    print(
+        "ASI real_driver_hint=verify the LFM2.5-1.2B-Instruct snapshot is "
+        "available (OCZY_HF_MODEL_DIR or HF cache), that torch/transformers "
+        "are installed and output_hidden_states is supported, then retry; "
+        "or run with --driver mock for the deterministic floor."
+    )
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Layer-L hidden extraction probe"
@@ -330,13 +365,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.driver == "real":
+        probe_exc: Exception | None = None
+        probe_tb: str | None = None
         try:
             silhouettes = _hf_probe()
-        except Exception:
+        except Exception as exc:  # fail closed, not fallback
             silhouettes = None
+            probe_exc = exc
+            probe_tb = traceback.format_exc()
         if silhouettes is None:
-            print("ASI real_driver=failed")
-            silhouettes = _mock_probe()
+            _report_real_driver_failure(probe_exc, probe_tb)
+            return 1
     else:
         silhouettes = _mock_probe()
 

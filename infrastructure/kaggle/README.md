@@ -114,7 +114,7 @@ A run counts as wired only when its JSON artifact has `passed: true`,
 
 For many-jobs fan-out, the **parallel scheduler** (`parallel_scheduler.py`)
 manages a batch of remote CPU jobs (Kaggle kernels and/or Colab sessions) with
-bounded concurrency, crash-safe durable state, and automatic resume.
+additive provider capacity, crash-safe durable state, and automatic resume.
 
 ### Batch schemas
 
@@ -194,13 +194,22 @@ uv run python infrastructure/kaggle/parallel_scheduler.py status \
 
 | Flag | Default | Description |
 |---|---|---|
-| ``--max-parallel N`` | 8 | Max concurrent remote jobs globally (hard max 10) |
+| ``--max-parallel N`` | omitted | Omit for additive provider capacity (kaggle_max + learned Colab). Explicit N caps total concurrency for backward compatibility (must be >= 1). |
 | ``--kaggle-max N`` | 8 | Max concurrent Kaggle kernels (hard max 10) |
 | ``--colab-max N`` | 10 | Colab AIMD capacity ceiling (additive probe, not a hard quota) |
 | ``--colab-cooldown SEC`` | 60 | Seconds to wait after a Colab 412 rejection before retrying |
 | ``--push-timeout SEC`` | 21600 | Kaggle kernel run-time limit |
 | ``--job-timeout SEC`` | 21600 | Max wall-clock wait per job |
 | ``--poll-interval SEC`` | 30 | Seconds between status polls |
+
+**Omitting ``--max-parallel`` means additive provider capacity.** The scheduler
+imposes no global concurrency cap — Kaggle jobs fill up to ``--kaggle-max``
+(hard-capped at 10) and Colab jobs fill up to the AIMD-learned limit
+(``--colab-max`` ceiling). For example, ``--kaggle-max 10`` plus a learned
+Colab limit of X allows 10 Kaggle + X Colab jobs to run concurrently.
+
+**Explicit ``--max-parallel N`` caps total concurrency** across all providers
+for backward compatibility. When provided, N must be >= 1.
 
 **``--colab-max`` sets a ceiling, not a guaranteed capacity.** The Colab
 AIMD controller starts admissions at 1 and probes upward — actual available
