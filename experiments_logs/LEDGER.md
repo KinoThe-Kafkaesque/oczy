@@ -1,6 +1,6 @@
 # Experiments Logs Ledger — Authoritative Index
 
-**Date:** 2026-07-02 (updated through session `f645e4af` remediation)
+**Date:** 2026-07-11 (updated through campaign `0d48130` adjudication)
 **Purpose:** This ledger classifies every experiment log against three
 invalidation events:
 
@@ -94,12 +94,22 @@ these are the numbers all future work must beat. The 13.5x drift claim
 | 2026-07-01 | `2026-07-01_s2_4_breakthrough_ablation.md` | VALID | S2.4 single-variable ablation of the "13.5x breakthrough" (`044cb51`) — **RETRACTED as magnitude inflation**. Survival ratio 0.354 < 0.5; control logits rose more than target. New experiment, pre-registered. | — |
 | 2026-07-01 | `2026-07-01_stage5_scope_dsi_benchmarks.md` | **PARTIAL** | Stage 5 scope=1.00 and retention=1.00 claims are SUPERSEDED (leakage-era `_SCOPE_TEACHING`). DSI Fact Index implementation, external benchmark integration, and papers analysis are VALID. | `2026-07-01_honest_post_leakage_baseline.md` |
 | 2026-07-02 | `2026-07-02_s1_1_model_selection.md` | VALID | S1.1 HF substrate model selection — Qwen2.5-0.5B-Instruct (82.8 ms/tok). Decision record, not a claim under any invalidation event. | — |
+| 2026-07-11 | `campaign-0d48130/exp01-correction-competence` | VALID | Campaign 0d48130 (commit `537260c`, colab). **Scientific NULL** for behavior-delta transfer: `v2_behavior_delta_mock=0.0`, `v2_discrimination=0.0`; domain_recall=1.0 but exact_recall=0.0; 5 de-saturation events, no behavior delta. Report: `colab-importfix-generated/reports/exp01-correction-competence-importfix/stdout.log` | — |
+| 2026-07-11 | `campaign-0d48130/exp02-kv-slot-injection` | VALID | Campaign 0d48130 (commit `537260c`, colab). **Scientific REFUTATION** of KV-slot injection: `kv_slot_rank1_count=0.0`. Logit biasing confirmed (rank1_count=3.0, all rank_logit_bias=1). Report: `colab-importfix-generated/reports/exp02-kv-slot-injection-importfix/stdout.log` | — |
+| 2026-07-11 | `campaign-0d48130/exp03-layer-L-probe` | VALID | Campaign 0d48130 (commits `0d48130` and `537260c`, colab). **INFRASTRUCTURE BLOCKED — no scientific verdict.** Repeated HF snapshot transfers failed before execution; no metrics or ASI scores emitted. Not a scientific null or refutation. Evidence: `generated/campaign_execution_summary.json` and `colab-direct-generated/reports/exp03-layer-l-probe-direct/` | — |
+| 2026-07-11 | `campaign-0d48130/exp04-scope-selectivity` | VALID | Campaign 0d48130 (commit `537260c`, colab). **Scientific POSITIVE**: `scope_selectivity_index=1.0`. Single-run, no cross-seed variance. Report: `colab-importfix-generated/reports/exp04-scope-selectivity-importfix/stdout.log` | — |
+| 2026-07-11 | `campaign-0d48130/exp05-metabolism-loop` | VALID | Campaign 0d48130 (commit `537260c`, colab). **Scientific NULL** for metabolism drift: `metabolism_drift_delta=0.0`, `drift_uptake=0.0`, `delta_target=0.0`. Loop runs (4 consolidations, slope=0.1755) but no captured delta. Report: `colab-importfix-generated/reports/exp05-metabolism-loop-importfix/stdout.log` | — |
+| 2026-07-11 | `campaign-0d48130/exp06-bounded-growth` | VALID | Campaign 0d48130 (commit `0d48130`, kaggle CPU-only). **Scientific POSITIVE**: `bounded_growth_m1_ratio=0.002079` (5 seeds, zero variance). Structural footprints bit-identical across seeds. bytes_per_delta spread ≤20 B: A0 18 B, A0b 20 B, A1 19 B, A2 18 B, A3 19 B. Report: `generated/reports/exp06-seed-{0..4}/oczy-exp06-s{0..4}-*.log` | — |
+| 2026-07-11 | `campaign-0d48130/exp07-conversation-world-model` | VALID | Campaign 0d48130 (commit `537260c`, colab). **Scientific POSITIVE** for marker-free uptake (`marker_free_uptake_gap=1.0`, `accept_pred_auc_string=1.0`, `accept_pred_auc_hidden=0.8125`); **NULL** for critic AUC improvement (`critic_auc_delta=0.0`). Report: `colab-importfix-generated/reports/exp07-conversation-world-model-importfix/stdout.log` | — |
+| 2026-07-11 | `campaign-0d48130/r18-teacher-gate` | VALID | Campaign 0d48130 (commit `537260c`, kaggle CPU-only). **Scientific POSITIVE** (gate passed): `distill_delta_holdout=0.3333`, `distill_specificity_delta=0.04348`. Single seed, 5 steps, LoRA rank=8/alpha=16/lr=0.005. No cross-seed claim. Report: `r18-final-generated/reports/r18-teacher-gate-final/oczy-r18-teacher-final-537260c.log` | — |
+| 2026-07-11 | `campaign-0d48130/r18-distillation-full` | VALID | Campaign 0d48130 (commit `537260c`, kaggle CPU-only). **Scientific PARTIAL**: distillation signal in 2/3 seeds, absent in 1/3. `distill_delta_holdout` mean=0.2222 (s0=0.3333, s1=0.3333, s2=0.0). `teacher_dev_delta=0.1765` identical all seeds. `persistent_bytes=17,699,903` identical. `specificity_delta`: 0.0/0.0/0.04348. 3 seeds, 10 steps. Report: `r18-full-generated/reports/r18-distillation-full/oczy-r18-full-537260c.log` | — |
+| 2026-07-11 | `campaign-0d48130/r14-m2b-additive-organs` | VALID | Campaign 0d48130 (commit `2a22049`, kaggle CPU-only). **Scientific NULL (metricless completed run):** `--seeds 3` exited 0 after 11,786.6 s but emitted no `METRIC` or `ASI` values. No effect estimate or positive/negative mechanism verdict is available beyond the registered metricless null. Report: `fixed-generated/reports/r14-m2b-additive-organs-fixed/oczy-r14-m2b-additive-fixed-2a22049.log` | — |
 
 ## Summary
 
 | Classification | Count |
 |----------------|-------|
-| VALID | 47 |
+| VALID | 57 |
 | PARTIAL | 9 |
 | INVALIDATED (pure) | 0 |
 | SUPERSEDED (pure) | 0 |
@@ -142,6 +152,41 @@ What survives: the KV-splice mechanism (≡ text prefix at zero token cost, see
 S1.3), the scope-slot reranker's legitimate 0.92, and a frozen eval that can no
 longer be quietly bent. See `SPRINT.md` for the remediation plan and current
 sprint status.
+
+## Campaign 0d48130 Adjudication (2026-07-11)
+
+Four execution summaries adjudicated from two source commits: `0d48130` (Exp06
+batch) and `537260c` (colab-importfix + R18 gate + R18 full). All completed jobs
+ran under CPU-only contract (cuda_available=false, torch 2.10.0+cpu).
+
+**Scientific outcomes (complete):**
+
+| Experiment | Outcome | Primary metric |
+|------------|---------|----------------|
+| Exp01 | NULL (behavior-delta transfer) | `v2_behavior_delta_mock=0.0` |
+| Exp02 | REFUTATION (KV-slot injection) | `kv_slot_rank1_count=0.0` |
+| Exp04 | POSITIVE (scope selectivity) | `scope_selectivity_index=1.0` |
+| Exp05 | NULL (metabolism drift) | `metabolism_drift_delta=0.0` |
+| Exp06 | POSITIVE (bounded growth) | `bounded_growth_m1_ratio=0.002079` (5 seeds, zero variance) |
+| Exp07 | POSITIVE (marker-free uptake) + NULL (critic AUC) | `marker_free_uptake_gap=1.0`, `critic_auc_delta=0.0` |
+| R18 gate | POSITIVE (gate passed) | `distill_delta_holdout=0.3333` (1 seed) |
+| R18 full | PARTIAL (2/3 seeds positive, 1/3 null) | `distill_delta_holdout` mean=0.2222 (3 seeds) |
+| R14 M2B | NULL (metricless completed run) | 3 seeds, exit 0, no `METRIC`/`ASI` values |
+
+**Non-scientific outcomes:**
+
+| Experiment | Status | Reason |
+|------------|--------|--------|
+| Exp03 | INFRASTRUCTURE BLOCKED | Colab job failed (HF snapshot transfer failures); no metrics emitted. Not a scientific null or refutation. |
+
+**Seed distributions:** Exp06 — 5 seeds (0–4), `m1_ratio` zero variance,
+bytes_per_delta spread ≤20 B across all agents. R18 full — 3 seeds:
+`distill_delta_holdout` bimodal {0.3333, 0.3333, 0.0}; `teacher_dev_delta` and
+`persistent_bytes` identical across seeds. Colab experiments (01/02/04/05/07)
+are single-run with no cross-seed variance data.
+
+Source: `local://campaign-adjudication.md`. No threshold changes or causal
+claims beyond measured metrics.
 
 ## Notes (conceptual, non-log)
 
