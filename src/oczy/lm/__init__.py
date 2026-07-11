@@ -22,10 +22,27 @@ On this host (i7-1260P, no usable GPU) that hits **38 tok/s, 1.6 GB peak
 RSS, 697 MB on disc** -- the best of every config we benched.
 """
 
-from __future__ import annotations
+from typing import TYPE_CHECKING, Any
 
+from ._types import ReservedPosition
 from .adapter import LanguageAdapter, LanguageAdapterConfig
-from .cvec_driver import CVecDriverConfig, LlamaCVecDriver, ReservedPosition
+
+if TYPE_CHECKING:
+    from .cvec_driver import CVecDriverConfig, LlamaCVecDriver
+
+_CVEC_EXPORTS = frozenset(
+    {"CVecDriverConfig", "LlamaCVecDriver"}
+)
+
+
+def __getattr__(name: str) -> Any:
+    if name not in _CVEC_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from . import cvec_driver
+
+    value = getattr(cvec_driver, name)
+    globals()[name] = value
+    return value
 
 __all__ = [
     "LanguageAdapter",

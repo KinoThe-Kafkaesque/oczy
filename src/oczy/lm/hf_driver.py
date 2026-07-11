@@ -33,7 +33,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from .cvec_driver import ReservedPosition
+from ._types import ReservedPosition
 
 # ---------------------------------------------------------------------------
 # Parallel-task model choice (S1.1).  Fall back to a constructor-required

@@ -121,20 +121,13 @@ class CVecDriverConfig:
 
 
 
-@dataclass
-class ReservedPosition:
-    """A reserved KV-position steering surface injected as a literal prefix.
+from ._types import ReservedPosition  # noqa: F401  -- re-exported for callers
 
-    This is a first-class handle for the soft-prompt / reserved-position
-    mechanism: instead of passing around raw strings, callers carry a small
-    dataclass that records provenance and (optionally) measured uptake so
-    the organism can later learn which positions work.
-    """
-
-    text: str
-    source: str = "hand_coded"
-    exact_uptake_score: float | None = None
-    domain_uptake_score: float | None = None
+__all__ = [
+    "CVecDriverConfig",
+    "LlamaCVecDriver",
+    "ReservedPosition",
+]
 
 class LlamaCVecDriver:
     """Persistent control-vector binding for a single ``Llama`` instance.
