@@ -1,6 +1,6 @@
 # Experiments Logs Ledger — Authoritative Index
 
-**Date:** 2026-07-11 (updated through campaign `0d48130` adjudication)
+**Date:** 2026-07-11 (updated through campaign `0d48130` adjudication and Exp03 `ad77e93` real-driver closure)
 **Purpose:** This ledger classifies every experiment log against three
 invalidation events:
 
@@ -101,13 +101,14 @@ these are the numbers all future work must beat. The 13.5x drift claim
 | 2026-07-02 | `2026-07-02_s3_m2_retrieval_ablation.md` | VALID | S3.M2 additive retrieval ablation (HF driver, eval v2 holdout, 3 seeds). Scope-slot reranker zero-variance positive (S0 +0.667, S4 +0.250); hippocampus-at-answer Δ=0.000 exactly; DSI unsupported. Post-reranker-fix, post-leakage-removal. | — |
 | 2026-07-03 | `2026-07-03_s3_organ_triage_adjudication.md` | VALID | S3 organ triage adjudication — combines M1+M2 into KEEP/RETRIEVAL-BASELINE/ARCHIVE verdicts. ScopeSlotReranker=RETRIEVAL-BASELINE; all other organs=ARCHIVE. research/15 declared VACUOUS. No reranker, leakage, or gameable metric. | — |
 | 2026-07-03 | `2026-07-03_eval_v2_1_expansion.md` | VALID | Eval v2→v2.1 curriculum expansion (S0.6 growth path). +12 new ambiguous words across stages 0/1/2; stage-1 holdout 1→9 probes. Existing episodes/probes never modified. Regression locks updated. No reranker, leakage, or gameable metric. | — |
-| 2026-07-11 | `2026-07-11_campaign_0d48130.md` | VALID | **Campaign 0d48130 curated evidence log.** 10 experiment outcomes across 3 commits and 2 providers (kaggle CPU-only, colab). Scientific outcomes: 3 POSITIVE (Exp04, Exp06, R18 gate), 2 POSITIVE+NULL (Exp07, R18 full PARTIAL), 3 NULL (Exp01, Exp05, R14 M2B metricless), 1 REFUTATION (Exp02), 1 INFRASTRUCTURE BLOCKED (Exp03). See the log for per-run metrics, seed distributions, non-runnable inventory, artifact provenance, and infrastructure fixes. | — |
+| 2026-07-11 | `2026-07-11_campaign_0d48130.md` | VALID | **Campaign 0d48130 curated evidence log.** 10 experiment outcomes across 3 commits and 2 providers (kaggle CPU-only, colab). Scientific outcomes: 3 POSITIVE (Exp04, Exp06, R18 gate), 2 POSITIVE+NULL (Exp07, R18 full PARTIAL), 3 NULL (Exp01, Exp05, R14 M2B metricless), 1 REFUTATION (Exp02), 1 INFRASTRUCTURE BLOCKED (Exp03, original campaign). Exp03 reproducibility closure appended 2026-07-11 (commit `ad77e93`): real-driver rerun exit 0, `layer_l_silhouette_gap=0.10925446726657728` (> +0.10, threshold unchanged) → positive/accept for this single closure; S1.4 not reopened. See the log and `2026-07-11_exp03_real_driver_closure.json`. | — |
+| 2026-07-11 | `2026-07-11_exp03_real_driver_closure.json` | VALID | **Exp03 real-driver reproducibility closure.** Durable execution report object: commit `ad77e93`, `--driver real`, Colab, exit 0, `layer_l_silhouette_gap=0.10925446726657728` (> +0.10 registered threshold, unchanged), all ASI scores, model provenance (`LiquidAI/LFM2.5-1.2B-Instruct` rev `868df74d…`, manifest `infrastructure/kaggle/model_manifests/lfm2_5-1_2b-instruct.json`), infrastructure fix description. Single run on one architecture; does not reopen S1.4. | — |
 
 ## Summary
 
 | Classification | Count |
 |----------------|-------|
-| VALID | 55 |
+| VALID | 56 |
 | PARTIAL | 9 |
 | INVALIDATED (pure) | 0 |
 | SUPERSEDED (pure) | 0 |
@@ -181,7 +182,7 @@ CPU-only contract (cuda_available=false, torch 2.10.0+cpu).
 
 | Experiment | Status | Reason |
 |------------|--------|--------|
-| Exp03 | INFRASTRUCTURE BLOCKED | Colab job failed (HF snapshot transfer failures); no metrics emitted. Not a scientific null or refutation. |
+| Exp03 | INFRASTRUCTURE BLOCKED (original campaign) → **REPRODUCIBILITY CLOSURE** (2026-07-11, commit `ad77e93`) | Original: Colab job failed (HF snapshot transfer failures); no metrics emitted. Not a scientific null or refutation. Closure: real-driver rerun (`--driver real`, Colab, exit 0) produced `layer_l_silhouette_gap=0.10925446726657728` (> +0.10, threshold unchanged) → positive/accept for this single reproducibility closure. Does not reopen or overturn the pre-registered S1.4 refutation (two architectures). Durable record: `2026-07-11_exp03_real_driver_closure.json`. |
 
 **Seed distributions:** Exp06 — 5 seeds (0–4), `m1_ratio` zero variance,
 bytes_per_delta spread ≤20 B across all agents. R18 full — 3 seeds:
@@ -190,7 +191,9 @@ bytes_per_delta spread ≤20 B across all agents. R18 full — 3 seeds:
 are single-run with no cross-seed variance data.
 
 Source: `2026-07-11_campaign_0d48130.md` (adjudicated from
-`/tmp/oczy-campaign-0d48130/` execution summaries). No threshold changes or
+`/tmp/oczy-campaign-0d48130/` execution summaries) and
+`2026-07-11_exp03_real_driver_closure.json` (ad77e93 real-driver closure,
+from `/tmp/oczy-exp03-real-run-v2/`). No threshold changes or
 causal claims beyond measured metrics.
 
 ## Notes (conceptual, non-log)

@@ -114,14 +114,23 @@ not research blockers.
 >   fails the same facts). Pre-blank splice position fixed the hardest
 >   fact (rank 4→0). Sprint 2 implications: KV slots replace the prefix,
 >   spliced pre-blank; consider the 1.5B fallback for recall-critical runs.
-> - **Campaign Exp03 block** (2026-07-11, `0d48130`): the campaign
+> - **Campaign Exp03 block → closure** (2026-07-11): the original campaign
 >   re-run of the layer-L probe under the remote scheduler was
 >   **infrastructure-blocked** — repeated HF snapshot transfers failed
->   before execution; no metrics or ASI scores emitted. This is not a
->   scientific null or refutation and does not reopen the S1.4 verdict,
->   which stands on the pre-registered HF probe
->   (`2026-07-01_s1_4_hf_layer_probe.md`). Evidence:
->   `experiments_logs/2026-07-11_campaign_0d48130.md`.
+>   before execution; no metrics or ASI scores emitted. That history is
+>   preserved and not rewritten. A follow-up real-driver rerun (commit
+>   `ad77e93`, `--driver real`, Colab, 2026-07-11) closed the
+>   reproducibility gap: exit 0, `layer_l_silhouette_gap=0.10925446726657728`
+>   exceeds the registered +0.10 threshold (unchanged), so this single run
+>   is **positive/accept** for the reproducibility closure. This is not a
+>   scientific null or refutation and does not reopen or overturn the S1.4
+>   verdict, which stands on the pre-registered HF probe on two
+>   architectures (`2026-07-01_s1_4_hf_layer_probe.md`). The infrastructure
+>   fix used a seven-file exact-revision manifest with direct atomic HTTP
+>   streaming and per-file size/SHA-256 verification, a fail-closed real
+>   driver, and an HF final mean-pool baseline. Evidence:
+>   `experiments_logs/2026-07-11_exp03_real_driver_closure.json`;
+>   original campaign record: `experiments_logs/2026-07-11_campaign_0d48130.md`.
 
 ### Tasks
 
@@ -390,14 +399,17 @@ Dependency-ordered. Each item has an observable acceptance criterion. No
 threshold, metric, baseline, or episode change is implied; frozen eval
 remains frozen unless an item explicitly calls for the governance path.
 
-1. **Exp03 real-driver infrastructure correction (reproducibility closure).**
-   The campaign Exp03 run was infrastructure-blocked (HF snapshot transfer
-   failures); it produced no scientific verdict and does not reopen S1.4. If
-   reproducibility closure is needed, re-run with `--driver real` on the HF
-   substrate and confirm the pre-registered S1.4 refutation reproduces.
-   **Acceptance:** a dated log in `experiments_logs/` either reproduces the
-   S1.4 refutation or documents the infrastructure fix; the S1.4 hypothesis
-   is not reopened.
+1. **Exp03 real-driver infrastructure correction (reproducibility closure) — COMPLETE (2026-07-11).**
+   The original campaign Exp03 run was infrastructure-blocked (HF snapshot
+   transfer failures) and produced no scientific verdict; that history is
+   preserved. A follow-up real-driver rerun (commit `ad77e93`,
+   `--driver real`, Colab, 2026-07-11) closed the gap: exit 0,
+   `layer_l_silhouette_gap=0.10925446726657728` exceeds the registered
+   +0.10 threshold (unchanged) → positive/accept for this single
+   reproducibility closure. The pre-registered S1.4 refutation (two
+   architectures) is not reopened or overturned. **Acceptance met:** durable
+   execution report at `experiments_logs/2026-07-11_exp03_real_driver_closure.json`;
+   S1.4 is not reopened.
 
 2. **R18: extend to ≥5 seeds and diagnose LoRA uptake variance.**
    The 3-seed run is bimodal {0.3333, 0.3333, 0.0}; 1/3 seeds show no

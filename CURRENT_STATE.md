@@ -197,14 +197,15 @@ rerun is written to a new dated log and the ledger is amended.
 10 run groups adjudicated from three source commits (`0d48130`, `537260c`,
 `2a22049`) under CPU-only contract via the remote scheduler (Kaggle +
 Colab). 9 completed (including one metricless R14 result); 1 (Exp03) was
-infrastructure-blocked. Nulls and refutations are recorded as prominently
-as positives. Not every catalogued project ran.
+infrastructure-blocked in the original campaign and subsequently closed by a
+real-driver rerun (commit `ad77e93`, 2026-07-11). Nulls and refutations are
+recorded as prominently as positives. Not every catalogued project ran.
 
 | Experiment | Verdict | Primary metric | Seeds |
 |---|---|---|---|
 | Exp01 correction-competence | **NULL** (behavior-delta transfer) | `v2_behavior_delta_mock=0.0`, `v2_discrimination=0.0` | 1 |
 | Exp02 KV-slot injection | **REFUTATION** | `kv_slot_rank1_count=0.0` (logit bias confirmed: rank1_count=3.0) | 1 |
-| Exp03 layer-L probe | **INFRASTRUCTURE BLOCKED** | No metrics emitted (HF snapshot transfer failures) | — |
+| Exp03 layer-L probe | **INFRASTRUCTURE BLOCKED** (original campaign); **POSITIVE/ACCEPT** (ad77e93 real-driver closure) | Original: no metrics. Closure: `layer_l_silhouette_gap=0.10925446726657728` (> +0.10) | — |
 | Exp04 scope-selectivity | **POSITIVE** | `scope_selectivity_index=1.0` | 1 |
 | Exp05 metabolism-loop | **NULL** (metabolism drift) | `metabolism_drift_delta=0.0`, `drift_uptake=0.0` | 1 |
 | Exp06 bounded-growth | **POSITIVE** | `bounded_growth_m1_ratio=0.002079`, zero variance | 5 |
@@ -213,14 +214,26 @@ as positives. Not every catalogued project ran.
 | R18 distillation full | **PARTIAL** (2/3 seeds positive, 1/3 null) | `distill_delta_holdout` mean=0.2222, bimodal {0.3333, 0.3333, 0.0} | 3 |
 | R14 M2b additive-organs | **NULL (metricless)** | 3 seeds, exit 0, no `METRIC`/`ASI` values | 3 |
 
-Exp03's infrastructure block does not reopen the S1.4 refutation, which
-stands on the pre-registered HF probe
-(`2026-07-01_s1_4_hf_layer_probe.md`). R14 M2b's metricless null means no
-effect estimate is available beyond the registered null — it is not a
-positive or negative mechanism verdict.
+Exp03's original campaign run was infrastructure-blocked (HF snapshot
+transfer failures) and produced no scientific verdict — that history is
+preserved and not rewritten. A follow-up real-driver rerun (commit
+`ad77e93`, `--driver real`, Colab, 2026-07-11) closed the reproducibility
+gap: exit 0, `layer_l_silhouette_gap=0.10925446726657728` exceeds the
+registered +0.10 threshold, so this single run is **positive/accept** for
+the reproducibility closure. The +0.10 threshold was not changed. This
+does not reopen or overturn the pre-registered S1.4 refutation
+(`2026-07-01_s1_4_hf_layer_probe.md`), which was adjudicated on two
+architectures (Qwen gap −0.083; LFM2.5 gap +0.058); it is a single
+real-driver run on one architecture (LFM2.5-1.2B-Instruct). The
+infrastructure fix used a seven-file exact-revision manifest with direct
+atomic HTTP streaming and per-file size/SHA-256 verification, a fail-closed
+real driver, and an HF final mean-pool baseline. R14 M2b's metricless null
+means no effect estimate is available beyond the registered null — it is
+not a positive or negative mechanism verdict.
 
-Evidence: [`experiments_logs/2026-07-11_campaign_0d48130.md`](experiments_logs/2026-07-11_campaign_0d48130.md);
-adjudication in [`experiments_logs/LEDGER.md`](experiments_logs/LEDGER.md).
+Evidence: [`experiments_logs/2026-07-11_exp03_real_driver_closure.json`](experiments_logs/2026-07-11_exp03_real_driver_closure.json)
+(durable execution report); [`experiments_logs/2026-07-11_campaign_0d48130.md`](experiments_logs/2026-07-11_campaign_0d48130.md)
+(original campaign adjudication); adjudication in [`experiments_logs/LEDGER.md`](experiments_logs/LEDGER.md).
 
 ## 5. Current research direction
 
@@ -361,13 +374,17 @@ For commit `f48dccc`, the explicitly authorized scoped guard passed with
    one independent scope. Validate them before a separate commit; do not fold
    them retroactively into the published cortex/compute commits.
 
-3. **Exp03 reproducibility closure (only if needed).** The campaign Exp03
-   run was infrastructure-blocked (HF snapshot transfer failures); it
-   produced no scientific verdict and does not reopen S1.4. If
-   reproducibility closure is needed, re-run with `--driver real` on the HF
-   substrate and confirm the S1.4 refutation reproduces. **Acceptance:** a
-   dated log reproduces S1.4 or documents the infrastructure fix; S1.4 is
-   not reopened.
+3. **Exp03 reproducibility closure — COMPLETE (2026-07-11).** The original
+   campaign Exp03 run was infrastructure-blocked (HF snapshot transfer
+   failures) and produced no scientific verdict; that history is preserved.
+   A follow-up real-driver rerun (commit `ad77e93`, `--driver real`, Colab)
+   closed the reproducibility gap: exit 0,
+   `layer_l_silhouette_gap=0.10925446726657728` exceeds the registered
+   +0.10 threshold (unchanged), so this single run is positive/accept for
+   the closure. The pre-registered S1.4 refutation (two architectures) is
+   not reopened or overturned. **Acceptance met:** durable execution report
+   at [`experiments_logs/2026-07-11_exp03_real_driver_closure.json`](experiments_logs/2026-07-11_exp03_real_driver_closure.json);
+   S1.4 is not reopened.
 4. **R18: extend to ≥5 seeds and diagnose LoRA uptake variance.** The
    3-seed run is bimodal {0.3333, 0.3333, 0.0}; 1/3 seeds show no
    distillation signal. Extend to ≥5 seeds without changing thresholds.
