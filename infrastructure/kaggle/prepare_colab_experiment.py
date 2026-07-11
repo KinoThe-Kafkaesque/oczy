@@ -278,12 +278,26 @@ def clone_at_commit(repo_url: str, commit: str, dest: Path) -> Path:
 
 
 def add_source_paths(repo_root: Path) -> None:
-    """Prepend repo root, repo/src, and workspace-package src dirs to sys.path."""
+    """Prepend repo root, repo/src, and workspace-package src dirs to sys.path
+    and to ``PYTHONPATH`` so child subprocesses inherit the same import roots.
+    """
     paths = [repo_root, repo_root / "src"]
     paths.extend(sorted(repo_root.glob("*/src")))
-    for path in reversed(paths):
-        if path.is_dir():
-            sys.path.insert(0, str(path))
+    resolved = [str(p) for p in paths if p.is_dir()]
+    # Current process: prepend roots not already present, preserving
+    # ``resolved`` order at the front without duplicating entries.
+    existing_sys = set(sys.path)
+    for path in reversed(resolved):
+        if path not in existing_sys:
+            sys.path.insert(0, path)
+            existing_sys.add(path)
+    # Child processes: prepend the same roots to PYTHONPATH, preserving
+    # existing entries/order after the new roots and deduplicating.
+    existing = os.environ.get("PYTHONPATH", "")
+    existing_entries = existing.split(os.pathsep) if existing else []
+    seen = set(resolved)
+    kept = [e for e in existing_entries if e and e not in seen]
+    os.environ["PYTHONPATH"] = os.pathsep.join(resolved + kept)
 
 
 def hardware() -> dict:

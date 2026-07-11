@@ -5195,3 +5195,221 @@ class TestBootstrapRunnerOutputForwarding:
         assert exit_code == 0
         assert flush_tracker["stdout"] >= 1, "stdout must be flushed"
         assert flush_tracker["stderr"] >= 1, "stderr must be flushed"
+
+# ===========================================================================
+# 26. add_source_paths PYTHONPATH propagation
+# ===========================================================================
+
+
+@pytest.fixture(scope="session")
+def _add_source_paths_fn() -> Any:
+    """Generate a Colab bootstrap and extract the real add_source_paths.
+
+    add_source_paths lives inside the BOOTSTRAP_TEMPLATE string, not as a
+    top-level function in prepare_colab_experiment.py, so we must exec the
+    generated bootstrap to obtain it.
+    """
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "out"
+        prepare_colab_experiment(
+            output=out, job_name="cb-src", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-src",
+        )
+        source = (out / "colab_bootstrap.py").read_text()
+        ns = _exec_bootstrap(source)
+        return ns["add_source_paths"]
+
+
+@pytest.fixture
+def _restore_path_env() -> Any:
+    """Save and restore sys.path and PYTHONPATH around each test."""
+    orig_path = list(sys.path)
+    orig_pythonpath = os.environ.get("PYTHONPATH")
+    try:
+        yield
+    finally:
+        sys.path[:] = orig_path
+        if orig_pythonpath is not None:
+            os.environ["PYTHONPATH"] = orig_pythonpath
+        else:
+            os.environ.pop("PYTHONPATH", None)
+
+
+class TestAddSourcePathsPythonpath:
+    """add_source_paths prepends repo/src and workspace */src to both
+    sys.path and child-process PYTHONPATH — no duplicates, existing entries
+    preserved, idempotent across repeated calls."""
+
+    # ------------------------------------------------------------------
+    # sys.path propagation
+    # ------------------------------------------------------------------
+
+    def test_repo_src_prepended_to_sys_path(
+        self, tmp_path: Path, _add_source_paths_fn: Any, _restore_path_env: Any,
+    ) -> None:
+        """repo/src is prepended to sys.path."""
+        (tmp_path / "src").mkdir()
+        _add_source_paths_fn(tmp_path)
+        assert str(tmp_path / "src") in sys.path
+
+    def test_workspace_src_dirs_prepended_to_sys_path(
+        self, tmp_path: Path, _add_source_paths_fn: Any, _restore_path_env: Any,
+    ) -> None:
+        """Workspace package */src dirs are prepended to sys.path."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "pkg_a" / "src").mkdir(parents=True)
+        (tmp_path / "pkg_b" / "src").mkdir(parents=True)
+        _add_source_paths_fn(tmp_path)
+        assert str(tmp_path / "pkg_a" / "src") in sys.path
+        assert str(tmp_path / "pkg_b" / "src") in sys.path
+
+    def test_existing_sys_path_entries_preserved(
+        self, tmp_path: Path, _add_source_paths_fn: Any, _restore_path_env: Any,
+    ) -> None:
+        """Existing sys.path entries are not lost after add_source_paths."""
+        (tmp_path / "src").mkdir()
+        marker = "/unique/marker/that/should/survive"
+        sys.path.append(marker)
+        _add_source_paths_fn(tmp_path)
+        assert marker in sys.path
+
+    # ------------------------------------------------------------------
+    # PYTHONPATH propagation
+    # ------------------------------------------------------------------
+
+    def test_repo_src_prepended_to_pythonpath(
+        self, tmp_path: Path, _add_source_paths_fn: Any, _restore_path_env: Any,
+    ) -> None:
+        """repo/src is prepended to the PYTHONPATH env var."""
+        (tmp_path / "src").mkdir()
+        _add_source_paths_fn(tmp_path)
+        parts = os.environ.get("PYTHONPATH", "").split(os.pathsep)
+        assert str(tmp_path / "src") in parts
+
+    def test_workspace_src_prepended_to_pythonpath(
+        self, tmp_path: Path, _add_source_paths_fn: Any, _restore_path_env: Any,
+    ) -> None:
+        """Workspace */src dirs are prepended to PYTHONPATH."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "pkg_a" / "src").mkdir(parents=True)
+        _add_source_paths_fn(tmp_path)
+        parts = os.environ.get("PYTHONPATH", "").split(os.pathsep)
+        assert str(tmp_path / "pkg_a" / "src") in parts
+
+    def test_existing_pythonpath_entries_preserved(
+        self, tmp_path: Path, _add_source_paths_fn: Any, _restore_path_env: Any,
+    ) -> None:
+        """Existing PYTHONPATH entries are preserved, not lost."""
+        (tmp_path / "src").mkdir()
+        existing = "/some/existing/path"
+        os.environ["PYTHONPATH"] = existing
+        _add_source_paths_fn(tmp_path)
+        parts = os.environ.get("PYTHONPATH", "").split(os.pathsep)
+        assert existing in parts
+
+    def test_new_entries_precede_existing_pythonpath(
+        self, tmp_path: Path, _add_source_paths_fn: Any, _restore_path_env: Any,
+    ) -> None:
+        """Propagated paths precede existing PYTHONPATH entries (prepend)."""
+        (tmp_path / "src").mkdir()
+        existing = "/preexisting/path"
+        os.environ["PYTHONPATH"] = existing
+        _add_source_paths_fn(tmp_path)
+        parts = os.environ.get("PYTHONPATH", "").split(os.pathsep)
+        new_idx = parts.index(str(tmp_path / "src"))
+        old_idx = parts.index(existing)
+        assert new_idx < old_idx
+
+    # ------------------------------------------------------------------
+    # Duplicate removal
+    # ------------------------------------------------------------------
+
+    def test_no_duplicate_sys_path_on_repeated_calls(
+        self, tmp_path: Path, _add_source_paths_fn: Any, _restore_path_env: Any,
+    ) -> None:
+        """Repeated calls do not create duplicate sys.path entries."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "pkg_a" / "src").mkdir(parents=True)
+        _add_source_paths_fn(tmp_path)
+        _add_source_paths_fn(tmp_path)
+        for p in [str(tmp_path / "src"), str(tmp_path / "pkg_a" / "src")]:
+            assert sys.path.count(p) == 1, f"duplicate sys.path entry: {p}"
+
+    def test_no_duplicate_pythonpath_on_repeated_calls(
+        self, tmp_path: Path, _add_source_paths_fn: Any, _restore_path_env: Any,
+    ) -> None:
+        """Repeated calls do not create duplicate PYTHONPATH entries."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "pkg_a" / "src").mkdir(parents=True)
+        _add_source_paths_fn(tmp_path)
+        _add_source_paths_fn(tmp_path)
+        parts = os.environ.get("PYTHONPATH", "").split(os.pathsep)
+        for p in [str(tmp_path / "src"), str(tmp_path / "pkg_a" / "src")]:
+            assert parts.count(p) == 1, f"duplicate PYTHONPATH entry: {p}"
+
+    # ------------------------------------------------------------------
+    # Idempotency
+    # ------------------------------------------------------------------
+
+    def test_idempotent_sys_path(
+        self, tmp_path: Path, _add_source_paths_fn: Any, _restore_path_env: Any,
+    ) -> None:
+        """Repeated calls produce the same sys.path list."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "pkg_a" / "src").mkdir(parents=True)
+        _add_source_paths_fn(tmp_path)
+        after_first = list(sys.path)
+        _add_source_paths_fn(tmp_path)
+        after_second = list(sys.path)
+        assert after_first == after_second
+
+    def test_idempotent_pythonpath(
+        self, tmp_path: Path, _add_source_paths_fn: Any, _restore_path_env: Any,
+    ) -> None:
+        """Repeated calls produce the same PYTHONPATH string."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "pkg_a" / "src").mkdir(parents=True)
+        _add_source_paths_fn(tmp_path)
+        after_first = os.environ.get("PYTHONPATH", "")
+        _add_source_paths_fn(tmp_path)
+        after_second = os.environ.get("PYTHONPATH", "")
+        assert after_first == after_second
+
+    # ------------------------------------------------------------------
+    # Real subprocess import via propagated PYTHONPATH
+    # ------------------------------------------------------------------
+
+    def test_subprocess_imports_module_via_pythonpath(
+        self, tmp_path: Path, _add_source_paths_fn: Any, _restore_path_env: Any,
+    ) -> None:
+        """A real child subprocess imports a temp module only available
+        through the PYTHONPATH propagated by add_source_paths.
+
+        The subprocess does NOT inherit sys.path mutations — only env vars.
+        So this test proves PYTHONPATH propagation, not sys.path mutation.
+        """
+        pkg_src = tmp_path / "src"
+        pkg_dir = pkg_src / "_remote_test_marker_pkg"
+        pkg_dir.mkdir(parents=True)
+        (pkg_dir / "__init__.py").write_text(
+            "MARKER = 'propagated_ok'\n", encoding="utf-8"
+        )
+        # A neutral CWD so the import cannot resolve via the working directory.
+        neutral_cwd = tmp_path / "_neutral_cwd"
+        neutral_cwd.mkdir()
+        _add_source_paths_fn(tmp_path)
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import _remote_test_marker_pkg; print(_remote_test_marker_pkg.MARKER)"],
+            capture_output=True,
+            text=True,
+            env=os.environ.copy(),
+            cwd=str(neutral_cwd),
+        )
+        assert result.returncode == 0, (
+            f"subprocess exit {result.returncode}: {result.stderr.strip()}"
+        )
+        assert "propagated_ok" in result.stdout
