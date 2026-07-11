@@ -79,6 +79,7 @@ CAMPAIGN_SCHEMA_VERSION: str = _prep_mod["CAMPAIGN_SCHEMA_VERSION"]
 validate_campaign = _prep_mod["validate_campaign"]
 prepare_experiment_campaign = _prep_mod["prepare_experiment_campaign"]
 CampaignValidationError = _prep_mod["CampaignValidationError"]
+_build_runner_arguments = _prep_mod["_build_runner_arguments"]
 
 classify_job_result = _coll_mod["classify_job_result"]
 collect_experiment_campaign = _coll_mod["collect_experiment_campaign"]
@@ -89,8 +90,9 @@ COLAB_RESULT_FILENAME: str = _coll_mod.get("COLAB_RESULT_FILENAME", "result.json
 KAGGLE_PROVENANCE_FILENAME: str = _coll_mod.get("KAGGLE_PROVENANCE_FILENAME", "remote_run_provenance.json")
 SentinelError = _coll_mod.get("SentinelError", type("SentinelError", (Exception,), {}))
 
-run_module = _runner_mod["run_module"]
 RUNNER_SCHEMA_VERSION: str = _runner_mod["SCHEMA_VERSION"]
+parse_args = _runner_mod["parse_args"]
+run_module = _runner_mod["run_module"]
 
 prepare_colab_experiment = _colab_prep_mod["prepare_colab_experiment"]
 COLAB_JOB_SCHEMA_VERSION: str = _colab_prep_mod["JOB_SPEC_SCHEMA_VERSION"]
@@ -808,6 +810,10 @@ class TestColabSrcLayoutInjection:
         # The runner module must be invoked via -m in the argv.
         assert "infrastructure.kaggle.run_experiment_module" in source
         assert '"-m"' in source or "'-m'" in source
+        # Module arguments must use --arg=<value> single-token encoding so that
+        # option-like arguments (e.g. --seed, -1) are not misparsed by argparse.
+        assert "--arg=" in source, "bootstrap must use --arg=<value> encoding"
+        assert 'extend(["--arg"' not in source, "bootstrap must not use --arg <value> pair encoding"
 
     def test_job_spec_written(self, tmp_path: Path) -> None:
         """A job_spec.json with schema oczy/colab-experiment-job/v1 is written."""
@@ -2768,3 +2774,243 @@ class TestCampaignKaggleRejection:
         ])
         with pytest.raises(CampaignValidationError, match="model_artifact|missing"):
             validate_campaign(campaign)
+
+
+# ===========================================================================
+# 21. Option-like argument transport (--arg=<value> encoding)
+# ===========================================================================
+
+
+class TestArgumentTransportOptionLike:
+    """Regression: option-like module arguments (--seed, -1, --flag) must
+    reach the child unchanged and in order via ``--arg=<value>`` single-token
+    encoding in both Kaggle and Colab runner argv.
+
+    Pair encoding (``--arg <value>``) makes argparse report "expected one
+    argument" when the value starts with ``-``.  Equals encoding
+    (``--arg=<value>``) is parsed correctly by argparse with
+    ``action="append"``.
+    """
+
+    OPTION_LIKE_ARGS: list[str] = ["--seed", "-1", "--flag"]
+    MIXED_ARGS: list[str] = ["--seed", "0", "-1", "--flag", "normal", "--epochs", "5"]
+
+    # --- Kaggle: _build_runner_arguments ---
+
+    def test_kaggle_build_uses_arg_equals_encoding(self) -> None:
+        """_build_runner_arguments emits --arg=<value> single tokens, not pairs."""
+        job = _valid_campaign_job(arguments=self.OPTION_LIKE_ARGS)
+        runner_args = _build_runner_arguments(job, COMMIT, PROVIDER_KAGGLE)
+        arg_tokens = [t for t in runner_args if t.startswith("--arg=")]
+        assert len(arg_tokens) == len(self.OPTION_LIKE_ARGS)
+        for token, expected in zip(arg_tokens, self.OPTION_LIKE_ARGS):
+            assert token == f"--arg={expected}"
+        # No bare "--arg" tokens (pair encoding).
+        assert "--arg" not in runner_args
+
+    def test_kaggle_build_preserves_order(self) -> None:
+        """Arguments preserve their original order in the runner argv."""
+        job = _valid_campaign_job(arguments=self.MIXED_ARGS)
+        runner_args = _build_runner_arguments(job, COMMIT, PROVIDER_KAGGLE)
+        arg_tokens = [t for t in runner_args if t.startswith("--arg=")]
+        assert [t[len("--arg="):] for t in arg_tokens] == self.MIXED_ARGS
+
+    def test_kaggle_build_includes_required_cli_flags(self) -> None:
+        """The runner argv includes all required CLI flags before --arg tokens."""
+        job = _valid_campaign_job(arguments=self.OPTION_LIKE_ARGS)
+        runner_args = _build_runner_arguments(job, COMMIT, PROVIDER_KAGGLE)
+        assert runner_args[0] == "--module"
+        assert runner_args[1] == job["module"]
+        assert "--source-commit" in runner_args
+        assert COMMIT in runner_args
+        assert "--provider" in runner_args
+        assert "--job-name" in runner_args
+        assert "--report" in runner_args
+
+    def test_kaggle_runner_argv_parses_without_argparse_error(self) -> None:
+        """Generated Kaggle runner argv parses through parse_args without failure."""
+        job = _valid_campaign_job(arguments=self.OPTION_LIKE_ARGS)
+        runner_args = _build_runner_arguments(job, COMMIT, PROVIDER_KAGGLE)
+        args = parse_args(runner_args)
+        assert args.arguments == self.OPTION_LIKE_ARGS
+        assert args.module == job["module"]
+        assert args.source_commit == COMMIT
+        assert args.provider == PROVIDER_KAGGLE
+
+    def test_kaggle_runner_argv_parses_mixed_args(self) -> None:
+        """Mixed option-like and normal args all parse correctly and in order."""
+        job = _valid_campaign_job(arguments=self.MIXED_ARGS)
+        runner_args = _build_runner_arguments(job, COMMIT, PROVIDER_KAGGLE)
+        args = parse_args(runner_args)
+        assert args.arguments == self.MIXED_ARGS
+
+    def test_kaggle_pair_encoding_would_fail(self) -> None:
+        """Sanity: pair encoding with option-like values triggers argparse error.
+
+        This confirms the regression is real — if the implementation reverted to
+        pair encoding, parse_args would raise SystemExit (argparse error).
+        """
+        job = _valid_campaign_job(arguments=self.OPTION_LIKE_ARGS)
+        # Simulate pair encoding (the broken form).
+        pair_args: list[str] = [
+            "--module", job["module"],
+            "--source-commit", COMMIT,
+            "--provider", PROVIDER_KAGGLE,
+            "--job-name", job["name"],
+            "--report", "execution_report.json",
+        ]
+        for arg in self.OPTION_LIKE_ARGS:
+            pair_args.extend(["--arg", arg])
+        with pytest.raises(SystemExit):
+            parse_args(pair_args)
+
+    # --- Colab: bootstrap runner_argv ---
+
+    def test_colab_bootstrap_source_uses_arg_equals(self, tmp_path: Path) -> None:
+        """Colab bootstrap source text uses --arg=<value>, not --arg <value> pairs."""
+        out = tmp_path / "colab-job"
+        prepare_colab_experiment(
+            output=out,
+            job_name="colab-a",
+            repo_url=REPO_URL,
+            source_commit=COMMIT,
+            module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=self.OPTION_LIKE_ARGS,
+            phase="development",
+            claim_class="scientific",
+            output_path="out/colab-a",
+        )
+        source = (out / "colab_bootstrap.py").read_text()
+        assert "--arg=" in source, "bootstrap must use --arg=<value> encoding"
+        assert 'extend(["--arg"' not in source, "bootstrap must not use pair encoding"
+
+    def test_colab_job_spec_preserves_option_like_args(self, tmp_path: Path) -> None:
+        """job_spec.json preserves option-like arguments verbatim and in order."""
+        out = tmp_path / "colab-job"
+        prepare_colab_experiment(
+            output=out,
+            job_name="colab-a",
+            repo_url=REPO_URL,
+            source_commit=COMMIT,
+            module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=self.OPTION_LIKE_ARGS,
+            phase="development",
+            claim_class="scientific",
+            output_path="out/colab-a",
+        )
+        spec = json.loads((out / "job_spec.json").read_text())
+        assert spec["arguments"] == self.OPTION_LIKE_ARGS
+
+    def test_colab_bootstrap_exec_captures_runner_argv(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Exec the Colab bootstrap with mocked subprocess to capture runner_argv,
+        then verify it parses through parse_args without argparse failure."""
+        out = tmp_path / "colab-job"
+        prepare_colab_experiment(
+            output=out,
+            job_name="colab-a",
+            repo_url=REPO_URL,
+            source_commit=COMMIT,
+            module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=self.OPTION_LIKE_ARGS,
+            phase="development",
+            claim_class="scientific",
+            output_path="out/colab-a",
+        )
+        source = (out / "colab_bootstrap.py").read_text()
+        ns = _exec_bootstrap(source)
+
+        captured: dict[str, Any] = {}
+
+        class _FakeProc:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_subprocess_run(argv: list[str], **kwargs: Any) -> _FakeProc:
+            captured["runner_argv"] = list(argv)
+            return _FakeProc()
+
+        # Mock bootstrap-level functions so main() reaches runner_argv construction.
+        monkeypatch.setattr(ns["subprocess"], "run", fake_subprocess_run)
+        ns["clone_at_commit"] = lambda repo_url, commit, dest: tmp_path
+        ns["add_source_paths"] = lambda root: None
+        ns["write_provenance"] = lambda payload: None
+        ns["hardware"] = lambda: {}
+
+        result = ns["main"]()
+        assert result == 0
+        assert "runner_argv" in captured, "subprocess.run was not called"
+
+        runner_argv: list[str] = captured["runner_argv"]
+        # Strip [sys.executable, "-m", "infrastructure.kaggle.run_experiment_module"]
+        # to get the runner CLI flags that parse_args expects.
+        assert runner_argv[1] == "-m"
+        assert runner_argv[2] == "infrastructure.kaggle.run_experiment_module"
+        runner_cli_args = runner_argv[3:]
+
+        args = parse_args(runner_cli_args)
+        assert args.arguments == self.OPTION_LIKE_ARGS
+        assert args.module == "infrastructure.kaggle.run_cortex_smoke"
+        assert args.source_commit == COMMIT
+        assert args.provider == "colab"
+
+    def test_colab_bootstrap_exec_preserves_order(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Colab bootstrap runner_argv preserves mixed arg order."""
+        out = tmp_path / "colab-job"
+        prepare_colab_experiment(
+            output=out,
+            job_name="colab-a",
+            repo_url=REPO_URL,
+            source_commit=COMMIT,
+            module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=self.MIXED_ARGS,
+            phase="development",
+            claim_class="scientific",
+            output_path="out/colab-a",
+        )
+        source = (out / "colab_bootstrap.py").read_text()
+        ns = _exec_bootstrap(source)
+
+        captured: dict[str, Any] = {}
+
+        class _FakeProc:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_subprocess_run(argv: list[str], **kwargs: Any) -> _FakeProc:
+            captured["runner_argv"] = list(argv)
+            return _FakeProc()
+
+        monkeypatch.setattr(ns["subprocess"], "run", fake_subprocess_run)
+        ns["clone_at_commit"] = lambda repo_url, commit, dest: tmp_path
+        ns["add_source_paths"] = lambda root: None
+        ns["write_provenance"] = lambda payload: None
+        ns["hardware"] = lambda: {}
+
+        ns["main"]()
+        runner_cli_args = captured["runner_argv"][3:]
+        args = parse_args(runner_cli_args)
+        assert args.arguments == self.MIXED_ARGS
+
+    def test_colab_pair_encoding_would_fail(self, tmp_path: Path) -> None:
+        """Sanity: pair encoding with option-like values triggers argparse error.
+
+        Confirms the regression is real for the Colab path too.
+        """
+        # Build the runner CLI args as pair encoding (the broken form).
+        pair_cli_args: list[str] = [
+            "--module", "infrastructure.kaggle.run_cortex_smoke",
+            "--source-commit", COMMIT,
+            "--provider", "colab",
+            "--job-name", "colab-a",
+            "--report", "execution_report.json",
+        ]
+        for arg in self.OPTION_LIKE_ARGS:
+            pair_cli_args.extend(["--arg", arg])
+        with pytest.raises(SystemExit):
+            parse_args(pair_cli_args)

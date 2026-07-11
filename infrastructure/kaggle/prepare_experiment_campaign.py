@@ -25,7 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -81,7 +81,7 @@ _MODEL_ARTIFACT_REQUIRED_FIELDS = ("kind", "repo_id", "revision", "filename", "s
 # ---------------------------------------------------------------------------
 
 def _utc_now() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -320,10 +320,11 @@ def _build_runner_arguments(
 ) -> list[str]:
     """Build argv for ``run_experiment_module`` from a campaign job.
 
-    The runner CLI accepts ``--module``, repeated ``--arg``, ``--source-commit``,
-    ``--provider``, ``--job-name``, and ``--report``.  Each campaign job
-    argument becomes a ``--arg <value>`` pair so the runner forwards them
-    verbatim to the experiment module.
+    The runner CLI accepts ``--module``, repeated ``--arg=<value>``,
+    ``--source-commit``, ``--provider``, ``--job-name``, and ``--report``.
+    Each campaign job argument becomes a single ``--arg=<value>`` token so the
+    runner forwards it verbatim to the experiment module — including values
+    that begin with ``-`` (e.g. ``--seed``, negative numbers, empty strings).
     """
     runner_args: list[str] = [
         "--module", job["module"],
@@ -333,7 +334,7 @@ def _build_runner_arguments(
         "--report", DEFAULT_REPORT_FILENAME,
     ]
     for arg in job.get("arguments", []):
-        runner_args.extend(["--arg", arg])
+        runner_args.append(f"--arg={arg}")
     return runner_args
 
 

@@ -492,7 +492,7 @@ def main() -> int:
             "--report", "execution_report.json",
         ]
         for arg in JOB_SPEC["arguments"]:
-            runner_argv.extend(["--arg", arg])
+            runner_argv.append(f"--arg={arg}")
         if JOB_SPEC.get("timeout") is not None:
             runner_argv.extend(["--timeout", str(JOB_SPEC["timeout"])])
 
