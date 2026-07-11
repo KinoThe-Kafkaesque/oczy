@@ -3601,3 +3601,303 @@ class TestArgumentTransportOptionLike:
             pair_cli_args.extend(["--arg", arg])
         with pytest.raises(SystemExit):
             parse_args(pair_cli_args)
+
+
+# ===========================================================================
+# 22. Colab public HF download: implicit token disabled, token=False passed
+# ===========================================================================
+
+
+class TestPublicHFDownloadNoImplicitToken:
+    """Generated bootstrap disables implicit HF token lookup and passes
+    token=False to both hf_hub_download and snapshot_download, while
+    retaining revision pinning and SHA-256 verification.
+
+    These tests fail on the old behavior (no HF_HUB_DISABLE_IMPLICIT_TOKEN,
+    no token=False kwarg) and pass once the fix is applied.
+    """
+
+    def _generate_bootstrap(
+        self, tmp_path: Path, artifact: dict[str, Any] | None = None
+    ) -> str:
+        out = tmp_path / "out"
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a",
+            model_artifact=artifact or _valid_gguf_artifact(),
+        )
+        return (out / "colab_bootstrap.py").read_text()
+
+    @staticmethod
+    def _find_func(source: str, name: str) -> ast.FunctionDef | None:
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == name:
+                return node
+        return None
+
+    # --- AST inspection: implicit token disabled ---
+
+    def test_top_env_guard_sets_disable_implicit_token(self, tmp_path: Path) -> None:
+        """The top-level CPU-only env guard sets HF_HUB_DISABLE_IMPLICIT_TOKEN=1
+        before any heavy imports, so implicit token lookup never fires."""
+        source = self._generate_bootstrap(tmp_path)
+        assert "HF_HUB_DISABLE_IMPLICIT_TOKEN" in source, (
+            "bootstrap must set HF_HUB_DISABLE_IMPLICIT_TOKEN to disable "
+            "implicit HF token lookup (e.g. from Colab vault secrets)"
+        )
+
+    def test_provision_reasserts_disable_implicit_token_before_import(
+        self, tmp_path: Path
+    ) -> None:
+        """provision_model_artifact re-asserts HF_HUB_DISABLE_IMPLICIT_TOKEN=1
+        right before importing huggingface_hub, after the temporary
+        HF_HUB_OFFLINE=0 that permits network for the download."""
+        source = self._generate_bootstrap(tmp_path)
+        prov_func = self._find_func(source, "provision_model_artifact")
+        assert prov_func is not None, "provision_model_artifact not defined"
+        func_source = ast.unparse(prov_func)
+        assert "HF_HUB_DISABLE_IMPLICIT_TOKEN" in func_source, (
+            "provision_model_artifact must re-assert HF_HUB_DISABLE_IMPLICIT_TOKEN "
+            "before importing huggingface_hub"
+        )
+        # The re-assertion must come before the huggingface_hub import.
+        idx_disable = func_source.index("HF_HUB_DISABLE_IMPLICIT_TOKEN")
+        idx_import = func_source.index("huggingface_hub")
+        assert idx_disable < idx_import, (
+            "HF_HUB_DISABLE_IMPLICIT_TOKEN must be set before "
+            "importing huggingface_hub"
+        )
+
+    # --- AST inspection: token=False on both download calls ---
+
+    def test_gguf_hf_hub_download_has_token_false(self, tmp_path: Path) -> None:
+        """The hf_hub_download call in the gguf branch passes token=False."""
+        source = self._generate_bootstrap(tmp_path, _valid_gguf_artifact())
+        prov_func = self._find_func(source, "provision_model_artifact")
+        assert prov_func is not None
+        calls = [
+            n for n in ast.walk(prov_func)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "hf_hub_download"
+        ]
+        assert calls, "hf_hub_download call not found in provision_model_artifact"
+        kw_args = {kw.arg: kw.value for kw in calls[0].keywords}
+        assert "token" in kw_args, "hf_hub_download must pass token=False"
+        token_val = kw_args["token"]
+        assert isinstance(token_val, ast.Constant) and token_val.value is False, (
+            "hf_hub_download token kwarg must be literal False"
+        )
+
+    def test_snapshot_download_has_token_false(self, tmp_path: Path) -> None:
+        """The snapshot_download call in the hf_snapshot branch passes token=False."""
+        source = self._generate_bootstrap(tmp_path, _valid_hf_snapshot_artifact())
+        prov_func = self._find_func(source, "provision_model_artifact")
+        assert prov_func is not None
+        calls = [
+            n for n in ast.walk(prov_func)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "snapshot_download"
+        ]
+        assert calls, "snapshot_download call not found in provision_model_artifact"
+        kw_args = {kw.arg: kw.value for kw in calls[0].keywords}
+        assert "token" in kw_args, "snapshot_download must pass token=False"
+        token_val = kw_args["token"]
+        assert isinstance(token_val, ast.Constant) and token_val.value is False, (
+            "snapshot_download token kwarg must be literal False"
+        )
+
+    # --- AST inspection: revision pinning retained ---
+
+    def test_gguf_download_retains_revision(self, tmp_path: Path) -> None:
+        """hf_hub_download still passes revision=revision (pinned)."""
+        source = self._generate_bootstrap(tmp_path, _valid_gguf_artifact())
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "hf_hub_download"
+            ):
+                kw_args = {kw.arg for kw in node.keywords}
+                assert "revision" in kw_args, (
+                    "hf_hub_download must still pass revision for pinning"
+                )
+                assert "repo_id" in kw_args
+                assert "filename" in kw_args
+                return
+        pytest.fail("hf_hub_download call not found")
+
+    def test_snapshot_download_retains_revision(self, tmp_path: Path) -> None:
+        """snapshot_download still passes revision=revision (pinned)."""
+        source = self._generate_bootstrap(tmp_path, _valid_hf_snapshot_artifact())
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "snapshot_download"
+            ):
+                kw_args = {kw.arg for kw in node.keywords}
+                assert "revision" in kw_args, (
+                    "snapshot_download must still pass revision for pinning"
+                )
+                assert "repo_id" in kw_args
+                return
+        pytest.fail("snapshot_download call not found")
+
+    # --- Runtime: token=False and revision passed to mocked HF ---
+
+    def test_gguf_runtime_token_false_and_revision(self, tmp_path: Path) -> None:
+        """Exec bootstrap, mock huggingface_hub, call provision_model_artifact:
+        hf_hub_download receives token=False and the pinned revision."""
+        model_file = tmp_path / "model.gguf"
+        model_content = b"fake gguf bytes"
+        model_file.write_bytes(model_content)
+        expected_sha = hashlib.sha256(model_content).hexdigest()
+
+        artifact = _valid_gguf_artifact(sha256=expected_sha)
+        source = self._generate_bootstrap(tmp_path, artifact)
+        ns = _exec_bootstrap(source)
+
+        captured: dict[str, Any] = {}
+
+        def fake_hf_hub_download(**kw):
+            captured["hf_hub_download"] = kw
+            return str(model_file)
+
+        fake_hf = types.ModuleType("huggingface_hub")
+        fake_hf.hf_hub_download = fake_hf_hub_download
+        fake_hf.snapshot_download = lambda **kw: str(tmp_path)
+
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_MODEL_PATH",
+                "HF_HUB_DISABLE_IMPLICIT_TOKEN",
+            )
+        }
+        try:
+            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+                result = ns["provision_model_artifact"](artifact)
+            assert captured["hf_hub_download"]["token"] is False
+            assert captured["hf_hub_download"]["revision"] == MODEL_REVISION
+            assert captured["hf_hub_download"]["repo_id"] == artifact["repo_id"]
+            assert captured["hf_hub_download"]["filename"] == artifact["filename"]
+            assert result["sha256_verified"] is True
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+    def test_snapshot_runtime_token_false_and_revision(self, tmp_path: Path) -> None:
+        """Exec bootstrap, mock huggingface_hub, call provision_model_artifact:
+        snapshot_download receives token=False and the pinned revision."""
+        snapshot_dir = tmp_path / "snapshot"
+        snapshot_dir.mkdir()
+        config_file = snapshot_dir / "config.json"
+        config_content = b'{"model_type":"lfm"}'
+        config_file.write_bytes(config_content)
+        expected_sha = hashlib.sha256(config_content).hexdigest()
+
+        artifact = _valid_hf_snapshot_artifact(sha256=expected_sha)
+        source = self._generate_bootstrap(tmp_path, artifact)
+        ns = _exec_bootstrap(source)
+
+        captured: dict[str, Any] = {}
+
+        def fake_snapshot_download(**kw):
+            captured["snapshot_download"] = kw
+            return str(snapshot_dir)
+
+        fake_hf = types.ModuleType("huggingface_hub")
+        fake_hf.hf_hub_download = lambda **kw: str(config_file)
+        fake_hf.snapshot_download = fake_snapshot_download
+
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_HF_MODEL_DIR",
+                "HF_HUB_DISABLE_IMPLICIT_TOKEN",
+            )
+        }
+        try:
+            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+                result = ns["provision_model_artifact"](artifact)
+            assert captured["snapshot_download"]["token"] is False
+            assert captured["snapshot_download"]["revision"] == MODEL_REVISION
+            assert captured["snapshot_download"]["repo_id"] == artifact["repo_id"]
+            assert result["sha256_verified"] is True
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+    # --- Runtime: implicit token disabled at module load ---
+
+    def test_disable_implicit_token_set_after_exec(self, tmp_path: Path) -> None:
+        """After execing the bootstrap, HF_HUB_DISABLE_IMPLICIT_TOKEN must be
+        set to '1' in the process environment (the top-level guard runs at
+        import time)."""
+        source = self._generate_bootstrap(tmp_path)
+        old_val = os.environ.get("HF_HUB_DISABLE_IMPLICIT_TOKEN")
+        try:
+            _exec_bootstrap(source)
+            assert os.environ.get("HF_HUB_DISABLE_IMPLICIT_TOKEN") == "1", (
+                "top-level env guard must set HF_HUB_DISABLE_IMPLICIT_TOKEN=1"
+            )
+        finally:
+            if old_val is not None:
+                os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = old_val
+            elif "HF_HUB_DISABLE_IMPLICIT_TOKEN" in os.environ:
+                del os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"]
+
+    # --- Runtime: SHA-256 verification still enforced with token=False ---
+
+    def test_sha_mismatch_still_raises_with_token_false(self, tmp_path: Path) -> None:
+        """SHA-256 mismatch still raises RuntimeError even with token=False.
+        Proves the fix doesn't weaken verification."""
+        model_file = tmp_path / "model.gguf"
+        model_file.write_bytes(b"actual content")
+
+        artifact = _valid_gguf_artifact(sha256="0" * 64)  # wrong SHA
+        source = self._generate_bootstrap(tmp_path, artifact)
+        ns = _exec_bootstrap(source)
+
+        captured: dict[str, Any] = {}
+
+        def fake_hf_hub_download(**kw):
+            captured["hf_hub_download"] = kw
+            return str(model_file)
+
+        fake_hf = types.ModuleType("huggingface_hub")
+        fake_hf.hf_hub_download = fake_hf_hub_download
+        fake_hf.snapshot_download = lambda **kw: str(tmp_path)
+
+        old_env = {
+            k: os.environ.get(k)
+            for k in (
+                "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE",
+                "HF_HUB_DISABLE_IMPLICIT_TOKEN",
+            )
+        }
+        try:
+            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+                with pytest.raises(RuntimeError, match="SHA-256 mismatch|mismatch"):
+                    ns["provision_model_artifact"](artifact)
+            # Even on failure, token=False was passed to the download call.
+            assert captured["hf_hub_download"]["token"] is False
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]

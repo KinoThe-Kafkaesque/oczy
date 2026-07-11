@@ -200,6 +200,7 @@ os.environ["OCZY_REMOTE_CPU_ONLY"] = "1"
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
 
 JOB_SPEC = json.loads(__JOB_SPEC__)
 
@@ -337,6 +338,7 @@ def provision_model_artifact(artifact: dict) -> dict:
     # Temporarily permit HF network for exact download only.
     os.environ["HF_HUB_OFFLINE"] = "0"
     os.environ["TRANSFORMERS_OFFLINE"] = "0"
+    os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
     try:
         from huggingface_hub import hf_hub_download, snapshot_download
     except ImportError as exc:
@@ -351,6 +353,7 @@ def provision_model_artifact(artifact: dict) -> dict:
                 repo_id=repo_id,
                 revision=revision,
                 filename=filename,
+                token=False,
             )
             actual_sha = _sha256_file(Path(local_path))
             if actual_sha != expected_sha:
@@ -373,6 +376,7 @@ def provision_model_artifact(artifact: dict) -> dict:
             local_dir = snapshot_download(
                 repo_id=repo_id,
                 revision=revision,
+                token=False,
             )
             target_file = Path(local_dir) / filename
             if not target_file.is_file():
