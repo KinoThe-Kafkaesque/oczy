@@ -65,6 +65,53 @@ def _parse_asi_line(line: str) -> tuple[str, float] | None:
         return None
     return m.group(1), float(m.group(2))
 
+# Maximum bytes of stderr/stdout inlined into the report error block.
+# Keeps the sentinel JSON bounded so it stays a single manageable line
+# and does not exfiltrate megabytes of child output.
+_DIAGNOSTIC_MAX_BYTES = 8192
+
+# Conservative secret redaction: catches ``KEY=value`` / ``key: value`` forms
+# for common credential names.  Deliberately narrow to avoid mangling
+# stack traces; false negatives are acceptable, false positives are not.
+_SECRET_RE = re.compile(
+    r"(?i)((?:api[_-]?key|auth[_-]?token|access[_-]?token|secret|password|passwd"
+    r"|credential|authorization)\s*[:=]\s*)\S+"
+)
+
+
+def _redact_secrets(text: str) -> str:
+    """Replace obvious credential values in *text* with ``[REDACTED]``."""
+    return _SECRET_RE.sub(r"\1[REDACTED]", text)
+
+
+def _read_bounded_tail(path: Path, max_bytes: int = _DIAGNOSTIC_MAX_BYTES) -> str | None:
+    """Read the last *max_bytes* bytes of *path* as text, or None if empty.
+
+    On files larger than *max_bytes*, reads from the offset and discards the
+    partial first line so the result always starts on a line boundary.
+    Returns None when the file is missing, empty, or contains only whitespace.
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return None
+    if size == 0:
+        return None
+    offset = max(0, size - max_bytes)
+    try:
+        with path.open("rb") as fh:
+            fh.seek(offset)
+            raw = fh.read()
+    except OSError:
+        return None
+    text = raw.decode("utf-8", errors="replace")
+    if offset > 0:
+        nl = text.find("\n")
+        if nl >= 0:
+            text = text[nl + 1:]
+    text = _redact_secrets(text)
+    return text if text.strip() else None
+
 
 def _stream_reader(
     stream: Any,
@@ -263,7 +310,19 @@ def run_module(
         error_block = None
     else:
         status = "error"
-        error_block = None
+        stderr_tail = _read_bounded_tail(stderr_log)
+        stdout_tail: str | None = None
+        if stderr_tail is None:
+            # stderr was empty — fall back to stdout so the report still
+            # carries an actionable diagnostic (some modules write errors
+            # to stdout, e.g. argparse usage on --help failures).
+            stdout_tail = _read_bounded_tail(stdout_log)
+        error_block = {
+            "type": "NonzeroExit",
+            "message": f"child exited with code {exit_code}",
+            "stderr_tail": stderr_tail,
+            "stdout_tail": stdout_tail,
+        }
 
     report.update(
         {

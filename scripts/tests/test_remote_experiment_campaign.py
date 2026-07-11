@@ -93,6 +93,7 @@ SentinelError = _coll_mod.get("SentinelError", type("SentinelError", (Exception,
 RUNNER_SCHEMA_VERSION: str = _runner_mod["SCHEMA_VERSION"]
 parse_args = _runner_mod["parse_args"]
 run_module = _runner_mod["run_module"]
+DIAGNOSTIC_MAX_BYTES: int = _runner_mod.get("_DIAGNOSTIC_MAX_BYTES", 8192)
 
 prepare_colab_experiment = _colab_prep_mod["prepare_colab_experiment"]
 COLAB_JOB_SCHEMA_VERSION: str = _colab_prep_mod["JOB_SPEC_SCHEMA_VERSION"]
@@ -583,6 +584,194 @@ class TestRunnerReport:
         )
         assert "METRIC loss=0.5" in log_text
 
+# ===========================================================================
+# 1b. Runner report: nonzero-exit diagnostic capture
+# ===========================================================================
+
+
+class TestRunnerErrorDiagnostics:
+    """On nonzero child exit, the report error carries a bounded stderr tail
+    (falling back to stdout when stderr is empty) so downstream collectors
+    that cannot retrieve the log files still get an actionable diagnostic.
+    """
+
+    def test_nonzero_stderr_tail(self, tmp_path: Path) -> None:
+        """Nonzero exit with stderr → status=error, original exit code, and
+        error.stderr_tail contains the child's stderr text."""
+        proc = FakeProc(
+            returncode=1,
+            stderr_lines=[
+                "Traceback (most recent call last):\n",
+                '  File "m.py", line 10, in <module>\n',
+                "ValueError: bad input\n",
+            ],
+        )
+        patcher, _ = _patch_popen(proc)
+        with patcher:
+            report = run_module(
+                module="json",
+                arguments=["--bad"],
+                source_commit=COMMIT,
+                provider=PROVIDER_KAGGLE,
+                job_name="job-err",
+                report_path=str(tmp_path / "execution_report.json"),
+            )
+        assert report["status"] == "error"
+        assert report["exit_code"] == 1
+        assert report["error"] is not None
+        assert report["error"]["type"] == "NonzeroExit"
+        assert "code 1" in report["error"]["message"]
+        assert report["error"]["stderr_tail"] is not None
+        assert "ValueError: bad input" in report["error"]["stderr_tail"]
+        assert report["error"]["stdout_tail"] is None
+
+    def test_nonzero_stdout_fallback(self, tmp_path: Path) -> None:
+        """Nonzero exit with empty stderr → falls back to stdout_tail."""
+        proc = FakeProc(
+            returncode=2,
+            stdout_lines=["usage: prog [--flag]\n", "error: invalid argument\n"],
+            stderr_lines=[],
+        )
+        patcher, _ = _patch_popen(proc)
+        with patcher:
+            report = run_module(
+                module="json",
+                arguments=[],
+                source_commit=COMMIT,
+                provider=PROVIDER_COLAB,
+                job_name="job-err2",
+                report_path=str(tmp_path / "execution_report.json"),
+            )
+        assert report["status"] == "error"
+        assert report["exit_code"] == 2
+        assert report["error"] is not None
+        assert report["error"]["stderr_tail"] is None
+        assert report["error"]["stdout_tail"] is not None
+        assert "invalid argument" in report["error"]["stdout_tail"]
+
+    def test_nonzero_both_empty(self, tmp_path: Path) -> None:
+        """Nonzero exit with no output at all → error block still has
+        type/message, both tails None."""
+        proc = FakeProc(returncode=127, stdout_lines=[], stderr_lines=[])
+        patcher, _ = _patch_popen(proc)
+        with patcher:
+            report = run_module(
+                module="json",
+                arguments=[],
+                source_commit=COMMIT,
+                provider=PROVIDER_KAGGLE,
+                job_name="job-err3",
+                report_path=str(tmp_path / "execution_report.json"),
+            )
+        assert report["status"] == "error"
+        assert report["exit_code"] == 127
+        assert report["error"] is not None
+        assert report["error"]["type"] == "NonzeroExit"
+        assert report["error"]["stderr_tail"] is None
+        assert report["error"]["stdout_tail"] is None
+
+    def test_success_error_still_null(self, tmp_path: Path) -> None:
+        """Successful run → error is None (unchanged behavior)."""
+        proc = FakeProc(
+            returncode=0,
+            stdout_lines=["METRIC loss=0.5\n"],
+            stderr_lines=["some warning\n"],
+        )
+        patcher, _ = _patch_popen(proc)
+        with patcher:
+            report = run_module(
+                module="json",
+                arguments=[],
+                source_commit=COMMIT,
+                provider=PROVIDER_KAGGLE,
+                job_name="job-ok",
+                report_path=str(tmp_path / "execution_report.json"),
+            )
+        assert report["status"] == "complete"
+        assert report["exit_code"] == 0
+        assert report["error"] is None
+
+    def test_diagnostic_bounded_size(self, tmp_path: Path) -> None:
+        """Large stderr is truncated to DIAGNOSTIC_MAX_BYTES and starts on a
+        line boundary."""
+        big_lines = [f"line {i:05d} padding padding padding\n" for i in range(5000)]
+        proc = FakeProc(returncode=1, stderr_lines=big_lines)
+        patcher, _ = _patch_popen(proc)
+        with patcher:
+            report = run_module(
+                module="json",
+                arguments=[],
+                source_commit=COMMIT,
+                provider=PROVIDER_KAGGLE,
+                job_name="job-big",
+                report_path=str(tmp_path / "execution_report.json"),
+            )
+        tail = report["error"]["stderr_tail"]
+        assert tail is not None
+        assert len(tail.encode("utf-8")) <= DIAGNOSTIC_MAX_BYTES
+        # Must start on a line boundary (not mid-line from the seek offset).
+        assert tail.startswith("line "), f"tail did not start on line boundary: {tail[:40]!r}"
+        # Must contain the *last* line (tail, not head).
+        assert "line 04999" in tail
+
+    def test_secret_redaction_in_tail(self, tmp_path: Path) -> None:
+        """Obvious credential values in stderr are redacted before inlining."""
+        proc = FakeProc(
+            returncode=1,
+            stderr_lines=[
+                "API_KEY=sk-1234567890abcdef\n",
+                "password=hunter2\n",
+                "Traceback (most recent call last):\n",
+                "RuntimeError: oops\n",
+            ],
+        )
+        patcher, _ = _patch_popen(proc)
+        with patcher:
+            report = run_module(
+                module="json",
+                arguments=[],
+                source_commit=COMMIT,
+                provider=PROVIDER_KAGGLE,
+                job_name="job-secret",
+                report_path=str(tmp_path / "execution_report.json"),
+            )
+        tail = report["error"]["stderr_tail"]
+        assert tail is not None
+        assert "sk-1234567890abcdef" not in tail
+        assert "hunter2" not in tail
+        assert "[REDACTED]" in tail
+        # Non-secret diagnostic content is preserved.
+        assert "RuntimeError: oops" in tail
+
+    def test_sentinel_carries_diagnostic(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The sentinel JSON includes the error block with the stderr tail."""
+        proc = FakeProc(
+            returncode=1,
+            stderr_lines=["ImportError: no module named foo\n"],
+        )
+        patcher, _ = _patch_popen(proc)
+        with patcher:
+            run_module(
+                module="json",
+                arguments=[],
+                source_commit=COMMIT,
+                provider=PROVIDER_COLAB,
+                job_name="job-sentinel",
+                report_path=str(tmp_path / "execution_report.json"),
+            )
+        captured = capsys.readouterr()
+        sentinel_lines = [
+            line for line in captured.out.splitlines()
+            if line.startswith("OCZY_EXECUTION_REPORT_JSON=")
+        ]
+        assert len(sentinel_lines) == 1
+        parsed = json.loads(sentinel_lines[0][len("OCZY_EXECUTION_REPORT_JSON="):])
+        assert parsed["status"] == "error"
+        assert parsed["error"] is not None
+        assert parsed["error"]["stderr_tail"] is not None
+        assert "ImportError" in parsed["error"]["stderr_tail"]
 
 # ===========================================================================
 # 2. Metric / ASI parsing
@@ -1918,6 +2107,404 @@ class TestKaggleProvenanceFallback:
             report_dir=report_dir,
         )
         assert isinstance(summary, dict)
+
+
+# ===========================================================================
+# 12b. Kaggle log JSON sentinel fallback (OCZY_EXECUTION_REPORT_JSON in *.log)
+# ===========================================================================
+
+
+class TestKaggleLogSentinelFallback:
+    """Kaggle collector parses OCZY_EXECUTION_REPORT_JSON from the downloaded
+    *.log JSON stream when execution_report.json and remote_run_provenance.json
+    are both absent.
+
+    The Kaggle kernel log is a JSON array of stream objects::
+
+        [{"stream_name": "stdout", "time": 9.24,
+          "data": "OCZY_EXECUTION_REPORT_JSON={...}"},
+         {"stream_name": "stderr", "time": 9.24, "data": "..."},
+         ...]
+
+    The sentinel appears in a ``stdout`` entry's ``data`` field.  The collector
+    must reuse the same strict sentinel/provenance validation as the Colab
+    path — missing, multiple, or corrupt sentinels are INVALID; provenance
+    mismatches are INVALID.
+    """
+
+    def _make_kaggle_log_output(
+        self,
+        base: Path,
+        job_name: str,
+        *,
+        stream_entries: list[dict[str, Any]],
+        log_filename: str | None = None,
+    ) -> Path:
+        """Create a Kaggle job output dir with a *.log JSON stream file."""
+        out = base / job_name
+        out.mkdir(parents=True, exist_ok=True)
+        fname = log_filename or f"oczy-{job_name}.log"
+        (out / fname).write_text(
+            json.dumps(stream_entries), encoding="utf-8"
+        )
+        return out
+
+    def _log_entry(
+        self, stream: str, data: str, time: float = 1.0
+    ) -> dict[str, Any]:
+        return {"stream_name": stream, "time": time, "data": data}
+
+    def _sentinel_data(self, report: dict[str, Any]) -> str:
+        return _COLAB_SENTINEL_PREFIX + json.dumps(report, separators=(",", ":"))
+
+    def _run_collector(
+        self, tmp_path: Path, report_dir: Path
+    ) -> dict[str, Any]:
+        """Run collect_experiment_campaign for a single Kaggle job."""
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(
+                name="kg-0", provider=PROVIDER_KAGGLE, claim_class="scientific"
+            ),
+        ])
+        campaign_path = _write_campaign(tmp_path, campaign)
+        gen_dir = tmp_path / "generated"
+        result = prepare_experiment_campaign(campaign_path, gen_dir)
+        return collect_experiment_campaign(
+            campaign_path,
+            result["batch_path"],
+            tmp_path / "state.json",
+            tmp_path / "collected",
+            report_dir=report_dir,
+        )
+
+    def test_sentinel_from_log_json_complete(self, tmp_path: Path) -> None:
+        """A valid sentinel in the Kaggle log JSON stream with metrics → COMPLETE."""
+        report = _make_report(
+            job_name="kg-0",
+            provider=PROVIDER_KAGGLE,
+            metrics={"loss": 0.5},
+        )
+        self._make_kaggle_log_output(
+            tmp_path / "reports",
+            "kg-0",
+            stream_entries=[
+                self._log_entry("stdout", self._sentinel_data(report)),
+                self._log_entry("stderr", "execution_report: status=complete exit_code=0\n"),
+            ],
+        )
+        summary = self._run_collector(tmp_path, tmp_path / "reports")
+        job = summary["jobs"][0]
+        assert job["classification"] == "COMPLETE"
+        assert job["report_source"] == "kaggle_log_sentinel"
+        assert job["metrics"] == {"loss": 0.5}
+
+    def test_sentinel_from_log_json_null(self, tmp_path: Path) -> None:
+        """A valid sentinel with no metrics for a scientific job → NULL."""
+        report = _make_report(
+            job_name="kg-0",
+            provider=PROVIDER_KAGGLE,
+            exit_code=0,
+            status="complete",
+            metrics={},
+            asi_scores={},
+        )
+        self._make_kaggle_log_output(
+            tmp_path / "reports",
+            "kg-0",
+            stream_entries=[
+                self._log_entry("stdout", self._sentinel_data(report)),
+            ],
+        )
+        summary = self._run_collector(tmp_path, tmp_path / "reports")
+        job = summary["jobs"][0]
+        assert job["classification"] == "NULL"
+        assert job["report_source"] == "kaggle_log_sentinel"
+
+    def test_sentinel_from_log_json_infrastructure_complete(self, tmp_path: Path) -> None:
+        """A valid sentinel with no metrics for an infrastructure job → COMPLETE."""
+        report = _make_report(
+            job_name="kg-0",
+            provider=PROVIDER_KAGGLE,
+            exit_code=0,
+            status="complete",
+            metrics={},
+            asi_scores={},
+        )
+        self._make_kaggle_log_output(
+            tmp_path / "reports",
+            "kg-0",
+            stream_entries=[
+                self._log_entry("stdout", self._sentinel_data(report)),
+            ],
+        )
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(
+                name="kg-0", provider=PROVIDER_KAGGLE, claim_class="infrastructure"
+            ),
+        ])
+        campaign_path = _write_campaign(tmp_path, campaign)
+        gen_dir = tmp_path / "generated"
+        result = prepare_experiment_campaign(campaign_path, gen_dir)
+        summary = collect_experiment_campaign(
+            campaign_path,
+            result["batch_path"],
+            tmp_path / "state.json",
+            tmp_path / "collected",
+            report_dir=tmp_path / "reports",
+        )
+        job = summary["jobs"][0]
+        assert job["classification"] == "COMPLETE"
+
+    def test_sentinel_mismatched_commit_invalid(self, tmp_path: Path) -> None:
+        """A sentinel with wrong source_commit → INVALID."""
+        report = _make_report(
+            job_name="kg-0",
+            provider=PROVIDER_KAGGLE,
+            source_commit="d" * 40,
+            metrics={"loss": 0.5},
+        )
+        self._make_kaggle_log_output(
+            tmp_path / "reports",
+            "kg-0",
+            stream_entries=[
+                self._log_entry("stdout", self._sentinel_data(report)),
+            ],
+        )
+        summary = self._run_collector(tmp_path, tmp_path / "reports")
+        job = summary["jobs"][0]
+        assert job["classification"] == "INVALID"
+
+    def test_sentinel_mismatched_provider_invalid(self, tmp_path: Path) -> None:
+        """A sentinel with wrong provider → INVALID."""
+        report = _make_report(
+            job_name="kg-0",
+            provider=PROVIDER_COLAB,
+            metrics={"loss": 0.5},
+        )
+        self._make_kaggle_log_output(
+            tmp_path / "reports",
+            "kg-0",
+            stream_entries=[
+                self._log_entry("stdout", self._sentinel_data(report)),
+            ],
+        )
+        summary = self._run_collector(tmp_path, tmp_path / "reports")
+        job = summary["jobs"][0]
+        assert job["classification"] == "INVALID"
+
+    def test_sentinel_mismatched_job_name_invalid(self, tmp_path: Path) -> None:
+        """A sentinel with wrong job_name → INVALID."""
+        report = _make_report(
+            job_name="wrong-job",
+            provider=PROVIDER_KAGGLE,
+            metrics={"loss": 0.5},
+        )
+        self._make_kaggle_log_output(
+            tmp_path / "reports",
+            "kg-0",
+            stream_entries=[
+                self._log_entry("stdout", self._sentinel_data(report)),
+            ],
+        )
+        summary = self._run_collector(tmp_path, tmp_path / "reports")
+        job = summary["jobs"][0]
+        assert job["classification"] == "INVALID"
+
+    def test_log_json_no_sentinel_invalid(self, tmp_path: Path) -> None:
+        """A log JSON with no sentinel line → INVALID."""
+        self._make_kaggle_log_output(
+            tmp_path / "reports",
+            "kg-0",
+            stream_entries=[
+                self._log_entry("stdout", "just some output\n"),
+                self._log_entry("stderr", "no sentinel here\n"),
+            ],
+        )
+        summary = self._run_collector(tmp_path, tmp_path / "reports")
+        job = summary["jobs"][0]
+        assert job["classification"] == "INVALID"
+        assert "sentinel_error" in job
+
+    def test_log_json_corrupt_sentinel_invalid(self, tmp_path: Path) -> None:
+        """A sentinel with non-JSON payload → INVALID."""
+        self._make_kaggle_log_output(
+            tmp_path / "reports",
+            "kg-0",
+            stream_entries=[
+                self._log_entry("stdout", "OCZY_EXECUTION_REPORT_JSON=not-json\n"),
+            ],
+        )
+        summary = self._run_collector(tmp_path, tmp_path / "reports")
+        job = summary["jobs"][0]
+        assert job["classification"] == "INVALID"
+        assert "sentinel_error" in job
+
+    def test_log_json_multiple_sentinels_invalid(self, tmp_path: Path) -> None:
+        """Two sentinel lines in the stdout stream → INVALID."""
+        report1 = _make_report(job_name="kg-0", provider=PROVIDER_KAGGLE, metrics={"a": 1})
+        report2 = _make_report(job_name="kg-0", provider=PROVIDER_KAGGLE, metrics={"a": 2})
+        self._make_kaggle_log_output(
+            tmp_path / "reports",
+            "kg-0",
+            stream_entries=[
+                self._log_entry("stdout", self._sentinel_data(report1)),
+                self._log_entry("stdout", self._sentinel_data(report2)),
+            ],
+        )
+        summary = self._run_collector(tmp_path, tmp_path / "reports")
+        job = summary["jobs"][0]
+        assert job["classification"] == "INVALID"
+        assert "sentinel_error" in job
+
+    def test_log_json_not_array_invalid(self, tmp_path: Path) -> None:
+        """A log file that is valid JSON but not an array → INVALID."""
+        out = (tmp_path / "reports" / "kg-0")
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "oczy-kg-0.log").write_text(
+            json.dumps({"not": "an array"}), encoding="utf-8"
+        )
+        summary = self._run_collector(tmp_path, tmp_path / "reports")
+        job = summary["jobs"][0]
+        assert job["classification"] == "INVALID"
+        assert "sentinel_error" in job
+
+    def test_log_json_not_json_invalid(self, tmp_path: Path) -> None:
+        """A .log file that is not valid JSON → INVALID."""
+        out = (tmp_path / "reports" / "kg-0")
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "oczy-kg-0.log").write_text(
+            "this is plain text, not JSON\n", encoding="utf-8"
+        )
+        summary = self._run_collector(tmp_path, tmp_path / "reports")
+        job = summary["jobs"][0]
+        assert job["classification"] == "INVALID"
+        assert "sentinel_error" in job
+
+    def test_no_log_file_still_blocked(self, tmp_path: Path) -> None:
+        """When no execution_report.json, no provenance, and no *.log exist,
+        the job is BLOCKED (not INVALID)."""
+        report_dir = tmp_path / "reports"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        (report_dir / "kg-0").mkdir()
+        summary = self._run_collector(tmp_path, report_dir)
+        job = summary["jobs"][0]
+        assert job["classification"] == "BLOCKED"
+
+    def test_execution_report_priority_over_log_sentinel(self, tmp_path: Path) -> None:
+        """execution_report.json takes priority over the log sentinel."""
+        log_report = _make_report(
+            job_name="kg-0",
+            provider=PROVIDER_KAGGLE,
+            metrics={"from_sentinel": 1},
+        )
+        self._make_kaggle_log_output(
+            tmp_path / "reports",
+            "kg-0",
+            stream_entries=[
+                self._log_entry("stdout", self._sentinel_data(log_report)),
+            ],
+        )
+        # Also write execution_report.json — should take priority.
+        file_report = _make_report(
+            job_name="kg-0",
+            provider=PROVIDER_KAGGLE,
+            metrics={"from_file": 2},
+        )
+        _write_report(
+            tmp_path / "reports" / "kg-0" / "execution_report.json",
+            file_report,
+        )
+        summary = self._run_collector(tmp_path, tmp_path / "reports")
+        job = summary["jobs"][0]
+        assert job["classification"] == "COMPLETE"
+        assert job["metrics"] == {"from_file": 2}
+        assert job["report_source"] == "execution_report"
+
+    def test_sentinel_outranks_provenance(self, tmp_path: Path) -> None:
+        """A valid log sentinel takes priority over remote_run_provenance.json.
+
+        The sentinel carries the full structured report (commit, provider,
+        job_name, metrics) from the runner, while provenance only records
+        bootstrap metadata.  When both are present, the sentinel wins.
+        """
+        log_report = _make_report(
+            job_name="kg-0",
+            provider=PROVIDER_KAGGLE,
+            metrics={"from_sentinel": 1},
+        )
+        self._make_kaggle_log_output(
+            tmp_path / "reports",
+            "kg-0",
+            stream_entries=[
+                self._log_entry("stdout", self._sentinel_data(log_report)),
+            ],
+        )
+        # Also write remote_run_provenance.json — sentinel should still win.
+        provenance = {
+            "schema_version": "oczy/kaggle-research-job/v1",
+            "status": "complete",
+            "exit_code": 0,
+            "started_utc": "2026-07-11T00:00:00Z",
+            "finished_utc": "2026-07-11T00:01:00Z",
+            "job_spec": {
+                "module": "infrastructure.kaggle.run_cortex_smoke",
+                "source_commit": COMMIT,
+                "arguments": [],
+            },
+        }
+        prov_path = tmp_path / "reports" / "kg-0" / KAGGLE_PROVENANCE_FILENAME
+        prov_path.parent.mkdir(parents=True, exist_ok=True)
+        prov_path.write_text(json.dumps(provenance), encoding="utf-8")
+        summary = self._run_collector(tmp_path, tmp_path / "reports")
+        job = summary["jobs"][0]
+        assert job["report_source"] == "kaggle_log_sentinel"
+        assert job["metrics"] == {"from_sentinel": 1}
+        assert job["classification"] == "COMPLETE"
+
+    def test_sentinel_split_across_stdout_entries(self, tmp_path: Path) -> None:
+        """The sentinel data split across multiple stdout entries is still
+        parsed correctly (Kaggle may fragment a long line across entries)."""
+        report = _make_report(
+            job_name="kg-0",
+            provider=PROVIDER_KAGGLE,
+            metrics={"loss": 0.5},
+        )
+        sentinel = self._sentinel_data(report)
+        mid = len(sentinel) // 2
+        self._make_kaggle_log_output(
+            tmp_path / "reports",
+            "kg-0",
+            stream_entries=[
+                self._log_entry("stdout", "Starting...\n"),
+                self._log_entry("stdout", sentinel[:mid]),
+                self._log_entry("stdout", sentinel[mid:]),
+                self._log_entry("stderr", "done\n"),
+            ],
+        )
+        summary = self._run_collector(tmp_path, tmp_path / "reports")
+        job = summary["jobs"][0]
+        assert job["classification"] == "COMPLETE"
+        assert job["metrics"] == {"loss": 0.5}
+
+    def test_sentinel_only_in_stderr_not_found(self, tmp_path: Path) -> None:
+        """A sentinel in a stderr entry (not stdout) is not parsed → INVALID."""
+        report = _make_report(
+            job_name="kg-0",
+            provider=PROVIDER_KAGGLE,
+            metrics={"loss": 0.5},
+        )
+        self._make_kaggle_log_output(
+            tmp_path / "reports",
+            "kg-0",
+            stream_entries=[
+                self._log_entry("stdout", "normal output\n"),
+                self._log_entry("stderr", self._sentinel_data(report)),
+            ],
+        )
+        summary = self._run_collector(tmp_path, tmp_path / "reports")
+        job = summary["jobs"][0]
+        assert job["classification"] == "INVALID"
+        assert "sentinel_error" in job
 
 
  # ===========================================================================

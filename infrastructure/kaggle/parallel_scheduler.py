@@ -69,9 +69,11 @@ try:
     from colab_provider import (  # type: ignore[import-not-found]
         COLAB_CAPACITY_REJECTED,
         COLAB_COMPLETE,
+        COLAB_ERROR,
         ColabCliClient,
         classify_colab_output,
         detect_orphaned_sessions,
+        _read_proc_output,
     )
     _COLAB_AVAILABLE = True
 except ImportError:  # pragma: no cover - colab_provider is co-located
@@ -79,6 +81,7 @@ except ImportError:  # pragma: no cover - colab_provider is co-located
     ColabCliClient = None  # type: ignore[assignment, misc]
     COLAB_COMPLETE = "complete"
     COLAB_CAPACITY_REJECTED = "capacity_rejected"
+    COLAB_ERROR = "error"
 
     def classify_colab_output(_proc: Any) -> str:  # type: ignore[no-redef]
         raise RuntimeError("colab_provider not available")
@@ -86,6 +89,9 @@ except ImportError:  # pragma: no cover - colab_provider is co-located
     def detect_orphaned_sessions(  # type: ignore[no-redef]
         _client: Any, _known_names: set[str]
     ) -> list[str]:
+        raise RuntimeError("colab_provider not available")
+
+    def _read_proc_output(_proc: Any, _stream: str) -> str:  # type: ignore[no-redef]
         raise RuntimeError("colab_provider not available")
 
 
@@ -997,8 +1003,10 @@ class ParallelScheduler:
             job.state = RUNNING
             job.error = None
         except Exception as exc:
+            err = f"colab run failed: {exc}"
+            self._persist_colab_diagnostics(job, error=err)
             job.state = FAILED
-            job.error = f"colab run failed: {exc}"
+            job.error = err
 
     def _poll_colab(self, job: Job, job_timeout: float, jobs: dict[str, Job]) -> None:
         """Poll a running Colab job's Popen.
@@ -1017,19 +1025,23 @@ class ParallelScheduler:
             elapsed = now - job.submitted_at
             effective_timeout = job.timeout if job.timeout is not None else job_timeout
             if elapsed > effective_timeout:
-                job.state = FAILED
-                job.error = (
+                err = (
                     f"job timed out after {elapsed:.0f}s "
                     f"(limit {effective_timeout:.0f}s)"
                 )
                 self._kill_proc(job)
+                self._persist_colab_diagnostics(job, error=err)
                 self._best_effort_stop(job)
                 job.proc = None
+                job.state = FAILED
+                job.error = err
                 return
 
         if job.proc is None:
+            err = "interrupted: no local process handle on restart"
+            self._persist_colab_diagnostics(job, error=err)
             job.state = FAILED
-            job.error = "interrupted: no local process handle on restart"
+            job.error = err
             self._best_effort_stop(job)
             return
 
@@ -1057,10 +1069,21 @@ class ParallelScheduler:
                 active_colab = len(self.colab_client.sessions())
             except Exception:
                 active_colab = self._active_provider_count(jobs, PROVIDER_COLAB)
+            # If this rejection will exhaust the retry limit, persist
+            # diagnostics BEFORE stop() cleans up temp files.
+            new_rejection_count = job.capacity_rejections + 1
+            will_fail = new_rejection_count >= COLAB_MAX_CAPACITY_REJECTIONS
+            fail_err: str | None = None
+            if will_fail:
+                fail_err = (
+                    f"colab job failed after {new_rejection_count} "
+                    f"consecutive capacity rejections"
+                )
+                self._persist_colab_diagnostics(job, error=fail_err)
             self._best_effort_stop(job)
             job.proc = None
             job.admission_confirmed = False
-            job.capacity_rejections += 1
+            job.capacity_rejections = new_rejection_count
             # Reduce AIMD limit to the account-wide active Colab count
             # (including external sessions), not just scheduler-local jobs.
             # This prevents permanent under-admission when external sessions
@@ -1071,12 +1094,9 @@ class ParallelScheduler:
             # Fail after too many consecutive capacity rejections to avoid
             # an infinite retry loop when external sessions permanently
             # occupy all account capacity.
-            if job.capacity_rejections >= COLAB_MAX_CAPACITY_REJECTIONS:
+            if will_fail:
                 job.state = FAILED
-                job.error = (
-                    f"colab job failed after {job.capacity_rejections} "
-                    f"consecutive capacity rejections"
-                )
+                job.error = fail_err
             else:
                 job.state = PENDING
                 job.error = None
@@ -1086,10 +1106,14 @@ class ParallelScheduler:
         if status == COLAB_COMPLETE:
             job.state = COLLECTING
         else:
+            exit_code = job.proc.returncode if job.proc is not None else None
+            err = f"colab job failed: status={status}, exit_code={exit_code}"
+            # Persist diagnostics BEFORE stop() cleans up temp files.
+            self._persist_colab_diagnostics(job, error=err)
             # Stop the session on error to free the VM.
             self._best_effort_stop(job)
             job.state = FAILED
-            job.error = f"colab job failed: status={status}"
+            job.error = err
 
     def _collect_colab(self, job: Job) -> None:
         """Collect Colab output and stop the session."""
@@ -1103,8 +1127,13 @@ class ParallelScheduler:
                 job.state = FAILED
                 job.error = f"colab collection failed: {result.get('error')}"
         except Exception as exc:
+            err = f"colab collection failed: {exc}"
+            # collect() may have partially written files or cleaned up
+            # temp files in its finally block.  Persist what we can —
+            # cached proc output survives _cleanup_proc_tempfiles.
+            self._persist_colab_diagnostics(job, error=err)
             job.state = FAILED
-            job.error = f"colab collection failed: {exc}"
+            job.error = err
         finally:
             self._best_effort_stop(job)
             job.proc = None
@@ -1136,6 +1165,65 @@ class ParallelScheduler:
             self.colab_client.stop(job.remote_id)
         except Exception:
             pass
+
+    def _persist_colab_diagnostics(
+        self, job: Job, *, error: str | None = None
+    ) -> None:
+        """Persist stdout/stderr/result.json to *job.output_dir* before terminal state.
+
+        Writes diagnostics regardless of success or failure.  Does NOT stop
+        the session, kill the proc, or clean up temp files — the caller
+        retains responsibility for those lifecycle steps.  Safe to call
+        with no proc (writes empty stdout/stderr and a result.json carrying
+        the *error* message).
+
+        When a proc is available, stdout/stderr are read from the cached
+        output set by :func:`classify_colab_output` (if already classified)
+        or directly from the proc's temp files / pipes via
+        :func:`_read_proc_output`.  This ensures output is captured even
+        for a still-running proc that was killed before classification.
+        """
+        out = Path(job.output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+
+        stdout_text = ""
+        stderr_text = ""
+        exit_code: int | None = None
+        status = COLAB_ERROR
+
+        proc = job.proc
+        if proc is not None:
+            cached_stdout = getattr(proc, "_colab_stdout", None)
+            cached_stderr = getattr(proc, "_colab_stderr", None)
+            cached_status = getattr(proc, "_colab_classified_output", None)
+            if cached_stdout is not None:
+                stdout_text = cached_stdout
+            else:
+                stdout_text = _read_proc_output(proc, "stdout")
+            if cached_stderr is not None:
+                stderr_text = cached_stderr
+            else:
+                stderr_text = _read_proc_output(proc, "stderr")
+            exit_code = proc.returncode
+            if cached_status is not None:
+                status = cached_status  # type: ignore[assignment]
+
+        (out / "stdout.log").write_text(stdout_text, encoding="utf-8")
+        (out / "stderr.log").write_text(stderr_text, encoding="utf-8")
+
+        result_meta: dict[str, Any] = {
+            "ok": status == COLAB_COMPLETE and error is None,
+            "error": error if error is not None else (
+                None if status == COLAB_COMPLETE else status
+            ),
+            "exit_code": exit_code,
+            "status": status,
+            "session": job.remote_id,
+        }
+        (out / "result.json").write_text(
+            json.dumps(result_meta, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
 
     # -- main loop ---------------------------------------------------------
 
@@ -1198,6 +1286,9 @@ class ParallelScheduler:
                 # Fail all pending Colab jobs — no client configured.
                 for job in jobs.values():
                     if job.provider == PROVIDER_COLAB and job.state == PENDING:
+                        self._persist_colab_diagnostics(
+                            job, error="no colab client configured"
+                        )
                         job.state = FAILED
                         job.error = "no colab client configured"
             else:
@@ -1224,6 +1315,7 @@ class ParallelScheduler:
                     and job.error
                     and "interrupted" in job.error
                 ):
+                    self._persist_colab_diagnostics(job, error=job.error)
                     self._best_effort_stop(job)
             # Detect and stop orphaned sessions from SUBMITTING crash
             # windows.  A job that was SUBMITTING when the scheduler crashed

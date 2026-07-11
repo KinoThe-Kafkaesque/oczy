@@ -99,6 +99,7 @@ ParallelScheduler = _mod["ParallelScheduler"]
 ColabAimdController = _mod["ColabAimdController"]
 Job = _mod["Job"]
 main = _mod["main"]
+COLAB_MAX_CAPACITY_REJECTIONS: int = _mod["COLAB_MAX_CAPACITY_REJECTIONS"]
 
 EXPECTED_BATCH_V2 = "oczy/remote-parallel-batch/v2"
 EXPECTED_STATE_V2 = "oczy/remote-parallel-state/v2"
@@ -298,11 +299,13 @@ class FakeColabClient:
         sessions_list: list[dict[str, str]] | None = None,
         collect_ok: bool = True,
         collect_raises: Exception | None = None,
+        run_raises: Exception | None = None,
     ) -> None:
         self._behaviors = behaviors or {}
         self._sessions_list = sessions_list or []
         self._collect_ok = collect_ok
         self._collect_raises = collect_raises
+        self._run_raises = run_raises
         self._behavior_idx: dict[str, int] = {}
         self._procs: dict[str, FakePopen] = {}
         self.run_calls: list[tuple[str, str, list[str] | None, float | None]] = []
@@ -323,6 +326,8 @@ class FakeColabClient:
         timeout: float | None = None,
     ) -> FakePopen:
         self.run_calls.append((name, script, arguments, timeout))
+        if self._run_raises is not None:
+            raise self._run_raises
         idx = self._behavior_idx.get(name, 0)
         behaviors = self._behaviors.get(name, [])
         if idx < len(behaviors):
@@ -2847,3 +2852,275 @@ def test_fourth_job_queues_then_succeeds_no_capacity_rejection(
     # eventual success (all_succeeded).  The learned limit is preserved.
     assert summary["providers"]["colab"]["succeeded"] == 4
     assert summary["providers"]["colab"]["failed"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 17. Colab failure diagnostics: stdout/stderr/result.json persistence
+# ---------------------------------------------------------------------------
+
+
+def test_colab_error_persists_diagnostics(tmp_path: Path) -> None:
+    """A Colab job that exits non-zero leaves stdout.log, stderr.log, and
+    result.json in output_dir with the proc's captured output."""
+    manifest, entries = _make_mixed_batch(tmp_path, n_kaggle=0, n_colab=1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    sleeper = CountingSleeper(clock_h, interval=1.0)
+    colab_client = FakeColabClient(
+        behaviors={
+            "cb0": [{"stdout": "script output here", "stderr": "traceback: boom", "returncode": 1}],
+        }
+    )
+    sched = ParallelScheduler(
+        FakeKaggleClient(), colab_client=colab_client, clock=clock, sleeper=sleeper
+    )
+    sched.run(manifest, state, max_parallel=2, poll_interval=1, colab_max=5)
+
+    out_dir = tmp_path / "out" / "cb0"
+    assert (out_dir / "stdout.log").read_text(encoding="utf-8") == "script output here"
+    assert (out_dir / "stderr.log").read_text(encoding="utf-8") == "traceback: boom"
+    result = json.loads((out_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["ok"] is False
+    assert result["status"] == COLAB_ERROR
+    assert result["exit_code"] == 1
+    assert result["session"] == "cb0"
+
+
+def test_colab_error_message_includes_exit_code(tmp_path: Path) -> None:
+    """The scheduler error for a failed Colab job includes the exit code
+    for actionable diagnostics."""
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=0, n_colab=1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    sleeper = CountingSleeper(clock_h, interval=1.0)
+    colab_client = FakeColabClient(
+        behaviors={"cb0": [{"stderr": "fail", "returncode": 42}]},
+    )
+    sched = ParallelScheduler(
+        FakeKaggleClient(), colab_client=colab_client, clock=clock, sleeper=sleeper
+    )
+    sched.run(manifest, state, max_parallel=2, poll_interval=1, colab_max=5)
+    raw = _read_state(state)
+    err = raw["jobs"]["cb0"].get("error") or ""
+    assert "exit_code=42" in err
+    assert "status=error" in err
+
+
+def test_colab_timeout_persists_diagnostics(tmp_path: Path) -> None:
+    """A Colab job that times out leaves stdout.log, stderr.log, and
+    result.json in output_dir with whatever output was produced before
+    the timeout."""
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=0, n_colab=1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock(start=1000.0)
+    sleeper = CountingSleeper(clock_h, interval=100.0)
+    # Process never finishes (running_polls very high).
+    colab_client = FakeColabClient(
+        behaviors={"cb0": [{"stdout": "partial output", "stderr": "", "running_polls": 100, "returncode": 0}]},
+    )
+    sched = ParallelScheduler(
+        FakeKaggleClient(), colab_client=colab_client, clock=clock, sleeper=sleeper
+    )
+    sched.run(
+        manifest, state, max_parallel=2, poll_interval=1,
+        job_timeout=50.0, colab_max=5,
+    )
+
+    out_dir = tmp_path / "out" / "cb0"
+    assert (out_dir / "stdout.log").exists()
+    assert (out_dir / "stderr.log").exists()
+    result = json.loads((out_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["ok"] is False
+    assert "timed out" in (result["error"] or "")
+    assert result["session"] == "cb0"
+
+    raw = _read_state(state)
+    assert raw["jobs"]["cb0"]["state"] == FAILED
+    assert "timed out" in (raw["jobs"]["cb0"].get("error") or "").lower()
+
+
+def test_colab_capacity_exhaustion_persists_diagnostics(tmp_path: Path) -> None:
+    """A Colab job that fails after COLAB_MAX_CAPACITY_REJECTIONS
+    consecutive capacity rejections leaves diagnostics in output_dir."""
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=0, n_colab=1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock(start=1000.0)
+    sleeper = CountingSleeper(clock_h, interval=1.0)
+    rejections = [
+        {"stderr": "TooManyAssignmentsError", "returncode": 1}
+        for _ in range(COLAB_MAX_CAPACITY_REJECTIONS)
+    ]
+    colab_client = FakeColabClient(behaviors={"cb0": rejections})
+    sched = ParallelScheduler(
+        FakeKaggleClient(), colab_client=colab_client, clock=clock, sleeper=sleeper
+    )
+    sched.run(
+        manifest, state, max_parallel=2, poll_interval=1,
+        colab_max=5, colab_cooldown=1.0,
+    )
+
+    raw = _read_state(state)
+    assert raw["jobs"]["cb0"]["state"] == FAILED
+    assert "capacity rejections" in (raw["jobs"]["cb0"].get("error") or "")
+
+    out_dir = tmp_path / "out" / "cb0"
+    assert (out_dir / "stdout.log").exists()
+    assert (out_dir / "stderr.log").exists()
+    result = json.loads((out_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["ok"] is False
+    assert "capacity rejections" in (result["error"] or "")
+    assert result["session"] == "cb0"
+
+
+def test_colab_submit_failure_persists_diagnostics(tmp_path: Path) -> None:
+    """A Colab job whose run() raises leaves result.json with the error
+    in output_dir, even though no proc was created."""
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=0, n_colab=1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    sleeper = CountingSleeper(clock_h, interval=1.0)
+    colab_client = FakeColabClient(
+        run_raises=RuntimeError("colab CLI not installed"),
+    )
+    sched = ParallelScheduler(
+        FakeKaggleClient(), colab_client=colab_client, clock=clock, sleeper=sleeper
+    )
+    sched.run(manifest, state, max_parallel=2, poll_interval=1, colab_max=5)
+
+    raw = _read_state(state)
+    assert raw["jobs"]["cb0"]["state"] == FAILED
+    assert "colab run failed" in (raw["jobs"]["cb0"].get("error") or "")
+
+    out_dir = tmp_path / "out" / "cb0"
+    assert (out_dir / "stdout.log").exists()
+    assert (out_dir / "stderr.log").exists()
+    assert (out_dir / "stdout.log").read_text(encoding="utf-8") == ""
+    assert (out_dir / "stderr.log").read_text(encoding="utf-8") == ""
+    result = json.loads((out_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["ok"] is False
+    assert "colab run failed" in (result["error"] or "")
+    assert result["session"] == "cb0"
+
+
+def test_colab_restart_interrupted_persists_diagnostics(tmp_path: Path) -> None:
+    """A Colab job failed as interrupted on restart leaves result.json
+    with the interruption error in output_dir."""
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=0, n_colab=1)
+    state = tmp_path / "state.json"
+    state.write_text(
+        json.dumps({
+            "schema_version": STATE_SCHEMA_V2,
+            "batch_path": str(manifest.resolve()),
+            "jobs": {
+                "cb0": {
+                    "name": "cb0",
+                    "output_dir": str((tmp_path / "out/cb0").resolve()),
+                    "state": RUNNING,
+                    "provider": PROVIDER_COLAB,
+                    "remote_id": "cb0",
+                    "script": str((tmp_path / "scripts/cb0.py").resolve()),
+                    "arguments": [],
+                    "timeout": None,
+                }
+            },
+            "updated_at": 1000.0,
+        }),
+        encoding="utf-8",
+    )
+    clock_h, clock = _make_clock()
+    sleeper = CountingSleeper(clock_h, interval=1.0)
+    colab_client = FakeColabClient()
+    sched = ParallelScheduler(
+        FakeKaggleClient(), colab_client=colab_client, clock=clock, sleeper=sleeper
+    )
+    sched.run(manifest, state, max_parallel=2, poll_interval=1, colab_max=5)
+
+    raw = _read_state(state)
+    assert raw["jobs"]["cb0"]["state"] == FAILED
+    assert "interrupted" in (raw["jobs"]["cb0"].get("error") or "").lower()
+
+    out_dir = tmp_path / "out" / "cb0"
+    assert (out_dir / "stdout.log").exists()
+    assert (out_dir / "stderr.log").exists()
+    result = json.loads((out_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["ok"] is False
+    assert "interrupted" in (result["error"] or "").lower()
+    assert result["session"] == "cb0"
+
+
+def test_colab_no_client_persists_diagnostics(tmp_path: Path) -> None:
+    """A Colab job with no client configured leaves result.json with the
+    error in output_dir."""
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=0, n_colab=1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    sleeper = CountingSleeper(clock_h, interval=1.0)
+    sched = ParallelScheduler(
+        FakeKaggleClient(), colab_client=None, clock=clock, sleeper=sleeper
+    )
+    sched.run(manifest, state, max_parallel=2, poll_interval=1, colab_max=5)
+
+    raw = _read_state(state)
+    assert raw["jobs"]["cb0"]["state"] == FAILED
+    assert "no colab client" in (raw["jobs"]["cb0"].get("error") or "")
+
+    out_dir = tmp_path / "out" / "cb0"
+    assert (out_dir / "stdout.log").exists()
+    assert (out_dir / "stderr.log").exists()
+    result = json.loads((out_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["ok"] is False
+    assert "no colab client" in (result["error"] or "")
+    assert result["session"] == "cb0"
+
+
+def test_colab_collect_failure_persists_diagnostics(tmp_path: Path) -> None:
+    """A Colab job whose collect() raises still leaves diagnostics in
+    output_dir via the _persist_colab_diagnostics fallback."""
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=0, n_colab=1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    sleeper = CountingSleeper(clock_h, interval=1.0)
+    colab_client = FakeColabClient(
+        behaviors={"cb0": [{"stdout": "ok output", "stderr": "", "returncode": 0}]},
+        collect_raises=RuntimeError("disk full"),
+    )
+    sched = ParallelScheduler(
+        FakeKaggleClient(), colab_client=colab_client, clock=clock, sleeper=sleeper
+    )
+    sched.run(manifest, state, max_parallel=2, poll_interval=1, colab_max=5)
+
+    raw = _read_state(state)
+    assert raw["jobs"]["cb0"]["state"] == FAILED
+    assert "collection failed" in (raw["jobs"]["cb0"].get("error") or "")
+
+    out_dir = tmp_path / "out" / "cb0"
+    assert (out_dir / "stdout.log").exists()
+    assert (out_dir / "stderr.log").exists()
+    result = json.loads((out_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["ok"] is False
+    assert "collection failed" in (result["error"] or "")
+    assert result["session"] == "cb0"
+
+
+def test_colab_success_still_persists_diagnostics(tmp_path: Path) -> None:
+    """A successful Colab job still has stdout.log/stderr.log/result.json
+    in output_dir (via collect), confirming the success path is not
+    broken by the diagnostics changes."""
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=0, n_colab=1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    sleeper = CountingSleeper(clock_h, interval=1.0)
+    colab_client = FakeColabClient(
+        behaviors={"cb0": [{"stdout": "hello world", "stderr": "", "returncode": 0}]},
+    )
+    sched = ParallelScheduler(
+        FakeKaggleClient(), colab_client=colab_client, clock=clock, sleeper=sleeper
+    )
+    summary = sched.run(manifest, state, max_parallel=2, poll_interval=1, colab_max=5)
+    assert summary["all_succeeded"]
+
+    out_dir = tmp_path / "out" / "cb0"
+    assert (out_dir / "stdout.log").read_text(encoding="utf-8") == "hello world"
+    assert (out_dir / "stderr.log").exists()
+    result = json.loads((out_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True

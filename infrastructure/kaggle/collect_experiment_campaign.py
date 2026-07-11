@@ -156,20 +156,80 @@ def _extract_sentinel_report(stdout_text: str) -> dict[str, Any]:
 # Report loading (provider-specific)
 # ---------------------------------------------------------------------------
 
+def _extract_kaggle_log_sentinel(log_path: Path) -> dict[str, Any]:
+    """Extract the execution report from a Kaggle kernel log JSON stream.
+
+    Kaggle kernel logs are downloaded as a JSON array of stream objects::
+
+        [{"stream_name": "stdout", "time": 9.24,
+          "data": "OCZY_EXECUTION_REPORT_JSON={...}"},
+         {"stream_name": "stderr", "time": 9.24,
+          "data": "execution_report: ..."},
+         ...]
+
+    The sentinel ``OCZY_EXECUTION_REPORT_JSON=<compact-json>`` appears in a
+    ``stdout`` stream entry's ``data`` field.  This function concatenates all
+    stdout data fragments and reuses :func:`_extract_sentinel_report` for
+    strict single-sentinel validation (missing/multiple/corrupt →
+    :class:`SentinelError`).
+    """
+    if not log_path.is_file():
+        raise SentinelError(f"Kaggle log not found: {log_path.name}")
+    try:
+        raw = json.loads(log_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise SentinelError(f"Kaggle log not valid JSON: {exc}") from exc
+    if not isinstance(raw, list):
+        raise SentinelError(f"Kaggle log is not a JSON array: {log_path.name}")
+    stdout_chunks: list[str] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("stream_name") != "stdout":
+            continue
+        data = entry.get("data", "")
+        if isinstance(data, str):
+            stdout_chunks.append(data)
+    stdout_text = "".join(stdout_chunks)
+    return _extract_sentinel_report(stdout_text)
+
+
 def _load_kaggle_report(output_dir: Path) -> dict[str, Any] | None:
     """Load a Kaggle execution report from *output_dir*.
 
-    Tries ``execution_report.json`` (written by the runner), then falls back
-    to ``remote_run_provenance.json`` (written by the Kaggle bootstrap) if the
-    runner report is absent.
+    Resolution order:
+    1. ``execution_report.json`` — written by the runner (primary).
+    2. ``OCZY_EXECUTION_REPORT_JSON`` sentinel in a downloaded ``*.log`` JSON
+       stream — the runner emits this on stdout; the Kaggle API captures it
+       into a kernel log file.  A valid sentinel carries the full structured
+       report (commit, provider, job_name, metrics) and outranks the
+       provenance fallback because provenance only records bootstrap metadata,
+       not the runner's scientific output.
+    3. ``remote_run_provenance.json`` — written by the Kaggle bootstrap when
+       the runner report is absent and no log sentinel is available.
     """
     report = _try_load_json(output_dir / DEFAULT_REPORT_FILENAME)
     if report is not None:
+        return report
+    # Try log sentinel before provenance: a valid sentinel has the full
+    # structured report, while provenance only has bootstrap metadata.
+    log_paths = sorted(output_dir.glob("*.log"))
+    for log_path in log_paths:
+        try:
+            report = _extract_kaggle_log_sentinel(log_path)
+        except SentinelError:
+            continue
+        report["_source"] = "kaggle_log_sentinel"
         return report
     # Fall back to provenance report from the bootstrap.
     provenance = _try_load_json(output_dir / KAGGLE_PROVENANCE_FILENAME)
     if provenance is not None:
         return _adapt_provenance_report(provenance)
+    # Log file(s) existed but no valid sentinel, and no provenance file.
+    if log_paths:
+        raise SentinelError(
+            "no valid OCZY_EXECUTION_REPORT_JSON sentinel in Kaggle log"
+        )
     return None
 
 
