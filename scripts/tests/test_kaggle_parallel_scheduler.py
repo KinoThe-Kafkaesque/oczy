@@ -4,7 +4,7 @@ These tests exercise the *behavior* specified in the shared contract:
 
 * Manifest loading and validation (schema, relative paths, CPU-only rejection,
   duplicate name/id detection, profile/cpu checks).
-* Concurrency bounds: default 8, hard cap 10, minimum 1, bounded active jobs.
+* Concurrency bounds: default 10, hard cap 10, minimum 1, bounded active jobs.
 * Durable state transitions: pending -> submitting -> running -> collecting ->
   succeeded, with terminal failed; resume converts interrupted
   submitting/collecting to pending/running and never resubmits a recorded
@@ -571,7 +571,7 @@ def test_load_batch_accepts_matching_title_id_slug(tmp_path: Path) -> None:
 
 
 def test_run_respects_default_max_parallel(tmp_path: Path) -> None:
-    """With default max_parallel=8, at most 8 jobs should be actively
+    """With explicit max_parallel=8, at most 8 jobs should be actively
     submitted/running at any time."""
     manifest, _ = _make_batch_with_kernels(tmp_path, 12)
     state = tmp_path / "state.json"
@@ -732,8 +732,8 @@ def test_run_rejects_kaggle_max_above_hard_cap(tmp_path: Path) -> None:
         sched.run(manifest, state, kaggle_max=11)
 
 
-def test_run_default_kaggle_max_is_8(tmp_path: Path) -> None:
-    """The default kaggle_max is 8 (DEFAULT_KAGGLE_MAX), unchanged."""
+def test_run_default_kaggle_max_is_10(tmp_path: Path) -> None:
+    """The default kaggle_max is 10 (DEFAULT_KAGGLE_MAX), matching the hard cap."""
     manifest, _ = _make_batch_with_kernels(tmp_path, 12)
     state = tmp_path / "state.json"
 
@@ -763,10 +763,14 @@ def test_run_default_kaggle_max_is_8(tmp_path: Path) -> None:
     sleeper = CountingSleeper(holder)
     client = ConcurrencyClient()
     sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
-    # max_parallel=None (no global cap), default kaggle_max=8
+    # max_parallel=None (no global cap), default kaggle_max=10
     sched.run(manifest, state, max_parallel=None, poll_interval=1)
     assert client.max_concurrent <= DEFAULT_KAGGLE_MAX, (
         f"exceeded default kaggle_max: {client.max_concurrent}"
+    )
+    assert client.max_concurrent == DEFAULT_KAGGLE_MAX, (
+        f"expected exactly {DEFAULT_KAGGLE_MAX} concurrent Kaggle jobs, "
+        f"got {client.max_concurrent}"
     )
 
 
@@ -1351,7 +1355,7 @@ def test_cli_run_default_is_additive(tmp_path: Path) -> None:
     """The CLI --max-parallel should default to None (additive provider capacity).
 
     With 12 Kaggle jobs and no --max-parallel, concurrency is bounded only by
-    the default kaggle_max=8, not by a global cap.
+    the default kaggle_max=10, not by a global cap.
     """
     manifest, _ = _make_batch_with_kernels(tmp_path, 12)
     state = tmp_path / "state.json"
@@ -1387,7 +1391,7 @@ def test_cli_run_default_is_additive(tmp_path: Path) -> None:
         clock=clock,
         sleeper=sleeper,
     )
-    # No global cap — bounded only by default kaggle_max=8
+    # No global cap — bounded only by default kaggle_max=10
     assert client.max_concurrent <= DEFAULT_KAGGLE_MAX
 
 

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import sys
+import types
+
 import numpy as np
 import pytest
 
@@ -73,11 +76,20 @@ def test_silhouette_none_on_too_few_pairs() -> None:
     assert layer_l_probe._silhouette({"only": [rng.standard_normal(4)]}) is None
 
 
-def test_compute_gap_with_final() -> None:
-    s = {"L9_last": 0.5, "L13_last": 0.3, "final_meanpool": 0.4}
+def test_compute_gap_compares_mid_layers_to_hf_final_meanpool() -> None:
+    """The primary gap is best mid-layer silhouette minus HF final mean-pool."""
+    s = {
+        "R_random": 10.0,
+        "last_L9": 0.52,
+        "last_L13": 0.41,
+        "mean_L14": 0.47,
+        "final_meanpool": 0.34,
+    }
     r = layer_l_probe._compute_gap(s)
-    assert r["gap"] == pytest.approx(0.1)
-    assert r["max_mid"] == pytest.approx(0.5)
+    assert r["gap"] == pytest.approx(0.18)
+    assert r["max_mid"] == pytest.approx(0.52)
+    assert r["final"] == pytest.approx(0.34)
+    assert r["mid_labels"] == ["last_L9", "last_L13", "mean_L14"]
 
 
 def test_compute_gap_without_final() -> None:
@@ -90,6 +102,108 @@ def test_compute_gap_without_final() -> None:
 def test_compute_gap_empty() -> None:
     r = layer_l_probe._compute_gap({})
     assert r["gap"] == 0.0
+
+
+def test_hf_probe_includes_hf_final_meanpool_without_gguf(monkeypatch) -> None:
+    """HF hidden states alone provide final_meanpool when llama_cpp/GGUF is absent."""
+    hidden_dim = layer_l_probe._D_EMBD
+    concept_axis_by_phrase = {
+        phrase: idx
+        for idx, phrases in enumerate(layer_l_probe._CONCEPTS.values())
+        for phrase in phrases
+    }
+
+    class _NoGrad:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class _FakeTensor:
+        def __init__(self, array: np.ndarray) -> None:
+            self._array = array
+
+        def __getitem__(self, item):
+            return _FakeTensor(self._array[item])
+
+        def to(self, dtype):
+            return self
+
+        def numpy(self) -> np.ndarray:
+            return self._array
+
+    class _FakeTokenizer:
+        def __call__(self, phrase: str, return_tensors: str):
+            assert return_tensors == "pt"
+            return {"phrase": phrase}
+
+    class _FakeModel:
+        def eval(self) -> None:
+            return None
+
+        def __call__(self, phrase: str):
+            axis = concept_axis_by_phrase[phrase]
+            hidden_states = []
+            for idx in range(layer_l_probe._N_HIDDEN_STATES):
+                sequence = np.zeros((3, hidden_dim), dtype=np.float32)
+                sequence[:, axis] = 1.0
+                if idx == layer_l_probe._N_HIDDEN_STATES - 1:
+                    sequence[-1, axis] = 0.0
+                hidden_states.append(_FakeTensor(sequence[np.newaxis, :, :]))
+            return types.SimpleNamespace(hidden_states=hidden_states)
+
+    class _FakeAutoTokenizer:
+        @staticmethod
+        def from_pretrained(model_name: str, **kwargs):
+            return _FakeTokenizer()
+
+    class _FakeAutoModelForCausalLM:
+        @staticmethod
+        def from_pretrained(model_name: str, **kwargs):
+            return _FakeModel()
+
+    class _FakeKVCortexConfig:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    class _FakeKVCortex:
+        def __init__(self, config: _FakeKVCortexConfig) -> None:
+            self.config = config
+
+        def reset_warm_to_zeros(self) -> None:
+            return None
+
+        def observe(
+            self, vec: np.ndarray, correction_signal: float = 0.0
+        ) -> np.ndarray:
+            return vec.astype(np.float32, copy=False)
+
+    fake_torch = types.ModuleType("torch")
+    fake_torch.bfloat16 = object()
+    fake_torch.float32 = object()
+    fake_torch.no_grad = _NoGrad
+
+    fake_transformers = types.ModuleType("transformers")
+    fake_transformers.AutoModelForCausalLM = _FakeAutoModelForCausalLM
+    fake_transformers.AutoTokenizer = _FakeAutoTokenizer
+
+    fake_plastic = types.ModuleType("plastic_cortex")
+    fake_kv = types.ModuleType("plastic_cortex.kv_cortex")
+    fake_kv.KVCortex = _FakeKVCortex
+    fake_kv.KVCortexConfig = _FakeKVCortexConfig
+
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+    monkeypatch.setitem(sys.modules, "plastic_cortex", fake_plastic)
+    monkeypatch.setitem(sys.modules, "plastic_cortex.kv_cortex", fake_kv)
+    monkeypatch.setitem(sys.modules, "llama_cpp", None)
+
+    silhouettes = layer_l_probe._hf_probe()
+
+    assert silhouettes is not None
+    assert silhouettes["final_meanpool"] == pytest.approx(1.0)
+    assert layer_l_probe._compute_gap(silhouettes)["final"] == pytest.approx(1.0)
 
 
 def test_mock_driver_runs_and_prints_metric(capsys) -> None:

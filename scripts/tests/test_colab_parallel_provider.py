@@ -705,6 +705,191 @@ def test_global_max_parallel_caps_total_active(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 3b. Regression: additive capacity admits 10 Kaggle + learned Colab
+# ---------------------------------------------------------------------------
+
+
+def test_additive_capacity_admits_10_kaggle_plus_colab(tmp_path: Path) -> None:
+    """Regression: max_parallel=None admits 10 Kaggle plus at least one Colab
+    concurrently, proving additive provider capacity rather than stopping at
+    10 total.
+
+    With DEFAULT_KAGGLE_MAX=10 Kaggle jobs and Colab AIMD starting at 1, the
+    scheduler should concurrently run 10 Kaggle + at least 1 Colab, which
+    exceeds 10 total — impossible under a global cap of 10.
+    """
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=12, n_colab=2)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    sleeper = CountingSleeper(clock_h, interval=1.0)
+
+    tracker: dict[str, Any] = {
+        "kaggle_active": set(),
+        "colab_active": set(),
+        "max_kaggle": 0,
+        "max_colab": 0,
+        "max_total": 0,
+    }
+
+    def _update_max() -> None:
+        tracker["max_kaggle"] = max(
+            tracker["max_kaggle"], len(tracker["kaggle_active"])
+        )
+        tracker["max_colab"] = max(
+            tracker["max_colab"], len(tracker["colab_active"])
+        )
+        tracker["max_total"] = max(
+            tracker["max_total"],
+            len(tracker["kaggle_active"]) + len(tracker["colab_active"]),
+        )
+
+    class TrackingKaggleClient(FakeKaggleClient):
+        def __init__(self) -> None:
+            super().__init__(
+                status_sequences={
+                    f"owner/kg{i}": ["running", "complete"] for i in range(12)
+                },
+            )
+
+        def push(self, kernel_dir: str, *, timeout: float | None = None) -> str:
+            kid = super().push(kernel_dir, timeout=timeout)
+            tracker["kaggle_active"].add(kid)
+            _update_max()
+            return kid
+
+        def status(self, kernel_id: str, *, timeout: float | None = None) -> str:
+            result = super().status(kernel_id, timeout=timeout)
+            if result in ("complete", "error"):
+                tracker["kaggle_active"].discard(kernel_id)
+            return result
+
+    class TrackingColabClient(FakeColabClient):
+        def __init__(self) -> None:
+            super().__init__(
+                behaviors={f"cb{i}": [{"running_polls": 1}] for i in range(2)},
+            )
+
+        def run(
+            self,
+            name: str,
+            script: str,
+            *,
+            arguments: list[str] | None = None,
+            timeout: float | None = None,
+        ) -> FakePopen:
+            proc = super().run(name, script, arguments=arguments, timeout=timeout)
+            tracker["colab_active"].add(name)
+            _update_max()
+            return proc
+
+        def stop(self, name: str, *, timeout: float | None = None) -> None:
+            super().stop(name, timeout=timeout)
+            tracker["colab_active"].discard(name)
+
+    kaggle_client = TrackingKaggleClient()
+    colab_client = TrackingColabClient()
+    sched = ParallelScheduler(
+        kaggle_client, colab_client=colab_client, clock=clock, sleeper=sleeper
+    )
+    summary = sched.run(
+        manifest, state, max_parallel=None, poll_interval=1,
+    )
+
+    assert summary["all_succeeded"], f"jobs failed: {summary['failed']}"
+    # 10 Kaggle jobs admitted concurrently (DEFAULT_KAGGLE_MAX)
+    assert tracker["max_kaggle"] == DEFAULT_KAGGLE_MAX, (
+        f"expected {DEFAULT_KAGGLE_MAX} concurrent Kaggle, "
+        f"got {tracker['max_kaggle']}"
+    )
+    # At least 1 Colab job admitted concurrently
+    assert tracker["max_colab"] >= 1, (
+        f"expected >=1 concurrent Colab, got {tracker['max_colab']}"
+    )
+    # Total concurrency exceeded 10 — proving additive capacity, not a 10 cap
+    assert tracker["max_total"] > HARD_KAGGLE_MAX, (
+        f"total concurrency {tracker['max_total']} did not exceed "
+        f"hard kaggle cap {HARD_KAGGLE_MAX} — additive capacity not proven"
+    )
+
+
+def test_explicit_max_parallel_10_caps_total_with_mixed(tmp_path: Path) -> None:
+    """Explicit max_parallel=10 caps total concurrency at 10 even with
+    12 Kaggle + 2 Colab jobs, preserving backward-compatible global cap."""
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=12, n_colab=2)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    sleeper = CountingSleeper(clock_h, interval=1.0)
+
+    tracker: dict[str, Any] = {
+        "kaggle_active": set(),
+        "colab_active": set(),
+        "max_total": 0,
+    }
+
+    def _update_max() -> None:
+        tracker["max_total"] = max(
+            tracker["max_total"],
+            len(tracker["kaggle_active"]) + len(tracker["colab_active"]),
+        )
+
+    class TrackingKaggleClient(FakeKaggleClient):
+        def __init__(self) -> None:
+            super().__init__(
+                status_sequences={
+                    f"owner/kg{i}": ["running", "complete"] for i in range(12)
+                },
+            )
+
+        def push(self, kernel_dir: str, *, timeout: float | None = None) -> str:
+            kid = super().push(kernel_dir, timeout=timeout)
+            tracker["kaggle_active"].add(kid)
+            _update_max()
+            return kid
+
+        def status(self, kernel_id: str, *, timeout: float | None = None) -> str:
+            result = super().status(kernel_id, timeout=timeout)
+            if result in ("complete", "error"):
+                tracker["kaggle_active"].discard(kernel_id)
+            return result
+
+    class TrackingColabClient(FakeColabClient):
+        def __init__(self) -> None:
+            super().__init__(
+                behaviors={f"cb{i}": [{"running_polls": 1}] for i in range(2)},
+            )
+
+        def run(
+            self,
+            name: str,
+            script: str,
+            *,
+            arguments: list[str] | None = None,
+            timeout: float | None = None,
+        ) -> FakePopen:
+            proc = super().run(name, script, arguments=arguments, timeout=timeout)
+            tracker["colab_active"].add(name)
+            _update_max()
+            return proc
+
+        def stop(self, name: str, *, timeout: float | None = None) -> None:
+            super().stop(name, timeout=timeout)
+            tracker["colab_active"].discard(name)
+
+    kaggle_client = TrackingKaggleClient()
+    colab_client = TrackingColabClient()
+    sched = ParallelScheduler(
+        kaggle_client, colab_client=colab_client, clock=clock, sleeper=sleeper
+    )
+    summary = sched.run(
+        manifest, state, max_parallel=10, poll_interval=1,
+    )
+
+    assert summary["all_succeeded"], f"jobs failed: {summary['failed']}"
+    assert tracker["max_total"] <= 10, (
+        f"total concurrency {tracker['max_total']} exceeded explicit cap of 10"
+    )
+
+# ---------------------------------------------------------------------------
 # 4. Colab AIMD: starts at 1, increases by 1 on success
 # ---------------------------------------------------------------------------
 

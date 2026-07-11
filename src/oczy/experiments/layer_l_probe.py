@@ -210,6 +210,7 @@ def _hf_probe() -> dict[str, float] | None:
         ("last_L15", 16, _last_token),
         ("maxpool_L14", 15, _max_pool),
         ("mean_L14", 14, _mean_pool),
+        ("final_meanpool", 16, _mean_pool),
     ]
 
     silhouettes: dict[str, float] = {

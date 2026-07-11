@@ -195,7 +195,7 @@ uv run python infrastructure/kaggle/parallel_scheduler.py status \
 | Flag | Default | Description |
 |---|---|---|
 | ``--max-parallel N`` | omitted | Omit for additive provider capacity (kaggle_max + learned Colab). Explicit N caps total concurrency for backward compatibility (must be >= 1). |
-| ``--kaggle-max N`` | 8 | Max concurrent Kaggle kernels (hard max 10) |
+| ``--kaggle-max N`` | 10 | Max concurrent Kaggle kernels (hard max 10) |
 | ``--colab-max N`` | 10 | Colab AIMD capacity ceiling (additive probe, not a hard quota) |
 | ``--colab-cooldown SEC`` | 60 | Seconds to wait after a Colab 412 rejection before retrying |
 | ``--push-timeout SEC`` | 21600 | Kaggle kernel run-time limit |
