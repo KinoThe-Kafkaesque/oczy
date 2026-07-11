@@ -1,25 +1,28 @@
 # Remote research compute guide
 
-This is the required workflow for using Kaggle compute for Oczy research. The
-remote service is an execution substrate, not an authority over the experiment.
-It may accelerate a pre-registered workload, but it may not change the
-instrument, select thresholds, inspect meta-test during development, or turn an
-infrastructure smoke result into evidence for the cortex hypothesis.
+This is the required workflow for using remote CPU compute (Kaggle Kernels
+and/or Google Colab CLI) for Oczy research. The remote service is an execution
+substrate, not an authority over the experiment. It may accelerate a
+pre-registered workload, but it may not change the instrument, select
+thresholds, inspect meta-test during development, or turn an infrastructure
+smoke result into evidence for the cortex hypothesis.
 
-The active remote profile is **CPU only**. GPU (T4/P100/L4) and TPU profiles
-are not active. Historical GPU verification is preserved under
-[`archive/gpu/`](archive/gpu/) as archived evidence; it must not be resubmitted
-or used to schedule GPU work.
+The active remote profile is **CPU only**, available via both Kaggle Kernels
+and the Colab CLI. GPU (T4/P100/L4) and TPU profiles are not active.
+Historical GPU verification is preserved under
+[`archive/gpu/`](archive/gpu/) as archived evidence; it must not be
+resubmitted or used to schedule GPU work.
 
 ## Approved state and fixed references
 
-As of 2026-07-10:
+As of 2026-07-11:
 
 | Resource | Status | Fixed reference |
 |---|---|---|
 | Kaggle CPU | Verified | private CPU kernel path in [`cpu-smoke/`](cpu-smoke/) |
-| Qwen CPU probe | Verified (v1) | [`qwen-cpu-probe/`](qwen-cpu-probe/) |
-| GPU (T4/P100/L4) | Archived — not active | [`archive/gpu/`](archive/gpu/) |
+| Colab CLI 0.6.0 CPU | Verified | `colab run --keep --session <name> -- <script>` |
+| Qwen CPU probe (Kaggle) | Verified (v1) | [`qwen-cpu-probe/`](qwen-cpu-probe/) |
+| GPU (T4/P100/L4) | Archived --- not active | [`archive/gpu/`](archive/gpu/) |
 | TPU | Not wired | no XLA/JAX parity probe or runner exists |
 | Language organ | Version pinned | `qwen-lm/qwen2.5/transformers/0.5b-instruct/1` |
 
@@ -49,27 +52,41 @@ task confirmed the same model hashes on CPU (v1, 2026-07-10).
 | [`run_qwen_model_probe.py`](run_qwen_model_probe.py) | Locate and hash the attached Qwen artifact; verify frozen-parameter and input-gradient behavior on CPU |
 | [`prepare_source_bundle.py`](prepare_source_bundle.py) | Create a commit-addressed source archive and private Kaggle dataset metadata |
 | [`prepare_research_kernel.py`](prepare_research_kernel.py) | Generate a private, internet-off CPU kernel with source/model/provenance checks |
+| [`parallel_scheduler.py`](parallel_scheduler.py) | Durable mixed-provider scheduler (Kaggle + Colab) with bounded concurrency, AIMD Colab admission, and crash-safe resume |
+| [`colab_provider.py`](colab_provider.py) | Colab CLI 0.6.0 adapter: `run --keep --session`, `collect`, `stop`, `sessions`, capacity rejection classification |
 | [`RESULTS.md`](RESULTS.md) | Verified CPU results and acceptance contract |
-
-Generated bundles and kernels belong in a temporary directory or the ignored
-`infrastructure/kaggle/build/` directory. Do not hand-edit a generated
-`run.py`; change the generator or job arguments and regenerate it.
-
 ## Which compute to use
 
-| Work | Default compute | Reason |
+| Work | Preferred provider | Reason |
 |---|---|---|
-| Instrument materialization, split/leakage audits, distribution checks | CPU | deterministic; no frozen-organ gradient workload |
-| Scorer tests, report aggregation, bootstrap CIs | CPU | GPU overhead adds no value |
-| Oracle articulation and frozen-Qwen interface checks | CPU | model forward/backward runs on CPU |
-| Developmental outer-loop training | CPU | one developmental seed per CPU job |
-| Immutable meta-test | CPU | compute changes must not become an unregistered variable |
+| Instrument materialization, split/leakage audits, distribution checks | Kaggle CPU or Colab CPU | deterministic; no frozen-organ gradient workload |
+| Scorer tests, report aggregation, bootstrap CIs | Kaggle CPU or Colab CPU | GPU overhead adds no value |
+| Oracle articulation and frozen-Qwen interface checks | Kaggle CPU | model forward/backward runs on CPU; Kaggle's private kernel isolation preferred |
+| Developmental outer-loop training | Kaggle CPU or Colab CPU | one developmental seed per CPU job; Colab good for ad-hoc runs |
+| Immutable meta-test | Kaggle CPU | compute changes must not become an unregistered variable; Kaggle's pinned image/dataset guarantees preferred |
+| Batch parallel fan-out | Kaggle + Colab mixed via `parallel_scheduler.py` | scheduler handles both providers with bounded concurrency and AIMD admission |
 | TPU | Do not schedule | no XLA/JAX implementation or parity run exists |
 
-All active remote work uses the CPU profile. The generated bootstrap enforces
-CPU through `CUDA_VISIBLE_DEVICES=""` before torch import plus CPU-only
-metadata and profile, without performing any CUDA or NVML runtime query.
+All active remote work uses the CPU profile. The generated Kaggle bootstrap
+enforces CPU through `CUDA_VISIBLE_DEVICES=""` before torch import plus
+CPU-only metadata and profile. Colab jobs never pass `--gpu` or `--tpu`.
 Do not request a GPU accelerator or submit archived GPU kernels.
+
+### Alternative: direct Colab CLI (without scheduler)
+
+For a quick single run outside the scheduler:
+
+```bash
+colab run --keep --session my-run --timeout 3600 -- scripts/train.py --seed 0
+```
+
+The `--keep` flag keeps the session daemon alive after the script exits.
+Stop it explicitly when done:
+
+```bash
+colab stop --session my-run
+colab sessions
+```
 
 ## End-to-end workflow
 

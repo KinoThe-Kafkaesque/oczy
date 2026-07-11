@@ -1,9 +1,9 @@
 # Oczy — Current Project State
 
-**Last updated:** 2026-07-09 22:03:41 +01:00 (Africa/Casablanca)
+**Last updated:** 2026-07-11
 
 **Evidence cutoff:** repository and local experiment artifacts inspected through
-2026-07-09
+2026-07-11
 
 **Purpose:** canonical living handoff for what Oczy is, what has actually been
 demonstrated, what changed in the research direction, and where the remaining
@@ -232,49 +232,58 @@ side channel.
 | Research/19 direct cortex | Specification only | No dedicated implementation module yet |
 | Research/20 / Experiment 09 | Specification only | Planned module: `src/oczy/experiments/meta_cortex/` — currently absent |
 | Research/21 multi-organ router | Specification only | No implementation module yet |
-| Kaggle offline compute | CPU-only profile active (`cpu-smoke` v4 verified, `qwen-cpu-probe` v1 verified); GPU (T4/P100/L4) archived under `infrastructure/kaggle/archive/gpu/`; TPU not wired | [`infrastructure/kaggle/`](infrastructure/kaggle/) |
+| Remote compute pool | Mixed Kaggle/Colab CPU; Kaggle verified v4 smoke/probe/bootstrap; Colab CLI 0.6.0 verified v2 queue-starvation fix; GPU (T4/P100/L4) archived; TPU not wired | [`infrastructure/kaggle/`](infrastructure/kaggle/) |
 | Pi tool-use work / Experiment 08 | Unpublished local spec, proxy, runner, and two JSON logs; core curriculum package absent; result 0/3 | Existing [`benchmarks/pi/`](benchmarks/pi/) plus local `experiments/08-oczy-pi-tool-calling-curriculum/` |
 | Dashboard | Generator exists; canonical output absent | [`scripts/dashboard.py`](scripts/dashboard.py); planned `experiments_logs/DASHBOARD.md` |
 | Weekly external battery | Research spec exists; runner absent | [`research/16-s4-external-benchmark-battery.md`](research/16-s4-external-benchmark-battery.md); planned `scripts/weekly_battery.sh` |
 | Archived-code move | Not done | Planned `attic/` directory is absent |
 
-### Remote offline compute — CPU-only cutover 2026-07-10
+### Remote compute pool — mixed Kaggle/Colab CPU 2026-07-10/11
 
-The Kaggle CLI is authenticated (version 2.2.3). The active remote profile is
-**CPU only**. The `cpu-smoke` kernel
-(`abdellahkadem/oczy-cortex-cpu-smoke`) was re-verified remotely on 2026-07-10 (v4):
-it ran the 64×64 cortex / width-896 frozen-organ interface workload on a
-Kaggle x86_64 CPU, passed finite-gradient, held-out-improvement, and
-frozen-parameter hash checks, and reported `cuda_available: false`. The
-`qwen-cpu-probe` kernel (`abdellahkadem/oczy-qwen-cpu-probe`) completed
-remotely with `passed: true` on 2026-07-10 (v1).
+The remote compute pool now supports two CPU-only providers:
 
-The `cpu-bootstrap-probe` kernel
-(`abdellahkadem/oczy-cpu-bootstrap-probe`) completed remotely with `passed: true`
-on 2026-07-10 (v4), verifying the full generated-job pipeline: source bundling,
-opaque archive extraction under `/tmp/`, the generated `run.py` bootstrap, and
-provenance logging. Two previously failing modes (v1 null JSON, v2 Kaggle
-auto-extraction) are diagnosed and covered by regression tests.
+| Provider | Status | Since | Key detail |
+|---|---|---|---|
+| Kaggle CLI 2.2.3 | Active, verified | 2026-07-10 | `cpu-smoke` v4, `qwen-cpu-probe` v1, `cpu-bootstrap-probe` v4 |
+| Colab CLI 0.6.0 | Active, verified | 2026-07-11 | CPU sessions, dynamic AIMD admission, queue-starvation fix |
+| GPU (T4/P100/L4) | Archived --- do not submit | 2026-07-09 | Historical evidence under `infrastructure/kaggle/archive/gpu/` |
 
-GPU verification (T4, P100, L4, and the T4-based Qwen model probe) from
-2026-07-09 is preserved as historical evidence under
-[`infrastructure/kaggle/archive/gpu/`](infrastructure/kaggle/archive/gpu/).
-That material — including the 2×T4 throughput comparison and P100/L4
-compatibility nulls — is not active and must not be resubmitted. See
-[`infrastructure/kaggle/archive/gpu/RESULTS.md`](infrastructure/kaggle/archive/gpu/RESULTS.md)
-for the full historical record.
+**Kaggle verification (2026-07-10):** The `cpu-smoke` kernel
+(`abdellahkadem/oczy-cortex-cpu-smoke`) was re-verified remotely (v4): it ran
+the 64x64 cortex / width-896 frozen-organ interface workload on a Kaggle x86_64
+CPU, passed finite-gradient, held-out-improvement, and frozen-parameter hash
+checks, and reported `cuda_available: false`. The `qwen-cpu-probe` kernel
+(`abdellahkadem/oczy-qwen-cpu-probe`) completed remotely with `passed: true`
+(v1). The `cpu-bootstrap-probe` kernel
+(`abdellahkadem/oczy-cpu-bootstrap-probe`) completed remotely (v4), verifying
+the full generated-job pipeline.
+
+**Colab verification (2026-07-11):** The Colab CLI 0.6.0 was installed and
+authenticated. Safe allocation probes confirmed CPU session creation, execution,
+and cleanup. A final live batch of four 30-second scripts ran through the
+scheduler: first three concurrent on first attempt, fourth capacity-rejected
+(412) then retried after slot freed, all four succeeded (attempts 1/1/1/2).
+Each VM reported `cpu_count=2`. The `learned_limit` ended at 4 due to additive
+probing and will self-correct on the next 412; do not claim capacity is
+hardcoded at 3.
+
+**Scheduler upgrade (2026-07-11):** The parallel scheduler was upgraded to
+support mixed providers. v2 batch schema (`oczy/remote-parallel-batch/v2`) with
+per-job ``provider`` field (``kaggle``/``colab``), v2 state schema
+(``oczy/remote-parallel-state/v2``) with ``colab_learned_limit`` and
+provider-neutral job records. New CLI flags: ``--kaggle-max``, ``--colab-max``,
+``--colab-cooldown``. A queue-starvation bug (admission gate incrementing
+``capacity_rejections`` on capacity blocks, causing false failure after 10
+blocks) was fixed during the same session.
 
 The exact official Qwen source
 `qwen-lm/qwen2.5/transformers/0.5b-instruct/1` remains version-pinned for all
-model-bearing CPU jobs. The active `qwen-cpu-probe` task re-verifies the same
-model hashes on CPU. See
+model-bearing CPU jobs. See
 [`infrastructure/kaggle/RESULTS.md`](infrastructure/kaggle/RESULTS.md) for the
-current acceptance contract and
+full evidence and acceptance contract, and
 [`infrastructure/kaggle/RESEARCH_GUIDE.md`](infrastructure/kaggle/RESEARCH_GUIDE.md)
-for the required CPU-only workflow. A durable parallel scheduler
-(`parallel_scheduler.py`, batch schema `oczy/kaggle-parallel-batch/v1`) was
-verified on 2026-07-10 with two concurrently submitted CPU smoke kernels,
-proving bounded-parallel submission, lifecycle state, and crash-safe resume.
+for the required workflow.
+
 No real Research/20 job can be generated from current work until the
 `meta_cortex` module is implemented and the intended source is committed
 cleanly.

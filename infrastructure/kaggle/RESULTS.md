@@ -1,20 +1,21 @@
-# Kaggle CPU compute verification — 2026-07-10
+# Remote CPU compute verification — 2026-07-10/11
 
 **Result class:** infrastructure verification, not a Research/20 experiment
 
-**Active remote profile:** CPU only
+**Active remote profile:** CPU only (Kaggle Kernels + Colab CLI 0.6.0)
 
 ## Active tasks
 
-| Task | Kernel slug | Profile | Local status | Remote status |
+| Task | Slug / provider | Profile | Local status | Remote status |
 |---|---|---|---|---|
-| Cortex smoke | `abdellahkadem/oczy-cortex-cpu-smoke` | `cpu` | PASS | verified 2026-07-10 (v4) |
-| Generated bootstrap probe | `abdellahkadem/oczy-cpu-bootstrap-probe` | `cpu` | PASS | verified 2026-07-10 (v4) |
-| Qwen CPU probe | `abdellahkadem/oczy-qwen-cpu-probe` | `cpu` | PASS | verified 2026-07-10 (v1) |
+| Cortex smoke (Kaggle) | `abdellahkadem/oczy-cortex-cpu-smoke` | `cpu` | PASS | verified 2026-07-10 (v4) |
+| Generated bootstrap probe (Kaggle) | `abdellahkadem/oczy-cpu-bootstrap-probe` | `cpu` | PASS | verified 2026-07-10 (v4) |
+| Qwen CPU probe (Kaggle) | `abdellahkadem/oczy-qwen-cpu-probe` | `cpu` | PASS | verified 2026-07-10 (v1) |
+| Colab CLI 0.6.0 CPU sessions | Colab (installed CLI) | `cpu` | PASS | verified 2026-07-11 |
 
 The `cpu-smoke` task is the infrastructure plumbing verification: a synthetic
-learned-writer → fixed fast/slow state → latent coupler → frozen differentiable
-organ path with a 64×64 cortex state and a width-896 frozen-organ interface. No
+learned-writer -> fixed fast/slow state -> latent coupler -> frozen differentiable
+organ path with a 64x64 cortex state and a width-896 frozen-organ interface. No
 Qwen weights are loaded, no `meta_cortex/v1` code runs, and the result is not
 evidence for H-META-CORTEX.
 
@@ -24,31 +25,37 @@ input-embedding gradient, and no parameter-fingerprint change. The kernel
 metadata lives in [`qwen-cpu-probe/`](qwen-cpu-probe/) and uses
 `enable_gpu: false`. Remote acceptance verified on 2026-07-10 (v1).
 
+The Colab CLI 0.6.0 was installed and the `colab sessions` command confirmed
+the OAuth-authenticated backend was reachable. Safe allocation probes (see
+below) confirmed CPU session creation, execution, and cleanup.
+
 ## Acceptance contract
 
 A remote run counts as accepted only when **all** of the following hold:
 
-1. `kaggle kernels status <slug>` reports `complete`.
-2. The pulled JSON artifact has `passed: true`.
-3. `remote_run_provenance.json` (generated kernels) or the report JSON
-   (smoke/probe kernels) records `cuda_available: false` and
-   `cuda_device_count: 0`.
+1. The remote service reports completion (Kaggle `status complete` / Colab
+   exit code 0 with no capacity-rejection markers).
+2. The pulled JSON artifact has `passed: true` (Kaggle) or `result.json`
+   `ok: true` (Colab).
+3. For Kaggle kernels: `remote_run_provenance.json` or the report JSON records
+   `cuda_available: false` and `cuda_device_count: 0`. For Colab: argv never
+   contains `--gpu` or `--tpu`.
 4. Source hash, model hashes (for probe jobs), and frozen-parameter hashes
    match the locally verified values.
 5. The kernel metadata used `enable_gpu: false`, `enable_tpu: false`, and
-   `enable_internet: false`.
+   `enable_internet: false` (Kaggle); Colab uses CPU-only CLI flags.
 
 Any run that reports CUDA availability, a non-empty `CUDA_VISIBLE_DEVICES`, or
 a GPU device name is **BLOCKED** — it means the CPU-only contract was violated.
 
-## Verified CPU smoke result (2026-07-10)
+## Verified CPU smoke result (Kaggle, 2026-07-10)
 
 The CPU smoke kernel
 [`oczy-cortex-cpu-smoke` v4](https://www.kaggle.com/code/abdellahkadem/oczy-cortex-cpu-smoke)
 completed remotely on a Kaggle x86_64 CPU. The report recorded:
 
-- 64×64 fast and slow state shapes;
-- a 4×896 latent bank;
+- 64x64 fast and slow state shapes;
+- a 4x896 latent bank;
 - 274,563 trainable smoke-path parameters and 3,473,792 frozen parameters;
 - finite losses and gradients;
 - held-out improvement of 42.11% (0.4211);
@@ -80,7 +87,7 @@ The historical T4-based model probe is preserved as archived evidence in
 [`archive/gpu/RESULTS.md`](archive/gpu/RESULTS.md). The active `qwen-cpu-probe`
 task confirmed the same model hashes on CPU (v1, 2026-07-10).
 
-## Verified qwen-cpu-probe result (2026-07-10)
+## Verified qwen-cpu-probe result (Kaggle, 2026-07-10)
 
 The Qwen CPU probe kernel
 [`oczy-qwen-cpu-probe` v1](https://www.kaggle.com/code/abdellahkadem/oczy-qwen-cpu-probe)
@@ -100,12 +107,12 @@ completed remotely on a Kaggle x86_64 CPU. The report recorded:
 - `cuda_available: false`;
 - runner SHA `3c8cddceea2d5ddd5e083db8e42af0d83bfffcf68d9d0363596c8c241d715fe2`.
 
-## Verified generated bootstrap probe result (2026-07-10)
+## Verified generated bootstrap probe result (Kaggle, 2026-07-10)
 
 The generated research-bootstrap kernel
 [`oczy-cpu-bootstrap-probe` v4](https://www.kaggle.com/code/abdellahkadem/oczy-cpu-bootstrap-probe)
 completed remotely on a Kaggle x86_64 CPU. This kernel exercises the full
-`prepare_source_bundle.py` &#x2192; `prepare_research_kernel.py` pipeline: a
+`prepare_source_bundle.py` -> `prepare_research_kernel.py` pipeline: a
 commit-addressed private source dataset, opaque archive extraction under
 `/tmp/...` (not `/kaggle/working`), pinned Qwen model attachment, and the
 generated `run.py` bootstrap with hardware and environment provenance checks.
@@ -140,13 +147,12 @@ output; v4 produces the compact three-file output documented above.
 The generated bootstrap probes the same pinned Qwen2.5-0.5B-Instruct model
 (hashes match the reference in the pinned model source section) and the same
 CPU-only contract as the `cpu-smoke` and `qwen-cpu-probe` tasks. It is the
-infrastructure proof that the full generated-job pipeline — source bundling,
+infrastructure proof that the full generated-job pipeline -- source bundling,
 opaque archiving, kernel generation, extraction, model attachment, bootstrap
-execution, and provenance logging — works end to end on a remote CPU. It is
+execution, and provenance logging -- works end to end on a remote CPU. It is
 not evidence for the cortex hypothesis; it is a verified compute substrate.
 
-
-## Verified parallel scheduler result (2026-07-10)
+## Verified Kaggle parallel scheduler result (2026-07-10)
 
 The durable parallel scheduler
 (``parallel_scheduler.py``, batch schema ``oczy/kaggle-parallel-batch/v1``)
@@ -180,7 +186,7 @@ point.
 **Contract enforcement.** The scheduler rejected the original kernel
 directories because the title "Oczy Scheduler CPU Smoke 1" generated the
 Kaggle slug ``oczy-scheduler-cpu-smoke-1`` while the kernel metadata ``id``
-was set to ``abdellahkadem/oczy-scheduler-smoke-1`` — a mismatch that
+was set to ``abdellahkadem/oczy-scheduler-smoke-1`` -- a mismatch that
 would have caused Kaggle to create the kernel under a different slug and
 all subsequent polling to fail. This guard was discovered, fixed, and
 verified during the same session. See
@@ -188,27 +194,165 @@ verified during the same session. See
 ``parallel_scheduler.py`` ``_validate_kernel()``.
 
 The state file and pulled kernel output are not checked into the
-repository — they are transient operator artifacts in a temporary
+repository -- they are transient operator artifacts in a temporary
 directory, preserved only as session log evidence. The scheduler
 verification is infrastructure proof, not a scientific result.
+
+## Verified Colab CLI result (2026-07-11)
+
+The Colab CLI 0.6.0 and the v2 mixed-provider scheduler were verified live
+on 2026-07-11 on a standard free-tier Colab account.
+
+### Environment
+
+- Colab CLI version: **0.6.0** (installed via pip).
+- OAuth flow completed; `colab sessions` reached the backend.
+- Standard free CPU tier (no Colab Pro/Pro+).
+
+### Safe allocation probe
+
+A safe account-capacity probe used `colab new --session <name>` with the
+default CPU runtime. Three successive allocations succeeded. The fourth
+allocation failed with:
+
+- **HTTP 412 `TooManyAssignmentsError`** (`Precondition Failed`).
+
+The three sessions that were actually allocated were then stopped, and
+`colab sessions` confirmed **no active sessions**. The rejected fourth
+attempt never created a session.
+
+This establishes an observed capacity of three simultaneous standard CPU
+sessions for this account at that time. It is not a permanent quota claim:
+Colab does not expose a numeric limit, and availability can vary.
+
+The scheduler therefore learns rather than hardcodes capacity. In the final
+four-job run it reduced its limit after the fourth job received a 412, queued
+that job until a slot freed, and increased the persisted `learned_limit` to 4
+after the retry succeeded. A future fourth concurrent admission will probe
+again and self-correct on another 412.
+
+### Standard free CPU RAM
+
+Standard free-tier Colab CPU sessions typically provide approximately
+**12.7 GB** of system RAM. This value was not measured in this proof
+but is the documented and user-observed typical allocation.
+
+### Final scheduler live batch: four 30-second scripts
+
+A v2 batch manifest with four Colab CPU jobs
+(``oczy-colab-pool-v2-1`` through ``oczy-colab-pool-v2-4``) was run through
+``parallel_scheduler.py`` with ``colab_max=10`` as an admission ceiling, each
+running a 30-second Python script. Results:
+
+| Job | Attempts | Result | Exit code | cpu_count | status |
+|---|---|---|---|---|---|
+| ``oczy-colab-pool-v2-1`` | 1 | ok true | 0 | 2 | succeeded |
+| ``oczy-colab-pool-v2-2`` | 1 | ok true | 0 | 2 | succeeded |
+| ``oczy-colab-pool-v2-3`` | 1 | ok true | 0 | 2 | succeeded |
+| ``oczy-colab-pool-v2-4`` | 2 | ok true | 0 | 2 | succeeded |
+
+- **First three** (jobs 1–3): submitted concurrently, each succeeded on the
+  first attempt.
+- **Fourth** (job 4): first attempt was capacity-rejected (412) and queued;
+  it retried after a slot freed, then succeeded on attempt 2.
+- **Each VM reported ``cpu_count=2``** in the runtime environment.
+- **Final ``colab sessions``** confirmed no active sessions.
+
+### Verified queue-starvation fix
+
+The first live four-job Colab batch exposed a queue-starvation bug: the
+admission gate in the scheduler's submission phase incremented
+``capacity_rejections`` on every poll cycle when a pending job was blocked
+solely because `cached_external_active >= effective_limit`. After
+``COLAB_MAX_CAPACITY_REJECTIONS`` (10) blocks, the job was failed even
+though no ``TooManyAssignmentsError`` process exit had occurred -- it was
+normal queueing.
+
+The fix: admission gate blocks (the ``continue`` at the ``if
+cached_external_active >= effective_limit`` guard) do not touch
+``capacity_rejections``. Only an actual 412 process exit (classified as
+``COLAB_CAPACITY_REJECTED`` by `classify_colab_output`) increments the
+counter. The test `test_fourth_job_queues_then_succeeds_no_capacity_rejection`
+proves that with learned capacity=3 and four jobs, the fourth stays pending
+across 12+ admission polls without incrementing ``capacity_rejections``,
+then succeeds when a slot frees.
+
+The regression tests in `test_colab_parallel_provider.py` confirm:
+- Admission blocks never increment ``capacity_rejections``.
+- ``capacity_rejections == 0`` for all four jobs in the queueing scenario.
+- ``COLAB_MAX_CAPACITY_REJECTIONS`` (10) consecutive 412 rejections still
+  fail a job (infinite retry guard).
+
+### Colab lifecycle evidence
+
+- **argv**: ``colab run --keep --session <name> --timeout <sec> -- <script> [args...]``
+  The ``--`` separator ensures script paths or arguments starting with ``--``
+  are forwarded correctly (tested: ``test_f3_separator_before_script_in_argv``).
+- **No GPU/TPU flags**: argv never contains ``--gpu`` or ``--tpu`` (tested:
+  ``test_colab_run_argv_omits_gpu_and_tpu``).
+- **Output**: ``stdout.log``, ``stderr.log``, ``result.json`` (with ``ok``,
+  ``error``, ``exit_code``, ``status``, ``session``).
+- **Cleanup**: ``stop()`` called on success, error, timeout, and capacity
+  rejection (tested: ``test_cleanup_stop_called_on_*``). Local Popen killed
+  and reaped on timeout (tested: ``test_f4_kill_proc_on_timeout``).
+- **External session accounting**: ``colab sessions()`` cached once per
+  loop iteration (tested: ``test_f8_sessions_cached_once_per_loop_iteration``).
+  External sessions reduce available slots (tested:
+  ``test_external_sessions_block_admission``).
+- **Restart recovery**: orphan sessions detected and stopped (tested:
+  ``test_f5_orphan_recovery_stops_leaked_session``). A ``sessions()`` probe
+  runs once at restart so external sessions can drain without false failure.
+- **AIMD deferred on_success**: learned_limit does not increase on immediate
+  exit (tested: ``test_f9_no_aimd_increase_on_immediate_exit``). Increases
+  only after the first poll confirms the proc is RUNNING (tested:
+  ``test_f9_aimd_increases_after_confirmed_running``).
+
+## Infrastructure test suite
+
+The verified targeted suite contains **240 behavioral tests** across three
+files:
+
+- ``test_kaggle_parallel_scheduler.py`` (73 tests): v1 batch loading,
+  lifecycle, concurrency bounds, state persistence, title/slug guard,
+  CLI exit codes, and resume semantics.
+- ``test_colab_parallel_provider.py`` (119 tests): v2 batch/state schemas,
+  mixed-provider slot invariants, Colab AIMD admission, capacity rejection
+  lifecycle, session parsing/output collection, orphan detection, cleanup,
+  external-session accounting, queue-starvation regression, and F1-F12
+  reliability invariants.
+- ``test_kaggle_preparation.py`` (48 tests): source bundling, generated
+  kernels, bootstrap provenance, CPU-only metadata, and title/slug checks.
+
+All use fake clients, fake processes, or deterministic clocks where remote
+behavior is involved; none invoke Kaggle or Colab during the test suite.
+
+New Colab or mixed-provider features must be added with tests following the
+same pattern (fake client, deterministic clock, no network).
 
 ## Historical GPU evidence
 
 GPU verification results (T4, P100, L4) from 2026-07-09 are preserved under
-[`archive/gpu/`](archive/gpu/). That material — including the 2×T4 throughput
-comparison, P100/L4 compatibility nulls, and the T4 model probe — is historical
+[`archive/gpu/`](archive/gpu/). That material -- including the 2xT4 throughput
+comparison, P100/L4 compatibility nulls, and the T4 model probe -- is historical
 evidence only. GPU kernels and metadata under the archive must not be
 resubmitted. See [`archive/gpu/RESULTS.md`](archive/gpu/RESULTS.md) for the
 full historical record.
 
-## CLI/account state
+## CLI/account state (Kaggle)
 
 - Kaggle CLI version: **2.2.3** (upgraded from 2.1.2 via `uv tool`).
 - OAuth credentials at `~/.kaggle/credentials.json` (mode `600`); no credential
   value is printed or copied.
 - CPU-only jobs do not consume GPU or TPU quota.
 
-## Exact active submission commands
+## CLI/account state (Colab)
+
+- Colab CLI version: **0.6.0** (installed via pip).
+- OAuth authenticated via `colab login`.
+- Standard free-tier CPU account (no Pro/Pro+).
+- CPU sessions report ``cpu_count=2`` in the runtime environment.
+
+## Exact active submission commands (Kaggle)
 
 ```bash
 # Cortex CPU smoke
@@ -237,3 +381,20 @@ kaggle kernels output \
 No `--accelerator` flag is used. CPU kernels set `enable_gpu: false` in their
 metadata; the generated bootstrap also sets `CUDA_VISIBLE_DEVICES=""` before
 importing torch.
+
+## Exact scheduler commands (mixed batch)
+
+```bash
+# Run a mixed Kaggle/Colab batch (v2 manifest)
+uv run python infrastructure/kaggle/parallel_scheduler.py run \
+  infrastructure/kaggle/my-mixed-batch.json \
+  --state /tmp/parallel-state.json \
+  --kaggle-max 4 \
+  --colab-max 4 \
+  --colab-cooldown 60
+
+# Status check
+uv run python infrastructure/kaggle/parallel_scheduler.py status \
+  infrastructure/kaggle/my-mixed-batch.json \
+  --state /tmp/parallel-state.json
+```
