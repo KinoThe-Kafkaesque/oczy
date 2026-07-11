@@ -2,6 +2,12 @@
 
 Research proposal: ../../research/07-conversation-world-model-rl.md
 
+## Status
+
+- **Implementation:** `src/oczy/experiments/conversation_world_model.py` — implemented and tested.
+- **Campaign 0d48130 (2026-07-11):** **POSITIVE** (marker-free uptake) — `marker_free_uptake_gap=1.0`, `accept_pred_auc_string=1.0`, `accept_pred_auc_hidden=0.8125`. **NULL** (critic AUC improvement) — `critic_auc_delta=0.0`. Evidence: [`campaign log`](../../experiments_logs/2026-07-11_campaign_0d48130.md)
+
+
 ## Objective
 
 Does a self-supervised acceptance predictor reading the LM hidden (a) predict corrections *before the correction text exists* better than the lexical `_looks_like_correction` stop-gap, and (b) when wired as the cortex `correction_signal`, recover uptake on marker-free corrections that the lexical gate misses — without over-firing on non-correction turns?

@@ -192,6 +192,36 @@ Therefore the qualitative retraction remains the working conclusion, while
 the exact values must be treated as provisional until a corrected, multi-seed
 rerun is written to a new dated log and the ledger is amended.
 
+### Campaign 0d48130 (2026-07-11)
+
+10 run groups adjudicated from three source commits (`0d48130`, `537260c`,
+`2a22049`) under CPU-only contract via the remote scheduler (Kaggle +
+Colab). 9 completed (including one metricless R14 result); 1 (Exp03) was
+infrastructure-blocked. Nulls and refutations are recorded as prominently
+as positives. Not every catalogued project ran.
+
+| Experiment | Verdict | Primary metric | Seeds |
+|---|---|---|---|
+| Exp01 correction-competence | **NULL** (behavior-delta transfer) | `v2_behavior_delta_mock=0.0`, `v2_discrimination=0.0` | 1 |
+| Exp02 KV-slot injection | **REFUTATION** | `kv_slot_rank1_count=0.0` (logit bias confirmed: rank1_count=3.0) | 1 |
+| Exp03 layer-L probe | **INFRASTRUCTURE BLOCKED** | No metrics emitted (HF snapshot transfer failures) | — |
+| Exp04 scope-selectivity | **POSITIVE** | `scope_selectivity_index=1.0` | 1 |
+| Exp05 metabolism-loop | **NULL** (metabolism drift) | `metabolism_drift_delta=0.0`, `drift_uptake=0.0` | 1 |
+| Exp06 bounded-growth | **POSITIVE** | `bounded_growth_m1_ratio=0.002079`, zero variance | 5 |
+| Exp07 conversation-world-model | **POSITIVE** (marker-free) + **NULL** (critic AUC) | `marker_free_uptake_gap=1.0`, `critic_auc_delta=0.0` | 1 |
+| R18 teacher gate | **POSITIVE** (gate passed) | `distill_delta_holdout=0.3333` | 1 |
+| R18 distillation full | **PARTIAL** (2/3 seeds positive, 1/3 null) | `distill_delta_holdout` mean=0.2222, bimodal {0.3333, 0.3333, 0.0} | 3 |
+| R14 M2b additive-organs | **NULL (metricless)** | 3 seeds, exit 0, no `METRIC`/`ASI` values | 3 |
+
+Exp03's infrastructure block does not reopen the S1.4 refutation, which
+stands on the pre-registered HF probe
+(`2026-07-01_s1_4_hf_layer_probe.md`). R14 M2b's metricless null means no
+effect estimate is available beyond the registered null — it is not a
+positive or negative mechanism verdict.
+
+Evidence: [`experiments_logs/2026-07-11_campaign_0d48130.md`](experiments_logs/2026-07-11_campaign_0d48130.md);
+adjudication in [`experiments_logs/LEDGER.md`](experiments_logs/LEDGER.md).
+
 ## 5. Current research direction
 
 The July 9 conversation and repository audit produced a dependency-ordered
@@ -200,7 +230,7 @@ the core premise test; Research/21 is conditional on it.
 
 | Order | Work | Role | Current state |
 |---|---|---|---|
-| 1 | [`research/18-consolidation-as-distillation.md`](research/18-consolidation-as-distillation.md) | Plastic-LM-weight comparator: distill transient context into LoRA, delete traces, test survival | Pre-registered; not run |
+| 1 | [`research/18-consolidation-as-distillation.md`](research/18-consolidation-as-distillation.md) | Plastic-LM-weight comparator: distill transient context into LoRA, delete traces, test survival | **PARTIAL** (Campaign 0d48130): teacher gate passed (1 seed, `distill_delta_holdout=0.3333`); 3-seed full run bimodal {0.3333, 0.3333, 0.0}, mean=0.2222; no cross-seed claim; ≥5 seeds needed |
 | 2 | [`research/19-lm-as-language-organ.md`](research/19-lm-as-language-organ.md) | Direct diagnostic with matched label-prefix and latent-control articulation arms | Amended 2026-07-09; not implemented |
 | 3 | [`research/20-meta-trained-cortex-frozen-language-organ.md`](research/20-meta-trained-cortex-frozen-language-organ.md) | Core test: meta-learn write/read/consolidate/articulate, then learn an unseen rule online through state only | New specification; not implemented |
 | 4 | [`research/21-cortex-routed-frozen-specialist-organs.md`](research/21-cortex-routed-frozen-specialist-organs.md) | Conditional extension: cortex routes between frozen language and action/tool organs using recurrent goal state | New specification; do not start before Research/20 accepts |
@@ -276,6 +306,15 @@ provider-neutral job records. New CLI flags: ``--kaggle-max``, ``--colab-max``,
 ``capacity_rejections`` on capacity blocks, causing false failure after 10
 blocks) was fixed during the same session.
 
+**Campaign 0d48130 (2026-07-11):** The mixed-provider scheduler completed its
+first full research campaign. 10 run groups were submitted across Kaggle
+(CPU-only) and Colab (CPU-only) from three source commits: 9 completed
+with scientific verdicts (including nulls, refutations, and one metricless
+R14 result) and 1 (Exp03) was infrastructure-blocked by HF snapshot
+transfer failures. See section 4 above and
+[`experiments_logs/2026-07-11_campaign_0d48130.md`](experiments_logs/2026-07-11_campaign_0d48130.md)
+for the full adjudication.
+
 The exact official Qwen source
 `qwen-lm/qwen2.5/transformers/0.5b-instruct/1` remains version-pinned for all
 model-bearing CPU jobs. See
@@ -322,6 +361,24 @@ For commit `f48dccc`, the explicitly authorized scoped guard passed with
    one independent scope. Validate them before a separate commit; do not fold
    them retroactively into the published cortex/compute commits.
 
+3. **Exp03 reproducibility closure (only if needed).** The campaign Exp03
+   run was infrastructure-blocked (HF snapshot transfer failures); it
+   produced no scientific verdict and does not reopen S1.4. If
+   reproducibility closure is needed, re-run with `--driver real` on the HF
+   substrate and confirm the S1.4 refutation reproduces. **Acceptance:** a
+   dated log reproduces S1.4 or documents the infrastructure fix; S1.4 is
+   not reopened.
+4. **R18: extend to ≥5 seeds and diagnose LoRA uptake variance.** The
+   3-seed run is bimodal {0.3333, 0.3333, 0.0}; 1/3 seeds show no
+   distillation signal. Extend to ≥5 seeds without changing thresholds.
+   Diagnose why seed 2 produced `distill_delta_holdout=0.0` while seeds 0–1
+   produced 0.3333. **Acceptance:** ≥5-seed mean ± std in a dated log; a
+   written mechanism hypothesis for the null seed; no threshold change.
+5. **S4.1: complete honest reruns.** Re-run every June 26–29 result that
+   depended on the broken scope-slot reranker or leakage-era paths on eval
+   v2. **Acceptance:** every INVALIDATED/SUPERSEDED ledger row points to a
+   dated honest rerun log or is labeled "no longer relevant."
+
 ### P1 — Run the cheap interface diagnostic
 
 Implement Research/19 as a matched two-arm test:
@@ -334,6 +391,15 @@ Implement Research/19 as a matched two-arm test:
   retrieval, and oracle conditions.
 - Put code under a dedicated module in [`src/oczy/experiments/`](src/oczy/experiments/)
   and write results to a new dated file in [`experiments_logs/`](experiments_logs/).
+
+### P1b — Build the S5.3 diagnostic head-to-head table
+
+One table: R18 (consolidation-as-distillation) vs both R19 arms vs
+retrieval-baseline vs vanilla, with deletion audits, CIs, per-byte
+accounting, and explicit classification of every answer path.
+**Acceptance:** `experiments_logs/DASHBOARD.md` or a dated log contains the
+table with all columns filled and every path classified as retrieval,
+metabolism, or vanilla.
 
 ### P2 — Build and adjudicate the core cortex experiment
 
@@ -385,8 +451,10 @@ If and only if Research/20 accepts:
 - Move evidence-archived answer-time organs to a documented `attic/` only after
   imports and historical reproduction paths are mapped.
 - Run the registered DSI stage-1 appeal or label it permanently closed.
-- Run M2b only if it answers a still-relevant question; it cannot retroactively
-  turn an archived organ into evidence for the learned-cortex premise.
+- M2b ran as a metricless NULL (Campaign 0d48130: 3 seeds, exit 0, no
+  `METRIC`/`ASI` values). It cannot retroactively turn an archived organ
+  into evidence for the learned-cortex premise; re-run only if it answers a
+  still-relevant question.
 
 ### P5 — Expand an eval only by the governance path
 

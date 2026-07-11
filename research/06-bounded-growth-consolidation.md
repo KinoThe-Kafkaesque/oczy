@@ -2,7 +2,9 @@
 
 *Stop pickling dense random matrices and raw traces; make persistent memory a compact, trained latent identity whose byte-cost stops growing.*
 
-Status: PROPOSED | Thesis anchor: experiments.txt §5 (hypernetwork identity, `z_{t+1}=z_t+Δz`), §9 (experience autoencoder; `L = behavior_improvement + reconstruction_of_correction + compression_penalty + anti-overgeneralization + replay_consistency`) | Goal anchor: GOALS.md Goal 3 (organ tensor upgrades / metabolism loop closure) | Depends on / relates to: 01-correction-to-competence-benchmark (owns the byte metric), 05-metabolism-loop-closure (the consolidation path), 07-conversation-world-model-rl
+Status: ACCEPTED (2026-07-11, five-seed) | Thesis anchor: experiments.txt §5 (hypernetwork identity, `z_{t+1}=z_t+Δz`), §9 (experience autoencoder; `L = behavior_improvement + reconstruction_of_correction + compression_penalty + anti-overgeneralization + replay_consistency`) | Goal anchor: GOALS.md Goal 3 (organ tensor upgrades / metabolism loop closure) | Depends on / relates to: 01-correction-to-competence-benchmark (owns the byte metric), 05-metabolism-loop-closure (the consolidation path), 07-conversation-world-model-rl
+
+> **Outcome (2026-07-11):** ACCEPTED (five-seed). Campaign 0d48130 (kaggle CPU-only, commit `0d48130`): `bounded_growth_m1_ratio=0.002079` across 5 seeds with **zero variance**. Structural footprints are bit-identical across seeds. `bytes_per_delta` spread ≤20 B: A0 18 B, A0b 20 B, A1 19 B, A2 18 B, A3 19 B. The M1 ratio (combined-footprint reduction) is well under the 1/10 threshold. Evidence: `../experiments_logs/2026-07-11_campaign_0d48130.md`.
 
 ## Problem
 

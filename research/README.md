@@ -44,6 +44,25 @@ So the agenda is built as a spine and ribs:
 | [06](06-bounded-growth-consolidation.md) | **Bounded-growth consolidation** | §5, §9 | Goal 3 | The autoencoder/hypernetwork hoard serialized objects (~68 KB/Δ) instead of compact adapters. |
 | [07](07-conversation-world-model-rl.md) | **RL Phase 0: conversation world model** | §6 | — | A lexical `_looks_like_correction` stop-gap stands in for a model that should *predict* the correction. |
 
+## Current verdicts (Campaign 0d48130, 2026-07-11)
+
+All reported completed runs used CPU-only; Campaign Exp03 was infrastructure-blocked before execution. Curated
+campaign log: `../experiments_logs/2026-07-11_campaign_0d48130.md`. The S1.4
+layer-L probe log is `../experiments_logs/2026-07-01_s1_4_hf_layer_probe.md`.
+Nulls and refutations are reported alongside wins.
+
+| # | Verdict | Primary metric | Seeds | Notes |
+|---|---------|----------------|-------|-------|
+| 01 | **TESTED-NULL** | `v2_behavior_delta_mock=0.0`, `v2_discrimination=0.0` | 1 (colab) | 5 de-saturation events but zero behavior delta; exact_recall=0.0, domain_recall=1.0 |
+| 02 | **REFUTED** | `kv_slot_rank1_count=0.0` | 1 (colab) | Logit biasing confirmed (rank1=3.0); KV-slot cannot recall |
+| 03 | **REFUTED** (S1.4) | Qwen gap −0.083, LFM2.5 gap +0.058 (threshold +0.10) | 2 architectures | Mid-layer hiddens do not beat final layer; campaign re-run infrastructure-blocked (no verdict from campaign) |
+| 04 | **ACCEPTED** | `scope_selectivity_index=1.0` | 1 (colab) | Single-run, no cross-seed variance |
+| 05 | **TESTED-NULL** | `metabolism_drift_delta=0.0`, `drift_uptake=0.0` | 1 (colab) | Loop runs (4 consolidations, slope=0.1755) but no captured behavioral delta |
+| 06 | **ACCEPTED** | `bounded_growth_m1_ratio=0.002079` | 5 (kaggle) | Zero variance; bit-identical footprints; bytes_per_delta spread ≤20 B |
+| 07 | **ACCEPTED-PARTIAL** | `marker_free_uptake_gap=1.0`; `critic_auc_delta=0.0` | 1 (colab) | Predictive AUC positive (0.8125/1.0); critic AUC improvement null |
+| 14 | **TESTED-METRICLESS-NULL** | no METRIC/ASI emitted | 3 (kaggle) | Exit 0 after 11,787 s; harness completed but produced no scored output |
+| 18 | **TESTED-PARTIAL** | `distill_delta_holdout` mean=0.2222 | 3 (kaggle) | Gate passed (1 seed, 0.3333); full run bimodal {0.3333, 0.3333, 0.0} |
+
 ## Post-remediation frontier
 
 Sprints 0–3 invalidated the cheap activation-steering route, established
@@ -51,25 +70,25 @@ retrieval as the honest baseline, and left a narrower question: can learned
 neural state outside a frozen LM acquire and express experience without an
 answer-time content store?
 
-| # | Project | Role in the new sequence | Primary distinction |
-|---|---|---|---|
-| [18](18-consolidation-as-distillation.md) | Weight-editing comparator | Experience is consolidated into LoRA weights inside the LM. |
-| [19](19-lm-as-language-organ.md) | Direct-learning diagnostic | A label-prefix parametric-retrieval arm is separated from latent control of a frozen language organ. |
-| [20](20-meta-trained-cortex-frozen-language-organ.md) | Core cortex hypothesis; [Experiment 09](../experiments/09-meta-trained-cortex-frozen-language-organ/) | The write, read, consolidation, and articulation rules are meta-trained; only cortex state changes on an unseen task. |
-| [21](21-cortex-routed-frozen-specialist-organs.md) | Multi-organ extension | A learned cortex routes shared state into independently frozen language and action organs. |
+| # | Project | Role in the new sequence | Primary distinction | Status |
+|---|---|---|---|---|
+| [18](18-consolidation-as-distillation.md) | Weight-editing comparator | Experience is consolidated into LoRA weights inside the LM. | **TESTED-PARTIAL** (2026-07-11) |
+| [19](19-lm-as-language-organ.md) | Direct-learning diagnostic | A label-prefix parametric-retrieval arm is separated from latent control of a frozen language organ. | PENDING |
+| [20](20-meta-trained-cortex-frozen-language-organ.md) | Core cortex hypothesis; [Experiment 09](../experiments/09-meta-trained-cortex-frozen-language-organ/) | The write, read, consolidation, and articulation rules are meta-trained; only cortex state changes on an unseen task. | PENDING |
+| [21](21-cortex-routed-frozen-specialist-organs.md) | Multi-organ extension | A learned cortex routes shared state into independently frozen language and action organs. | BLOCKED (depends on 20) |
 
 Dependency and verdict order:
 
 ```text
-18  LM-weight comparator ───────────────┐
-                                        ├─► same reporting table
-19  direct cortex: label vs latent ─────┘
+18  LM-weight comparator ───────────────┐  TESTED-PARTIAL (gate passed,
+                                        ├─► same reporting table         bimodal full run)
+19  direct cortex: label vs latent ─────┘  PENDING
                     │
                     ▼
-20  meta-trained cortex over frozen language organ
+20  meta-trained cortex over frozen language organ  PENDING
                     │ ACCEPT + causal-state audit
                     ▼
-21  cortex-routed frozen language + action organs
+21  cortex-routed frozen language + action organs   BLOCKED (needs 20)
 ```
 
 Retrieval is mandatory in every comparison table but disabled in the primary
@@ -80,17 +99,22 @@ relabelled as cortex metabolism.
 
 ```
                 01  Benchmark v2  (de-saturate — unblocks honest claims for all)
-                 │
+                 │                   TESTED-NULL: 5 de-saturation events,
+                 │                   zero behavior delta
    ┌─────────────┼───────────────────────────┬───────────────┐
    │             │                            │               │
   02 KV-slot    03 Layer-L hiddens           06 Bounded      07 World model
   fact inject    (perception depth)           growth          (predict the
-   │             │                            │   correction)
-   │             ├──────────────┐             │
+  REFUTED        REFUTED (S1.4)               ACCEPTED        correction)
+  kv_slot=0      gap < +0.10                  m1=0.002        ACCEPTED-PARTIAL
+   │             │                            │   5 seeds      uptake=1.0
+   │             ├──────────────┐             │               critic_auc=0.0
    │             ▼              ▼             │
    │            04 Context-     05 Metabolism │
    │            scoped          loop closure ─┘
    │            attractors      (compounding drift)
+   │            ACCEPTED        TESTED-NULL
+   │            SSI=1.0         drift=0.0
    └────────────┴──────────────┘
         02/03/04 all chip at the same wall: a residual control vector
         carries posture; facts need a reserved slot (02) keyed by real
@@ -101,8 +125,10 @@ relabelled as cortex metabolism.
 ```
 
 Reading order if you only do one thing: **01**, then whichever rib has live
-momentum. **03** is the highest-leverage rib because **04** and **05** both
-depend on it.
+momentum. **03** is refuted (S1.4: mid-layer hiddens do not beat final layer
+on two architectures); **04** and **05** both consumed 03's input and have
+their own verdicts (04 ACCEPTED, 05 TESTED-NULL). The highest-leverage open
+question is now **18** (TESTED-PARTIAL) → **19** (PENDING) → **20** (PENDING).
 
 ## Conventions these proposals follow
 
@@ -135,3 +161,10 @@ unverified forward-looking claim as a hypothesis, not a finding.
 implementation to close the label-prefix interpretation loophole; Research/20
 and /21 plus Experiment/09 were added to test a meta-trained cortex controlling
 frozen language and action organs without retrieval in the primary path.
+
+**2026-07-11 status update:** Campaign 0d48130 adjudicated projects 01–07, 14,
+and 18. Verdicts and outcome annotations added to each project spec; this README
+updated with a current-verdicts table, R18 result in the frontier table, and
+dependency-graph status labels. Projects 19 and 20 remain PENDING; 21 remains
+BLOCKED (depends on 20). No hypotheses, success criteria, or kill criteria
+were modified. Evidence: `../experiments_logs/2026-07-11_campaign_0d48130.md`.

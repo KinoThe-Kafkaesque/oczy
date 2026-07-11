@@ -1,6 +1,12 @@
 # 18 — Consolidation as context distillation (the surviving route to changed dynamics)
 
-**Pre-registered 2026-07-03** (human-approved, before implementation).
+**Pre-registered 2026-07-03** (human-approved, before implementation). **Status: TESTED-PARTIAL (2026-07-11).**
+
+> **Outcome (2026-07-11):** TESTED-PARTIAL. Campaign 0d48130 (kaggle CPU-only, commit `537260c`):
+> - **R18 teacher gate (1 seed, 5 steps):** PASSED. `distill_delta_holdout=0.3333`, `distill_specificity_delta=0.04348`, `teacher_dev_delta=0.1765` (≥ 0.2 gate not met; fallback chat-template prompting was used). LoRA rank=8/alpha=16/lr=0.005.
+> - **R18 full (3 seeds, 10 steps):** PARTIAL. `distill_delta_holdout` mean=0.2222 — bimodal {0.3333, 0.3333, 0.0}; distillation signal present in 2/3 seeds, absent in 1/3. `teacher_dev_delta=0.1765` and `persistent_bytes=17,699,903` identical across all seeds. `specificity_delta`: 0.0/0.0/0.04348.
+> The teacher gate passed and distillation produces a real holdout delta, but the single-seed gate and bimodal full-run prevent full acceptance of H-DISTILL. Evidence: `../experiments_logs/2026-07-11_campaign_0d48130.md`.
+
 Agents running this experiment MUST NOT edit this spec; deviations are
 reported as deviations.
 

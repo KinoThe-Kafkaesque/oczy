@@ -1,7 +1,11 @@
 # 03 — Real Hidden-State Extraction at Layer L
 *Feed the cortex the residual where semantic intent actually forms, not the final-layer mean-pool it metabolizes today.*
 
-Status: PROPOSED | Thesis anchor: experiments.txt §1 (correction-gated SSM cortex), §3 (neural hippocampus) | Goal anchor: GOALS.md Goal 2 (hidden-state extraction at layer L) | Depends on / relates to: 04-context-scoped-attractors (consumer), 05-metabolism-loop-closure (consumer), 02-kv-slot-fact-injection (sibling Goal 1, blocked), 01-correction-to-competence-benchmark (eval substrate)
+Status: REFUTED (2026-07-01, S1.4) | Thesis anchor: experiments.txt §1 (correction-gated SSM cortex), §3 (neural hippocampus) | Goal anchor: GOALS.md Goal 2 (hidden-state extraction at layer L) | Depends on / relates to: 04-context-scoped-attractors (consumer), 05-metabolism-loop-closure (consumer), 02-kv-slot-fact-injection (sibling Goal 1, blocked), 01-correction-to-competence-benchmark (eval substrate)
+
+> **Outcome (2026-07-01):** REFUTED. S1.4 HF layer-L probe (`../experiments_logs/2026-07-01_s1_4_hf_layer_probe.md`) measured warm_sep_silhouette on two architectures: Qwen2.5-0.5B-Instruct (gap −0.083, threshold +0.10) and LFM2.5-1.2B-Instruct (gap +0.058, threshold +0.10). Mid-layer hiddens do NOT cluster by concept better than the final layer on either model. This confirms lane_03's refutation on a substrate that can see every layer — the mid-layer assumption is a model property, not a llama.cpp keyhole.
+>
+> **Campaign note (2026-07-11):** Campaign 0d48130 attempted to re-run Exp03 on colab but was **infrastructure-blocked** — repeated HF snapshot transfers failed before execution; no metrics or ASI scores emitted. This is not a scientific null or refutation; the authoritative pre-campaign verdict remains S1.4 above. Evidence: `../experiments_logs/2026-07-11_campaign_0d48130.md`.
 
 ## Problem
 

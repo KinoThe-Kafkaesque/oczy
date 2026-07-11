@@ -2,6 +2,12 @@
 
 Research proposal: ../../research/05-metabolism-loop-closure.md
 
+## Status
+
+- **Implementation:** `src/oczy/experiments/metabolism_loop.py` — implemented and tested.
+- **Campaign 0d48130 (2026-07-11):** **NULL** (metabolism drift) — `metabolism_drift_delta=0.0`, `drift_uptake=0.0`, `delta_target=0.0`. Loop runs (4 consolidations, slope=0.1755) but no captured delta. Evidence: [`campaign log`](../../experiments_logs/2026-07-11_campaign_0d48130.md)
+
+
 ## Objective
 
 When the same concept is corrected K times through `CortexAgent` (each followed by `consolidate()`), does `cortex.cold_state` drift **compound** (accumulate, not overwrite), and does that accumulated drift — with every label/prefix/logit-bias surface disabled — drive a **continuous, K-increasing domain shift** in the LM's answer?

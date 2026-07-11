@@ -1,6 +1,9 @@
 # 14 — Organ ablation matrix & triage verdicts (Sprint 3 / S3.1 + S3.2 + S3.4)
 
-**Pre-registered 2026-07-02** (human-approved sprint setup, before the runs).
+**Pre-registered 2026-07-02** (human-approved sprint setup, before the runs). **Status: TESTED-METRICLESS-NULL (2026-07-11).**
+
+> **Outcome (2026-07-11):** TESTED-METRICLESS-NULL. Campaign 0d48130 (kaggle CPU-only, commit `2a22049`): the M2B additive-organs run (`--seeds 3`) exited 0 after 11,786.6 s but emitted **no `METRIC` or `ASI` values**. No effect estimate or positive/negative mechanism verdict is available beyond the registered metricless null — the harness completed but produced no scored output. This is distinct from a scientific null (which measures zero effect) and from a refutation (which measures a negative effect). Evidence: `../experiments_logs/2026-07-11_campaign_0d48130.md`.
+
 Agents running this experiment MUST NOT edit this spec; deviations are reported
 as deviations. Depends on research/11's minimal organism being merged; the
 S3.1 harness (`src/oczy/experiments/organ_ablation.py`, merged 2026-07-01)

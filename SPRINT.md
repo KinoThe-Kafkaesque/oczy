@@ -114,6 +114,14 @@ not research blockers.
 >   fails the same facts). Pre-blank splice position fixed the hardest
 >   fact (rank 4→0). Sprint 2 implications: KV slots replace the prefix,
 >   spliced pre-blank; consider the 1.5B fallback for recall-critical runs.
+> - **Campaign Exp03 block** (2026-07-11, `0d48130`): the campaign
+>   re-run of the layer-L probe under the remote scheduler was
+>   **infrastructure-blocked** — repeated HF snapshot transfers failed
+>   before execution; no metrics or ASI scores emitted. This is not a
+>   scientific null or refutation and does not reopen the S1.4 verdict,
+>   which stands on the pre-registered HF probe
+>   (`2026-07-01_s1_4_hf_layer_probe.md`). Evidence:
+>   `experiments_logs/2026-07-11_campaign_0d48130.md`.
 
 ### Tasks
 
@@ -226,7 +234,9 @@ norm-controlled variants reported alongside every drift number.
 > retrieval added exactly 0.0000; DSI unsupported at v2 power and net-harmful
 > in the full stack (appeal: v2.1 stage-1 battery); critic/identity/immune/
 > autoencoder all noise in M1 (M2b harness merged as the appeal instrument;
-> its run was not executed — recorded as the adjudication's weakest link).
+> its run completed as a **metricless NULL** — `--seeds 3` exited 0 after
+> 11,786.6 s but emitted no `METRIC` or `ASI` values; no effect estimate
+> is available beyond the registered metricless null).
 > **research/15 tensor wiring: VACUOUS** (nothing earned KEEP) — Goal 3's
 > question closed honestly. S3.4 attic moves remain a pending code task.
 
@@ -235,7 +245,7 @@ behavioral metric on the frozen eval or be archived.
 
 ### Tasks
 
-- [x] **S3.1 — Ablation matrix.** — DONE (M1 + M2a; M2b harness merged, run not executed)
+- [x] **S3.1 — Ablation matrix.** — DONE (M1 + M2a; M2b harness merged, run completed as metricless NULL)
   Minimal organism ± each organ, one at a time, on frozen eval v2.
   An organ earns its place only if it moves a held-out behavioral metric
   beyond noise (per S0.5 statistics).
@@ -337,10 +347,18 @@ test: a meta-trained cortex controlling a frozen language organ with retrieval
 disabled in the primary condition. Research/21 is the dependent multi-organ
 extension.
 
-- [ ] **S5.1 — research/18: consolidation as context distillation.**
+- [ ] **S5.1 — research/18: consolidation as context distillation.** — **PARTIAL (Campaign 0d48130, 2026-07-11)**
   Per-fact transient prefix → KL-distilled LoRA → delete prefix + traces →
   survival on holdout. Plasticity in LM weights; retained as the mouth-weight
   comparator, not the frozen-organ cortex condition.
+  > **Campaign 0d48130 adjudication:** the R18 teacher gate passed (1 seed,
+  > `distill_delta_holdout=0.3333`, `distill_specificity_delta=0.04348`).
+  > The R18 full 3-seed run is **PARTIAL**: distillation signal in 2/3 seeds,
+  > absent in 1/3. `distill_delta_holdout` is bimodal {0.3333, 0.3333, 0.0}
+  > (mean=0.2222); `teacher_dev_delta=0.1765` and `persistent_bytes=17,699,903`
+  > are identical across seeds; `specificity_delta` is {0.0, 0.0, 0.04348}.
+  > Single-seed gate does not constitute a cross-seed claim. No threshold
+  > changes. Evidence: `experiments_logs/2026-07-11_campaign_0d48130.md`.
 - [ ] **S5.2 — research/19: direct cortex learning, two articulation arms.**
   The same ≤64k-param online-trained cortex is evaluated through (A) a
   label-prefix parametric-retrieval readout and (B) a fixed-width latent-control
@@ -365,6 +383,75 @@ extension.
 Background/conceptual grounding:
 `notes/2026-07-03_steering_vs_posture_postmortem.md`; successor rationale and
 frozen-organ boundary are fixed in `research/20` and `research/21`.
+
+## Next actionable todos (Campaign 0d48130 → forward)
+
+Dependency-ordered. Each item has an observable acceptance criterion. No
+threshold, metric, baseline, or episode change is implied; frozen eval
+remains frozen unless an item explicitly calls for the governance path.
+
+1. **Exp03 real-driver infrastructure correction (reproducibility closure).**
+   The campaign Exp03 run was infrastructure-blocked (HF snapshot transfer
+   failures); it produced no scientific verdict and does not reopen S1.4. If
+   reproducibility closure is needed, re-run with `--driver real` on the HF
+   substrate and confirm the pre-registered S1.4 refutation reproduces.
+   **Acceptance:** a dated log in `experiments_logs/` either reproduces the
+   S1.4 refutation or documents the infrastructure fix; the S1.4 hypothesis
+   is not reopened.
+
+2. **R18: extend to ≥5 seeds and diagnose LoRA uptake variance.**
+   The 3-seed run is bimodal {0.3333, 0.3333, 0.0}; 1/3 seeds show no
+   distillation signal. Extend to ≥5 seeds without changing thresholds.
+   Diagnose why seed 2 produced `distill_delta_holdout=0.0` while seeds 0–1
+   produced 0.3333; check LoRA initialization, gradient flow, and data order.
+   **Acceptance:** ≥5-seed `distill_delta_holdout` with mean ± std in a
+   dated log; a written mechanism hypothesis for the null seed; no
+   threshold change.
+
+3. **S4.1: complete honest reruns.**
+   Re-run every June 26–29 result that depended on the broken scope-slot
+   reranker or leakage-era paths on eval v2, mark each affected ledger
+   entry, and record the honest replacement. **Acceptance:** every
+   INVALIDATED/SUPERSEDED ledger row points to a dated honest rerun log
+   or is explicitly labeled "no longer relevant."
+
+4. **Research/19: implement matched label-prefix vs latent-control arms.**
+   Build the two-arm diagnostic under a dedicated module in
+   `src/oczy/experiments/`. Arm A: online-trained cortex decoded to a label
+   prefix (parametric retrieval). Arm B: same cortex state through a
+   fixed-width learned latent coupler into the frozen LM, no label text.
+   Include zero-state, swapped-state, shuffled-feedback, vanilla, retrieval,
+   and oracle conditions. **Acceptance:** a dated log with both arms scored
+   on eval v2 held-out, multi-seed, vanilla column; Arm B causal controls
+   pass or fail explicitly.
+
+5. **S5.3: build the diagnostic head-to-head comparison table.**
+   One table: R18 (consolidation-as-distillation) vs both R19 arms vs
+   retrieval-baseline vs vanilla, with deletion audits, CIs, per-byte
+   accounting, and explicit classification of every answer path.
+   **Acceptance:** `experiments_logs/DASHBOARD.md` or a dated log contains
+   the table with all columns filled and every path classified as
+   retrieval, metabolism, or vanilla.
+
+6. **Research/20: materialize `meta_cortex/v1` Phase 0 instrument and
+   obtain human sign-off before meta-test.**
+   Build the separate task generator, task-level train/dev/test split,
+   manifest, leakage audit, threshold distributions, and power analysis.
+   **Acceptance:** the Phase 0 instrument exists under
+   `src/oczy/experiments/meta_cortex/`, the manifest verifies, and a
+   human sign-off is recorded before any meta-test run begins.
+
+7. **External battery / second model.**
+   After honest baselines (items 3–5) are in place, run the frozen eval on
+   a second small model and promote the external QA + Pi tool-use
+   benchmarks to a standing weekly job with the vanilla column. Add at
+   least one benchmark not authored by this repo. **Acceptance:** a dated
+   log with a second-model column and at least one external benchmark
+   result, both with vanilla comparison.
+
+8. **Research/21: remains blocked on Research/20 acceptance.**
+   Do not start the multi-organ router until S5.4 accepts. **Acceptance:**
+   no work begins until the Research/20 decision gate is passed.
 
 Sprint 0 and Sprint 1 can overlap after S0.1–S0.4 land; nothing in Sprints
 2–4 may start before Sprint 0 is fully done.

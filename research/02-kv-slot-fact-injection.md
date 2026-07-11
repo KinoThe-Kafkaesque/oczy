@@ -2,7 +2,9 @@
 
 *A residual control vector changes the LM's posture; a reserved KV slot carries content. This project measures the boundary between the two and unblocks the practical slot without a binding fork.*
 
-**Status:** PROPOSED | **Thesis anchor:** experiments.txt §1 (Correction-Gated SSM Cortex), §7 (Energy / Attractor memory) | **Goal anchor:** GOALS.md Goal 1 (LM-side steering binding / reserved KV slot) | **Depends on / relates to:** 01-correction-to-competence-benchmark, 03-layer-l-hidden-extraction, 04-context-scoped-attractors, 05-metabolism-loop-closure
+**Status:** REFUTED (2026-07-11) | **Thesis anchor:** experiments.txt §1 (Correction-Gated SSM Cortex), §7 (Energy / Attractor memory) | **Goal anchor:** GOALS.md Goal 1 (LM-side steering binding / reserved KV slot) | **Depends on / relates to:** 01-correction-to-competence-benchmark, 03-layer-l-hidden-extraction, 04-context-scoped-attractors, 05-metabolism-loop-closure
+
+> **Outcome (2026-07-11):** REFUTED. Campaign 0d48130 (colab, commit `537260c`): `kv_slot_rank1_count=0.0` — the KV-chunk injection surface achieved zero rank-1 exact recalls across all probes, refuting H1 (slot equivalence). Logit biasing confirmed as the only working exact-token route (`logit_bias_rank1_count=3.0`, all `rank_logit_bias=1`). The KV-splice ≡ text-prefix parity from S1.3 holds, but the capacity bound (H2) is moot: the slot cannot recall. Evidence: `../experiments_logs/2026-07-11_campaign_0d48130.md`.
 
 ## Problem
 

@@ -2,6 +2,12 @@
 
 Research proposal: ../../research/02-kv-slot-fact-injection.md
 
+## Status
+
+- **Implementation:** `src/oczy/experiments/kv_slot_injection.py` — implemented and tested.
+- **Campaign 0d48130 (2026-07-11):** **REFUTED** (KV-slot injection) — `kv_slot_rank1_count=0.0`; logit biasing confirmed as the working rank-1 mechanism (`logit_bias_rank1_count=3.0`, all rank-1). Evidence: [`campaign log`](../../experiments_logs/2026-07-11_campaign_0d48130.md)
+
+
 ## Objective
 
 Does a text-derived KV chunk — prefilled once, snapshotted, and re-injected into the live sequence via the installed `llama_cpp` 0.3.31 per-sequence KV APIs — reproduce the live text-prefix's exact-token recall at **zero prefix re-encode per turn** on the LFM2.5 hybrid, and where does each steering surface (cvec vs KV slot) hit its information-capacity ceiling?

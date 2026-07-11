@@ -1,6 +1,11 @@
 # Experiment: Correction-to-Competence Benchmark v2 — de-saturating the eval
 Research proposal: ../../research/01-correction-to-competence-benchmark.md
 
+## Status
+
+- **Implementation:** `src/oczy/experiments/correction_competence_v2.py` — implemented and tested.
+- **Campaign 0d48130 (2026-07-11):** **NULL** (behavior-delta transfer) — `v2_behavior_delta_mock=0.0`, `v2_discrimination=0.0`; domain_recall=1.0 but exact_recall=0.0; 5 de-saturation events, no behavior delta. Evidence: [`campaign log`](../../experiments_logs/2026-07-11_campaign_0d48130.md)
+
 ## Objective
 Does a behavior-only v2 scorecard (signed interference-forgetting + separated exact/domain recall + an un-inverted `behavior_delta_per_byte`) produce non-overlapping 95% CIs between variants the current eval scores identically — steering (prefix/logit-bias vs cvec) and consolidation (S vs H)?
 

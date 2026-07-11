@@ -2,7 +2,9 @@
 
 *An agent should predict the correction before it arrives — then let that prediction error, not a keyword, decide what to learn.*
 
-**Status:** PROPOSED | **Thesis anchor:** experiments.txt §6 (world-model-first: predict OUTCOMES, correction = prediction error); supports §4 (learned plasticity) and §10 (mistake immune system) | **Goal anchor:** GOALS.md Goal 3 (upgrade organs from string features to tensor consumers so the metabolism loop closes); relates to Goal 2 (layer-L peek feeds richer hidden) | **Depends on / relates to:** 01-correction-to-competence-benchmark, 05-metabolism-loop-closure (cross-link), 03-layer-l-hidden-extraction (richer input signal)
+**Status:** ACCEPTED-PARTIAL (2026-07-11) | **Thesis anchor:** experiments.txt §6 (world-model-first: predict OUTCOMES, correction = prediction error); supports §4 (learned plasticity) and §10 (mistake immune system) | **Goal anchor:** GOALS.md Goal 3 (upgrade organs from string features to tensor consumers so the metabolism loop closes); relates to Goal 2 (layer-L peek feeds richer hidden) | **Depends on / relates to:** 01-correction-to-competence-benchmark, 05-metabolism-loop-closure (cross-link), 03-layer-l-hidden-extraction (richer input signal)
+
+> **Outcome (2026-07-11):** ACCEPTED-PARTIAL. Campaign 0d48130 (colab, commit `537260c`): **POSITIVE** for marker-free uptake — `marker_free_uptake_gap=1.0` (≥ 0.40 threshold met), `accept_pred_auc_string=1.0`, `accept_pred_auc_hidden=0.8125` (≥ 0.70 threshold met). **NULL** for critic AUC improvement — `critic_auc_delta=0.0` (the hidden-feature critic does not beat the string-feature critic). H1 (predictive) accepted; H2 (behavioral) partially accepted: the world-model modulator recovers marker-free uptake but does not improve correction prediction over string features. Single-run, no cross-seed variance. Evidence: `../experiments_logs/2026-07-11_campaign_0d48130.md`.
 
 ## Problem
 
