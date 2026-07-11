@@ -1,6 +1,6 @@
 # Experiments Logs Ledger — Authoritative Index
 
-**Date:** 2026-07-11 (updated through campaign `0d48130` adjudication, Exp03 `ad77e93` real-driver closure, and R18 5-seed diagnostic clarification)
+**Date:** 2026-07-11 (updated through campaign `0d48130` adjudication, Exp03 `ad77e93` real-driver closure, R18 5-seed diagnostic clarification, and R18 5-seed diagnostic adjudication)
 **Purpose:** This ledger classifies every experiment log against three
 invalidation events:
 
@@ -101,15 +101,16 @@ these are the numbers all future work must beat. The 13.5x drift claim
 | 2026-07-02 | `2026-07-02_s3_m2_retrieval_ablation.md` | VALID | S3.M2 additive retrieval ablation (HF driver, eval v2 holdout, 3 seeds). Scope-slot reranker zero-variance positive (S0 +0.667, S4 +0.250); hippocampus-at-answer Δ=0.000 exactly; DSI unsupported. Post-reranker-fix, post-leakage-removal. | — |
 | 2026-07-03 | `2026-07-03_s3_organ_triage_adjudication.md` | VALID | S3 organ triage adjudication — combines M1+M2 into KEEP/RETRIEVAL-BASELINE/ARCHIVE verdicts. ScopeSlotReranker=RETRIEVAL-BASELINE; all other organs=ARCHIVE. research/15 declared VACUOUS. No reranker, leakage, or gameable metric. | — |
 | 2026-07-03 | `2026-07-03_eval_v2_1_expansion.md` | VALID | Eval v2→v2.1 curriculum expansion (S0.6 growth path). +12 new ambiguous words across stages 0/1/2; stage-1 holdout 1→9 probes. Existing episodes/probes never modified. Regression locks updated. No reranker, leakage, or gameable metric. | — |
-| 2026-07-11 | `2026-07-11_campaign_0d48130.md` | VALID | **Campaign 0d48130 curated evidence log.** 10 experiment outcomes across 3 commits and 2 providers (kaggle CPU-only, colab). Scientific outcomes: 3 POSITIVE (Exp04, Exp06, R18 gate), 2 POSITIVE+NULL (Exp07, R18 full PARTIAL), 3 NULL (Exp01, Exp05, R14 M2B metricless), 1 REFUTATION (Exp02), 1 INFRASTRUCTURE BLOCKED (Exp03, original campaign). Exp03 reproducibility closure appended 2026-07-11 (commit `ad77e93`): real-driver rerun exit 0, `layer_l_silhouette_gap=0.10925446726657728` (> +0.10, threshold unchanged) → positive/accept for this single closure; S1.4 not reopened. See the log and `2026-07-11_exp03_real_driver_closure.json`. | — |
+| 2026-07-11 | `2026-07-11_campaign_0d48130.md` | VALID | **Campaign 0d48130 curated evidence log.** 10 experiment outcomes across 3 commits and 2 providers (kaggle CPU-only, colab). Scientific outcomes: 2 POSITIVE (Exp04, Exp06), 1 POSITIVE+NULL (Exp07), 3 NULL (Exp01, Exp05, R14 M2B metricless), 1 REFUTATION (Exp02), 2 BLOCKED at teacher validity gate / diagnostic only (R18 gate, R18 full), 1 INFRASTRUCTURE BLOCKED (Exp03, original campaign). Exp03 reproducibility closure appended 2026-07-11 (commit `ad77e93`): real-driver rerun exit 0, `layer_l_silhouette_gap=0.10925446726657728` (> +0.10, threshold unchanged) → positive/accept for this single closure; S1.4 not reopened. See the log and `2026-07-11_exp03_real_driver_closure.json`. | — |
 | 2026-07-11 | `2026-07-11_exp03_real_driver_closure.json` | VALID | **Exp03 real-driver reproducibility closure.** Durable execution report object: commit `ad77e93`, `--driver real`, Colab, exit 0, `layer_l_silhouette_gap=0.10925446726657728` (> +0.10 registered threshold, unchanged), all ASI scores, model provenance (`LiquidAI/LFM2.5-1.2B-Instruct` rev `868df74d…`, manifest `infrastructure/kaggle/model_manifests/lfm2_5-1_2b-instruct.json`), infrastructure fix description. Single run on one architecture; does not reopen S1.4. | — |
-| 2026-07-11 | `2026-07-11_live_runner_queue.json` | VALID | **Live runner queue launch provenance.** Durable record of the now-active live experiment queue at implementation commit `5b5e93c63d769fea7854073a4e6c359e5d36606f`. Records UTC launch date, live local state paths under `/tmp/oczy-live-queue/` (batch, state, campaign, campaign_manifest — explicitly labeled as non-tracked live local state), scheduler flags (`--watch-batch --watch-interval 30`), additive provider capacity contract (10 Kaggle hard-cap + AIMD-learned Colab X, no global cap), source dataset/archive provenance (`abdellahkadem/oczy-source-5b5e93c63d76`, sha256 `bc1ff926…`), and the first job `r18-distillation-5seed-diagnostic` (Kaggle, kernel `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, module `oczy.experiments.consolidation_distillation`, args `--seeds 5 --max-steps 10 --stage stage_0_grounding`, state=running). Job is **diagnostic** unless unchanged `teacher_dev_delta >= 0.2` gate passes. **No completion metrics claimed** — the job is still running at record time. This file is launch provenance only, not experiment outcomes. | — |
+| 2026-07-11 | `2026-07-11_live_runner_queue.json` | VALID | **Live runner queue launch provenance and completion record.** Durable record of the live experiment queue at implementation commit `5b5e93c63d769fea7854073a4e6c359e5d36606f`. Records UTC launch date, live local state paths under `/tmp/oczy-live-queue/` (batch, state, campaign, campaign_manifest — explicitly labeled as non-tracked live local state), scheduler flags (`--watch-batch --watch-interval 30`), additive provider capacity contract (10 Kaggle hard-cap + AIMD-learned Colab X, no global cap), source dataset/archive provenance (`abdellahkadem/oczy-source-5b5e93c63d76`, sha256 `bc1ff926…`), and the first job `r18-distillation-5seed-diagnostic` (Kaggle, kernel `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, module `oczy.experiments.consolidation_distillation`, args `--seeds 5 --max-steps 10 --stage stage_0_grounding`). **Job completed** (exit 0, state=succeeded, completed 2026-07-11T15:04:52Z, collected 2026-07-11T15:04:54Z). Scientific classification: **BLOCKED** at teacher validity gate (`teacher_dev_delta=0.17647058823529413` < 0.2, identical across all 5 seeds). No positive scientific verdict claimed. Full adjudication in `2026-07-11_r18_five_seed_diagnostic.json`. | — |
+| 2026-07-11 | `2026-07-11_r18_five_seed_diagnostic.json` | VALID | **R18 5-seed diagnostic adjudication.** Durable execution/adjudication JSON: commit `5b5e93c63d769fea7854073a4e6c359e5d36606f`, Kaggle CPU, kernel `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, exit 0, 5 seeds. Per-seed `distill_delta_holdout` {0.3333, 0.3333, 0.0, 0.3333, 0.3333} (4/5 positive, seed 2 null); `teacher_dev_delta=0.17647058823529413` identical across all seeds. Mean `distill_delta_holdout=0.2667`, mean `specificity_delta=0.0261`. Gate comparison: `0.1765 < 0.2` → FAILED. Scientific classification: **BLOCKED** at teacher validity gate / diagnostic only. No H-DISTILL verdict permitted (teacher gate failed after registered fallback). 4/5 conditional signal and seed-2 null both visible. No threshold, metric, or research spec changed. | — |
 
 ## Summary
 
 | Classification | Count |
 |----------------|-------|
-| VALID | 57 |
+| VALID | 58 |
 | PARTIAL | 9 |
 | INVALIDATED (pure) | 0 |
 | SUPERSEDED (pure) | 0 |
@@ -175,8 +176,8 @@ CPU-only contract (cuda_available=false, torch 2.10.0+cpu).
 | Exp05 | NULL (metabolism drift) | `metabolism_drift_delta=0.0` |
 | Exp06 | POSITIVE (bounded growth) | `bounded_growth_m1_ratio=0.002079` (5 seeds, zero variance) |
 | Exp07 | POSITIVE (marker-free uptake) + NULL (critic AUC) | `marker_free_uptake_gap=1.0`, `critic_auc_delta=0.0` |
-| R18 gate | POSITIVE (gate passed) | `distill_delta_holdout=0.3333` (1 seed) |
-| R18 full | PARTIAL (2/3 seeds positive, 1/3 null); 5-seed `stage_0` rerun diagnostic unless `teacher_dev_delta` ≥ 0.2 gate passes (currently 0.1765) | `distill_delta_holdout` mean=0.2222 (3 seeds) |
+| R18 gate | BLOCKED at teacher validity gate / diagnostic only (`teacher_dev_delta=0.1765` < 0.2) | `distill_delta_holdout=0.3333` (1 seed) |
+| R18 full | BLOCKED at teacher validity gate / diagnostic only (3-seed: 2/3 positive, 1/3 null; 5-seed `stage_0` rerun `teacher_dev_delta=0.1765` < 0.2, all 5 seeds identical; 4/5 positive holdout deltas, seed 2 null; no H-DISTILL verdict) | `distill_delta_holdout` mean=0.2222 (3 seeds), 0.2667 (5 seeds) |
 | R14 M2B | NULL (metricless completed run) | 3 seeds, exit 0, no `METRIC`/`ASI` values |
 
 **Non-scientific outcomes:**
@@ -191,15 +192,23 @@ bytes_per_delta spread ≤20 B across all agents. R18 full — 3 seeds:
 `persistent_bytes` identical across seeds. Colab experiments (01/02/04/05/07)
 are single-run with no cross-seed variance data.
 
-**R18 5-seed diagnostic note:** The 3-seed `stage_0` run is PARTIAL.
-`teacher_dev_delta=0.1765` is below the ≥ 0.2 validity gate, so a 5-seed
-`stage_0` rerun is **diagnostic** unless that unchanged gate passes. No
-threshold changes.
+**R18 5-seed diagnostic adjudication:** The 5-seed `stage_0` rerun completed
+(exit 0, Kaggle CPU, kernel `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`).
+`teacher_dev_delta=0.17647058823529413` is identical across all 5 seeds and
+remains below the ≥ 0.2 validity gate. Scientific classification: **BLOCKED**
+at teacher validity gate / diagnostic only. 4/5 seeds show positive
+`distill_delta_holdout=0.3333`; seed 2 is null (0.0). Mean
+`distill_delta_holdout=0.2667`, mean `specificity_delta=0.0261`. No H-DISTILL
+verdict is permitted because the teacher gate failed after registered fallback.
+No threshold changes. Durable record:
+`2026-07-11_r18_five_seed_diagnostic.json`.
 
 Source: `2026-07-11_campaign_0d48130.md` (adjudicated from
-`/tmp/oczy-campaign-0d48130/` execution summaries) and
+`/tmp/oczy-campaign-0d48130/` execution summaries),
 `2026-07-11_exp03_real_driver_closure.json` (ad77e93 real-driver closure,
-from `/tmp/oczy-exp03-real-run-v2/`). No threshold changes or
+from `/tmp/oczy-exp03-real-run-v2/`), and
+`2026-07-11_r18_five_seed_diagnostic.json` (5-seed diagnostic adjudication,
+from `/tmp/oczy-live-queue/` live state). No threshold changes or
 causal claims beyond measured metrics.
 
 ## Notes (conceptual, non-log)

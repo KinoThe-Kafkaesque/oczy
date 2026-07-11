@@ -1,0 +1,195 @@
+{
+  "schema_version": "oczy/execution-report/v1",
+  "record_type": "r18_five_seed_diagnostic_adjudication",
+  "adjudication_date": "2026-07-11",
+  "job_name": "r18-distillation-5seed-diagnostic",
+  "module": "oczy.experiments.consolidation_distillation",
+  "provider": "kaggle",
+  "profile": "cpu",
+  "source_commit": "5b5e93c63d769fea7854073a4e6c359e5d36606f",
+  "source_repo": "https://github.com/KinoThe-Kafkaesque/oczy.git",
+  "command": ["/usr/bin/python3", "-m", "oczy.experiments.consolidation_distillation", "--seeds", "5", "--max-steps", "10", "--stage", "stage_0_grounding"],
+  "arguments": ["--seeds", "5", "--max-steps", "10", "--stage", "stage_0_grounding"],
+  "status": "complete",
+  "exit_code": 0,
+  "error": null,
+  "started_utc": "2026-07-11T14:03:13Z",
+  "finished_utc": "2026-07-11T15:04:37Z",
+  "timeout_seconds": null,
+
+  "kernel": {
+    "kernel_id": "abdellahkadem/oczy-r18-5seed-5b5e93c63d76",
+    "kernel_title": "Oczy R18 5seed 5b5e93c63d76",
+    "source_dataset": "abdellahkadem/oczy-source-5b5e93c63d76",
+    "source_archive_sha256": "bc1ff926bc679fc26e5f20cfcb0756339b002ff3c1027eb3c24251fe2f6d7f72"
+  },
+
+  "hardware": {
+    "platform": "Linux-6.12.90+-x86_64-with-glibc2.35",
+    "python": "3.12.13",
+    "torch": "2.10.0+cpu",
+    "cuda_available": false,
+    "cuda_device_count": 0,
+    "torch_cuda_version": null
+  },
+
+  "cpu_only_contract": {
+    "cuda_available": false,
+    "cuda_visible_devices": "",
+    "hf_hub_offline": "1",
+    "mkl_num_threads": "4",
+    "oczy_remote_cpu_only": "1",
+    "omp_num_threads": "4",
+    "transformers_offline": "1"
+  },
+
+  "model_artifact": {
+    "kind": "kaggle_attached_dataset",
+    "model_source": "qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
+    "hf_model_dir": "/kaggle/input/models/qwen-lm/qwen2.5/transformers/0.5b-instruct/1"
+  },
+
+  "lora_config": {
+    "lora_alpha": 16.0,
+    "lora_lr": 0.005,
+    "lora_rank": 8.0,
+    "max_steps": 10,
+    "svd_target": 0.01,
+    "stage": "stage_0_grounding",
+    "seeds": 5
+  },
+
+  "aggregate_metrics": {
+    "distill_delta_holdout": 0.26666666666666666,
+    "distill_specificity_delta": 0.02608695652173913,
+    "positive_holdout_delta_count": 4,
+    "null_holdout_delta_count": 1,
+    "null_seeds": [2],
+    "positive_seeds": [0, 1, 3, 4]
+  },
+
+  "per_seed_metrics": [
+    {
+      "seed": 0,
+      "distill_delta_holdout": 0.3333333333333333,
+      "vanilla_holdout_acc": 0.0,
+      "lora_holdout_acc": 0.3333333333333333,
+      "teacher_dev_delta": 0.17647058823529413,
+      "specificity_delta": 0.0,
+      "persistent_bytes": 17699231,
+      "wall_s": 730.4152231329999,
+      "holdout_delta_positive": true
+    },
+    {
+      "seed": 1,
+      "distill_delta_holdout": 0.3333333333333333,
+      "vanilla_holdout_acc": 0.0,
+      "lora_holdout_acc": 0.3333333333333333,
+      "teacher_dev_delta": 0.17647058823529413,
+      "specificity_delta": 0.0,
+      "persistent_bytes": 17699329,
+      "wall_s": 728.6607881289999,
+      "holdout_delta_positive": true
+    },
+    {
+      "seed": 2,
+      "distill_delta_holdout": 0.0,
+      "vanilla_holdout_acc": 0.0,
+      "lora_holdout_acc": 0.0,
+      "teacher_dev_delta": 0.17647058823529413,
+      "specificity_delta": 0.043478260869565216,
+      "persistent_bytes": 17699397,
+      "wall_s": 728.3512674170001,
+      "holdout_delta_positive": false
+    },
+    {
+      "seed": 3,
+      "distill_delta_holdout": 0.3333333333333333,
+      "vanilla_holdout_acc": 0.0,
+      "lora_holdout_acc": 0.3333333333333333,
+      "teacher_dev_delta": 0.17647058823529413,
+      "specificity_delta": 0.0,
+      "persistent_bytes": 17699383,
+      "wall_s": 727.6332641600002,
+      "holdout_delta_positive": true
+    },
+    {
+      "seed": 4,
+      "distill_delta_holdout": 0.3333333333333333,
+      "vanilla_holdout_acc": 0.0,
+      "lora_holdout_acc": 0.3333333333333333,
+      "teacher_dev_delta": 0.17647058823529413,
+      "specificity_delta": 0.08695652173913043,
+      "persistent_bytes": 17699359,
+      "wall_s": 728.5650060029998,
+      "holdout_delta_positive": true
+    }
+  ],
+
+  "teacher_validity_gate": {
+    "gate_name": "teacher_dev_delta >= 0.2",
+    "registered_threshold": 0.2,
+    "threshold_changed": false,
+    "observed_teacher_dev_delta": 0.17647058823529413,
+    "observed_identical_across_all_seeds": true,
+    "gate_passed": false,
+    "margin_below_gate": 0.023529411764705884,
+    "gate_comparison": "0.17647058823529413 < 0.2 → FAILED"
+  },
+
+  "scientific_classification": {
+    "classification": "BLOCKED",
+    "classification_detail": "BLOCKED at teacher validity gate / diagnostic only",
+    "h_distill_verdict_permitted": false,
+    "h_distill_verdict_reason": "Teacher gate failed after registered fallback. The prior 3-seed stage_0 run produced teacher_dev_delta=0.1765 (below 0.2 gate). The 5-seed rerun was registered as a diagnostic fallback and also produced teacher_dev_delta=0.17647058823529413 across all 5 seeds. No H-DISTILL verdict is permitted because the teacher validity gate did not pass.",
+    "positive_signal_visible": true,
+    "positive_signal_detail": "4 of 5 seeds show positive distill_delta_holdout (0.3333333333333333). This is conditional signal only — it cannot be elevated to a scientific verdict while the teacher gate is failed.",
+    "null_signal_visible": true,
+    "null_signal_detail": "Seed 2 shows distill_delta_holdout=0.0 (null). The seed-2 null is visible alongside the 4/5 positive signal.",
+    "infrastructure_exit_code": 0,
+    "infrastructure_succeeded": true,
+    "infrastructure_vs_scientific_separation": "Infrastructure completed successfully (exit 0, all 5 seeds ran to completion). This is distinct from the scientific classification, which is BLOCKED at the teacher validity gate. Infrastructure success does not imply a positive scientific verdict."
+  },
+
+  "provenance": {
+    "launch_record": "experiments_logs/2026-07-11_live_runner_queue.json",
+    "local_evidence_log": "/tmp/oczy-live-queue/reports/r18-distillation-5seed-diagnostic/oczy-r18-5seed-5b5e93c63d76.log",
+    "local_provenance_json": "/tmp/oczy-live-queue/reports/r18-distillation-5seed-diagnostic/remote_run_provenance.json",
+    "local_state_json": "/tmp/oczy-live-queue/state.json",
+    "scheduler_state": "succeeded",
+    "scheduler_completed_at_epoch": 1783782292.9804573,
+    "scheduler_completed_at_utc": "2026-07-11T15:04:52Z",
+    "scheduler_collected_at_epoch": 1783782294.7386103,
+    "scheduler_collected_at_utc": "2026-07-11T15:04:54Z",
+    "scheduler_submitted_at_epoch": 1783778582.3723054,
+    "scheduler_submitted_at_utc": "2026-07-11T14:03:02Z",
+    "source_manifest": {
+      "archive_sha256": "bc1ff926bc679fc26e5f20cfcb0756339b002ff3c1027eb3c24251fe2f6d7f72",
+      "archive_size_bytes": 1685358,
+      "tracked_file_count": 453,
+      "branch_at_packaging": "autoresearch/session-20260625",
+      "created_utc": "2026-07-11T14:02:03Z",
+      "dataset_id": "abdellahkadem/oczy-source-5b5e93c63d76",
+      "dirty_entry_count": 0,
+      "worktree_dirty_at_packaging": false
+    }
+  },
+
+  "historical_context": {
+    "prior_3seed_run": "The prior 3-seed stage_0 run (Campaign 0d48130, commit 537260c) produced teacher_dev_delta=0.1765 (below the 0.2 gate). It was infrastructure-complete (2/3 seeds showed positive distill_delta_holdout, 1/3 null) but scientifically BLOCKED because teacher_dev_delta=0.1765 < 0.2; the prior PARTIAL label was corrected during adjudication. See experiments_logs/2026-07-11_campaign_0d48130.md.",
+    "registered_fallback": "The 5-seed stage_0 rerun was registered as a diagnostic fallback to check whether the teacher gate would pass with more seeds. It did not: teacher_dev_delta=0.17647058823529413 is identical across all 5 seeds and remains below the 0.2 gate.",
+    "prior_r18_gate_result": "The single-seed R18 gate run (Campaign 0d48130) was infrastructure-complete with distill_delta_holdout=0.3333 but scientifically BLOCKED because teacher_dev_delta=0.1765 < 0.2; the prior gate-passed label was corrected during adjudication. The full experiment requires the teacher validity gate to pass.",
+    "campaign_log": "experiments_logs/2026-07-11_campaign_0d48130.md"
+  },
+
+  "explicit_non_claims": [
+    "No positive scientific verdict is claimed. The classification is BLOCKED at the teacher validity gate.",
+    "The 4/5 positive holdout deltas are conditional signal only and cannot be elevated to an H-DISTILL verdict while the teacher gate is failed.",
+    "The seed-2 null (distill_delta_holdout=0.0) is reported as observed; it is not interpreted as a refutation.",
+    "No threshold, metric, baseline, episode, scoring, eval manifest, or research spec was changed.",
+    "The teacher_dev_delta >= 0.2 gate is unchanged and was not moved to accommodate the observed 0.1765.",
+    "Infrastructure success (exit 0) is distinct from scientific success (gate passed)."
+  ],
+
+  "scope_limit": "Five-seed stage_0_grounding diagnostic run on Kaggle CPU (Qwen2.5-0.5B-Instruct, LoRA rank 8, alpha 16, lr 0.005, max_steps 10). No threshold, metric, baseline, episode, scoring, eval manifest, or research spec was changed. The teacher_dev_delta >= 0.2 validity gate is unchanged."
+}

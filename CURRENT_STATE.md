@@ -216,8 +216,8 @@ recorded as prominently as positives. Not every catalogued project ran.
 | Exp05 metabolism-loop | **NULL** (metabolism drift) | `metabolism_drift_delta=0.0`, `drift_uptake=0.0` | 1 |
 | Exp06 bounded-growth | **POSITIVE** | `bounded_growth_m1_ratio=0.002079`, zero variance | 5 |
 | Exp07 conversation-world-model | **POSITIVE** (marker-free) + **NULL** (critic AUC) | `marker_free_uptake_gap=1.0`, `critic_auc_delta=0.0` | 1 |
-| R18 teacher gate | **POSITIVE** (gate passed) | `distill_delta_holdout=0.3333` | 1 |
-| R18 distillation full | **PARTIAL** (2/3 seeds positive, 1/3 null) | `distill_delta_holdout` mean=0.2222, bimodal {0.3333, 0.3333, 0.0} | 3 |
+| R18 teacher gate | **BLOCKED** (teacher validity gate failed) | `teacher_dev_delta=0.1765` < 0.2 gate; `distill_delta_holdout=0.3333` | 1 |
+| R18 distillation 3-seed | **BLOCKED** (teacher gate failed; diagnostic only) | `distill_delta_holdout` mean=0.2222, bimodal {0.3333, 0.3333, 0.0}; `teacher_dev_delta=0.1765` all seeds | 3 |
 | R14 M2b additive-organs | **NULL (metricless)** | 3 seeds, exit 0, no `METRIC`/`ASI` values | 3 |
 
 Exp03's original campaign run was infrastructure-blocked (HF snapshot
@@ -241,6 +241,35 @@ Evidence: [`experiments_logs/2026-07-11_exp03_real_driver_closure.json`](experim
 (durable execution report); [`experiments_logs/2026-07-11_campaign_0d48130.md`](experiments_logs/2026-07-11_campaign_0d48130.md)
 (original campaign adjudication); adjudication in [`experiments_logs/LEDGER.md`](experiments_logs/LEDGER.md).
 
+### R18 five-seed diagnostic (2026-07-11, commit `5b5e93c`)
+
+A follow-up 5-seed `stage_0` rerun was submitted via the durable live
+watch queue (Kaggle CPU, kernel
+`abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, source commit
+`5b5e93c63d769fea7854073a4e6c359e5d36606f`). **Infrastructure:
+COMPLETE** (exit 0, all metrics collected). **Scientific verdict:
+BLOCKED at the teacher validity gate — diagnostic only.**
+
+The unchanged teacher gate is `teacher_dev_delta ≥ 0.2`. Every seed
+observed `teacher_dev_delta=0.17647058823529413`, which is below the
+0.2 gate. Because the teacher gate failed after registered fallback,
+no H-DISTILL verdict is permitted regardless of the holdout deltas.
+
+Per-seed `distill_delta_holdout`: {0.3333, 0.3333, 0.0, 0.3333,
+0.3333} — 4/5 seeds positive, seed 2 null (preserved). Mean
+`distill_delta_holdout=0.26666666666666666`. Mean
+`specificity_delta=0.02608695652173913`. The 4/5 positive holdout
+deltas are infrastructure-confirmed but scientifically inadmissible
+because the teacher gate failed.
+
+**Next mechanism-level work:** teacher ceiling diagnostics (why is
+`teacher_dev_delta` stuck at 0.1765 across all seeds?),
+prompt-contract diagnostics (is the teacher task prompt contract
+limiting the dev delta?), and trajectory diagnostics (why does seed 2
+produce `distill_delta_holdout=0.0` while the other four produce
+0.3333?). No threshold changes are prescribed; the 0.2 gate is
+unchanged.
+
 ## 5. Current research direction
 
 The July 9 conversation and repository audit produced a dependency-ordered
@@ -249,7 +278,7 @@ the core premise test; Research/21 is conditional on it.
 
 | Order | Work | Role | Current state |
 |---|---|---|---|
-| 1 | [`research/18-consolidation-as-distillation.md`](research/18-consolidation-as-distillation.md) | Plastic-LM-weight comparator: distill transient context into LoRA, delete traces, test survival | **PARTIAL** (Campaign 0d48130): teacher gate passed (1 seed, `distill_delta_holdout=0.3333`); 3-seed full run bimodal {0.3333, 0.3333, 0.0}, mean=0.2222; `teacher_dev_delta=0.1765` < 0.2 gate; 5-seed `stage_0` rerun is diagnostic unless gate passes; no cross-seed claim |
+| 1 | [`research/18-consolidation-as-distillation.md`](research/18-consolidation-as-distillation.md) | Plastic-LM-weight comparator: distill transient context into LoRA, delete traces, test survival | **BLOCKED** (teacher gate failed): 5-seed run complete (exit 0), `teacher_dev_delta=0.1765` < 0.2 gate all seeds; `distill_delta_holdout` mean=0.2667, 4/5 positive (seed 2 null); no H-DISTILL verdict permitted; next work is teacher ceiling, prompt-contract, and trajectory diagnostics; no threshold changes |
 | 2 | [`research/19-lm-as-language-organ.md`](research/19-lm-as-language-organ.md) | Direct diagnostic with matched label-prefix and latent-control articulation arms | Amended 2026-07-09; **unimplemented** |
 | 3 | [`research/20-meta-trained-cortex-frozen-language-organ.md`](research/20-meta-trained-cortex-frozen-language-organ.md) | Core test: meta-learn write/read/consolidate/articulate, then learn an unseen rule online through state only | New specification; **unimplemented**; meta-test blocked on human sign-off |
 | 4 | [`research/21-cortex-routed-frozen-specialist-organs.md`](research/21-cortex-routed-frozen-specialist-organs.md) | Conditional extension: cortex routes between frozen language and action/tool organs using recurrent goal state | New specification; do not start before Research/20 accepts |
@@ -404,16 +433,27 @@ For commit `f48dccc`, the explicitly authorized scoped guard passed with
    not reopened or overturned. **Acceptance met:** durable execution report
    at [`experiments_logs/2026-07-11_exp03_real_driver_closure.json`](experiments_logs/2026-07-11_exp03_real_driver_closure.json);
    S1.4 is not reopened.
-4. **R18: extend to ≥5 seeds and diagnose LoRA uptake variance.** The
-   3-seed run is **PARTIAL**: bimodal {0.3333, 0.3333, 0.0}; 1/3 seeds
-   show no distillation signal. A 5-seed `stage_0` rerun is
-   **diagnostic** unless the unchanged `teacher_dev_delta` ≥ 0.2
-   validity gate passes — currently `teacher_dev_delta=0.1765` < 0.2,
-   so the gate is not met and the rerun remains diagnostic, not
-   confirmatory. Extend to ≥5 seeds without changing thresholds.
-   Diagnose why seed 2 produced `distill_delta_holdout=0.0` while seeds 0–1
-   produced 0.3333. **Acceptance:** ≥5-seed mean ± std in a dated log; a
-   written mechanism hypothesis for the null seed; no threshold change.
+4. **R18 five-seed diagnostic — COMPLETE (2026-07-11); scientifically
+   BLOCKED at teacher gate.** The 5-seed `stage_0` rerun (Kaggle CPU,
+   kernel `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, source commit
+   `5b5e93c63d769fea7854073a4e6c359e5d36606f`) completed with exit 0.
+   All metrics collected. **Scientific verdict: BLOCKED — diagnostic
+   only.** The unchanged teacher gate (`teacher_dev_delta ≥ 0.2`)
+   failed: every seed observed `teacher_dev_delta=0.17647058823529413`
+   < 0.2. No H-DISTILL verdict is permitted because the teacher gate
+   failed after registered fallback. Per-seed
+   `distill_delta_holdout`: {0.3333, 0.3333, 0.0, 0.3333, 0.3333} —
+   4/5 positive, seed 2 null (preserved). Mean
+   `distill_delta_holdout=0.26666666666666666`; mean
+   `specificity_delta=0.02608695652173913`. The 4/5 positive holdout
+   deltas are infrastructure-confirmed but scientifically inadmissible.
+   **Next mechanism-level work:** teacher ceiling diagnostics (why is
+   `teacher_dev_delta` stuck at 0.1765?), prompt-contract diagnostics
+   (is the teacher task prompt contract limiting the dev delta?), and
+   trajectory diagnostics (why does seed 2 produce 0.0?). No threshold
+   changes prescribed; the 0.2 gate is unchanged. **Acceptance met:**
+   5-seed run complete with per-seed values; null seed 2 preserved;
+   no threshold change.
 5. **S4.1: complete honest reruns.** Re-run every June 26–29 result that
    depended on the broken scope-slot reranker or leakage-era paths on eval
    v2. **Acceptance:** every INVALIDATED/SUPERSEDED ledger row points to a
@@ -495,33 +535,40 @@ If and only if Research/20 accepts:
   `METRIC`/`ASI` values). It cannot retroactively turn an archived organ
   into evidence for the learned-cortex premise; re-run only if it answers a
   still-relevant question.
-- **Durable live watch queue — ACTIVE (2026-07-11).** Watch mode for
-  `parallel_scheduler.py` is **implemented and tested**: atomically reload
-  a changed batch, merge only unseen job names as pending, never mutate
-  existing job definitions or states, retry malformed reloads without
-  killing the daemon, and stay alive waiting for future jobs. Existing
-  non-watch behavior remains terminating and backward compatible. The
-  queue setup action is **complete**; the experiment result is **pending**.
-  Live queue paths:
-  batch `/tmp/oczy-live-queue/batch.json`,
-  state `/tmp/oczy-live-queue/state.json`,
-  campaign `/tmp/oczy-live-queue-campaign.json`.
-  Source commit: `5b5e93c63d769fea7854073a4e6c359e5d36606f`.
-  Capacity is **additive: 10 Kaggle + learned Colab X** (same defaults as
-  the scheduler upgrade above). The background scheduler runs with
-  `--watch-batch --watch-interval 30`.
-  **First running job:** `r18-distillation-5seed-diagnostic` (Kaggle,
-  kernel `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, pinned source
-  dataset `abdellahkadem/oczy-source-5b5e93c63d76`, source archive
-  sha256
+- **Durable live watch queue — ACTIVE (2026-07-11); first job
+  COMPLETE.** Watch mode for `parallel_scheduler.py` is
+  **implemented and tested**: atomically reload a changed batch,
+  merge only unseen job names as pending, never mutate existing job
+  definitions or states, retry malformed reloads without killing the
+  daemon, and stay alive waiting for future jobs. Existing non-watch
+  behavior remains terminating and backward compatible. The queue
+  setup action is **complete**; the first experiment result is
+  **complete and adjudicated**. Live queue paths: batch
+  `/tmp/oczy-live-queue/batch.json`, state
+  `/tmp/oczy-live-queue/state.json`, campaign
+  `/tmp/oczy-live-queue-campaign.json`. Source commit:
+  `5b5e93c63d769fea7854073a4e6c359e5d36606f`. Capacity is
+  **additive: 10 Kaggle + learned Colab X** (same defaults as the
+  scheduler upgrade above). The background scheduler runs with
+  `--watch-batch --watch-interval 30`. **First job:**
+  `r18-distillation-5seed-diagnostic` (Kaggle, kernel
+  `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, pinned source dataset
+  `abdellahkadem/oczy-source-5b5e93c63d76`, source archive sha256
   `bc1ff926bc679fc26e5f20cfcb0756339b002ff3c1027eb3c24251fe2f6d7f72`,
   module `oczy.experiments.consolidation_distillation`, args
-  `--seeds 5 --max-steps 10 --stage stage_0_grounding`). State is
-  `running` — the job is merely running, **not** completed or successful.
-  The R18 job is **diagnostic** unless the unchanged
-  `teacher_dev_delta` ≥ 0.2 validity gate passes (currently 0.1765 < 0.2,
-  so the gate is not met). No threshold, metric, or eval change is
-  implied. The Research/20 meta-test sign-off prohibition is unchanged.
+  `--seeds 5 --max-steps 10 --stage stage_0_grounding`).
+  **Infrastructure: COMPLETE** (exit 0, all metrics collected).
+  **Scientific verdict: BLOCKED at the teacher validity gate —
+  diagnostic only.** The unchanged teacher gate
+  (`teacher_dev_delta ≥ 0.2`) failed: every seed observed
+  `teacher_dev_delta=0.17647058823529413` < 0.2. No H-DISTILL
+  verdict is permitted because the teacher gate failed after
+  registered fallback. Per-seed `distill_delta_holdout`: {0.3333,
+  0.3333, 0.0, 0.3333, 0.3333} — 4/5 positive, seed 2 null
+  (preserved). Mean `distill_delta_holdout=0.26666666666666666`;
+  mean `specificity_delta=0.02608695652173913`. No threshold,
+  metric, or eval change is implied. The Research/20 meta-test
+  sign-off prohibition is unchanged.
 
 ### P5 — Expand an eval only by the governance path
 
