@@ -1795,6 +1795,18 @@ class TestColabSentinelParsing:
     by the current Colab provider.  Instead, the runner emits a sentinel
     line ``OCZY_EXECUTION_REPORT_JSON=<compact-json>`` in stdout.log.  The
     collector parses this sentinel to recover the structured report.
+
+    Resolution order (after the sentinel-priority fix):
+    1. ``execution_report.json`` — if the provider downloads it (primary).
+    2. ``OCZY_EXECUTION_REPORT_JSON`` sentinel in ``stdout.log`` — full
+       structured runner report; a valid sentinel outranks result.json.
+    3. ``result.json`` — provider fallback, used only when no stdout.log
+       exists at all.
+
+    If stdout.log exists but the sentinel is missing, multiple, or corrupt,
+    ``SentinelError`` is raised → INVALID, even if a valid result.json is
+    also present.  Provenance mismatches in an otherwise-valid sentinel
+    also remain INVALID.
     """
 
     def _make_colab_output(
@@ -1802,16 +1814,17 @@ class TestColabSentinelParsing:
         base: Path,
         job_name: str,
         *,
-        stdout_lines: list[str],
+        stdout_lines: list[str] | None = None,
         result_json: dict[str, Any] | None = None,
     ) -> Path:
-        """Create a Colab job output dir with stdout.log and optional result.json."""
+        """Create a Colab job output dir with optional stdout.log and result.json."""
         out = base / job_name
         out.mkdir(parents=True, exist_ok=True)
-        (out / _COLAB_STDOUT_LOG).write_text(
-            "".join(line if line.endswith("\n") else line + "\n" for line in stdout_lines),
-            encoding="utf-8",
-        )
+        if stdout_lines is not None:
+            (out / _COLAB_STDOUT_LOG).write_text(
+                "".join(line if line.endswith("\n") else line + "\n" for line in stdout_lines),
+                encoding="utf-8",
+            )
         if result_json is not None:
             (out / COLAB_RESULT_FILENAME).write_text(
                 json.dumps(result_json), encoding="utf-8"
@@ -1820,6 +1833,57 @@ class TestColabSentinelParsing:
 
     def _sentinel_line(self, report: dict[str, Any]) -> str:
         return _COLAB_SENTINEL_PREFIX + json.dumps(report, separators=(",", ":"))
+
+    def _valid_result_json(
+        self, *, job_name: str = "cb-0", metrics: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """A result.json with valid provenance for the fallback path."""
+        return {
+            "ok": True,
+            "error": None,
+            "exit_code": 0,
+            "status": "complete",
+            "job_name": job_name,
+            "source_commit": COMMIT,
+            "module": "infrastructure.kaggle.run_cortex_smoke",
+            "arguments": [],
+            "command": [],
+            "started_utc": "2026-07-11T00:00:00Z",
+            "finished_utc": "2026-07-11T00:01:00Z",
+            "metrics": metrics if metrics is not None else {"loss": 0.4},
+            "asi_scores": {},
+        }
+
+    def _collect_colab(
+        self, tmp_path: Path, *, claim_class: str = "scientific"
+    ) -> dict[str, Any]:
+        """Run collect_experiment_campaign for a single Colab cb-0 job."""
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(
+                name="cb-0", provider=PROVIDER_COLAB, claim_class=claim_class
+            ),
+        ])
+        campaign_path = _write_campaign(tmp_path, campaign)
+        gen_dir = tmp_path / "generated"
+        result = prepare_experiment_campaign(campaign_path, gen_dir)
+        return collect_experiment_campaign(
+            campaign_path,
+            result["batch_path"],
+            tmp_path / "state.json",
+            tmp_path / "collected",
+            report_dir=tmp_path / "reports",
+        )
+
+    @staticmethod
+    def _job(summary: dict[str, Any], name: str = "cb-0") -> dict[str, Any]:
+        for job in summary["jobs"]:
+            if job["name"] == name:
+                return job
+        raise KeyError(name)
+
+    # ------------------------------------------------------------------
+    # Valid sentinel parsed from stdout.log
+    # ------------------------------------------------------------------
 
     def test_sentinel_parsed_from_stdout_log(self, tmp_path: Path) -> None:
         """A valid sentinel line in stdout.log is parsed into a report dict."""
@@ -1836,44 +1900,76 @@ class TestColabSentinelParsing:
                 self._sentinel_line(report),
             ],
         )
-        # The collector should find and parse the sentinel.
-        # We test via collect_experiment_campaign with a Colab campaign.
-        campaign = _valid_campaign(jobs=[
-            _valid_campaign_job(name="cb-0", provider=PROVIDER_COLAB, claim_class="scientific"),
-        ])
-        campaign_path = _write_campaign(tmp_path, campaign)
-        gen_dir = tmp_path / "generated"
-        result = prepare_experiment_campaign(campaign_path, gen_dir)
-        summary = collect_experiment_campaign(
-            campaign_path,
-            result["batch_path"],
-            tmp_path / "state.json",
-            tmp_path / "collected",
-            report_dir=tmp_path / "reports",
-        )
-        assert isinstance(summary, dict)
+        summary = self._collect_colab(tmp_path)
+        job = self._job(summary)
+        assert job["classification"] == "COMPLETE"
+        assert job["report_source"] == "stdout_sentinel"
+        assert job["metrics"] == {"loss": 0.5}
 
-    def test_missing_sentinel_is_invalid(self, tmp_path: Path) -> None:
-        """A stdout.log with no sentinel line is classified INVALID."""
+    # ------------------------------------------------------------------
+    # Sentinel outranks result.json
+    # ------------------------------------------------------------------
+
+    def test_sentinel_outranks_result_json(self, tmp_path: Path) -> None:
+        """When both a valid sentinel and result.json exist, the sentinel wins.
+
+        The sentinel carries the full structured runner report (commit,
+        provider, job_name, metrics) and must outrank the provider
+        result.json fallback, which only has provider-level metadata.
+        """
+        report_sentinel = _make_report(
+            job_name="cb-0",
+            provider=PROVIDER_COLAB,
+            metrics={"from_sentinel": 1},
+        )
+        result_json = self._valid_result_json(metrics={"from_result": 2})
         self._make_colab_output(
             tmp_path / "reports",
             "cb-0",
-            stdout_lines=["just some output\n", "no sentinel here\n"],
+            stdout_lines=[self._sentinel_line(report_sentinel)],
+            result_json=result_json,
         )
-        campaign = _valid_campaign(jobs=[
-            _valid_campaign_job(name="cb-0", provider=PROVIDER_COLAB, claim_class="scientific"),
-        ])
-        campaign_path = _write_campaign(tmp_path, campaign)
-        gen_dir = tmp_path / "generated"
-        result = prepare_experiment_campaign(campaign_path, gen_dir)
-        summary = collect_experiment_campaign(
-            campaign_path,
-            result["batch_path"],
-            tmp_path / "state.json",
-            tmp_path / "collected",
-            report_dir=tmp_path / "reports",
+        summary = self._collect_colab(tmp_path)
+        job = self._job(summary)
+        assert job["classification"] == "COMPLETE"
+        assert job["report_source"] == "stdout_sentinel"
+        assert job["metrics"] == {"from_sentinel": 1}
+
+    # ------------------------------------------------------------------
+    # Corrupt / multiple / missing sentinel stays INVALID despite result.json
+    # ------------------------------------------------------------------
+
+    def test_corrupt_sentinel_is_invalid(self, tmp_path: Path) -> None:
+        """A sentinel line with non-JSON payload is INVALID."""
+        self._make_colab_output(
+            tmp_path / "reports",
+            "cb-0",
+            stdout_lines=[
+                "OCZY_EXECUTION_REPORT_JSON=not-json-at-all\n",
+            ],
         )
-        assert isinstance(summary, dict)
+        summary = self._collect_colab(tmp_path)
+        job = self._job(summary)
+        assert job["classification"] == "INVALID"
+        assert "sentinel_error" in job
+
+    def test_corrupt_sentinel_with_result_json_stays_invalid(self, tmp_path: Path) -> None:
+        """A corrupt sentinel stays INVALID even when a valid result.json exists.
+
+        stdout.log exists → sentinel extraction attempted → corrupt →
+        SentinelError.  The result.json fallback must NOT be reached.
+        """
+        self._make_colab_output(
+            tmp_path / "reports",
+            "cb-0",
+            stdout_lines=["OCZY_EXECUTION_REPORT_JSON=not-json-at-all\n"],
+            result_json=self._valid_result_json(),
+        )
+        summary = self._collect_colab(tmp_path)
+        job = self._job(summary)
+        assert job["classification"] == "INVALID"
+        assert "sentinel_error" in job
+        assert job["report_source"] == "missing"
 
     def test_multiple_sentinels_is_invalid(self, tmp_path: Path) -> None:
         """Two sentinel lines in stdout.log is ambiguous → INVALID."""
@@ -1887,71 +1983,95 @@ class TestColabSentinelParsing:
                 self._sentinel_line(report2),
             ],
         )
-        campaign = _valid_campaign(jobs=[
-            _valid_campaign_job(name="cb-0", provider=PROVIDER_COLAB, claim_class="scientific"),
-        ])
-        campaign_path = _write_campaign(tmp_path, campaign)
-        gen_dir = tmp_path / "generated"
-        result = prepare_experiment_campaign(campaign_path, gen_dir)
-        summary = collect_experiment_campaign(
-            campaign_path,
-            result["batch_path"],
-            tmp_path / "state.json",
-            tmp_path / "collected",
-            report_dir=tmp_path / "reports",
-        )
-        assert isinstance(summary, dict)
+        summary = self._collect_colab(tmp_path)
+        job = self._job(summary)
+        assert job["classification"] == "INVALID"
+        assert "sentinel_error" in job
 
-    def test_corrupt_sentinel_is_invalid(self, tmp_path: Path) -> None:
-        """A sentinel line with non-JSON payload is INVALID."""
+    def test_multiple_sentinels_with_result_json_stays_invalid(self, tmp_path: Path) -> None:
+        """Multiple sentinels stay INVALID even when a valid result.json exists."""
+        report1 = _make_report(job_name="cb-0", provider=PROVIDER_COLAB, metrics={"a": 1})
+        report2 = _make_report(job_name="cb-0", provider=PROVIDER_COLAB, metrics={"a": 2})
         self._make_colab_output(
             tmp_path / "reports",
             "cb-0",
             stdout_lines=[
-                "OCZY_EXECUTION_REPORT_JSON=not-json-at-all\n",
+                self._sentinel_line(report1),
+                self._sentinel_line(report2),
             ],
+            result_json=self._valid_result_json(),
         )
-        campaign = _valid_campaign(jobs=[
-            _valid_campaign_job(name="cb-0", provider=PROVIDER_COLAB, claim_class="scientific"),
-        ])
-        campaign_path = _write_campaign(tmp_path, campaign)
-        gen_dir = tmp_path / "generated"
-        result = prepare_experiment_campaign(campaign_path, gen_dir)
-        summary = collect_experiment_campaign(
-            campaign_path,
-            result["batch_path"],
-            tmp_path / "state.json",
-            tmp_path / "collected",
-            report_dir=tmp_path / "reports",
-        )
-        assert isinstance(summary, dict)
+        summary = self._collect_colab(tmp_path)
+        job = self._job(summary)
+        assert job["classification"] == "INVALID"
+        assert "sentinel_error" in job
+        assert job["report_source"] == "missing"
 
-    def test_result_json_takes_priority_over_sentinel(self, tmp_path: Path) -> None:
-        """When result.json exists, it is used instead of the sentinel."""
-        report_sentinel = _make_report(
-            job_name="cb-0", provider=PROVIDER_COLAB, metrics={"from_sentinel": 1}
-        )
-        result_json = {"ok": True, "error": None}
+    def test_missing_sentinel_is_invalid(self, tmp_path: Path) -> None:
+        """A stdout.log with no sentinel line is classified INVALID."""
         self._make_colab_output(
             tmp_path / "reports",
             "cb-0",
-            stdout_lines=[self._sentinel_line(report_sentinel)],
+            stdout_lines=["just some output\n", "no sentinel here\n"],
+        )
+        summary = self._collect_colab(tmp_path)
+        job = self._job(summary)
+        assert job["classification"] == "INVALID"
+        assert "sentinel_error" in job
+
+    def test_missing_sentinel_with_result_json_stays_invalid(self, tmp_path: Path) -> None:
+        """A stdout.log with no sentinel stays INVALID even with a valid result.json.
+
+        stdout.log exists → sentinel extraction attempted → no sentinel →
+        SentinelError.  The result.json fallback must NOT be reached.
+        """
+        self._make_colab_output(
+            tmp_path / "reports",
+            "cb-0",
+            stdout_lines=["just some output\n", "no sentinel here\n"],
+            result_json=self._valid_result_json(),
+        )
+        summary = self._collect_colab(tmp_path)
+        job = self._job(summary)
+        assert job["classification"] == "INVALID"
+        assert "sentinel_error" in job
+        assert job["report_source"] == "missing"
+
+    # ------------------------------------------------------------------
+    # result.json fallback works only without stdout.log
+    # ------------------------------------------------------------------
+
+    def test_result_json_fallback_without_stdout_log(self, tmp_path: Path) -> None:
+        """result.json is used as fallback only when no stdout.log exists."""
+        self._make_colab_output(
+            tmp_path / "reports",
+            "cb-0",
+            stdout_lines=None,
+            result_json=self._valid_result_json(metrics={"loss": 0.4}),
+        )
+        summary = self._collect_colab(tmp_path)
+        job = self._job(summary)
+        assert job["classification"] == "COMPLETE"
+        assert job["report_source"] == "result_fallback"
+        assert job["metrics"] == {"loss": 0.4}
+
+    def test_result_json_fallback_provenance_mismatch_is_invalid(self, tmp_path: Path) -> None:
+        """result.json fallback with wrong source_commit is INVALID."""
+        result_json = self._valid_result_json()
+        result_json["source_commit"] = "d" * 40
+        self._make_colab_output(
+            tmp_path / "reports",
+            "cb-0",
+            stdout_lines=None,
             result_json=result_json,
         )
-        campaign = _valid_campaign(jobs=[
-            _valid_campaign_job(name="cb-0", provider=PROVIDER_COLAB, claim_class="infrastructure"),
-        ])
-        campaign_path = _write_campaign(tmp_path, campaign)
-        gen_dir = tmp_path / "generated"
-        result = prepare_experiment_campaign(campaign_path, gen_dir)
-        summary = collect_experiment_campaign(
-            campaign_path,
-            result["batch_path"],
-            tmp_path / "state.json",
-            tmp_path / "collected",
-            report_dir=tmp_path / "reports",
-        )
-        assert isinstance(summary, dict)
+        summary = self._collect_colab(tmp_path)
+        job = self._job(summary)
+        assert job["classification"] == "INVALID"
+
+    # ------------------------------------------------------------------
+    # Sentinel classification: COMPLETE / NULL
+    # ------------------------------------------------------------------
 
     def test_sentinel_with_metrics_classified_complete(self, tmp_path: Path) -> None:
         """A Colab scientific job with metrics in the sentinel is COMPLETE."""
@@ -1967,20 +2087,10 @@ class TestColabSentinelParsing:
             "cb-0",
             stdout_lines=[self._sentinel_line(report)],
         )
-        campaign = _valid_campaign(jobs=[
-            _valid_campaign_job(name="cb-0", provider=PROVIDER_COLAB, claim_class="scientific"),
-        ])
-        campaign_path = _write_campaign(tmp_path, campaign)
-        gen_dir = tmp_path / "generated"
-        result = prepare_experiment_campaign(campaign_path, gen_dir)
-        summary = collect_experiment_campaign(
-            campaign_path,
-            result["batch_path"],
-            tmp_path / "state.json",
-            tmp_path / "collected",
-            report_dir=tmp_path / "reports",
-        )
-        assert isinstance(summary, dict)
+        summary = self._collect_colab(tmp_path)
+        job = self._job(summary)
+        assert job["classification"] == "COMPLETE"
+        assert job["report_source"] == "stdout_sentinel"
 
     def test_sentinel_no_metrics_scientific_is_null(self, tmp_path: Path) -> None:
         """A Colab scientific job with sentinel but no metrics is NULL."""
@@ -1997,20 +2107,14 @@ class TestColabSentinelParsing:
             "cb-0",
             stdout_lines=[self._sentinel_line(report)],
         )
-        campaign = _valid_campaign(jobs=[
-            _valid_campaign_job(name="cb-0", provider=PROVIDER_COLAB, claim_class="scientific"),
-        ])
-        campaign_path = _write_campaign(tmp_path, campaign)
-        gen_dir = tmp_path / "generated"
-        result = prepare_experiment_campaign(campaign_path, gen_dir)
-        summary = collect_experiment_campaign(
-            campaign_path,
-            result["batch_path"],
-            tmp_path / "state.json",
-            tmp_path / "collected",
-            report_dir=tmp_path / "reports",
-        )
-        assert isinstance(summary, dict)
+        summary = self._collect_colab(tmp_path)
+        job = self._job(summary)
+        assert job["classification"] == "NULL"
+        assert job["report_source"] == "stdout_sentinel"
+
+    # ------------------------------------------------------------------
+    # Provenance mismatch stays INVALID (with and without result.json)
+    # ------------------------------------------------------------------
 
     def test_sentinel_provenance_mismatch_is_invalid(self, tmp_path: Path) -> None:
         """A sentinel with wrong source_commit is INVALID."""
@@ -2025,20 +2129,34 @@ class TestColabSentinelParsing:
             "cb-0",
             stdout_lines=[self._sentinel_line(report)],
         )
-        campaign = _valid_campaign(jobs=[
-            _valid_campaign_job(name="cb-0", provider=PROVIDER_COLAB, claim_class="scientific"),
-        ])
-        campaign_path = _write_campaign(tmp_path, campaign)
-        gen_dir = tmp_path / "generated"
-        result = prepare_experiment_campaign(campaign_path, gen_dir)
-        summary = collect_experiment_campaign(
-            campaign_path,
-            result["batch_path"],
-            tmp_path / "state.json",
-            tmp_path / "collected",
-            report_dir=tmp_path / "reports",
+        summary = self._collect_colab(tmp_path)
+        job = self._job(summary)
+        assert job["classification"] == "INVALID"
+        assert job["report_source"] == "stdout_sentinel"
+
+    def test_sentinel_provenance_mismatch_with_result_json_stays_invalid(self, tmp_path: Path) -> None:
+        """A sentinel with wrong source_commit stays INVALID even with valid result.json.
+
+        The sentinel is parsed first (stdout.log exists), but its
+        source_commit doesn't match the campaign → provenance validation
+        fails → INVALID.  The result.json fallback is NOT reached.
+        """
+        report = _make_report(
+            job_name="cb-0",
+            provider=PROVIDER_COLAB,
+            source_commit="d" * 40,
+            metrics={"loss": 0.5},
         )
-        assert isinstance(summary, dict)
+        self._make_colab_output(
+            tmp_path / "reports",
+            "cb-0",
+            stdout_lines=[self._sentinel_line(report)],
+            result_json=self._valid_result_json(),
+        )
+        summary = self._collect_colab(tmp_path)
+        job = self._job(summary)
+        assert job["classification"] == "INVALID"
+        assert job["report_source"] == "stdout_sentinel"
 
 
 class TestKaggleProvenanceFallback:

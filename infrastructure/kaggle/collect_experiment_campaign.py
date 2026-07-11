@@ -268,35 +268,48 @@ def _adapt_provenance_report(provenance: dict[str, Any]) -> dict[str, Any]:
 def _load_colab_report(output_dir: Path) -> dict[str, Any] | None:
     """Load a Colab execution report from *output_dir*.
 
-    The execution report stays on the remote VM — the current Colab provider
-    does not download ``execution_report.json``.  Instead the runner emits a
-    single-line sentinel ``OCZY_EXECUTION_REPORT_JSON=<compact-json>`` which
-    the provider captures into ``stdout.log``.
+    The execution report normally stays on the remote VM — the current Colab
+    provider does not download ``execution_report.json``.  Instead the runner
+    emits a single-line sentinel ``OCZY_EXECUTION_REPORT_JSON=<compact-json>``
+    which the provider captures into ``stdout.log``.  A valid sentinel carries
+    the full structured report (commit, provider, job_name, metrics) and
+    outranks the provider ``result.json`` fallback, which only records
+    provider-level metadata (exit_code/status) without scientific provenance.
 
     Resolution order:
-    1. ``result.json`` — provider result file (if the provider writes one).
-    2. Sentinel in ``stdout.log``.
+    1. ``execution_report.json`` — if the provider downloads it (primary,
+       symmetric with Kaggle).
+    2. ``OCZY_EXECUTION_REPORT_JSON`` sentinel in ``stdout.log`` — the full
+       structured runner report.  A valid sentinel outranks result.json.
+    3. ``result.json`` — provider result fallback, used only when no stdout
+       sentinel source exists (no stdout.log at all).
 
-    Missing, multiple, or conflicting (unparseable) sentinels raise
-    :class:`SentinelError`, which the caller classifies as INVALID.
+    If ``stdout.log`` exists but the sentinel is missing, multiple, or
+    unparseable, :class:`SentinelError` is raised so the caller classifies the
+    job as INVALID rather than silently trusting the result.json fallback.
     """
-    # Provider result.json (structured provider-level result).
+    # 1. execution_report.json — primary if the provider downloads it.
+    report = _try_load_json(output_dir / DEFAULT_REPORT_FILENAME)
+    if report is not None:
+        return report
+
+    # 2. Sentinel in stdout.log — full structured report, outranks result.json.
+    stdout_path = output_dir / _COLAB_STDOUT_LOG
+    if stdout_path.is_file():
+        try:
+            stdout_text = stdout_path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise SentinelError(f"cannot read stdout.log: {exc}") from exc
+        report = _extract_sentinel_report(stdout_text)
+        report["_source"] = "stdout_sentinel"
+        return report
+
+    # 3. result.json fallback — only when no stdout sentinel source exists.
     result = _try_load_json(output_dir / COLAB_RESULT_FILENAME)
     if result is not None:
         return _adapt_colab_result(result, output_dir)
 
-    # Sentinel in stdout.log.
-    stdout_path = output_dir / _COLAB_STDOUT_LOG
-    if not stdout_path.is_file():
-        return None  # No stdout.log at all → report missing → BLOCKED/INVALID
-    try:
-        stdout_text = stdout_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-
-    report = _extract_sentinel_report(stdout_text)
-    report["_source"] = "stdout_sentinel"
-    return report
+    return None
 
 
 def _adapt_colab_result(result: dict[str, Any], output_dir: Path) -> dict[str, Any]:
