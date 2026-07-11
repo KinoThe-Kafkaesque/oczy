@@ -482,14 +482,35 @@ remains frozen unless an item explicitly calls for the governance path.
    Do not start the multi-organ router until S5.4 accepts. **Acceptance:**
    no work begins until the Research/20 decision gate is passed.
 
-9. **Durable live watch queue (planned, not yet verified).**
-   A watch mode for `parallel_scheduler.py` is planned: atomically reload a
-   changed batch, merge only unseen job names as pending, never mutate
-   existing job definitions or states, retry malformed reloads without
-   killing the daemon, and stay alive waiting for future jobs. Existing
-   non-watch behavior remains terminating and backward compatible.
-   **Acceptance:** watch mode implemented, verified by tests, and merged —
-   pending until then; do not claim it exists yet.
+9. **Durable live watch queue — ACTIVE (2026-07-11).**
+   Watch mode for `parallel_scheduler.py` is **implemented and tested**:
+   atomically reload a changed batch, merge only unseen job names as
+   pending, never mutate existing job definitions or states, retry
+   malformed reloads without killing the daemon, and stay alive waiting
+   for future jobs. Existing non-watch behavior remains terminating and
+   backward compatible. The queue setup action is **complete**; the
+   experiment result is **pending**. Live queue paths: batch
+   `/tmp/oczy-live-queue/batch.json`, state
+   `/tmp/oczy-live-queue/state.json`, campaign
+   `/tmp/oczy-live-queue-campaign.json`. Source commit:
+   `5b5e93c63d769fea7854073a4e6c359e5d36606f`. Capacity is **additive:
+   10 Kaggle + learned Colab X**. The background scheduler runs with
+   `--watch-batch --watch-interval 30`. **First running job:**
+   `r18-distillation-5seed-diagnostic` (Kaggle, kernel
+   `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, pinned source dataset
+   `abdellahkadem/oczy-source-5b5e93c63d76`, source archive sha256
+   `bc1ff926bc679fc26e5f20cfcb0756339b002ff3c1027eb3c24251fe2f6d7f72`,
+   module `oczy.experiments.consolidation_distillation`, args
+   `--seeds 5 --max-steps 10 --stage stage_0_grounding`). State is
+   `running` — the job is merely running, **not** completed or
+   successful. The R18 job is **diagnostic** unless the unchanged
+   `teacher_dev_delta` ≥ 0.2 validity gate passes (currently 0.1765 <
+   0.2, so the gate is not met). No threshold, metric, or eval change
+   is implied. The Research/20 meta-test sign-off prohibition is
+   unchanged. **Acceptance:** watch mode implemented and verified by
+   tests (met); the live queue is active with the first job running;
+   the experiment result remains pending until the job completes and is
+   adjudicated.
 
 Sprint 0 and Sprint 1 can overlap after S0.1–S0.4 land; nothing in Sprints
 2–4 may start before Sprint 0 is fully done.

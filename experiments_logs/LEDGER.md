@@ -103,12 +103,13 @@ these are the numbers all future work must beat. The 13.5x drift claim
 | 2026-07-03 | `2026-07-03_eval_v2_1_expansion.md` | VALID | Eval v2→v2.1 curriculum expansion (S0.6 growth path). +12 new ambiguous words across stages 0/1/2; stage-1 holdout 1→9 probes. Existing episodes/probes never modified. Regression locks updated. No reranker, leakage, or gameable metric. | — |
 | 2026-07-11 | `2026-07-11_campaign_0d48130.md` | VALID | **Campaign 0d48130 curated evidence log.** 10 experiment outcomes across 3 commits and 2 providers (kaggle CPU-only, colab). Scientific outcomes: 3 POSITIVE (Exp04, Exp06, R18 gate), 2 POSITIVE+NULL (Exp07, R18 full PARTIAL), 3 NULL (Exp01, Exp05, R14 M2B metricless), 1 REFUTATION (Exp02), 1 INFRASTRUCTURE BLOCKED (Exp03, original campaign). Exp03 reproducibility closure appended 2026-07-11 (commit `ad77e93`): real-driver rerun exit 0, `layer_l_silhouette_gap=0.10925446726657728` (> +0.10, threshold unchanged) → positive/accept for this single closure; S1.4 not reopened. See the log and `2026-07-11_exp03_real_driver_closure.json`. | — |
 | 2026-07-11 | `2026-07-11_exp03_real_driver_closure.json` | VALID | **Exp03 real-driver reproducibility closure.** Durable execution report object: commit `ad77e93`, `--driver real`, Colab, exit 0, `layer_l_silhouette_gap=0.10925446726657728` (> +0.10 registered threshold, unchanged), all ASI scores, model provenance (`LiquidAI/LFM2.5-1.2B-Instruct` rev `868df74d…`, manifest `infrastructure/kaggle/model_manifests/lfm2_5-1_2b-instruct.json`), infrastructure fix description. Single run on one architecture; does not reopen S1.4. | — |
+| 2026-07-11 | `2026-07-11_live_runner_queue.json` | VALID | **Live runner queue launch provenance.** Durable record of the now-active live experiment queue at implementation commit `5b5e93c63d769fea7854073a4e6c359e5d36606f`. Records UTC launch date, live local state paths under `/tmp/oczy-live-queue/` (batch, state, campaign, campaign_manifest — explicitly labeled as non-tracked live local state), scheduler flags (`--watch-batch --watch-interval 30`), additive provider capacity contract (10 Kaggle hard-cap + AIMD-learned Colab X, no global cap), source dataset/archive provenance (`abdellahkadem/oczy-source-5b5e93c63d76`, sha256 `bc1ff926…`), and the first job `r18-distillation-5seed-diagnostic` (Kaggle, kernel `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, module `oczy.experiments.consolidation_distillation`, args `--seeds 5 --max-steps 10 --stage stage_0_grounding`, state=running). Job is **diagnostic** unless unchanged `teacher_dev_delta >= 0.2` gate passes. **No completion metrics claimed** — the job is still running at record time. This file is launch provenance only, not experiment outcomes. | — |
 
 ## Summary
 
 | Classification | Count |
 |----------------|-------|
-| VALID | 56 |
+| VALID | 57 |
 | PARTIAL | 9 |
 | INVALIDATED (pure) | 0 |
 | SUPERSEDED (pure) | 0 |
