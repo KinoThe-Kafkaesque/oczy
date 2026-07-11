@@ -19,11 +19,11 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import sys
 from typing import Any
 
 import numpy as np
-
 
 # ---------------------------------------------------------------------------
 # Concept battery (matches lanes/lane_03.py)
@@ -154,12 +154,27 @@ def _hf_probe() -> dict[str, float] | None:
 
     from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
 
-    model_name = "LiquidAI/LFM2.5-1.2B-Instruct"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    # Prefer explicit env (set by the Kaggle bootstrap or a local user).
+    # Fall back to the canonical HF hub id only outside remote/offline mode.
+    env_hf_dir = os.environ.get("OCZY_HF_MODEL_DIR")
+    offline = (
+        os.environ.get("OCZY_REMOTE_CPU_ONLY") == "1"
+        or os.environ.get("HF_HUB_OFFLINE") == "1"
+        or os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+    )
+    model_name = env_hf_dir if env_hf_dir else "LiquidAI/LFM2.5-1.2B-Instruct"
+    load_kwargs: dict[str, Any] = {}
+    if offline or env_hf_dir is not None:
+        load_kwargs["local_files_only"] = True
+        load_kwargs["trust_remote_code"] = False
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name, **load_kwargs)
+    assert tokenizer is not None
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.bfloat16,
         output_hidden_states=True,
+        **load_kwargs,
     )
     model.eval()
 

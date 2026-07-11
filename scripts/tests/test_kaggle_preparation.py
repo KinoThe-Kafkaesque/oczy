@@ -1410,6 +1410,433 @@ def test_hf_layer_probe_run_probe_explicit_id_without_offline_allows_network(
 
 
 # ---------------------------------------------------------------------------
+# 8. Bootstrap GGUF/HF artifact discovery, env export, and provenance
+# ---------------------------------------------------------------------------
+
+_GGUF_FILENAME = "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
+
+
+def _generate_minimal_kernel(tmp_path: Path) -> Path:
+    """Generate a minimal CPU development kernel and return its output dir."""
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+    )
+    return output
+
+
+def _exec_bootstrap(
+    output: Path, kaggle_input: Path, monkeypatch: pytest.MonkeyPatch
+) -> dict:
+    """Exec the generated run.py in a controlled namespace.
+
+    Replaces the hardcoded ``/kaggle/input`` path with *kaggle_input* and
+    stubs torch so the source can be exec'd without CUDA initialisation.
+    Env vars touched by the bootstrap are tracked via monkeypatch for cleanup.
+    """
+    import types
+
+    # Pre-register env vars so monkeypatch restores originals at teardown
+    # even when the bootstrap sets them directly via os.environ[...]=...
+    for var in (
+        "CUDA_VISIBLE_DEVICES", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+        "OCZY_REMOTE_CPU_ONLY", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE",
+        "TOKENIZERS_PARALLELISM", "OCZY_MODEL_DIR", "OCZY_MODEL_PATH",
+        "OCZY_HF_MODEL_DIR", "PYTHONPATH",
+    ):
+        monkeypatch.setenv(var, "")
+
+    source = (output / "run.py").read_text(encoding="utf-8")
+    source = source.replace('"/kaggle/input"', repr(str(kaggle_input)))
+    # Stub torch to avoid heavy import / CUDA init.
+    fake_torch = types.ModuleType("torch")
+    fake_torch.__version__ = "0.0.0-fake"
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    namespace: dict = {}
+    exec(compile(source, str(output / "run.py"), "exec"), namespace)
+    return namespace
+
+
+def test_generated_bootstrap_contains_gguf_discovery_and_env_exports(
+    tmp_path: Path,
+) -> None:
+    """The generated run.py must define find_gguf_model/find_hf_model_dir and
+    export OCZY_MODEL_PATH / OCZY_HF_MODEL_DIR."""
+    output = _generate_minimal_kernel(tmp_path)
+    source = (output / "run.py").read_text(encoding="utf-8")
+    assert "def find_gguf_model()" in source
+    assert "def find_hf_model_dir()" in source
+    assert 'os.environ["OCZY_MODEL_PATH"]' in source
+    assert 'os.environ["OCZY_HF_MODEL_DIR"]' in source
+    assert _GGUF_FILENAME in source
+
+
+def test_generated_bootstrap_records_gguf_provenance(tmp_path: Path) -> None:
+    """The provenance report must include gguf_model_path and hf_model_dir."""
+    output = _generate_minimal_kernel(tmp_path)
+    source = (output / "run.py").read_text(encoding="utf-8")
+    assert '"gguf_model_path"' in source
+    assert '"hf_model_dir"' in source
+
+
+def test_bootstrap_find_gguf_model_discovers_unique_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """find_gguf_model returns the resolved path when exactly one GGUF is mounted."""
+    output = _generate_minimal_kernel(tmp_path)
+    kaggle_input = tmp_path / "kaggle-input"
+    dataset = kaggle_input / "lfm-gguf"
+    dataset.mkdir(parents=True)
+    gguf = dataset / _GGUF_FILENAME
+    gguf.write_bytes(b"fake-weights")
+
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    result = ns["find_gguf_model"]()
+    assert result == gguf.resolve()
+
+
+def test_bootstrap_find_gguf_model_rejects_ambiguous_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """find_gguf_model raises RuntimeError when multiple GGUFs are found."""
+    output = _generate_minimal_kernel(tmp_path)
+    kaggle_input = tmp_path / "kaggle-input"
+    ds1 = kaggle_input / "dataset-a"
+    ds1.mkdir(parents=True)
+    (ds1 / _GGUF_FILENAME).write_bytes(b"weights-a")
+    ds2 = kaggle_input / "dataset-b"
+    ds2.mkdir(parents=True)
+    (ds2 / _GGUF_FILENAME).write_bytes(b"weights-b")
+
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    with pytest.raises(RuntimeError, match="expected exactly one"):
+        ns["find_gguf_model"]()
+
+
+def test_bootstrap_find_gguf_model_returns_none_when_no_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """find_gguf_model returns None when no GGUF is mounted."""
+    output = _generate_minimal_kernel(tmp_path)
+    kaggle_input = tmp_path / "kaggle-input"
+    kaggle_input.mkdir(parents=True)
+    (kaggle_input / "empty-dataset").mkdir()
+
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    assert ns["find_gguf_model"]() is None
+
+
+def test_bootstrap_find_hf_model_dir_discovers_unique_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """find_hf_model_dir returns the directory when exactly one valid HF dir is mounted."""
+    output = _generate_minimal_kernel(tmp_path)
+    kaggle_input = tmp_path / "kaggle-input"
+    hf_dir = kaggle_input / "lfm-hf"
+    hf_dir.mkdir(parents=True)
+    (hf_dir / "config.json").write_text(
+        json.dumps({"model_type": "lfm2", "hidden_size": 2048}), encoding="utf-8"
+    )
+    (hf_dir / "model.safetensors").write_bytes(b"weights")
+
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    result = ns["find_hf_model_dir"]()
+    assert result == hf_dir.resolve()
+
+
+def test_bootstrap_find_hf_model_dir_accepts_bin_weights(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """find_hf_model_dir must accept *.bin weight files, not just safetensors."""
+    output = _generate_minimal_kernel(tmp_path)
+    kaggle_input = tmp_path / "kaggle-input"
+    hf_dir = kaggle_input / "lfm-hf-bin"
+    hf_dir.mkdir(parents=True)
+    (hf_dir / "config.json").write_text(
+        json.dumps({"model_type": "lfm2", "hidden_size": 2048}), encoding="utf-8"
+    )
+    (hf_dir / "pytorch_model.bin").write_bytes(b"weights")
+
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    result = ns["find_hf_model_dir"]()
+    assert result == hf_dir.resolve()
+
+
+def test_bootstrap_find_hf_model_dir_rejects_ambiguous_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """find_hf_model_dir raises RuntimeError when multiple HF dirs are found."""
+    output = _generate_minimal_kernel(tmp_path)
+    kaggle_input = tmp_path / "kaggle-input"
+    for name in ("hf-a", "hf-b"):
+        d = kaggle_input / name
+        d.mkdir(parents=True)
+        (d / "config.json").write_text(
+            json.dumps({"model_type": "lfm2", "hidden_size": 2048}), encoding="utf-8"
+        )
+        (d / "model.safetensors").write_bytes(b"weights")
+
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    with pytest.raises(RuntimeError, match="expected zero or one HF model directory"):
+        ns["find_hf_model_dir"]()
+
+
+def test_bootstrap_find_hf_model_dir_returns_none_when_no_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """find_hf_model_dir returns None when no HF directory is mounted."""
+    output = _generate_minimal_kernel(tmp_path)
+    kaggle_input = tmp_path / "kaggle-input"
+    kaggle_input.mkdir(parents=True)
+    (kaggle_input / "empty").mkdir()
+
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    assert ns["find_hf_model_dir"]() is None
+
+
+def test_bootstrap_find_hf_model_dir_ignores_config_without_weights(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """find_hf_model_dir must not match a directory that has config.json but no weight files."""
+    output = _generate_minimal_kernel(tmp_path)
+    kaggle_input = tmp_path / "kaggle-input"
+    d = kaggle_input / "incomplete-hf"
+    d.mkdir(parents=True)
+    (d / "config.json").write_text(
+        json.dumps({"model_type": "lfm2", "hidden_size": 2048}), encoding="utf-8"
+    )
+    # No safetensors or bin file.
+
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    assert ns["find_hf_model_dir"]() is None
+
+
+def test_bootstrap_find_hf_model_dir_ignores_config_without_model_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """find_hf_model_dir must skip config.json files that lack model_type/hidden_size."""
+    output = _generate_minimal_kernel(tmp_path)
+    kaggle_input = tmp_path / "kaggle-input"
+    d = kaggle_input / "bad-config"
+    d.mkdir(parents=True)
+    (d / "config.json").write_text(
+        json.dumps({"some_other_field": 42}), encoding="utf-8"
+    )
+    (d / "model.safetensors").write_bytes(b"weights")
+
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    assert ns["find_hf_model_dir"]() is None
+
+
+# ---------------------------------------------------------------------------
+# 9. Metabolism loop GGUF model path resolver
+# ---------------------------------------------------------------------------
+
+
+def test_metabolism_resolver_honors_oczy_model_path_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_resolve_gguf_model_path must return OCZY_MODEL_PATH when the file exists."""
+    from oczy.experiments.metabolism_loop import _resolve_gguf_model_path
+
+    gguf = tmp_path / "model.gguf"
+    gguf.write_bytes(b"weights")
+    monkeypatch.setenv("OCZY_MODEL_PATH", str(gguf))
+    # Ensure cache fallback is not accidentally hit.
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "nonexistent-home")
+
+    assert _resolve_gguf_model_path() == str(gguf)
+
+
+def test_metabolism_resolver_falls_back_to_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without OCZY_MODEL_PATH, the resolver must find the GGUF in the HF cache."""
+    from oczy.experiments.metabolism_loop import _resolve_gguf_model_path
+
+    monkeypatch.delenv("OCZY_MODEL_PATH", raising=False)
+    cache_parent = (
+        tmp_path
+        / ".cache" / "huggingface" / "hub"
+        / "models--LiquidAI--LFM2.5-1.2B-Instruct-GGUF"
+        / "snapshots" / "abc123"
+    )
+    cache_parent.mkdir(parents=True)
+    gguf = cache_parent / _GGUF_FILENAME
+    gguf.write_bytes(b"weights")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    assert _resolve_gguf_model_path() == str(gguf)
+
+
+def test_metabolism_resolver_raises_when_no_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_resolve_gguf_model_path must raise FileNotFoundError when no local GGUF exists."""
+    from oczy.experiments.metabolism_loop import _resolve_gguf_model_path
+
+    monkeypatch.delenv("OCZY_MODEL_PATH", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    with pytest.raises(FileNotFoundError, match=_GGUF_FILENAME):
+        _resolve_gguf_model_path()
+
+
+def test_metabolism_resolver_ignores_nonexistent_env_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When OCZY_MODEL_PATH points to a nonexistent file and no cache exists,
+    the resolver must raise FileNotFoundError rather than returning a bad path."""
+    from oczy.experiments.metabolism_loop import _resolve_gguf_model_path
+
+    monkeypatch.setenv("OCZY_MODEL_PATH", str(tmp_path / "nonexistent.gguf"))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    with pytest.raises(FileNotFoundError, match=_GGUF_FILENAME):
+        _resolve_gguf_model_path()
+
+
+# ---------------------------------------------------------------------------
+# 10. Layer-L probe HF model dir and local_files_only remote contract
+# ---------------------------------------------------------------------------
+
+
+def _patch_hf_probe_deps(monkeypatch: pytest.MonkeyPatch, captured: dict) -> None:
+    """Stub transformers and plastic_cortex so _hf_probe can be called without
+    real ML dependencies.  Captures from_pretrained kwargs and returns fakes
+    that make _hf_probe return early (hidden_states=None)."""
+    import types
+
+    import transformers
+
+    # Stub plastic_cortex (imported at top of _hf_probe but never reached when
+    # hidden_states is None).
+    fake_pc = types.ModuleType("plastic_cortex")
+    fake_kv = types.ModuleType("plastic_cortex.kv_cortex")
+    fake_kv.KVCortex = type("KVCortex", (), {})
+    fake_kv.KVCortexConfig = type("KVCortexConfig", (), {})
+    fake_pc.kv_cortex = fake_kv
+    monkeypatch.setitem(sys.modules, "plastic_cortex", fake_pc)
+    monkeypatch.setitem(sys.modules, "plastic_cortex.kv_cortex", fake_kv)
+
+    class _FakeOutput:
+        hidden_states = None  # Triggers early return in _hf_probe.
+
+    class _FakeModel:
+        def eval(self):
+            return self
+
+        def __call__(self, **kwargs):
+            return _FakeOutput()
+
+    class _FakeTokenizer:
+        pad_token = None
+        eos_token = "<eos>"
+
+        def __call__(self, phrase, return_tensors="pt"):
+            return {"input_ids": [[1, 2, 3]]}
+
+    def _fake_tok(mid, **kwargs):
+        captured["model_name"] = mid
+        captured["tokenizer_kwargs"] = kwargs
+        return _FakeTokenizer()
+
+    def _fake_model(mid, **kwargs):
+        captured["model_kwargs"] = kwargs
+        return _FakeModel()
+
+    monkeypatch.setattr(
+        transformers.AutoTokenizer,
+        "from_pretrained",
+        staticmethod(_fake_tok),
+    )
+    monkeypatch.setattr(
+        transformers.AutoModelForCausalLM,
+        "from_pretrained",
+        staticmethod(_fake_model),
+    )
+
+
+def test_layer_l_probe_hf_probe_uses_oczy_hf_model_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_hf_probe must use OCZY_HF_MODEL_DIR as model_name with local_files_only=True
+    and trust_remote_code=False."""
+    import oczy.experiments.layer_l_probe as llp
+
+    hf_dir = tmp_path / "hf-model"
+    hf_dir.mkdir()
+    monkeypatch.setenv("OCZY_HF_MODEL_DIR", str(hf_dir))
+    monkeypatch.delenv("OCZY_REMOTE_CPU_ONLY", raising=False)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+    captured: dict = {}
+    _patch_hf_probe_deps(monkeypatch, captured)
+
+    assert llp._hf_probe() is None  # None because fake hidden_states is None.
+    assert captured["model_name"] == str(hf_dir)
+    assert captured["tokenizer_kwargs"].get("local_files_only") is True
+    assert captured["model_kwargs"].get("local_files_only") is True
+    assert captured["model_kwargs"].get("trust_remote_code") is False
+
+
+def test_layer_l_probe_hf_probe_local_only_when_offline_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_hf_probe must pass local_files_only=True when offline env is set,
+    even without OCZY_HF_MODEL_DIR — model_name falls back to the hub id."""
+    import oczy.experiments.layer_l_probe as llp
+
+    monkeypatch.delenv("OCZY_HF_MODEL_DIR", raising=False)
+    monkeypatch.setenv("OCZY_REMOTE_CPU_ONLY", "1")
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+    captured: dict = {}
+    _patch_hf_probe_deps(monkeypatch, captured)
+
+    assert llp._hf_probe() is None
+    assert captured["model_name"] == "LiquidAI/LFM2.5-1.2B-Instruct"
+    assert captured["tokenizer_kwargs"].get("local_files_only") is True
+    assert captured["model_kwargs"].get("local_files_only") is True
+
+
+def test_layer_l_probe_hf_probe_allows_network_when_no_env_no_offline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_hf_probe must NOT pass local_files_only when no env and no offline mode,
+    preserving network resolution for local users."""
+    import oczy.experiments.layer_l_probe as llp
+
+    monkeypatch.delenv("OCZY_HF_MODEL_DIR", raising=False)
+    monkeypatch.delenv("OCZY_REMOTE_CPU_ONLY", raising=False)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+    captured: dict = {}
+    _patch_hf_probe_deps(monkeypatch, captured)
+
+    assert llp._hf_probe() is None
+    assert captured["model_name"] == "LiquidAI/LFM2.5-1.2B-Instruct"
+    assert "local_files_only" not in captured["tokenizer_kwargs"]
+    assert "local_files_only" not in captured["model_kwargs"]
+
+
+# ---------------------------------------------------------------------------
 # Qwen locator and artifact manifest (existing, preserved)
 # ---------------------------------------------------------------------------
 

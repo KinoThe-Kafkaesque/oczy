@@ -115,6 +115,66 @@ def safe_extract(archive: Path, destination: Path) -> Path:
     return root
 
 
+def find_gguf_model() -> Path | None:
+    """Locate the single pinned LFM2.5 GGUF under /kaggle/input.
+
+    Scans mounted Kaggle inputs read-only for the exact filename
+    ``LFM2.5-1.2B-Instruct-Q4_K_M.gguf``.  Rejects ambiguous multiple
+    matches so a misconfigured dataset surfaces loudly instead of
+    silently picking the wrong weights.
+    """
+    target = "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
+    matches: list[Path] = []
+    for root in Path("/kaggle/input").glob("*"):
+        if not root.is_dir():
+            continue
+        for path in root.rglob(target):
+            if path.is_file():
+                matches.append(path.resolve())
+    unique = sorted(set(matches), key=str)
+    if len(unique) == 0:
+        return None
+    if len(unique) != 1:
+        rendered = ", ".join(str(p) for p in unique)
+        raise RuntimeError(
+            f"expected exactly one {target} under /kaggle/input, found {len(unique)}: {rendered}"
+        )
+    return unique[0]
+
+
+def find_hf_model_dir() -> Path | None:
+    """Locate an optional local HF model directory under /kaggle/input.
+
+    A valid directory contains ``config.json`` plus at least one model
+    weight file (``*.safetensors`` or ``*.bin``).  Rejects ambiguous
+    multiple matches.  Returns None when no HF directory is attached —
+    the GGUF path is the primary model surface.
+    """
+    matches: list[Path] = []
+    for config_path in Path("/kaggle/input").rglob("config.json"):
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if "model_type" not in config or "hidden_size" not in config:
+            continue
+        candidate = config_path.parent.resolve()
+        has_weights = any(candidate.glob("*.safetensors")) or any(
+            candidate.glob("*.bin")
+        )
+        if has_weights:
+            matches.append(candidate)
+    unique = sorted(set(matches), key=str)
+    if len(unique) == 0:
+        return None
+    if len(unique) != 1:
+        rendered = ", ".join(str(p) for p in unique)
+        raise RuntimeError(
+            f"expected zero or one HF model directory under /kaggle/input, found {len(unique)}: {rendered}"
+        )
+    return unique[0]
+
+
 def find_model() -> Path | None:
     if not JOB_SPEC.get("model_source"):
         return None
@@ -192,6 +252,12 @@ def main() -> int:
         model_dir = find_model()
         if model_dir is not None:
             os.environ["OCZY_MODEL_DIR"] = str(model_dir)
+        gguf_path = find_gguf_model()
+        if gguf_path is not None:
+            os.environ["OCZY_MODEL_PATH"] = str(gguf_path)
+        hf_model_dir = find_hf_model_dir()
+        if hf_model_dir is not None:
+            os.environ["OCZY_HF_MODEL_DIR"] = str(hf_model_dir)
 
         report.update(
             {
@@ -199,6 +265,8 @@ def main() -> int:
                 "source_manifest": source_manifest,
                 "source_root": str(source_root),
                 "model_dir": str(model_dir) if model_dir is not None else None,
+                "gguf_model_path": str(gguf_path) if gguf_path is not None else None,
+                "hf_model_dir": str(hf_model_dir) if hf_model_dir is not None else None,
             }
         )
         write_report(report)
