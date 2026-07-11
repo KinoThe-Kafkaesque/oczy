@@ -532,6 +532,35 @@ def _emit_stderr_diagnostic(error: Exception) -> None:
     for line in tb.rstrip("\\n").splitlines():
         print(f"{prefix} {line}", file=sys.stderr)
 
+def _forward_runner_output(proc: subprocess.CompletedProcess) -> None:
+    """Forward captured runner stdout/stderr to bootstrap streams.
+
+    Stdout is emitted verbatim so the ``OCZY_EXECUTION_REPORT_JSON=<json>``
+    sentinel line survives intact for the downstream collector.  Stderr is
+    redacted and bounded to prevent unbounded diagnostic volume while still
+    surfacing runner failure diagnostics through the Colab CLI stderr stream.
+    """
+    if proc.stdout:
+        sys.stdout.write(proc.stdout)
+        sys.stdout.flush()
+    if proc.stderr:
+        # Reuse the same secret-redaction patterns as _emit_stderr_diagnostic.
+        _REDACT = [
+            re.compile(r"(token=)[^\\s&'\\\"]+"),
+            re.compile(r"(key=)[^\\s&'\\\"]+"),
+            re.compile(r"(password=)[^\\s&'\\\"]+"),
+            re.compile(r"(Authorization:\\s*)[^\\r\\n]+"),
+            re.compile(r"(Bearer\\s+)[A-Za-z0-9._\\-]+"),
+        ]
+        raw = proc.stderr
+        for pat in _REDACT:
+            raw = pat.sub(lambda m: m.group(1) + "***", raw)
+        # Bound to the last 4000 chars to avoid unbounded stderr.
+        if len(raw) > 4000:
+            raw = "...[truncated]...\\n" + raw[-4000:]
+        sys.stderr.write(raw)
+        sys.stderr.flush()
+
 def main() -> int:
     report: dict = {
         "schema_version": "oczy/colab-bootstrap-provenance/v1",
@@ -596,8 +625,14 @@ def main() -> int:
         proc = subprocess.run(
             runner_argv,
             cwd=str(repo_root),
+            capture_output=True,
+            text=True,
             check=False,
         )
+        # Forward captured runner stdout/stderr to bootstrap streams before
+        # provenance/return so the OCZY_EXECUTION_REPORT_JSON sentinel and
+        # bounded diagnostics are observable through the Colab CLI.
+        _forward_runner_output(proc)
         report.update(
             {
                 "status": "complete" if proc.returncode == 0 else "error",

@@ -4811,3 +4811,387 @@ class TestBootstrapStderrDiagnostics:
         assert len(prov) > 0
         assert prov[-1].get("status") == "error"
         assert prov[-1].get("exit_code") == 42
+# ===========================================================================
+# 25. Colab bootstrap runner stdout/stderr forwarding
+# ===========================================================================
+
+
+class TestBootstrapRunnerOutputForwarding:
+    """Bootstrap forwards captured runner stdout/stderr to its own streams.
+
+    The generated bootstrap invokes the runner with ``capture_output=True``,
+    then forwards ``proc.stdout`` to ``sys.stdout`` (verbatim, preserving the
+    ``OCZY_EXECUTION_REPORT_JSON`` sentinel) and ``proc.stderr`` to
+    ``sys.stderr`` (redacted and bounded), before writing provenance and
+    returning the runner exit code unchanged.
+
+    These tests exec the generated bootstrap, patch ``subprocess.run`` to
+    return a fake ``CompletedProcess`` with controlled stdout/stderr, call
+    ``main()`` with both streams captured, and assert on the forwarded
+    output, exit code, and provenance.
+    """
+
+    _SENTINEL_PREFIX = "OCZY_EXECUTION_REPORT_JSON="
+    _STDERR_BOUND = 4000
+
+    def _generate_and_exec(
+        self, tmp_path: Path, **kwargs: Any
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Generate bootstrap, exec it, install spies. Returns (ns, prov_calls)."""
+        out = tmp_path / "fwd_out"
+        defaults: dict[str, Any] = dict(
+            output=out,
+            job_name="cb-fwd",
+            repo_url=REPO_URL,
+            source_commit=COMMIT,
+            module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[],
+            phase="development",
+            claim_class="scientific",
+            output_path="out/cb-fwd",
+        )
+        defaults.update(kwargs)
+        prepare_colab_experiment(**defaults)
+        source = (out / "colab_bootstrap.py").read_text()
+        ns = _exec_bootstrap(source)
+
+        provenance_calls: list[dict[str, Any]] = []
+
+        def _spy_provenance(payload: dict) -> None:
+            provenance_calls.append(dict(payload))
+
+        ns["write_provenance"] = _spy_provenance
+
+        fake_repo = tmp_path / "fake_repo"
+        fake_repo.mkdir(exist_ok=True)
+        ns["clone_at_commit"] = lambda *a, **kw: fake_repo
+        ns["add_source_paths"] = lambda repo_root: None
+
+        return ns, provenance_calls
+
+    @staticmethod
+    def _call_main_captured_both(ns: dict[str, Any]) -> tuple[int, str, str]:
+        """Call ns main() with stdout and stderr captured; restore cwd/sys.path."""
+        out_buf = io.StringIO()
+        err_buf = io.StringIO()
+        orig_cwd = os.getcwd()
+        orig_path = list(sys.path)
+        try:
+            with patch.object(sys, "stdout", new=out_buf), patch.object(sys, "stderr", new=err_buf):
+                exit_code = ns["main"]()
+        finally:
+            os.chdir(orig_cwd)
+            sys.path[:] = orig_path
+        return exit_code, out_buf.getvalue(), err_buf.getvalue()
+
+    @staticmethod
+    def _make_sentinel(status: str = "complete", exit_code: int = 0) -> str:
+        """Build a valid OCZY_EXECUTION_REPORT_JSON sentinel line."""
+        report = {
+            "schema_version": "oczy/execution-report/v1",
+            "status": status,
+            "exit_code": exit_code,
+            "job_name": "cb-fwd",
+            "module": "infrastructure.kaggle.run_cortex_smoke",
+            "source_commit": COMMIT,
+            "provider": "colab",
+            "metrics": {},
+            "asi_scores": {},
+        }
+        compact = json.dumps(report, sort_keys=True, separators=(",", ":"))
+        return f"OCZY_EXECUTION_REPORT_JSON={compact}\n"
+
+    # ------------------------------------------------------------------
+    # Sentinel + stderr forwarding on exit 0 and exit 1
+    # ------------------------------------------------------------------
+
+    def test_sentinel_forwarded_on_exit0(self, tmp_path: Path) -> None:
+        """Runner exit 0: sentinel on stdout forwarded verbatim, stderr
+        forwarded, exit code 0, provenance status=complete."""
+        ns, prov = self._generate_and_exec(tmp_path)
+        sentinel = self._make_sentinel(status="complete", exit_code=0)
+        runner_stdout = sentinel + "METRIC loss=0.5\n"
+        runner_stderr = "some warning\n"
+
+        def fake_run(argv, **kwargs):
+            return subprocess.CompletedProcess(
+                args=argv, returncode=0,
+                stdout=runner_stdout, stderr=runner_stderr,
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            exit_code, out, err = self._call_main_captured_both(ns)
+
+        assert exit_code == 0
+        # Sentinel forwarded verbatim to stdout.
+        sentinel_lines = [
+            line for line in out.splitlines()
+            if line.startswith(self._SENTINEL_PREFIX)
+        ]
+        assert len(sentinel_lines) == 1, (
+            "exactly one sentinel line must be forwarded to stdout"
+        )
+        parsed = json.loads(sentinel_lines[0][len(self._SENTINEL_PREFIX):])
+        assert parsed["status"] == "complete"
+        # Non-sentinel stdout also forwarded.
+        assert "METRIC loss=0.5" in out
+        # Stderr forwarded.
+        assert "some warning" in err
+        # Provenance recorded with status=complete, exit_code=0.
+        assert len(prov) > 0
+        assert prov[-1].get("status") == "complete"
+        assert prov[-1].get("exit_code") == 0
+
+    def test_sentinel_forwarded_on_exit1(self, tmp_path: Path) -> None:
+        """Runner exit 1: sentinel on stdout forwarded verbatim, stderr
+        diagnostics forwarded, exit code 1, provenance status=error."""
+        ns, prov = self._generate_and_exec(tmp_path)
+        sentinel = self._make_sentinel(status="error", exit_code=1)
+        runner_stdout = sentinel
+        runner_stderr = "Traceback (most recent call last):\nRuntimeError: boom\n"
+
+        def fake_run(argv, **kwargs):
+            return subprocess.CompletedProcess(
+                args=argv, returncode=1,
+                stdout=runner_stdout, stderr=runner_stderr,
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            exit_code, out, err = self._call_main_captured_both(ns)
+
+        assert exit_code == 1
+        # Sentinel forwarded verbatim.
+        sentinel_lines = [
+            line for line in out.splitlines()
+            if line.startswith(self._SENTINEL_PREFIX)
+        ]
+        assert len(sentinel_lines) == 1
+        parsed = json.loads(sentinel_lines[0][len(self._SENTINEL_PREFIX):])
+        assert parsed["status"] == "error"
+        # Stderr diagnostics forwarded.
+        assert "RuntimeError: boom" in err
+        # Provenance recorded with status=error, exit_code=1.
+        assert len(prov) > 0
+        assert prov[-1].get("status") == "error"
+        assert prov[-1].get("exit_code") == 1
+
+    def test_stderr_forwarded_on_exit0(self, tmp_path: Path) -> None:
+        """Runner exit 0 with stderr: diagnostics forwarded to bootstrap stderr."""
+        ns, _ = self._generate_and_exec(tmp_path)
+        runner_stderr = "WARNING: deprecation\nINFO: something\n"
+
+        def fake_run(argv, **kwargs):
+            return subprocess.CompletedProcess(
+                args=argv, returncode=0,
+                stdout=self._make_sentinel(status="complete", exit_code=0),
+                stderr=runner_stderr,
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            _, _, err = self._call_main_captured_both(ns)
+
+        assert "WARNING: deprecation" in err
+        assert "INFO: something" in err
+
+    def test_stderr_forwarded_on_exit1(self, tmp_path: Path) -> None:
+        """Runner exit 1 with stderr: diagnostics forwarded to bootstrap stderr."""
+        ns, _ = self._generate_and_exec(tmp_path)
+        runner_stderr = "ImportError: no module named foo\n"
+
+        def fake_run(argv, **kwargs):
+            return subprocess.CompletedProcess(
+                args=argv, returncode=1,
+                stdout=self._make_sentinel(status="error", exit_code=1),
+                stderr=runner_stderr,
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            _, _, err = self._call_main_captured_both(ns)
+
+        assert "ImportError: no module named foo" in err
+
+    # ------------------------------------------------------------------
+    # Bounded / sanitized forwarded stderr
+    # ------------------------------------------------------------------
+
+    def test_forwarded_stderr_bounded(self, tmp_path: Path) -> None:
+        """Very long runner stderr is bounded in the forwarded output."""
+        ns, _ = self._generate_and_exec(tmp_path)
+        long_stderr = "x" * 100000
+
+        def fake_run(argv, **kwargs):
+            return subprocess.CompletedProcess(
+                args=argv, returncode=1,
+                stdout="",
+                stderr=long_stderr,
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            _, _, err = self._call_main_captured_both(ns)
+
+        # Forwarded stderr must be bounded (last ~4000 chars + truncation marker).
+        assert len(err) < 5000, (
+            f"forwarded stderr is unbounded: {len(err)} bytes"
+        )
+        assert "...[truncated]..." in err
+
+    def test_forwarded_stderr_sanitized(self, tmp_path: Path) -> None:
+        """Secrets in runner stderr are redacted in the forwarded output."""
+        ns, _ = self._generate_and_exec(tmp_path)
+        secret = "sk-secret_abc123DEF456"
+        runner_stderr = (
+            f"failed: token={secret} key={secret} "
+            f"password=hunter2 Authorization: Bearer s3cr3t\n"
+        )
+
+        def fake_run(argv, **kwargs):
+            return subprocess.CompletedProcess(
+                args=argv, returncode=1,
+                stdout="",
+                stderr=runner_stderr,
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            _, _, err = self._call_main_captured_both(ns)
+
+        assert secret not in err
+        assert "hunter2" not in err
+        assert "s3cr3t" not in err
+        assert "***" in err
+
+    # ------------------------------------------------------------------
+    # Exit code / provenance unchanged
+    # ------------------------------------------------------------------
+
+    def test_exit_code_preserved_nonzero(self, tmp_path: Path) -> None:
+        """Runner exit code (non-standard nonzero) is returned unchanged."""
+        ns, prov = self._generate_and_exec(tmp_path)
+
+        def fake_run(argv, **kwargs):
+            return subprocess.CompletedProcess(
+                args=argv, returncode=42,
+                stdout=self._make_sentinel(status="error", exit_code=42),
+                stderr="runner error\n",
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            exit_code, _, _ = self._call_main_captured_both(ns)
+
+        assert exit_code == 42
+        assert prov[-1].get("exit_code") == 42
+        assert prov[-1].get("status") == "error"
+
+    def test_provenance_exit0(self, tmp_path: Path) -> None:
+        """Provenance on exit 0: status=complete, exit_code=0,
+        runner_command recorded."""
+        ns, prov = self._generate_and_exec(tmp_path)
+
+        def fake_run(argv, **kwargs):
+            return subprocess.CompletedProcess(
+                args=argv, returncode=0,
+                stdout=self._make_sentinel(status="complete", exit_code=0),
+                stderr="",
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            self._call_main_captured_both(ns)
+
+        last = prov[-1]
+        assert last["status"] == "complete"
+        assert last["exit_code"] == 0
+        assert "runner_command" in last
+        assert "finished_utc" in last
+
+    def test_provenance_exit1(self, tmp_path: Path) -> None:
+        """Provenance on exit 1: status=error, exit_code=1,
+        runner_command recorded."""
+        ns, prov = self._generate_and_exec(tmp_path)
+
+        def fake_run(argv, **kwargs):
+            return subprocess.CompletedProcess(
+                args=argv, returncode=1,
+                stdout=self._make_sentinel(status="error", exit_code=1),
+                stderr="error\n",
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            self._call_main_captured_both(ns)
+
+        last = prov[-1]
+        assert last["status"] == "error"
+        assert last["exit_code"] == 1
+        assert "runner_command" in last
+        assert "finished_utc" in last
+
+    # ------------------------------------------------------------------
+    # Stdout verbatim (not sanitized) and flushing
+    # ------------------------------------------------------------------
+
+    def test_stdout_forwarded_verbatim(self, tmp_path: Path) -> None:
+        """Runner stdout is forwarded verbatim — sentinel JSON is not truncated
+        or sanitized, preserving collector parseability."""
+        ns, _ = self._generate_and_exec(tmp_path)
+        sentinel = self._make_sentinel(status="complete", exit_code=0)
+        # Include a secret-like pattern in stdout to prove stdout is NOT sanitized.
+        runner_stdout = sentinel + "token=sk-test123\n"
+
+        def fake_run(argv, **kwargs):
+            return subprocess.CompletedProcess(
+                args=argv, returncode=0,
+                stdout=runner_stdout,
+                stderr="",
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            _, out, _ = self._call_main_captured_both(ns)
+
+        # Sentinel is intact and parseable.
+        sentinel_lines = [
+            line for line in out.splitlines()
+            if line.startswith(self._SENTINEL_PREFIX)
+        ]
+        assert len(sentinel_lines) == 1
+        parsed = json.loads(sentinel_lines[0][len(self._SENTINEL_PREFIX):])
+        assert parsed["status"] == "complete"
+        # Stdout is NOT sanitized — token= survives verbatim.
+        assert "token=sk-test123" in out
+
+    def test_output_flushed(self, tmp_path: Path) -> None:
+        """Runner stdout/stderr are flushed to bootstrap streams."""
+        ns, _ = self._generate_and_exec(tmp_path)
+
+        flush_tracker: dict[str, int] = {"stdout": 0, "stderr": 0}
+
+        class _FlushTrackingStream(io.StringIO):
+            def __init__(self, name: str) -> None:
+                super().__init__()
+                self._name = name
+
+            def flush(self) -> None:
+                flush_tracker[self._name] += 1
+                super().flush()
+
+        out_buf = _FlushTrackingStream("stdout")
+        err_buf = _FlushTrackingStream("stderr")
+        orig_cwd = os.getcwd()
+        orig_path = list(sys.path)
+        try:
+            with patch.object(sys, "stdout", new=out_buf), \
+                 patch.object(sys, "stderr", new=err_buf):
+
+                def fake_run(argv, **kwargs):
+                    return subprocess.CompletedProcess(
+                        args=argv, returncode=0,
+                        stdout=self._make_sentinel(status="complete", exit_code=0),
+                        stderr="warning\n",
+                    )
+
+                with patch.object(ns["subprocess"], "run", fake_run):
+                    exit_code = ns["main"]()
+        finally:
+            os.chdir(orig_cwd)
+            sys.path[:] = orig_path
+
+        assert exit_code == 0
+        assert flush_tracker["stdout"] >= 1, "stdout must be flushed"
+        assert flush_tracker["stderr"] >= 1, "stderr must be flushed"
