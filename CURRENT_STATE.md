@@ -135,9 +135,15 @@ The remediation work delivered:
 - a validity ledger that labels nulls, refutations, invalidations, and
   superseded claims rather than hiding them.
 
-The current full test verification performed during the July 9 audit was
-**680 passed, 14 warnings**. The `eval/v2` manifest also verified. These are
-code-integrity checks, not evidence that the scientific thesis passed.
+The July 9 audit recorded **680 passed, 14 warnings**; that number is
+historical, not current. As of commit `4f1a022` (2026-07-11) the test
+collection surface is **800 tests collected, 48 collection errors** — the
+errors are import-time failures in optional-dependency packages
+(plastic-cortex, neural-hippocampus, world-model-critic,
+identity-hypernetwork, skill-immune-cortex, experience-autoencoder) and
+`src/oczy/lm` driver tests, not test failures. The `eval/v2` manifest
+verified. These are code-integrity checks, not evidence that the
+scientific thesis passed.
 
 ## 4. Verified experimental picture
 
@@ -243,9 +249,9 @@ the core premise test; Research/21 is conditional on it.
 
 | Order | Work | Role | Current state |
 |---|---|---|---|
-| 1 | [`research/18-consolidation-as-distillation.md`](research/18-consolidation-as-distillation.md) | Plastic-LM-weight comparator: distill transient context into LoRA, delete traces, test survival | **PARTIAL** (Campaign 0d48130): teacher gate passed (1 seed, `distill_delta_holdout=0.3333`); 3-seed full run bimodal {0.3333, 0.3333, 0.0}, mean=0.2222; no cross-seed claim; ≥5 seeds needed |
-| 2 | [`research/19-lm-as-language-organ.md`](research/19-lm-as-language-organ.md) | Direct diagnostic with matched label-prefix and latent-control articulation arms | Amended 2026-07-09; not implemented |
-| 3 | [`research/20-meta-trained-cortex-frozen-language-organ.md`](research/20-meta-trained-cortex-frozen-language-organ.md) | Core test: meta-learn write/read/consolidate/articulate, then learn an unseen rule online through state only | New specification; not implemented |
+| 1 | [`research/18-consolidation-as-distillation.md`](research/18-consolidation-as-distillation.md) | Plastic-LM-weight comparator: distill transient context into LoRA, delete traces, test survival | **PARTIAL** (Campaign 0d48130): teacher gate passed (1 seed, `distill_delta_holdout=0.3333`); 3-seed full run bimodal {0.3333, 0.3333, 0.0}, mean=0.2222; `teacher_dev_delta=0.1765` < 0.2 gate; 5-seed `stage_0` rerun is diagnostic unless gate passes; no cross-seed claim |
+| 2 | [`research/19-lm-as-language-organ.md`](research/19-lm-as-language-organ.md) | Direct diagnostic with matched label-prefix and latent-control articulation arms | Amended 2026-07-09; **unimplemented** |
+| 3 | [`research/20-meta-trained-cortex-frozen-language-organ.md`](research/20-meta-trained-cortex-frozen-language-organ.md) | Core test: meta-learn write/read/consolidate/articulate, then learn an unseen rule online through state only | New specification; **unimplemented**; meta-test blocked on human sign-off |
 | 4 | [`research/21-cortex-routed-frozen-specialist-organs.md`](research/21-cortex-routed-frozen-specialist-organs.md) | Conditional extension: cortex routes between frozen language and action/tool organs using recurrent goal state | New specification; do not start before Research/20 accepts |
 
 [`experiments/09-meta-trained-cortex-frozen-language-organ/README.md`](experiments/09-meta-trained-cortex-frozen-language-organ/README.md)
@@ -255,6 +261,8 @@ consolidation gate, query-conditioned reads, and a fixed-width soft latent bank
 into the frozen Qwen language organ. Outer-loop development spans contextual
 remapping, rule transformation, and finite-state behavior. Meta-test freezes
 all parameters and permits only cortex fast/slow state to change.
+**The R20 meta-test requires explicit human sign-off before any meta-test
+run begins and MUST NOT run without it.**
 
 The primary meta-test must exclude retrieval, online backpropagation, raw
 trace replay, answer/label text, correction text, and language-model weight
@@ -273,7 +281,7 @@ side channel.
 | Minimal-loop/forgetting harnesses | Implemented; primary loop refuted, gated successors blocked | [`src/oczy/experiments/minimal_loop.py`](src/oczy/experiments/minimal_loop.py), [`src/oczy/experiments/minimal_loop_forgetting.py`](src/oczy/experiments/minimal_loop_forgetting.py) |
 | Organ ablations | Implemented and adjudicated | [`src/oczy/experiments/organ_ablation.py`](src/oczy/experiments/organ_ablation.py), [`src/oczy/experiments/organ_additive_retrieval.py`](src/oczy/experiments/organ_additive_retrieval.py) |
 | Research/19 direct cortex | Specification only | No dedicated implementation module yet |
-| Research/20 / Experiment 09 | Specification only | Planned module: `src/oczy/experiments/meta_cortex/` — currently absent |
+| Research/20 / Experiment 09 | Specification only; meta-test blocked on human sign-off | Planned module: `src/oczy/experiments/meta_cortex/` — currently absent |
 | Research/21 multi-organ router | Specification only | No implementation module yet |
 | Remote compute pool | Mixed Kaggle/Colab CPU; Kaggle verified v4 smoke/probe/bootstrap; Colab CLI 0.6.0 verified v2 queue-starvation fix; GPU (T4/P100/L4) archived; TPU not wired | [`infrastructure/kaggle/`](infrastructure/kaggle/) |
 | Pi tool-use work / Experiment 08 | Unpublished local spec, proxy, runner, and two JSON logs; core curriculum package absent; result 0/3 | Existing [`benchmarks/pi/`](benchmarks/pi/) plus local `experiments/08-oczy-pi-tool-calling-curriculum/` |
@@ -319,6 +327,16 @@ provider-neutral job records. New CLI flags: ``--kaggle-max``, ``--colab-max``,
 ``capacity_rejections`` on capacity blocks, causing false failure after 10
 blocks) was fixed during the same session.
 
+**Default scheduler capacity (2026-07-11):** When ``--max-parallel`` is
+omitted (the default), the scheduler imposes no global concurrency cap —
+capacity is **additive: 10 Kaggle + learned Colab X**. Kaggle jobs fill up
+to ``--kaggle-max`` (default 10, hard-capped at 10); Colab jobs fill up to
+an AIMD-learned limit that starts at 1 and probes upward, capped by
+``--colab-max`` (default 10). The learned Colab limit is not a hardcoded
+quota — it adapts to account-level session availability. Explicit
+``--max-parallel N`` caps total concurrency globally for backward
+compatibility.
+
 **Campaign 0d48130 (2026-07-11):** The mixed-provider scheduler completed its
 first full research campaign. 10 run groups were submitted across Kaggle
 (CPU-only) and Colab (CPU-only) from three source commits: 9 completed
@@ -348,10 +366,11 @@ cleanly.
 - The verified Kaggle CPU/T4/Qwen workflow, standing guidance, generators, and
   tests were published in commit `6dee16b`
   (`infra: add guarded Kaggle research compute workflow`).
-- The working tree remains intentionally dirty only for separately scoped Pi
-  work: `GOALS.md`, Pi model/proxy changes, the Pi runner and logs, Experiment
-  08, and its unstaged experiment-index additions. Those files were preserved
-  locally and excluded from the research and infrastructure commits.
+- The working tree is **clean** at commit `4f1a022` on
+  `autoresearch/session-20260625`. The previously preserved Pi work
+  (`GOALS.md`, Pi model/proxy changes, the Pi runner and logs, Experiment
+  08, and its experiment-index additions) is tracked in the repository and
+  no longer pending as dirty working-tree state.
 - No force push, production deployment, eval change, or Pi publication was
   performed. The private Kaggle verification kernels remain the only external
   compute mutations.
@@ -386,8 +405,12 @@ For commit `f48dccc`, the explicitly authorized scoped guard passed with
    at [`experiments_logs/2026-07-11_exp03_real_driver_closure.json`](experiments_logs/2026-07-11_exp03_real_driver_closure.json);
    S1.4 is not reopened.
 4. **R18: extend to ≥5 seeds and diagnose LoRA uptake variance.** The
-   3-seed run is bimodal {0.3333, 0.3333, 0.0}; 1/3 seeds show no
-   distillation signal. Extend to ≥5 seeds without changing thresholds.
+   3-seed run is **PARTIAL**: bimodal {0.3333, 0.3333, 0.0}; 1/3 seeds
+   show no distillation signal. A 5-seed `stage_0` rerun is
+   **diagnostic** unless the unchanged `teacher_dev_delta` ≥ 0.2
+   validity gate passes — currently `teacher_dev_delta=0.1765` < 0.2,
+   so the gate is not met and the rerun remains diagnostic, not
+   confirmatory. Extend to ≥5 seeds without changing thresholds.
    Diagnose why seed 2 produced `distill_delta_holdout=0.0` while seeds 0–1
    produced 0.3333. **Acceptance:** ≥5-seed mean ± std in a dated log; a
    written mechanism hypothesis for the null seed; no threshold change.
@@ -472,6 +495,13 @@ If and only if Research/20 accepts:
   `METRIC`/`ASI` values). It cannot retroactively turn an archived organ
   into evidence for the learned-cortex premise; re-run only if it answers a
   still-relevant question.
+- **Durable live watch queue (planned, not yet verified).** A watch mode
+  for `parallel_scheduler.py` is planned: atomically reload a changed
+  batch, merge only unseen job names as pending, never mutate existing
+  job definitions or states, retry malformed reloads without killing the
+  daemon, and stay alive waiting for future jobs. Existing non-watch
+  behavior remains terminating and backward compatible. This is **pending
+  until implemented and verified** — do not claim it exists yet.
 
 ### P5 — Expand an eval only by the governance path
 

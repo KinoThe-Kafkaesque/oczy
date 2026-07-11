@@ -1,6 +1,6 @@
 # Experiments Logs Ledger — Authoritative Index
 
-**Date:** 2026-07-11 (updated through campaign `0d48130` adjudication and Exp03 `ad77e93` real-driver closure)
+**Date:** 2026-07-11 (updated through campaign `0d48130` adjudication, Exp03 `ad77e93` real-driver closure, and R18 5-seed diagnostic clarification)
 **Purpose:** This ledger classifies every experiment log against three
 invalidation events:
 
@@ -175,7 +175,7 @@ CPU-only contract (cuda_available=false, torch 2.10.0+cpu).
 | Exp06 | POSITIVE (bounded growth) | `bounded_growth_m1_ratio=0.002079` (5 seeds, zero variance) |
 | Exp07 | POSITIVE (marker-free uptake) + NULL (critic AUC) | `marker_free_uptake_gap=1.0`, `critic_auc_delta=0.0` |
 | R18 gate | POSITIVE (gate passed) | `distill_delta_holdout=0.3333` (1 seed) |
-| R18 full | PARTIAL (2/3 seeds positive, 1/3 null) | `distill_delta_holdout` mean=0.2222 (3 seeds) |
+| R18 full | PARTIAL (2/3 seeds positive, 1/3 null); 5-seed `stage_0` rerun diagnostic unless `teacher_dev_delta` ≥ 0.2 gate passes (currently 0.1765) | `distill_delta_holdout` mean=0.2222 (3 seeds) |
 | R14 M2B | NULL (metricless completed run) | 3 seeds, exit 0, no `METRIC`/`ASI` values |
 
 **Non-scientific outcomes:**
@@ -189,6 +189,11 @@ bytes_per_delta spread ≤20 B across all agents. R18 full — 3 seeds:
 `distill_delta_holdout` bimodal {0.3333, 0.3333, 0.0}; `teacher_dev_delta` and
 `persistent_bytes` identical across seeds. Colab experiments (01/02/04/05/07)
 are single-run with no cross-seed variance data.
+
+**R18 5-seed diagnostic note:** The 3-seed `stage_0` run is PARTIAL.
+`teacher_dev_delta=0.1765` is below the ≥ 0.2 validity gate, so a 5-seed
+`stage_0` rerun is **diagnostic** unless that unchanged gate passes. No
+threshold changes.
 
 Source: `2026-07-11_campaign_0d48130.md` (adjudicated from
 `/tmp/oczy-campaign-0d48130/` execution summaries) and

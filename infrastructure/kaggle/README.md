@@ -201,6 +201,8 @@ uv run python infrastructure/kaggle/parallel_scheduler.py status \
 | ``--push-timeout SEC`` | 21600 | Kaggle kernel run-time limit |
 | ``--job-timeout SEC`` | 21600 | Max wall-clock wait per job |
 | ``--poll-interval SEC`` | 30 | Seconds between status polls |
+| ``--watch-batch`` | off | Live watch mode: keep the scheduler alive after all jobs finish, re-read the batch file when it changes, and merge unseen job names as new pending jobs. Exit with Ctrl-C. |
+| ``--watch-interval SEC`` | 30 | Seconds between batch-file change checks when idle in watch mode (must be > 0 when ``--watch-batch`` is set) |
 
 **Omitting ``--max-parallel`` means additive provider capacity.** The scheduler
 imposes no global concurrency cap — Kaggle jobs fill up to ``--kaggle-max``
@@ -239,6 +241,28 @@ batch manifest are added.
 
 The JSON summary is printed on completion (exit code 0 if all succeeded,
 1 if any failed). The final state file is preserved for post-hoc inspection.
+
+### Live watch mode
+
+``--watch-batch`` keeps the scheduler alive after all jobs reach a terminal
+state. The batch file is periodically re-read (every ``--watch-interval``
+seconds when idle); any unseen job names are merged as new ``pending`` jobs.
+Existing jobs are never modified -- their definitions and lifecycle states are
+preserved exactly. Malformed or partially-written reloads are logged to stderr
+and retried on the next watch cycle without terminating the daemon.
+
+```bash
+uv run python infrastructure/kaggle/parallel_scheduler.py run \
+  infrastructure/kaggle/my-batch.json \
+  --state /tmp/parallel-state.json \
+  --watch-batch \
+  --watch-interval 15
+```
+
+The scheduler runs until interrupted with Ctrl-C. On interruption, state is
+persisted atomically and a JSON summary is printed (exit code 0 if all jobs
+succeeded, 1 if any failed). Without ``--watch-batch``, the scheduler
+terminates when all jobs finish -- unchanged from previous behavior.
 
 ### Colab session lifecycle differences
 

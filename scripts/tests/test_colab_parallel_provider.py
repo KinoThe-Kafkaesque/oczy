@@ -3309,3 +3309,443 @@ def test_colab_success_still_persists_diagnostics(tmp_path: Path) -> None:
     assert (out_dir / "stderr.log").exists()
     result = json.loads((out_dir / "result.json").read_text(encoding="utf-8"))
     assert result["ok"] is True
+# ---------------------------------------------------------------------------
+# 26. Live-watch contract: watch_batch mode regression tests (mixed provider)
+# ---------------------------------------------------------------------------
+#
+# These tests defend the durable live-watch queue contract in the mixed
+# Kaggle/Colab scheduler:
+#   - New jobs appended during an active run are merged and executed.
+#   - Existing job definition/state cannot be mutated by reload.
+#   - Malformed reload is retried; later valid content succeeds.
+#   - Watch mode stays alive across an empty interval and can be
+#     terminated deterministically (via KeyboardInterrupt).
+#   - Non-watch mode still terminates (backward compatible).
+#   - Additive 10 Kaggle + learned Colab X admission in watch mode.
+#
+# All tests avoid real network and real sleeps by injecting fake clients,
+# a deterministic clock, and a bounded or KeyboardInterrupt-raising sleeper.
+# ---------------------------------------------------------------------------
+
+DEFAULT_WATCH_INTERVAL: float | None = _mod.get("DEFAULT_WATCH_INTERVAL")
+
+
+def _append_colab_job_to_batch(
+    base: Path,
+    batch_path: Path,
+    name: str,
+) -> None:
+    """Append a new Colab job to an existing v2 batch manifest, creating
+    its script file.  Raises if the name already exists."""
+    manifest = json.loads(batch_path.read_text(encoding="utf-8"))
+    existing_names = {j["name"] for j in manifest["jobs"]}
+    assert name not in existing_names, f"job {name} already in batch"
+    script_rel = _make_colab_script(base, f"scripts/{name}.py")
+    manifest["jobs"].append({
+        "name": name,
+        "provider": PROVIDER_COLAB,
+        "script": script_rel,
+        "output_dir": f"out/{name}",
+        "arguments": [],
+    })
+    batch_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def _append_kaggle_job_to_batch(
+    base: Path,
+    batch_path: Path,
+    name: str,
+    kernel_id: str,
+) -> None:
+    """Append a new Kaggle job to an existing v2 batch manifest, creating
+    its kernel directory.  Raises if the name already exists."""
+    manifest = json.loads(batch_path.read_text(encoding="utf-8"))
+    existing_names = {j["name"] for j in manifest["jobs"]}
+    assert name not in existing_names, f"job {name} already in batch"
+    _make_kernel_dir(base, name, kernel_id)
+    manifest["jobs"].append({
+        "name": name,
+        "provider": PROVIDER_KAGGLE,
+        "kernel_dir": name,
+        "output_dir": f"out/{name}",
+    })
+    batch_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+class _KeyboardInterruptSleeper:
+    """Sleeper that raises KeyboardInterrupt after *max_calls* calls,
+    simulating Ctrl-C to terminate watch mode deterministically."""
+
+    def __init__(self, clock: list[float], max_calls: int) -> None:
+        self._clock = clock
+        self._max = max_calls
+        self._n = 0
+        self.calls: list[float] = []
+
+    def __call__(self, seconds: float) -> None:
+        self.calls.append(seconds)
+        self._clock[0] += seconds
+        self._n += 1
+        if self._n >= self._max:
+            raise KeyboardInterrupt()
+
+
+def test_watch_merges_new_colab_job_during_active_run(tmp_path: Path) -> None:
+    """In watch mode, a new Colab job appended to the batch file while
+    jobs are running is merged as PENDING and eventually executed.
+
+    The batch starts with 1 Colab job (cb0).  While cb0 is running, a
+    2nd Colab job (cb1) is appended.  The scheduler merges cb1, submits
+    it, and both reach SUCCEEDED.
+    """
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=0, n_colab=1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    colab_client = FakeColabClient(
+        behaviors={
+            "cb0": [{"running_polls": 1, "stdout": "ok0", "returncode": 0}],
+            "cb1": [{"running_polls": 0, "stdout": "ok1", "returncode": 0}],
+        },
+    )
+    kaggle_client = FakeKaggleClient()
+
+    appended = {"done": False}
+    original_submit_colab = ParallelScheduler._submit_colab
+
+    def _wrapped_submit_colab(self, job, job_timeout, save_state=None):
+        result = original_submit_colab(self, job, job_timeout, save_state=save_state)
+        if not appended["done"] and job.name == "cb0":
+            _append_colab_job_to_batch(tmp_path, manifest, "cb1")
+            appended["done"] = True
+        return result
+
+    sleeper = _KeyboardInterruptSleeper(clock_h, max_calls=10)
+
+    try:
+        ParallelScheduler._submit_colab = _wrapped_submit_colab
+        sched = ParallelScheduler(
+            kaggle_client, colab_client=colab_client,
+            clock=clock, sleeper=sleeper,
+        )
+        summary = sched.run(
+            manifest, state, max_parallel=None, poll_interval=1,
+            colab_max=5, watch_batch=True, watch_interval=1,
+        )
+    finally:
+        ParallelScheduler._submit_colab = original_submit_colab
+
+    assert summary["jobs"]["cb0"]["state"] == SUCCEEDED
+    assert "cb1" in summary["jobs"]
+    assert summary["jobs"]["cb1"]["state"] == SUCCEEDED
+    assert summary["all_succeeded"]
+
+
+def test_watch_does_not_mutate_existing_colab_job_on_reload(
+    tmp_path: Path,
+) -> None:
+    """Reloading the batch must not mutate existing Colab job state.
+    cb0 succeeds, then cb1 is appended.  cb0's state/attempts must be
+    unchanged by the reload."""
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=0, n_colab=1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    colab_client = FakeColabClient(
+        behaviors={
+            "cb0": [{"running_polls": 1, "stdout": "ok0", "returncode": 0}],
+            "cb1": [{"running_polls": 0, "stdout": "ok1", "returncode": 0}],
+        },
+    )
+    kaggle_client = FakeKaggleClient()
+
+    appended = {"done": False}
+    original_submit_colab = ParallelScheduler._submit_colab
+
+    def _wrapped_submit_colab(self, job, job_timeout, save_state=None):
+        result = original_submit_colab(self, job, job_timeout, save_state=save_state)
+        if not appended["done"] and job.name == "cb0":
+            _append_colab_job_to_batch(tmp_path, manifest, "cb1")
+            appended["done"] = True
+        return result
+
+    sleeper = _KeyboardInterruptSleeper(clock_h, max_calls=10)
+
+    try:
+        ParallelScheduler._submit_colab = _wrapped_submit_colab
+        sched = ParallelScheduler(
+            kaggle_client, colab_client=colab_client,
+            clock=clock, sleeper=sleeper,
+        )
+        summary = sched.run(
+            manifest, state, max_parallel=None, poll_interval=1,
+            colab_max=5, watch_batch=True, watch_interval=1,
+        )
+    finally:
+        ParallelScheduler._submit_colab = original_submit_colab
+
+    # cb0 succeeded with 1 attempt (not re-submitted by reload).
+    assert summary["jobs"]["cb0"]["state"] == SUCCEEDED
+    assert summary["jobs"]["cb0"]["attempts"] == 1
+    # cb1 was added fresh.
+    assert summary["jobs"]["cb1"]["state"] == SUCCEEDED
+    assert summary["jobs"]["cb1"]["attempts"] == 1
+
+
+def test_watch_malformed_reload_retried_then_valid_colab_succeeds(
+    tmp_path: Path,
+) -> None:
+    """Malformed batch reload (invalid JSON) is logged and retried.
+    Later valid content with a new Colab job is merged and executed."""
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=0, n_colab=1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    colab_client = FakeColabClient(
+        behaviors={
+            "cb0": [{"running_polls": 0, "stdout": "ok0", "returncode": 0}],
+            "cb1": [{"running_polls": 0, "stdout": "ok1", "returncode": 0}],
+        },
+    )
+    kaggle_client = FakeKaggleClient()
+
+    phase = {"step": 0}
+
+    class _StagedSleeper:
+        def __init__(self) -> None:
+            self.calls: list[float] = []
+
+        def __call__(self, seconds: float) -> None:
+            self.calls.append(seconds)
+            clock_h[0] += seconds
+            phase["step"] += 1
+            # After cb0 completes and scheduler goes idle, corrupt the file.
+            if phase["step"] == 2:
+                manifest.write_text("{ broken json !!!", encoding="utf-8")
+            # On the next idle, write valid JSON with cb0 + cb1.
+            if phase["step"] == 3:
+                _make_colab_script(tmp_path, "scripts/cb1.py")
+                manifest.write_text(
+                    json.dumps({
+                        "schema_version": BATCH_SCHEMA_V2,
+                        "jobs": [
+                            {"name": "cb0", "provider": PROVIDER_COLAB,
+                             "script": "scripts/cb0.py",
+                             "output_dir": "out/cb0", "arguments": []},
+                            {"name": "cb1", "provider": PROVIDER_COLAB,
+                             "script": "scripts/cb1.py",
+                             "output_dir": "out/cb1", "arguments": []},
+                        ],
+                    }),
+                    encoding="utf-8",
+                )
+            if phase["step"] >= 10:
+                raise KeyboardInterrupt()
+
+    sleeper = _StagedSleeper()
+    sched = ParallelScheduler(
+        kaggle_client, colab_client=colab_client,
+        clock=clock, sleeper=sleeper,
+    )
+    summary = sched.run(
+        manifest, state, max_parallel=None, poll_interval=1,
+        colab_max=5, watch_batch=True, watch_interval=1,
+    )
+
+    assert summary["jobs"]["cb0"]["state"] == SUCCEEDED
+    assert "cb1" in summary["jobs"]
+    assert summary["jobs"]["cb1"]["state"] == SUCCEEDED
+
+
+def test_watch_stays_alive_idle_then_terminated_colab(tmp_path: Path) -> None:
+    """Watch mode stays alive across idle intervals after all Colab jobs
+    complete, until KeyboardInterrupt.  The sleeper must be called at
+    least 3 times (poll + >=2 idle watch intervals)."""
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=0, n_colab=1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    colab_client = FakeColabClient(
+        behaviors={"cb0": [{"running_polls": 0, "stdout": "ok", "returncode": 0}]},
+    )
+    kaggle_client = FakeKaggleClient()
+    sleeper = _KeyboardInterruptSleeper(clock_h, max_calls=5)
+    sched = ParallelScheduler(
+        kaggle_client, colab_client=colab_client,
+        clock=clock, sleeper=sleeper,
+    )
+    summary = sched.run(
+        manifest, state, max_parallel=None, poll_interval=1,
+        colab_max=5, watch_batch=True, watch_interval=1,
+    )
+
+    assert summary["jobs"]["cb0"]["state"] == SUCCEEDED
+    assert len(sleeper.calls) >= 3, (
+        f"expected >=3 sleeper calls (poll + idle watch), "
+        f"got {len(sleeper.calls)}: {sleeper.calls}"
+    )
+    raw = _read_state(state)
+    assert raw["jobs"]["cb0"]["state"] == SUCCEEDED
+
+
+def test_non_watch_mode_still_terminates_colab(tmp_path: Path) -> None:
+    """Without watch_batch, the mixed scheduler terminates when all jobs
+    reach terminal state — backward compatible.  The sleeper must NOT
+    trigger KeyboardInterrupt."""
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=2, n_colab=2)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    sleeper = CountingSleeper(clock_h, interval=1.0)
+    colab_client = FakeColabClient(
+        behaviors={
+            f"cb{i}": [{"running_polls": 1}] for i in range(2)
+        },
+    )
+    kaggle_client = FakeKaggleClient(
+        status_sequences={
+            f"owner/kg{i}": ["running", "complete"] for i in range(2)
+        },
+    )
+    sched = ParallelScheduler(
+        kaggle_client, colab_client=colab_client,
+        clock=clock, sleeper=sleeper,
+    )
+    summary = sched.run(
+        manifest, state, max_parallel=None, poll_interval=1, colab_max=5,
+        # watch_batch defaults to False
+    )
+
+    assert summary["all_succeeded"]
+    assert summary["total"] == 4
+    # The sleeper was called a bounded number of times (no infinite loop).
+    assert len(sleeper.calls) < 50
+
+
+def test_watch_additive_capacity_10_kaggle_plus_colab(tmp_path: Path) -> None:
+    """In watch mode with max_parallel=None, the scheduler admits 10
+    Kaggle + at least 1 Colab concurrently — proving additive capacity
+    is preserved in watch mode.
+
+    The batch starts with 12 Kaggle + 2 Colab.  The scheduler should
+    concurrently run 10 Kaggle (DEFAULT_KAGGLE_MAX) + at least 1 Colab,
+    exceeding 10 total.  Watch mode is terminated via KeyboardInterrupt.
+    """
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=12, n_colab=2)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+
+    tracker: dict[str, Any] = {
+        "kaggle_active": set(),
+        "colab_active": set(),
+        "max_kaggle": 0,
+        "max_colab": 0,
+        "max_total": 0,
+    }
+
+    def _update_max() -> None:
+        tracker["max_kaggle"] = max(
+            tracker["max_kaggle"], len(tracker["kaggle_active"])
+        )
+        tracker["max_colab"] = max(
+            tracker["max_colab"], len(tracker["colab_active"])
+        )
+        tracker["max_total"] = max(
+            tracker["max_total"],
+            len(tracker["kaggle_active"]) + len(tracker["colab_active"]),
+        )
+
+    class TrackingKaggleClient(FakeKaggleClient):
+        def __init__(self) -> None:
+            super().__init__(
+                status_sequences={
+                    f"owner/kg{i}": ["running", "complete"] for i in range(12)
+                },
+            )
+
+        def push(self, kernel_dir: str, *, timeout: float | None = None) -> str:
+            kid = super().push(kernel_dir, timeout=timeout)
+            tracker["kaggle_active"].add(kid)
+            _update_max()
+            return kid
+
+        def status(self, kernel_id: str, *, timeout: float | None = None) -> str:
+            result = super().status(kernel_id, timeout=timeout)
+            if result in ("complete", "error"):
+                tracker["kaggle_active"].discard(kernel_id)
+            return result
+
+    class TrackingColabClient(FakeColabClient):
+        def __init__(self) -> None:
+            super().__init__(
+                behaviors={f"cb{i}": [{"running_polls": 1}] for i in range(2)},
+            )
+
+        def run(
+            self, name: str, script: str, *,
+            arguments: list[str] | None = None,
+            timeout: float | None = None,
+        ) -> FakePopen:
+            proc = super().run(name, script, arguments=arguments, timeout=timeout)
+            tracker["colab_active"].add(name)
+            _update_max()
+            return proc
+
+        def stop(self, name: str, *, timeout: float | None = None) -> None:
+            super().stop(name, timeout=timeout)
+            tracker["colab_active"].discard(name)
+
+    kaggle_client = TrackingKaggleClient()
+    colab_client = TrackingColabClient()
+    # 30 calls is generous for 14 jobs with 2-poll sequences.
+    sleeper = _KeyboardInterruptSleeper(clock_h, max_calls=30)
+    sched = ParallelScheduler(
+        kaggle_client, colab_client=colab_client,
+        clock=clock, sleeper=sleeper,
+    )
+    summary = sched.run(
+        manifest, state, max_parallel=None, poll_interval=1,
+        watch_batch=True, watch_interval=1,
+    )
+
+    # All jobs succeeded (KeyboardInterrupt may fire after completion).
+    # If it fires mid-run, some jobs may not have completed — but with
+    # 30 calls and fast fake clients, all should finish.
+    assert summary["total"] == 14
+    # 10 Kaggle jobs admitted concurrently.
+    assert tracker["max_kaggle"] == DEFAULT_KAGGLE_MAX, (
+        f"expected {DEFAULT_KAGGLE_MAX} concurrent Kaggle in watch mode, "
+        f"got {tracker['max_kaggle']}"
+    )
+    # At least 1 Colab admitted concurrently.
+    assert tracker["max_colab"] >= 1, (
+        f"expected >=1 concurrent Colab in watch mode, "
+        f"got {tracker['max_colab']}"
+    )
+    # Total exceeded 10 — additive capacity proven in watch mode.
+    assert tracker["max_total"] > HARD_KAGGLE_MAX, (
+        f"total concurrency {tracker['max_total']} did not exceed "
+        f"hard kaggle cap {HARD_KAGGLE_MAX} in watch mode"
+    )
+
+
+def test_watch_rejects_nonpositive_watch_interval_colab(tmp_path: Path) -> None:
+    """watch_batch=True with watch_interval <= 0 must raise ValueError."""
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=0, n_colab=1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    sleeper = CountingSleeper(clock_h, interval=1.0)
+    colab_client = FakeColabClient()
+    kaggle_client = FakeKaggleClient()
+    sched = ParallelScheduler(
+        kaggle_client, colab_client=colab_client,
+        clock=clock, sleeper=sleeper,
+    )
+    with pytest.raises(ValueError, match="watch_interval"):
+        sched.run(
+            manifest, state, max_parallel=None, poll_interval=1,
+            colab_max=5, watch_batch=True, watch_interval=0,
+        )
+
+
+def test_watch_default_watch_interval_constant_colab() -> None:
+    """The DEFAULT_WATCH_INTERVAL constant must exist and be 30.0 seconds."""
+    assert DEFAULT_WATCH_INTERVAL is not None, (
+        "DEFAULT_WATCH_INTERVAL not defined in scheduler module"
+    )
+    assert DEFAULT_WATCH_INTERVAL == 30.0

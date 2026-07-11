@@ -36,7 +36,7 @@ eval.
 > real-driver Stage 2 dropped 1.00 → 0.69, Stage 5 1.00 → 0.92; vanilla
 > baseline = 0.00 on all stages. lane_07 gap 1.0 → 0.0 against a
 > competitive baseline; lane_05 honest result = 0.0 (coverage was 1.0).
-> Full test suite green (500+ passed, 0 failures, 0 collection errors).
+> Full test suite green at the time (500+ passed, 0 failures, 0 collection errors). As of commit `4f1a022` (2026-07-11) the collection surface is 800 tests collected, 48 collection errors from optional-dependency packages — see CURRENT_STATE.md §3.
 
 ### Tasks
 
@@ -190,7 +190,14 @@ vanilla column.
 > norm control the NEW config (0.566) falls below OLD unclamped (0.627);
 > survival ratio 0.354 < 0.5; no single variable improves on OLD. Caveats:
 > single seed; clamp-budget capture has a cross-instance stochasticity
-> artifact (cond 1) — fixed by S2.0 (`f761cc0`).
+> artifact (cond 1) — fixed by S2.0 (`f761cc0`). **Evidence-integrity
+> caveat:** the committed log artifact contains a mock-driver table of
+> zeros and `NaN` (the old harness silently wrote test/mock runs to the
+> fixed experiment-log path); the real-run summary survives only outside
+> the repo in a cache log. The qualitative retraction is the working
+> conclusion, but exact values are provisional until a corrected
+> multi-seed rerun is written to a new dated log. See CURRENT_STATE.md
+> §4 "Critical evidence-integrity caveat: S2.4" for full detail.
 
 **Goal:** the minimal thesis loop, end to end, with nothing else attached:
 correction → cortex fast-weight change → consolidation → **changed LM
@@ -366,9 +373,12 @@ extension.
   > absent in 1/3. `distill_delta_holdout` is bimodal {0.3333, 0.3333, 0.0}
   > (mean=0.2222); `teacher_dev_delta=0.1765` and `persistent_bytes=17,699,903`
   > are identical across seeds; `specificity_delta` is {0.0, 0.0, 0.04348}.
-  > Single-seed gate does not constitute a cross-seed claim. No threshold
-  > changes. Evidence: `experiments_logs/2026-07-11_campaign_0d48130.md`.
-- [ ] **S5.2 — research/19: direct cortex learning, two articulation arms.**
+  > Single-seed gate does not constitute a cross-seed claim. A 5-seed
+  > `stage_0` rerun is **diagnostic** unless the unchanged
+  > `teacher_dev_delta` ≥ 0.2 validity gate passes (currently 0.1765 <
+  > 0.2, so the gate is not met). No threshold changes. Evidence:
+  > `experiments_logs/2026-07-11_campaign_0d48130.md`.
+- [ ] **S5.2 — research/19: direct cortex learning, two articulation arms.** — **unimplemented**
   The same ≤64k-param online-trained cortex is evaluated through (A) a
   label-prefix parametric-retrieval readout and (B) a fixed-width latent-control
   readout into a frozen LM. Only B can support the cortex premise; zero/swap/
@@ -379,11 +389,13 @@ extension.
   direct mechanisms; it does not close Research/20 before the learned update
   rule has been tested.
 - [ ] **S5.4 — research/20 / experiment/09: meta-trained cortex over a frozen
-  language organ.** Developmentally learn write, read, consolidation, and
+  language organ.** — **unimplemented**; meta-test blocked on human sign-off.
+  Developmentally learn write, read, consolidation, and
   latent articulation rules across task families; freeze them; then learn an
   unseen rule online with no backprop, retrieval, trace, label text, or LM
   update in the primary condition. Require transfer, composition, deletion,
-  and state-causal controls.
+  and state-causal controls. **The meta-test MUST NOT run without explicit
+  human sign-off.**
 - [ ] **S5.5 — research/21: cortex-routed frozen specialist organs.** Begin
   only if S5.4 accepts. Add a separately frozen action/tool organ, opaque tool
   families, learned routing, and recurrent goal state. Existing Pi tasks become
@@ -412,8 +424,12 @@ remains frozen unless an item explicitly calls for the governance path.
    S1.4 is not reopened.
 
 2. **R18: extend to ≥5 seeds and diagnose LoRA uptake variance.**
-   The 3-seed run is bimodal {0.3333, 0.3333, 0.0}; 1/3 seeds show no
-   distillation signal. Extend to ≥5 seeds without changing thresholds.
+   The 3-seed run is **PARTIAL**: bimodal {0.3333, 0.3333, 0.0}; 1/3 seeds
+   show no distillation signal. A 5-seed `stage_0` rerun is
+   **diagnostic** unless the unchanged `teacher_dev_delta` ≥ 0.2
+   validity gate passes — currently `teacher_dev_delta=0.1765` < 0.2, so
+   the gate is not met and the rerun remains diagnostic, not
+   confirmatory. Extend to ≥5 seeds without changing thresholds.
    Diagnose why seed 2 produced `distill_delta_holdout=0.0` while seeds 0–1
    produced 0.3333; check LoRA initialization, gradient flow, and data order.
    **Acceptance:** ≥5-seed `distill_delta_holdout` with mean ± std in a
@@ -449,7 +465,8 @@ remains frozen unless an item explicitly calls for the governance path.
    obtain human sign-off before meta-test.**
    Build the separate task generator, task-level train/dev/test split,
    manifest, leakage audit, threshold distributions, and power analysis.
-   **Acceptance:** the Phase 0 instrument exists under
+   **The R20 meta-test requires explicit human sign-off and MUST NOT run
+   without it.** **Acceptance:** the Phase 0 instrument exists under
    `src/oczy/experiments/meta_cortex/`, the manifest verifies, and a
    human sign-off is recorded before any meta-test run begins.
 
@@ -464,6 +481,15 @@ remains frozen unless an item explicitly calls for the governance path.
 8. **Research/21: remains blocked on Research/20 acceptance.**
    Do not start the multi-organ router until S5.4 accepts. **Acceptance:**
    no work begins until the Research/20 decision gate is passed.
+
+9. **Durable live watch queue (planned, not yet verified).**
+   A watch mode for `parallel_scheduler.py` is planned: atomically reload a
+   changed batch, merge only unseen job names as pending, never mutate
+   existing job definitions or states, retry malformed reloads without
+   killing the daemon, and stay alive waiting for future jobs. Existing
+   non-watch behavior remains terminating and backward compatible.
+   **Acceptance:** watch mode implemented, verified by tests, and merged —
+   pending until then; do not claim it exists yet.
 
 Sprint 0 and Sprint 1 can overlap after S0.1–S0.4 land; nothing in Sprints
 2–4 may start before Sprint 0 is fully done.

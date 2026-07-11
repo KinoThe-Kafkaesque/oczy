@@ -1776,3 +1776,407 @@ def test_default_clock_produces_wall_clock_timestamps(tmp_path: Path) -> None:
     # (orders of magnitude smaller).  A 120-second tolerance is generous
     # yet still distinguishes the two clocks decisively.
     assert wall_before - 120 <= job["submitted_at"] <= wall_after + 120
+# ---------------------------------------------------------------------------
+# 20. Live-watch contract: watch_batch mode regression tests
+# ---------------------------------------------------------------------------
+#
+# These tests defend the durable live-watch queue contract:
+#   - New jobs appended during an active run are merged and executed.
+#   - Existing job definition/state cannot be mutated by reload.
+#   - Malformed reload is retried; later valid content succeeds.
+#   - Watch mode stays alive across an empty interval and can be
+#     terminated deterministically (via KeyboardInterrupt).
+#   - Non-watch mode still terminates (backward compatible).
+#   - Additive 10 Kaggle + learned Colab X admission in watch mode.
+#
+# All tests avoid real network and real sleeps by injecting fake clients,
+# a deterministic clock, and a bounded or KeyboardInterrupt-raising sleeper.
+# ---------------------------------------------------------------------------
+
+DEFAULT_WATCH_INTERVAL: float | None = _mod.get("DEFAULT_WATCH_INTERVAL")
+
+
+def _append_job_to_batch(
+    base: Path,
+    batch_path: Path,
+    name: str,
+    kernel_id: str,
+) -> None:
+    """Append a new job to an existing v1 batch manifest, creating its
+    kernel directory.  Raises if the name already exists in the batch."""
+    manifest = json.loads(batch_path.read_text(encoding="utf-8"))
+    existing_names = {j["name"] for j in manifest["jobs"]}
+    assert name not in existing_names, f"job {name} already in batch"
+    _make_kernel_dir(base, name, kernel_id)
+    manifest["jobs"].append(
+        {"name": name, "kernel_dir": name, "output_dir": f"out/{name}"}
+    )
+    batch_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+class _KeyboardInterruptSleeper:
+    """Sleeper that raises KeyboardInterrupt after *max_calls* calls,
+    simulating Ctrl-C to terminate watch mode deterministically."""
+
+    def __init__(self, clock: list[float], max_calls: int) -> None:
+        self._clock = clock
+        self._max = max_calls
+        self._n = 0
+        self.calls: list[float] = []
+
+    def __call__(self, seconds: float) -> None:
+        self.calls.append(seconds)
+        self._clock[0] += seconds
+        self._n += 1
+        if self._n >= self._max:
+            raise KeyboardInterrupt()
+
+
+class _CountingSleeperNoRaise:
+    """Sleeper that records calls and advances a fake clock without raising."""
+
+    def __init__(self, clock: list[float]) -> None:
+        self._clock = clock
+        self.calls: list[float] = []
+
+    def __call__(self, seconds: float) -> None:
+        self.calls.append(seconds)
+        self._clock[0] += seconds
+
+
+def test_watch_rejects_nonpositive_watch_interval(tmp_path: Path) -> None:
+    """watch_batch=True with watch_interval <= 0 must raise ValueError."""
+    manifest, _ = _make_batch_with_kernels(tmp_path, 1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    sleeper = CountingSleeper(clock_h, interval=1.0)
+    client = FakeKaggleClient(status_sequences={"owner/k0": ["complete"]})
+    sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
+    with pytest.raises(ValueError, match="watch_interval"):
+        sched.run(
+            manifest, state, max_parallel=4, poll_interval=1,
+            watch_batch=True, watch_interval=0,
+        )
+
+
+def test_watch_merges_new_jobs_appended_during_active_run(
+    tmp_path: Path,
+) -> None:
+    """In watch mode, new jobs appended to the batch file while the
+    scheduler is running are merged as PENDING and eventually executed.
+
+    The batch starts with 1 job.  While that job is RUNNING, a 2nd job is
+    appended to the batch file.  The scheduler's _maybe_reload_batch detects
+    the file change, merges the new job as PENDING, submits it, and both
+    reach SUCCEEDED.  The sleeper raises KeyboardInterrupt after enough
+    cycles to complete both jobs plus one idle watch interval.
+    """
+    manifest, _ = _make_batch_with_kernels(tmp_path, 1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    # The first job stays running for 1 poll, then completes.
+    client = FakeKaggleClient(
+        status_sequences={"owner/k0": ["running", "complete"],
+                          "owner/k1": ["complete"]},
+    )
+
+    # Append job1 to the batch AFTER the scheduler has submitted job0.
+    # We use a wrapper on _submit to time the file mutation.
+    original_submit = ParallelScheduler._submit
+
+    appended = {"done": False}
+
+    def _wrapped_submit(self, job, push_timeout):
+        result = original_submit(self, job, push_timeout)
+        if not appended["done"] and job.name == "job0":
+            _append_job_to_batch(tmp_path, manifest, "job1", "owner/k1")
+            appended["done"] = True
+        return result
+
+    # Use a sleeper that raises KeyboardInterrupt after enough cycles.
+    # job0: submit (cycle 1) -> poll running (cycle 2) -> poll complete ->
+    # collect -> idle.  job1: submit -> poll complete -> collect -> idle.
+    # 8 cycles is generous.
+    sleeper = _KeyboardInterruptSleeper(clock_h, max_calls=8)
+
+    import types
+    try:
+        ParallelScheduler._submit = _wrapped_submit
+        sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
+        summary = sched.run(
+            manifest, state, max_parallel=4, poll_interval=1,
+            watch_batch=True, watch_interval=1,
+        )
+    finally:
+        ParallelScheduler._submit = original_submit
+
+    # Both jobs should be in the summary.
+    assert "job0" in summary["jobs"]
+    assert "job1" in summary["jobs"]
+    # job0 completed successfully.
+    assert summary["jobs"]["job0"]["state"] == SUCCEEDED
+    # job1 was merged and also completed.
+    assert summary["jobs"]["job1"]["state"] == SUCCEEDED
+    assert summary["all_succeeded"]
+
+
+def test_watch_does_not_mutate_existing_job_state_on_reload(
+    tmp_path: Path,
+) -> None:
+    """Reloading the batch file must not mutate existing job definitions
+    or lifecycle state.  An existing job that has SUCCEEDED must remain
+    SUCCEEDED with its original attempts/attempts count, even if the batch
+    file is rewritten with a different job order or additional jobs.
+
+    This test starts with 1 job, lets it succeed, then appends a 2nd job.
+    The 1st job's state/attempts in the final summary must be unchanged
+    by the reload.
+    """
+    manifest, _ = _make_batch_with_kernels(tmp_path, 1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    client = FakeKaggleClient(
+        status_sequences={"owner/k0": ["complete"],
+                          "owner/k1": ["complete"]},
+    )
+
+    appended = {"done": False}
+    original_submit = ParallelScheduler._submit
+
+    def _wrapped_submit(self, job, push_timeout):
+        result = original_submit(self, job, push_timeout)
+        if not appended["done"] and job.name == "job0":
+            _append_job_to_batch(tmp_path, manifest, "job1", "owner/k1")
+            appended["done"] = True
+        return result
+
+    sleeper = _KeyboardInterruptSleeper(clock_h, max_calls=8)
+
+    try:
+        ParallelScheduler._submit = _wrapped_submit
+        sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
+        summary = sched.run(
+            manifest, state, max_parallel=4, poll_interval=1,
+            watch_batch=True, watch_interval=1,
+        )
+    finally:
+        ParallelScheduler._submit = original_submit
+
+    # job0 succeeded with exactly 1 attempt (not re-submitted by reload).
+    assert summary["jobs"]["job0"]["state"] == SUCCEEDED
+    assert summary["jobs"]["job0"]["attempts"] == 1
+    # job1 was added as a fresh pending job.
+    assert summary["jobs"]["job1"]["state"] == SUCCEEDED
+    assert summary["jobs"]["job1"]["attempts"] == 1
+
+
+def test_watch_malformed_reload_retried_then_valid_content_succeeds(
+    tmp_path: Path,
+) -> None:
+    """When the batch file is malformed (invalid JSON) during a reload,
+    the scheduler logs the error, does NOT update watch_state, and retries
+    on the next cycle.  When the file is later written with valid content
+    (a new job), the merge succeeds and the new job is executed.
+
+    Sequence:
+    1. Start with 1 job (job0).  Let it complete.
+    2. While idle, write invalid JSON to the batch file.
+    3. The scheduler detects a change but load_batch fails — it logs and
+       retries (watch_state unchanged).
+    4. Write valid JSON with job0 + job1.
+    5. The scheduler retries, merges job1, executes it.
+    6. KeyboardInterrupt terminates after both jobs complete.
+    """
+    manifest, _ = _make_batch_with_kernels(tmp_path, 1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    client = FakeKaggleClient(
+        status_sequences={"owner/k0": ["complete"],
+                          "owner/k1": ["complete"]},
+    )
+
+    phase = {"step": 0}
+
+    class _StagedSleeper:
+        """Sleeper that mutates the batch file at strategic points and
+        eventually raises KeyboardInterrupt."""
+
+        def __init__(self) -> None:
+            self.calls: list[float] = []
+
+        def __call__(self, seconds: float) -> None:
+            self.calls.append(seconds)
+            clock_h[0] += seconds
+            phase["step"] += 1
+            # After job0 completes and the scheduler goes idle, corrupt
+            # the batch file on the first idle sleep.  The scheduler will
+            # call _maybe_reload_batch before sleeping, so we need to
+            # corrupt the file BEFORE that check.  We do it on the 2nd
+            # sleep call (after job0 has been submitted and polled).
+            if phase["step"] == 2:
+                # Write invalid JSON to the batch file.
+                manifest.write_text("{ invalid json !!!", encoding="utf-8")
+            # On the 3rd sleep, write valid JSON with job0 + job1.
+            if phase["step"] == 3:
+                # Write valid JSON from scratch with job0 + job1.
+                # (Cannot use _append_job_to_batch because the file is
+                # currently corrupted with invalid JSON.)
+                _make_kernel_dir(tmp_path, "job1", "owner/k1")
+                manifest.write_text(
+                    json.dumps({
+                        "schema_version": EXPECTED_BATCH_SCHEMA,
+                        "jobs": [
+                            {"name": "job0", "kernel_dir": "job0",
+                             "output_dir": "out/job0"},
+                            {"name": "job1", "kernel_dir": "job1",
+                             "output_dir": "out/job1"},
+                        ],
+                    }),
+                    encoding="utf-8",
+                )
+            # After enough cycles, terminate.
+            if phase["step"] >= 10:
+                raise KeyboardInterrupt()
+
+    sleeper = _StagedSleeper()
+    sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
+    summary = sched.run(
+        manifest, state, max_parallel=4, poll_interval=1,
+        watch_batch=True, watch_interval=1,
+    )
+
+    # job0 succeeded.
+    assert summary["jobs"]["job0"]["state"] == SUCCEEDED
+    # job1 was merged after the malformed retry and succeeded.
+    assert "job1" in summary["jobs"]
+    assert summary["jobs"]["job1"]["state"] == SUCCEEDED
+
+
+def test_watch_stays_alive_across_empty_interval_then_terminated(
+    tmp_path: Path,
+) -> None:
+    """Watch mode must NOT terminate when all jobs are done.  It stays
+    alive across idle intervals (sleeping watch_interval) until
+    KeyboardInterrupt.  This test verifies the scheduler survives at
+    least one full idle cycle before the sleeper raises KeyboardInterrupt.
+
+    A pre-change scheduler that breaks on idle would exit before the
+    sleeper raises, producing a summary with no KeyboardInterrupt-induced
+    state.  We verify the sleeper was called at least twice (once for
+    poll, once for idle watch_interval) before termination.
+    """
+    manifest, _ = _make_batch_with_kernels(tmp_path, 1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    client = FakeKaggleClient(
+        status_sequences={"owner/k0": ["complete"]},
+    )
+    # 5 calls: 1 for poll, then at least 2 idle watch intervals, then
+    # KeyboardInterrupt on the 5th.
+    sleeper = _KeyboardInterruptSleeper(clock_h, max_calls=5)
+    sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
+    summary = sched.run(
+        manifest, state, max_parallel=4, poll_interval=1,
+        watch_batch=True, watch_interval=1,
+    )
+
+    # job0 succeeded.
+    assert summary["jobs"]["job0"]["state"] == SUCCEEDED
+    # The sleeper was called at least 3 times (poll + at least 2 idle).
+    # A pre-change scheduler that breaks on idle would have called the
+    # sleeper fewer times (only during active jobs).
+    assert len(sleeper.calls) >= 3, (
+        f"expected >=3 sleeper calls (poll + idle watch), "
+        f"got {len(sleeper.calls)}: {sleeper.calls}"
+    )
+    # State file is valid after Ctrl-C termination.
+    data = json.loads(state.read_text())
+    assert data["jobs"]["job0"]["state"] == SUCCEEDED
+
+
+def test_non_watch_mode_still_terminates(tmp_path: Path) -> None:
+    """Without watch_batch, the scheduler must terminate when all jobs
+    reach terminal state — identical to historical behavior.  The sleeper
+    must NOT be called enough to trigger KeyboardInterrupt, and the run
+    returns normally.
+
+    This is the backward-compatibility regression: watch_batch=False
+    (default) must not enter the infinite watch loop.
+    """
+    manifest, _ = _make_batch_with_kernels(tmp_path, 2)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    client = FakeKaggleClient(
+        status_sequences={
+            "owner/k0": ["complete"],
+            "owner/k1": ["complete"],
+        },
+    )
+    # A sleeper that would raise KeyboardInterrupt after 100 calls.
+    # If non-watch mode terminates correctly, this never fires.
+    sleeper = _KeyboardInterruptSleeper(clock_h, max_calls=100)
+    sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
+    summary = sched.run(
+        manifest, state, max_parallel=4, poll_interval=1,
+        # watch_batch defaults to False
+    )
+
+    assert summary["all_succeeded"]
+    assert summary["total"] == 2
+    # The sleeper was called fewer than 100 times (no KeyboardInterrupt).
+    assert len(sleeper.calls) < 100
+    # No KeyboardInterrupt was raised — run returned normally.
+    data = json.loads(state.read_text())
+    assert all(
+        data["jobs"][j]["state"] == SUCCEEDED for j in ("job0", "job1")
+    )
+
+
+def test_watch_cli_rejects_nonpositive_watch_interval(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CLI --watch-batch with --watch-interval 0 must fail via SystemExit
+    (parser.error)."""
+    manifest, _ = _make_batch_with_kernels(tmp_path, 1)
+    state = tmp_path / "state.json"
+    client = FakeKaggleClient(status_sequences={"owner/k0": ["complete"]})
+    with pytest.raises(SystemExit):
+        main(
+            ["run", str(manifest), "--state", str(state),
+             "--watch-batch", "--watch-interval", "0"],
+            client=client,
+        )
+
+
+def test_watch_cli_accepts_watch_batch_flag(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CLI --watch-batch with a valid --watch-interval must be accepted
+    by the parser (no SystemExit from parser.error).  The run itself is
+    terminated via KeyboardInterrupt from the sleeper."""
+    manifest, _ = _make_batch_with_kernels(tmp_path, 1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    sleeper = _KeyboardInterruptSleeper(clock_h, max_calls=5)
+    client = FakeKaggleClient(
+        status_sequences={"owner/k0": ["complete"]},
+    )
+    rc = main(
+        ["run", str(manifest), "--state", str(state),
+         "--watch-batch", "--watch-interval", "1", "--poll-interval", "1"],
+        client=client, clock=clock, sleeper=sleeper,
+    )
+    # run() catches KeyboardInterrupt and returns a summary; main() prints
+    # it and returns 0 if all_succeeded.
+    assert rc == 0
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["all_succeeded"]
+
+
+def test_watch_default_watch_interval_constant() -> None:
+    """The DEFAULT_WATCH_INTERVAL constant must exist and be 30.0 seconds."""
+    assert DEFAULT_WATCH_INTERVAL is not None, (
+        "DEFAULT_WATCH_INTERVAL not defined in scheduler module"
+    )
+    assert DEFAULT_WATCH_INTERVAL == 30.0

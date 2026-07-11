@@ -71,9 +71,9 @@ try:
         COLAB_COMPLETE,
         COLAB_ERROR,
         ColabCliClient,
+        _read_proc_output,
         classify_colab_output,
         detect_orphaned_sessions,
-        _read_proc_output,
     )
     _COLAB_AVAILABLE = True
 except ImportError:  # pragma: no cover - colab_provider is co-located
@@ -138,6 +138,7 @@ DEFAULT_JOB_TIMEOUT = 21600
 DEFAULT_STATUS_TIMEOUT = 120
 DEFAULT_OUTPUT_TIMEOUT = 1800
 DEFAULT_PUSH_SUBPROCESS_TIMEOUT = 600
+DEFAULT_WATCH_INTERVAL = 30.0
 
 # ---------------------------------------------------------------------------
 # Job lifecycle states.
@@ -1227,6 +1228,103 @@ class ParallelScheduler:
             encoding="utf-8",
         )
 
+    # -- live batch watch -------------------------------------------------
+
+    @staticmethod
+    def _stat_signature(path: str | Path) -> tuple[int, int] | None:
+        """Return ``(st_mtime_ns, st_size)`` for *path*, or ``None`` if unavailable."""
+        try:
+            st = Path(path).stat()
+            return (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return None
+
+    def _maybe_reload_batch(
+        self,
+        jobs: dict[str, Job],
+        batch_path: str,
+        watch_state: dict[str, Any],
+    ) -> int:
+        """Reload *batch_path* if it changed; merge unseen jobs as PENDING.
+
+        *watch_state* carries ``mtime_ns`` and ``size`` from the last
+        successful load.  On change, the batch is re-read and validated.
+        Only job names not already in *jobs* are added (as fresh PENDING
+        jobs via :meth:`_new_job_from_batch`).  Existing jobs are never
+        modified — no definition or state overwrite.
+
+        Malformed or partially-written reloads (JSON parse errors,
+        validation failures, OS errors) are logged to stderr and the
+        watch_state is left unchanged so the next cycle retries.  This
+        method never raises.
+
+        Returns the number of new jobs added.
+        """
+        sig = self._stat_signature(batch_path)
+        if sig is None:
+            print(
+                f"[watch] could not stat batch file {batch_path}: "
+                f"will retry",
+                file=_sys.stderr,
+            )
+            return 0
+        mtime_ns, size = sig
+        if mtime_ns == watch_state.get("mtime_ns") and size == watch_state.get(
+            "size"
+        ):
+            return 0
+
+        try:
+            new_batch_jobs = load_batch(batch_path)
+        except (BatchValidationError, OSError, ValueError) as exc:
+            print(
+                f"[watch] batch reload failed (will retry): {exc}",
+                file=_sys.stderr,
+            )
+            return 0
+        except Exception as exc:  # pragma: no cover - defensive
+            print(
+                f"[watch] batch reload failed (will retry): {exc}",
+                file=_sys.stderr,
+            )
+            return 0
+
+        # Detect schema mismatch (informational only — new jobs still merge).
+        new_schema = (
+            new_batch_jobs[0].get("schema_version", BATCH_SCHEMA_VERSION)
+            if new_batch_jobs
+            else BATCH_SCHEMA_VERSION
+        )
+        if new_schema != self._state_schema and new_schema not in (
+            BATCH_SCHEMA_VERSION,
+            BATCH_SCHEMA_V2,
+        ):
+            print(
+                f"[watch] batch schema changed to {new_schema!r}; "
+                f"merging new jobs under existing state schema "
+                f"{self._state_schema!r}",
+                file=_sys.stderr,
+            )
+
+        added = 0
+        for batch_job in new_batch_jobs:
+            name = batch_job["name"]
+            if name in jobs:
+                continue
+            jobs[name] = self._new_job_from_batch(batch_job)
+            added += 1
+
+        if added:
+            print(
+                f"[watch] merged {added} new job(s) from batch reload",
+                file=_sys.stderr,
+            )
+
+        # Update watch_state only after a successful load+merge.
+        watch_state["mtime_ns"] = mtime_ns
+        watch_state["size"] = size
+        return added
+
     # -- main loop ---------------------------------------------------------
 
     def run(
@@ -1241,6 +1339,8 @@ class ParallelScheduler:
         kaggle_max: int = DEFAULT_KAGGLE_MAX,
         colab_max: int = DEFAULT_COLAB_MAX,
         colab_cooldown: float = DEFAULT_COLAB_COOLDOWN,
+        watch_batch: bool = False,
+        watch_interval: float = DEFAULT_WATCH_INTERVAL,
     ) -> dict[str, Any]:
         """Run the full scheduling loop until all jobs reach a terminal state.
 
@@ -1249,6 +1349,17 @@ class ParallelScheduler:
         capacities additively (kaggle_max Kaggle + learned Colab X).
         When *max_parallel* is an explicit int, it caps total concurrency
         globally for backward compatibility.
+
+        When *watch_batch* is ``False`` (default), the loop terminates when
+        all jobs reach a terminal state — identical to historical behavior.
+        When *watch_batch* is ``True``, the scheduler enters **live watch
+        mode**: it stays alive even when no jobs are pending or running,
+        periodically re-reads the batch file (every *watch_interval*
+        seconds when idle), and merges any unseen job names as new PENDING
+        jobs.  Existing jobs are never modified.  Malformed reloads are
+        logged and retried.  The loop exits only on ``KeyboardInterrupt``
+        (Ctrl-C), at which point state is persisted and a summary is
+        returned normally.
 
         Returns a summary dict with per-job status, per-provider breakdown,
         and overall success flag.
@@ -1266,6 +1377,11 @@ class ParallelScheduler:
         if colab_max < MIN_COLAB_MAX:
             raise ValueError(
                 f"colab_max must be >= {MIN_COLAB_MAX}, got {colab_max}"
+            )
+        if watch_batch and watch_interval <= 0:
+            raise ValueError(
+                f"watch_interval must be > 0 when watch_batch is True, "
+                f"got {watch_interval}"
             )
 
         batch_path_resolved = str(Path(batch_path).resolve())
@@ -1361,6 +1477,16 @@ class ParallelScheduler:
 
         self._save_state(state_path_resolved, batch_path_resolved, jobs)
 
+        # Watch mode: record the initial batch file signature so the first
+        # loop iteration does not immediately re-read it.  watch_state is
+        # mutated only by _maybe_reload_batch after a successful reload.
+        watch_state: dict[str, Any] = {}
+        if watch_batch:
+            sig = self._stat_signature(batch_path_resolved)
+            if sig is not None:
+                watch_state["mtime_ns"] = sig[0]
+                watch_state["size"] = sig[1]
+
         while True:
             # Phase 1: submit pending jobs into available slots.
             active = self._active_count(jobs)
@@ -1443,16 +1569,45 @@ class ParallelScheduler:
                         self._collect_colab(job)
                     self._save_state(state_path_resolved, batch_path_resolved, jobs)
 
+            # Watch mode: check for batch file changes before deciding
+            # whether to sleep or exit.  In non-watch mode this is a no-op
+            # (watch_state is empty, _maybe_reload_batch returns 0).
+            if watch_batch:
+                added = self._maybe_reload_batch(
+                    jobs, batch_path_resolved, watch_state
+                )
+                if added:
+                    self._save_state(
+                        state_path_resolved, batch_path_resolved, jobs
+                    )
+
             # Check if we're done.
             active = self._active_count(jobs)
             pending = sum(1 for j in jobs.values() if j.state == PENDING)
-            if active == 0 and pending == 0:
-                break
 
-            if active > 0:
+            if not watch_batch:
+                if active == 0 and pending == 0:
+                    break
                 self.sleeper(poll_interval)
-            elif pending > 0:
-                self.sleeper(poll_interval)
+                continue
+
+            # Watch mode: never break on idle.  Sleep with the appropriate
+            # interval — poll_interval when jobs are active/pending (to
+            # maintain responsive status polling), watch_interval when idle
+            # (to throttle batch-file checks).  KeyboardInterrupt (Ctrl-C)
+            # is caught here so state is persisted and a summary returned.
+            try:
+                if active > 0 or pending > 0:
+                    self.sleeper(poll_interval)
+                else:
+                    self.sleeper(watch_interval)
+            except KeyboardInterrupt:
+                print(
+                    "[watch] interrupted by user (Ctrl-C); "
+                    "persisting state and exiting",
+                    file=_sys.stderr,
+                )
+                break
 
         self._save_state(state_path_resolved, batch_path_resolved, jobs)
         return self._summary(jobs)
@@ -1593,6 +1748,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Colab capacity-rejection cooldown in seconds "
         f"(default {DEFAULT_COLAB_COOLDOWN}).",
     )
+    run_p.add_argument(
+        "--watch-batch",
+        action="store_true",
+        default=False,
+        help=(
+            "Live watch mode: keep the scheduler alive after all jobs reach "
+            "a terminal state, re-read the batch file when it changes, and "
+            "merge unseen job names as new pending jobs. Exit with Ctrl-C. "
+            "Without this flag, the scheduler terminates when all jobs are "
+            "done (default)."
+        ),
+    )
+    run_p.add_argument(
+        "--watch-interval",
+        type=float,
+        default=DEFAULT_WATCH_INTERVAL,
+        help=(
+            f"Seconds between batch-file change checks when idle in watch "
+            f"mode (default {DEFAULT_WATCH_INTERVAL}). Must be > 0 when "
+            f"--watch-batch is set."
+        ),
+    )
 
     status_p = sub.add_parser("status", help="Print status summary for a batch.")
     status_p.add_argument("batch", help="Path to batch manifest JSON.")
@@ -1636,7 +1813,10 @@ def main(
             )
         if args.colab_max < MIN_COLAB_MAX:
             parser.error(f"--colab-max must be >= {MIN_COLAB_MAX}")
-
+        if args.watch_batch and args.watch_interval <= 0:
+            parser.error(
+                "--watch-interval must be > 0 when --watch-batch is set"
+            )
         cli_client = client or KaggleCliClient(
             push_timeout=args.push_timeout,
             status_timeout=DEFAULT_STATUS_TIMEOUT,
@@ -1673,6 +1853,8 @@ def main(
             kaggle_max=args.kaggle_max,
             colab_max=args.colab_max,
             colab_cooldown=args.colab_cooldown,
+            watch_batch=args.watch_batch,
+            watch_interval=args.watch_interval,
         )
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 0 if summary["all_succeeded"] else 1
