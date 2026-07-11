@@ -29,7 +29,7 @@ from oczy.experiments.organism_curriculum.dataset import (
     build_curriculum,
     split_probes,
 )
-from oczy.lm.cvec_driver import ReservedPosition
+from oczy.lm import ReservedPosition
 from oczy.lm.hf_driver import HFDriver
 
 
