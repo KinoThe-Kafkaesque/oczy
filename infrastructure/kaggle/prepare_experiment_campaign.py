@@ -72,6 +72,8 @@ DEFAULT_REPORT_FILENAME = "execution_report.json"
 CLAIM_SCIENTIFIC = "scientific"
 CLAIM_INFRASTRUCTURE = "infrastructure"
 _VALID_CLAIM_CLASSES = frozenset({CLAIM_SCIENTIFIC, CLAIM_INFRASTRUCTURE})
+_VALID_MODEL_ARTIFACT_KINDS = frozenset({"gguf", "hf_snapshot"})
+_MODEL_ARTIFACT_REQUIRED_FIELDS = ("kind", "repo_id", "revision", "filename", "sha256")
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +193,33 @@ def validate_campaign(campaign: dict[str, Any]) -> None:
             _validate_kaggle_job_fields(name, job, phase)
         # Colab-specific validation is delegated to prepare_colab_experiment.
 
+        # Colab-only optional model provisioning fields.
+        # These are rejected on Kaggle jobs to enforce the CPU-only,
+        # no-external-model contract for Kaggle kernels.
+        model_artifact = job.get("model_artifact")
+        install_llama_cpp = job.get("install_llama_cpp")
+        if provider == PROVIDER_KAGGLE:
+            if model_artifact is not None:
+                raise CampaignValidationError(
+                    f"kaggle job {name!r}: model_artifact is only supported "
+                    f"on Colab jobs"
+                )
+            if install_llama_cpp is not None:
+                raise CampaignValidationError(
+                    f"kaggle job {name!r}: install_llama_cpp is only supported "
+                    f"on Colab jobs"
+                )
+        elif provider == PROVIDER_COLAB:
+            if model_artifact is not None:
+                _validate_model_artifact(name, model_artifact)
+            if install_llama_cpp is not None:
+                if not isinstance(install_llama_cpp, bool):
+                    raise CampaignValidationError(
+                        f"colab job {name!r}: install_llama_cpp must be a boolean"
+                    )
+            else:
+                job["install_llama_cpp"] = False
+
 
 def _validate_kaggle_job_fields(name: str, job: dict[str, Any], phase: str) -> None:
     """Validate Kaggle-specific required fields on a campaign job."""
@@ -228,6 +257,55 @@ def _validate_kaggle_job_fields(name: str, job: dict[str, Any], phase: str) -> N
         raise CampaignValidationError(
             f"kaggle job {name!r}: meta-test phase requires "
             "instrument_manifest_sha256 and human_signoff_id"
+        )
+
+def _validate_model_artifact(name: str, model_artifact: Any) -> None:
+    """Validate a Colab job's optional ``model_artifact`` dict.
+
+    The artifact must specify a Hugging Face repo, an exact 40-hex revision,
+    a filename, and a 64-hex SHA-256 of the downloaded file.  ``kind``
+    determines whether a single GGUF file is fetched via
+    ``hf_hub_download`` or a full snapshot via ``snapshot_download``.
+    """
+    if not isinstance(model_artifact, dict):
+        raise CampaignValidationError(
+            f"colab job {name!r}: model_artifact must be an object"
+        )
+    for field in _MODEL_ARTIFACT_REQUIRED_FIELDS:
+        if field not in model_artifact:
+            raise CampaignValidationError(
+                f"colab job {name!r}: model_artifact missing required field "
+                f"{field!r}"
+            )
+    kind = model_artifact["kind"]
+    if kind not in _VALID_MODEL_ARTIFACT_KINDS:
+        raise CampaignValidationError(
+            f"colab job {name!r}: model_artifact kind {kind!r} "
+            f"must be one of {sorted(_VALID_MODEL_ARTIFACT_KINDS)!r}"
+        )
+    repo_id = model_artifact["repo_id"]
+    if not isinstance(repo_id, str) or not repo_id.strip():
+        raise CampaignValidationError(
+            f"colab job {name!r}: model_artifact repo_id must be a "
+            f"non-empty string"
+        )
+    revision = model_artifact["revision"]
+    if not isinstance(revision, str) or not COMMIT_PATTERN.fullmatch(revision):
+        raise CampaignValidationError(
+            f"colab job {name!r}: model_artifact revision must be a "
+            f"40-character lowercase hex SHA"
+        )
+    filename = model_artifact["filename"]
+    if not isinstance(filename, str) or not filename.strip():
+        raise CampaignValidationError(
+            f"colab job {name!r}: model_artifact filename must be a "
+            f"non-empty string"
+        )
+    sha256 = model_artifact["sha256"]
+    if not isinstance(sha256, str) or not SHA256_PATTERN.fullmatch(sha256):
+        raise CampaignValidationError(
+            f"colab job {name!r}: model_artifact sha256 must be a "
+            f"64-character lowercase hex SHA-256"
         )
 
 
@@ -387,6 +465,8 @@ def prepare_experiment_campaign(
                 claim_class=job["claim_class"],
                 output_path=output_dir_rel,
                 timeout=job.get("timeout"),
+                model_artifact=job.get("model_artifact"),
+                install_llama_cpp=job.get("install_llama_cpp", False),
                 force=force,
             )
 

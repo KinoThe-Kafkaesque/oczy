@@ -28,13 +28,16 @@ network, real Kaggle/Colab CLI, or real GitHub.
 from __future__ import annotations
 
 import ast
+import hashlib
 import io
 import json
+import os
 import re
 import runpy
 import subprocess
 import sys
 import threading
+import types
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -75,6 +78,7 @@ _kernel_mod = _load_module(KAGGLE_DIR / "prepare_research_kernel.py")
 CAMPAIGN_SCHEMA_VERSION: str = _prep_mod["CAMPAIGN_SCHEMA_VERSION"]
 validate_campaign = _prep_mod["validate_campaign"]
 prepare_experiment_campaign = _prep_mod["prepare_experiment_campaign"]
+CampaignValidationError = _prep_mod["CampaignValidationError"]
 
 classify_job_result = _coll_mod["classify_job_result"]
 collect_experiment_campaign = _coll_mod["collect_experiment_campaign"]
@@ -90,6 +94,15 @@ RUNNER_SCHEMA_VERSION: str = _runner_mod["SCHEMA_VERSION"]
 
 prepare_colab_experiment = _colab_prep_mod["prepare_colab_experiment"]
 COLAB_JOB_SCHEMA_VERSION: str = _colab_prep_mod["JOB_SPEC_SCHEMA_VERSION"]
+ColabPrepValueError = _colab_prep_mod["ColabPrepValueError"]
+_VALID_MODEL_ARTIFACT_KINDS = _colab_prep_mod.get(
+    "_VALID_MODEL_ARTIFACT_KINDS", frozenset({"gguf", "hf_snapshot"})
+)
+_LLAMA_CPP_VERSION: str = _colab_prep_mod.get("_LLAMA_CPP_VERSION", "0.3.31")
+_LLAMA_CPP_WHEEL_INDEX: str = _colab_prep_mod.get(
+    "_LLAMA_CPP_WHEEL_INDEX",
+    "https://abetlen.github.io/llama-cpp-python/whl/cpu",
+)
 
 BATCH_SCHEMA_V2: str = _sched_mod["BATCH_SCHEMA_V2"]
 load_batch = _sched_mod["load_batch"]
@@ -112,6 +125,9 @@ EXPECTED_CAMPAIGN_SCHEMA = "oczy/remote-experiment-campaign/v1"
 EXPECTED_RUNNER_SCHEMA = "oczy/execution-report/v1"
 EXPECTED_COLAB_JOB_SCHEMA = "oczy/colab-experiment-job/v1"
 EXPECTED_BATCH_V2 = "oczy/remote-parallel-batch/v2"
+
+MODEL_REVISION = "f" * 40
+MODEL_SHA_DUMMY = "e" * 64
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +204,49 @@ def _write_campaign(tmp_path: Path, campaign: dict[str, Any] | None = None) -> P
     p = tmp_path / "campaign.json"
     p.write_text(json.dumps(campaign or _valid_campaign()), encoding="utf-8")
     return p
+
+
+def _valid_gguf_artifact(
+    *,
+    repo_id: str = "KinoThe-Kafkaesque/LFM2.5-1.2B-Instruct-GGUF",
+    revision: str = MODEL_REVISION,
+    filename: str = "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+    sha256: str = MODEL_SHA_DUMMY,
+) -> dict[str, Any]:
+    return {
+        "kind": "gguf",
+        "repo_id": repo_id,
+        "revision": revision,
+        "filename": filename,
+        "sha256": sha256,
+    }
+
+
+def _valid_hf_snapshot_artifact(
+    *,
+    repo_id: str = "KinoThe-Kafkaesque/LFM2.5-1.2B-Instruct",
+    revision: str = MODEL_REVISION,
+    filename: str = "config.json",
+    sha256: str = MODEL_SHA_DUMMY,
+) -> dict[str, Any]:
+    return {
+        "kind": "hf_snapshot",
+        "repo_id": repo_id,
+        "revision": revision,
+        "filename": filename,
+        "sha256": sha256,
+    }
+
+
+def _exec_bootstrap(source: str) -> dict[str, Any]:
+    """Exec generated bootstrap source in a test namespace.
+
+    Sets ``__name__`` to avoid triggering ``main()``.  Returns the
+    namespace containing all bootstrap-level functions.
+    """
+    ns: dict[str, Any] = {"__name__": "colab_bootstrap_test"}
+    exec(compile(source, "colab_bootstrap.py", "exec"), ns)
+    return ns
 
 
 
@@ -1871,3 +1930,841 @@ def test_runner_schema_version_constant() -> None:
 
 def test_colab_job_schema_version_constant() -> None:
     assert COLAB_JOB_SCHEMA_VERSION == EXPECTED_COLAB_JOB_SCHEMA
+
+
+# ===========================================================================
+# 14. Colab model artifact validation (prepare_colab_experiment)
+# ===========================================================================
+
+
+class TestModelArtifactValidation:
+    """prepare_colab_experiment rejects invalid model_artifact / install_llama_cpp."""
+
+    def test_rejects_non_dict_model_artifact(self, tmp_path: Path) -> None:
+        with pytest.raises(ColabPrepValueError, match="model_artifact"):
+            prepare_colab_experiment(
+                output=tmp_path / "out",
+                job_name="cb-a",
+                repo_url=REPO_URL,
+                source_commit=COMMIT,
+                module="infrastructure.kaggle.run_cortex_smoke",
+                arguments=[],
+                phase="development",
+                claim_class="scientific",
+                output_path="out/cb-a",
+                model_artifact="not-a-dict",
+            )
+
+    def test_rejects_missing_kind(self, tmp_path: Path) -> None:
+        artifact = _valid_gguf_artifact()
+        del artifact["kind"]
+        with pytest.raises(ColabPrepValueError, match="model_artifact|missing"):
+            prepare_colab_experiment(
+                output=tmp_path / "out", job_name="cb-a", repo_url=REPO_URL,
+                source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+                arguments=[], phase="development", claim_class="scientific",
+                output_path="out/cb-a", model_artifact=artifact,
+            )
+
+    def test_rejects_invalid_kind(self, tmp_path: Path) -> None:
+        artifact = _valid_gguf_artifact()
+        artifact["kind"] = "onnx"
+        with pytest.raises(ColabPrepValueError, match="kind"):
+            prepare_colab_experiment(
+                output=tmp_path / "out", job_name="cb-a", repo_url=REPO_URL,
+                source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+                arguments=[], phase="development", claim_class="scientific",
+                output_path="out/cb-a", model_artifact=artifact,
+            )
+
+    def test_rejects_empty_repo_id(self, tmp_path: Path) -> None:
+        artifact = _valid_gguf_artifact()
+        artifact["repo_id"] = ""
+        with pytest.raises(ColabPrepValueError, match="repo_id"):
+            prepare_colab_experiment(
+                output=tmp_path / "out", job_name="cb-a", repo_url=REPO_URL,
+                source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+                arguments=[], phase="development", claim_class="scientific",
+                output_path="out/cb-a", model_artifact=artifact,
+            )
+
+    def test_rejects_short_revision(self, tmp_path: Path) -> None:
+        artifact = _valid_gguf_artifact()
+        artifact["revision"] = "abc123"
+        with pytest.raises(ColabPrepValueError, match="revision"):
+            prepare_colab_experiment(
+                output=tmp_path / "out", job_name="cb-a", repo_url=REPO_URL,
+                source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+                arguments=[], phase="development", claim_class="scientific",
+                output_path="out/cb-a", model_artifact=artifact,
+            )
+
+    def test_rejects_uppercase_revision(self, tmp_path: Path) -> None:
+        artifact = _valid_gguf_artifact()
+        artifact["revision"] = "F" * 40
+        with pytest.raises(ColabPrepValueError, match="revision"):
+            prepare_colab_experiment(
+                output=tmp_path / "out", job_name="cb-a", repo_url=REPO_URL,
+                source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+                arguments=[], phase="development", claim_class="scientific",
+                output_path="out/cb-a", model_artifact=artifact,
+            )
+
+    def test_rejects_empty_filename(self, tmp_path: Path) -> None:
+        artifact = _valid_gguf_artifact()
+        artifact["filename"] = ""
+        with pytest.raises(ColabPrepValueError, match="filename"):
+            prepare_colab_experiment(
+                output=tmp_path / "out", job_name="cb-a", repo_url=REPO_URL,
+                source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+                arguments=[], phase="development", claim_class="scientific",
+                output_path="out/cb-a", model_artifact=artifact,
+            )
+
+    def test_rejects_short_sha256(self, tmp_path: Path) -> None:
+        artifact = _valid_gguf_artifact()
+        artifact["sha256"] = "a" * 32
+        with pytest.raises(ColabPrepValueError, match="sha256"):
+            prepare_colab_experiment(
+                output=tmp_path / "out", job_name="cb-a", repo_url=REPO_URL,
+                source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+                arguments=[], phase="development", claim_class="scientific",
+                output_path="out/cb-a", model_artifact=artifact,
+            )
+
+    def test_rejects_uppercase_sha256(self, tmp_path: Path) -> None:
+        artifact = _valid_gguf_artifact()
+        artifact["sha256"] = "E" * 64
+        with pytest.raises(ColabPrepValueError, match="sha256"):
+            prepare_colab_experiment(
+                output=tmp_path / "out", job_name="cb-a", repo_url=REPO_URL,
+                source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+                arguments=[], phase="development", claim_class="scientific",
+                output_path="out/cb-a", model_artifact=artifact,
+            )
+
+    def test_rejects_install_llama_cpp_not_bool(self, tmp_path: Path) -> None:
+        with pytest.raises(ColabPrepValueError, match="install_llama_cpp"):
+            prepare_colab_experiment(
+                output=tmp_path / "out", job_name="cb-a", repo_url=REPO_URL,
+                source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+                arguments=[], phase="development", claim_class="scientific",
+                output_path="out/cb-a", install_llama_cpp="yes",
+            )
+
+    def test_valid_gguf_artifact_accepted(self, tmp_path: Path) -> None:
+        """A valid GGUF model_artifact is accepted and written to job_spec.json."""
+        out = tmp_path / "out"
+        artifact = _valid_gguf_artifact()
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a", model_artifact=artifact,
+        )
+        spec = json.loads((out / "job_spec.json").read_text())
+        assert spec["model_artifact"] == artifact
+
+    def test_valid_hf_snapshot_artifact_accepted(self, tmp_path: Path) -> None:
+        """A valid hf_snapshot model_artifact is accepted."""
+        out = tmp_path / "out"
+        artifact = _valid_hf_snapshot_artifact()
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a", model_artifact=artifact,
+        )
+        spec = json.loads((out / "job_spec.json").read_text())
+        assert spec["model_artifact"] == artifact
+
+    def test_install_llama_cpp_true_accepted(self, tmp_path: Path) -> None:
+        """install_llama_cpp=True is accepted and written to job_spec.json."""
+        out = tmp_path / "out"
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a", install_llama_cpp=True,
+        )
+        spec = json.loads((out / "job_spec.json").read_text())
+        assert spec["install_llama_cpp"] is True
+
+
+# ===========================================================================
+# 15. Colab bootstrap provisioning code injection (AST inspection)
+# ===========================================================================
+
+
+class TestBootstrapProvisioningInjection:
+    """The generated bootstrap contains hash-verified provisioning code."""
+
+    def test_gguf_bootstrap_has_hf_hub_download_and_sha_verify(self, tmp_path: Path) -> None:
+        out = tmp_path / "out"
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a", model_artifact=_valid_gguf_artifact(),
+        )
+        source = (out / "colab_bootstrap.py").read_text()
+        assert "hf_hub_download" in source
+        assert "OCZY_MODEL_PATH" in source
+        assert "_sha256_file" in source
+        # SHA-256 mismatch must raise RuntimeError (fail closed).
+        assert "SHA-256 mismatch" in source or "sha256" in source.lower()
+
+    def test_hf_snapshot_bootstrap_has_snapshot_download_and_sha_verify(self, tmp_path: Path) -> None:
+        out = tmp_path / "out"
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a", model_artifact=_valid_hf_snapshot_artifact(),
+        )
+        source = (out / "colab_bootstrap.py").read_text()
+        assert "snapshot_download" in source
+        assert "OCZY_HF_MODEL_DIR" in source
+        assert "_sha256_file" in source
+
+    def test_bootstrap_forces_offline_after_download(self, tmp_path: Path) -> None:
+        """The bootstrap must set HF_HUB_OFFLINE=1 and TRANSFORMERS_OFFLINE=1
+        after provisioning completes (in the finally block)."""
+        out = tmp_path / "out"
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a", model_artifact=_valid_gguf_artifact(),
+        )
+        source = (out / "colab_bootstrap.py").read_text()
+        tree = ast.parse(source)
+        # Find provision_model_artifact function and check its finally block
+        # sets HF_HUB_OFFLINE and TRANSFORMERS_OFFLINE back to "1".
+        prov_func = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "provision_model_artifact":
+                prov_func = node
+                break
+        assert prov_func is not None, "provision_model_artifact not defined in bootstrap"
+        # The function body must contain references to offline env vars.
+        func_source = ast.unparse(prov_func)
+        assert 'HF_HUB_OFFLINE' in func_source
+        assert 'TRANSFORMERS_OFFLINE' in func_source
+        # The finally block must set them back to "1".
+        # Look for the string "1" being assigned to these env vars.
+        assert func_source.count('"1"') >= 2 or func_source.count("'1'") >= 2
+
+    def test_bootstrap_install_llama_cpp_uses_pinned_argv(self, tmp_path: Path) -> None:
+        """install_llama_cpp in the bootstrap uses the exact pinned CPU wheel argv."""
+        out = tmp_path / "out"
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a", install_llama_cpp=True,
+        )
+        source = (out / "colab_bootstrap.py").read_text()
+        tree = ast.parse(source)
+        install_func = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "install_llama_cpp":
+                install_func = node
+                break
+        assert install_func is not None, "install_llama_cpp not defined in bootstrap"
+        func_source = ast.unparse(install_func)
+        # Must use the exact pinned version.
+        assert f"llama-cpp-python=={_LLAMA_CPP_VERSION}" in func_source
+        # Must use the abetlen CPU wheel index.
+        assert _LLAMA_CPP_WHEEL_INDEX in func_source
+        # Must use sys.executable -m pip install (no shell=True).
+        assert "sys.executable" in func_source
+        assert "-m" in func_source
+        assert "pip" in func_source
+        assert "install" in func_source
+        # AST-structured check: no subprocess call in install_llama_cpp may
+        # pass shell=True (proves it structurally, not via substring match).
+        subprocess_funcs = {"run", "Popen", "call", "check_call", "check_output"}
+        for node in ast.walk(install_func):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if (
+                    isinstance(func, ast.Attribute)
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == "subprocess"
+                    and func.attr in subprocess_funcs
+                ):
+                    for kw in node.keywords:
+                        assert not (
+                            kw.arg == "shell"
+                            and isinstance(kw.value, ast.Constant)
+                            and kw.value.value is True
+                        ), "install_llama_cpp subprocess call must not use shell=True"
+        # Must NOT contain arbitrary pip args like --user, --upgrade, --no-deps.
+        for forbidden in ("--user", "--upgrade", "--no-deps", "--force-reinstall"):
+            assert forbidden not in func_source, f"install_llama_cpp must not use {forbidden}"
+
+    def test_bootstrap_provisioning_has_no_shell_true(self, tmp_path: Path) -> None:
+        """No subprocess call in the bootstrap may pass shell=True."""
+        out = tmp_path / "out"
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a",
+            model_artifact=_valid_gguf_artifact(),
+            install_llama_cpp=True,
+        )
+        source = (out / "colab_bootstrap.py").read_text()
+        tree = ast.parse(source)
+        subprocess_funcs = {"run", "Popen", "call", "check_call", "check_output"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if (
+                    isinstance(func, ast.Attribute)
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == "subprocess"
+                    and func.attr in subprocess_funcs
+                ):
+                    for kw in node.keywords:
+                        assert not (
+                            kw.arg == "shell"
+                            and isinstance(kw.value, ast.Constant)
+                            and kw.value.value is True
+                        ), "subprocess call in bootstrap must not use shell=True"
+
+    def test_bootstrap_provenance_records_artifact_and_install(self, tmp_path: Path) -> None:
+        """The bootstrap main() records model_artifact and llama_cpp_install in
+        the provenance report."""
+        out = tmp_path / "out"
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a",
+            model_artifact=_valid_gguf_artifact(),
+            install_llama_cpp=True,
+        )
+        source = (out / "colab_bootstrap.py").read_text()
+        # The main() function must write artifact_info and install_info to
+        # the provenance report.
+        assert 'report["model_artifact"]' in source or "report['model_artifact']" in source
+        assert 'report["llama_cpp_install"]' in source or "report['llama_cpp_install']" in source
+
+
+# ===========================================================================
+# 16. Colab provision_model_artifact runtime (mocked huggingface_hub)
+# ===========================================================================
+
+
+class TestProvisionModelArtifactRuntime:
+    """provision_model_artifact downloads, verifies SHA-256, and sets env vars.
+
+    The function is defined inside the bootstrap template, so tests exec the
+    generated bootstrap source and call the function with mocked
+    huggingface_hub.  No real network is invoked.
+    """
+
+    def _generate_bootstrap(self, tmp_path: Path, artifact: dict[str, Any] | None = None) -> str:
+        out = tmp_path / "out"
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a",
+            model_artifact=artifact or _valid_gguf_artifact(),
+        )
+        return (out / "colab_bootstrap.py").read_text()
+
+    def test_gguf_download_verifies_sha_and_sets_path(self, tmp_path: Path) -> None:
+        """GGUF provisioning: hf_hub_download → SHA verify → OCZY_MODEL_PATH set."""
+        model_file = tmp_path / "model.gguf"
+        model_content = b"fake gguf model bytes"
+        model_file.write_bytes(model_content)
+        expected_sha = hashlib.sha256(model_content).hexdigest()
+
+        artifact = _valid_gguf_artifact(sha256=expected_sha)
+        source = self._generate_bootstrap(tmp_path, artifact)
+        ns = _exec_bootstrap(source)
+
+        fake_hf = types.ModuleType("huggingface_hub")
+        fake_hf.hf_hub_download = lambda **kw: str(model_file)
+        fake_hf.snapshot_download = lambda **kw: str(tmp_path)
+
+        old_env = {k: os.environ.get(k) for k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_MODEL_PATH")}
+        try:
+            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+                result = ns["provision_model_artifact"](artifact)
+            assert result["kind"] == "gguf"
+            assert result["sha256_verified"] is True
+            assert result["sha256"] == expected_sha
+            assert result["env_var"] == "OCZY_MODEL_PATH"
+            assert os.environ.get("OCZY_MODEL_PATH") == str(model_file)
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+    def test_hf_snapshot_download_verifies_sha_and_sets_dir(self, tmp_path: Path) -> None:
+        """HF snapshot provisioning: snapshot_download → SHA verify → OCZY_HF_MODEL_DIR set."""
+        snapshot_dir = tmp_path / "snapshot"
+        snapshot_dir.mkdir()
+        config_file = snapshot_dir / "config.json"
+        config_content = b'{"model_type":"lfm"}'
+        config_file.write_bytes(config_content)
+        expected_sha = hashlib.sha256(config_content).hexdigest()
+
+        artifact = _valid_hf_snapshot_artifact(sha256=expected_sha)
+        source = self._generate_bootstrap(tmp_path, artifact)
+        ns = _exec_bootstrap(source)
+
+        fake_hf = types.ModuleType("huggingface_hub")
+        fake_hf.hf_hub_download = lambda **kw: str(config_file)
+        fake_hf.snapshot_download = lambda **kw: str(snapshot_dir)
+
+        old_env = {k: os.environ.get(k) for k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_HF_MODEL_DIR")}
+        try:
+            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+                result = ns["provision_model_artifact"](artifact)
+            assert result["kind"] == "hf_snapshot"
+            assert result["sha256_verified"] is True
+            assert result["sha256"] == expected_sha
+            assert result["env_var"] == "OCZY_HF_MODEL_DIR"
+            assert os.environ.get("OCZY_HF_MODEL_DIR") == str(snapshot_dir)
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+    def test_hash_mismatch_raises_runtime_error(self, tmp_path: Path) -> None:
+        """SHA-256 mismatch must raise RuntimeError (fail closed)."""
+        model_file = tmp_path / "model.gguf"
+        model_file.write_bytes(b"actual content")
+
+        artifact = _valid_gguf_artifact(sha256="0" * 64)  # wrong SHA
+        source = self._generate_bootstrap(tmp_path, artifact)
+        ns = _exec_bootstrap(source)
+
+        fake_hf = types.ModuleType("huggingface_hub")
+        fake_hf.hf_hub_download = lambda **kw: str(model_file)
+        fake_hf.snapshot_download = lambda **kw: str(tmp_path)
+
+        old_env = {k: os.environ.get(k) for k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")}
+        try:
+            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+                with pytest.raises(RuntimeError, match="SHA-256 mismatch|mismatch"):
+                    ns["provision_model_artifact"](artifact)
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+    def test_env_forced_offline_after_download(self, tmp_path: Path) -> None:
+        """After provisioning, HF_HUB_OFFLINE and TRANSFORMERS_OFFLINE must be '1'."""
+        model_file = tmp_path / "model.gguf"
+        model_content = b"offline test"
+        model_file.write_bytes(model_content)
+        expected_sha = hashlib.sha256(model_content).hexdigest()
+
+        artifact = _valid_gguf_artifact(sha256=expected_sha)
+        source = self._generate_bootstrap(tmp_path, artifact)
+        ns = _exec_bootstrap(source)
+
+        fake_hf = types.ModuleType("huggingface_hub")
+        fake_hf.hf_hub_download = lambda **kw: str(model_file)
+        fake_hf.snapshot_download = lambda **kw: str(tmp_path)
+
+        old_env = {k: os.environ.get(k) for k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "OCZY_MODEL_PATH")}
+        try:
+            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+                ns["provision_model_artifact"](artifact)
+            # After provisioning, offline mode must be forced back on.
+            assert os.environ.get("HF_HUB_OFFLINE") == "1"
+            assert os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+    def test_hf_snapshot_missing_file_raises(self, tmp_path: Path) -> None:
+        """If the named file is not in the snapshot, provisioning fails."""
+        snapshot_dir = tmp_path / "snapshot"
+        snapshot_dir.mkdir()
+
+        artifact = _valid_hf_snapshot_artifact(sha256="0" * 64)
+        source = self._generate_bootstrap(tmp_path, artifact)
+        ns = _exec_bootstrap(source)
+
+        fake_hf = types.ModuleType("huggingface_hub")
+        fake_hf.hf_hub_download = lambda **kw: str(tmp_path / "x")
+        fake_hf.snapshot_download = lambda **kw: str(snapshot_dir)
+
+        old_env = {k: os.environ.get(k) for k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")}
+        try:
+            with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+                with pytest.raises(RuntimeError, match="not found|Expected file"):
+                    ns["provision_model_artifact"](artifact)
+        finally:
+            for k, v in old_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
+
+
+# ===========================================================================
+# 17. Colab install_llama_cpp runtime (mocked subprocess)
+# ===========================================================================
+
+
+class TestInstallLlamaCppRuntime:
+    """install_llama_cpp installs the pinned CPU wheel via explicit argv.
+
+    The function is defined inside the bootstrap template, so tests exec the
+    generated bootstrap source and call it with mocked subprocess.run.
+    No real pip install is invoked.
+    """
+
+    def _generate_bootstrap(self, tmp_path: Path) -> str:
+        out = tmp_path / "out"
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a", install_llama_cpp=True,
+        )
+        return (out / "colab_bootstrap.py").read_text()
+
+    def test_install_uses_exact_pinned_argv(self, tmp_path: Path) -> None:
+        """install_llama_cpp calls subprocess.run with the exact pinned argv."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+
+        captured_argv: list[str] | None = None
+
+        def fake_run(argv, **kwargs):
+            nonlocal captured_argv
+            captured_argv = list(argv)
+            return subprocess.CompletedProcess(
+                args=argv, returncode=0, stdout="ok", stderr=""
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            result = ns["install_llama_cpp"]()
+
+        assert captured_argv is not None
+        assert captured_argv[0] == sys.executable
+        assert captured_argv[1] == "-m"
+        assert captured_argv[2] == "pip"
+        assert captured_argv[3] == "install"
+        assert captured_argv[4] == f"llama-cpp-python=={_LLAMA_CPP_VERSION}"
+        assert "--extra-index-url" in captured_argv
+        idx_pos = captured_argv.index("--extra-index-url")
+        assert captured_argv[idx_pos + 1] == _LLAMA_CPP_WHEEL_INDEX
+        # No arbitrary pip args.
+        for forbidden in ("--user", "--upgrade", "--no-deps", "--force-reinstall", "--editable"):
+            assert forbidden not in captured_argv
+        # No shell=True in kwargs.
+        assert result["package"] == "llama-cpp-python"
+        assert result["version"] == _LLAMA_CPP_VERSION
+        assert result["exit_code"] == 0
+
+    def test_install_success_returns_provenance(self, tmp_path: Path) -> None:
+        """Successful install returns a provenance dict with version and command."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+
+        def fake_run(argv, **kwargs):
+            return subprocess.CompletedProcess(
+                args=argv, returncode=0, stdout="Successfully installed", stderr=""
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            result = ns["install_llama_cpp"]()
+
+        assert result["package"] == "llama-cpp-python"
+        assert result["version"] == _LLAMA_CPP_VERSION
+        assert result["wheel_index"] == _LLAMA_CPP_WHEEL_INDEX
+        assert result["exit_code"] == 0
+        assert isinstance(result["install_command"], list)
+        assert f"llama-cpp-python=={_LLAMA_CPP_VERSION}" in result["install_command"]
+
+    def test_install_failure_raises_runtime_error(self, tmp_path: Path) -> None:
+        """Nonzero exit from pip install raises RuntimeError."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+
+        def fake_run(argv, **kwargs):
+            return subprocess.CompletedProcess(
+                args=argv, returncode=1, stdout="", stderr="pip install failed"
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            with pytest.raises(RuntimeError, match="llama-cpp-python install failed|install failed"):
+                ns["install_llama_cpp"]()
+
+    def test_install_no_shell_true(self, tmp_path: Path) -> None:
+        """install_llama_cpp must not pass shell=True to subprocess.run."""
+        source = self._generate_bootstrap(tmp_path)
+        ns = _exec_bootstrap(source)
+
+        captured_kwargs: dict[str, Any] = {}
+
+        def fake_run(argv, **kwargs):
+            captured_kwargs.update(kwargs)
+            return subprocess.CompletedProcess(
+                args=argv, returncode=0, stdout="ok", stderr=""
+            )
+
+        with patch.object(ns["subprocess"], "run", fake_run):
+            ns["install_llama_cpp"]()
+
+        assert captured_kwargs.get("shell") is not True
+        assert "shell" not in captured_kwargs or captured_kwargs["shell"] is not True
+
+
+# ===========================================================================
+# 18. Pure NumPy job unchanged (no model_artifact / no install_llama_cpp)
+# ===========================================================================
+
+
+class TestPureJobUnchanged:
+    """A Colab job without model_artifact/install_llama_cpp is unchanged."""
+
+    def test_no_model_artifact_key_in_job_spec(self, tmp_path: Path) -> None:
+        """job_spec.json must not contain model_artifact when not requested."""
+        out = tmp_path / "out"
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a",
+        )
+        spec = json.loads((out / "job_spec.json").read_text())
+        assert "model_artifact" not in spec
+
+    def test_install_llama_cpp_false_in_job_spec(self, tmp_path: Path) -> None:
+        """job_spec.json must have install_llama_cpp=False when not requested."""
+        out = tmp_path / "out"
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a",
+        )
+        spec = json.loads((out / "job_spec.json").read_text())
+        assert spec["install_llama_cpp"] is False
+
+    def test_pure_job_bootstrap_still_has_provisioning_functions(self, tmp_path: Path) -> None:
+        """The bootstrap always defines provisioning functions (they are gated
+        by JOB_SPEC at runtime), so pure jobs are unaffected."""
+        out = tmp_path / "out"
+        prepare_colab_experiment(
+            output=out, job_name="cb-a", repo_url=REPO_URL,
+            source_commit=COMMIT, module="infrastructure.kaggle.run_cortex_smoke",
+            arguments=[], phase="development", claim_class="scientific",
+            output_path="out/cb-a",
+        )
+        source = (out / "colab_bootstrap.py").read_text()
+        tree = ast.parse(source)
+        func_names = {
+            node.name for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+        }
+        # Provisioning functions are always present but gated by JOB_SPEC.
+        assert "provision_model_artifact" in func_names
+        assert "install_llama_cpp" in func_names
+        # JOB_SPEC must not contain model_artifact (it's absent from the spec).
+        spec = json.loads((out / "job_spec.json").read_text())
+        assert "model_artifact" not in spec
+        assert spec["install_llama_cpp"] is False
+
+
+# ===========================================================================
+# 19. Campaign model_artifact / install_llama_cpp field propagation
+# ===========================================================================
+
+
+class TestCampaignModelArtifactPropagation:
+    """prepare_experiment_campaign propagates model_artifact and install_llama_cpp
+    from campaign Colab jobs to the generated job_spec.json.
+    """
+
+    def test_campaign_propagates_model_artifact(self, tmp_path: Path) -> None:
+        """A Colab campaign job with model_artifact propagates to job_spec.json."""
+        artifact = _valid_gguf_artifact()
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(
+                name="cb-0", provider=PROVIDER_COLAB, phase="development",
+                model_artifact=artifact,
+            ),
+        ])
+        campaign_path = _write_campaign(tmp_path, campaign)
+        out_dir = tmp_path / "generated"
+        result = prepare_experiment_campaign(campaign_path, out_dir)
+        # Find the Colab job's kernel_dir / script and check job_spec.json.
+        for job in result["jobs"]:
+            script_rel = job.get("script")
+            if script_rel and "colab" in script_rel:
+                spec_path = out_dir / script_rel.replace("colab_bootstrap.py", "job_spec.json")
+                if spec_path.exists():
+                    spec = json.loads(spec_path.read_text())
+                    assert spec.get("model_artifact") == artifact
+                    return
+        pytest.fail("No Colab job_spec.json found in generated output")
+
+    def test_campaign_propagates_install_llama_cpp(self, tmp_path: Path) -> None:
+        """A Colab campaign job with install_llama_cpp=True propagates to job_spec.json."""
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(
+                name="cb-0", provider=PROVIDER_COLAB, phase="development",
+                install_llama_cpp=True,
+            ),
+        ])
+        campaign_path = _write_campaign(tmp_path, campaign)
+        out_dir = tmp_path / "generated"
+        result = prepare_experiment_campaign(campaign_path, out_dir)
+        for job in result["jobs"]:
+            script_rel = job.get("script")
+            if script_rel and "colab" in script_rel:
+                spec_path = out_dir / script_rel.replace("colab_bootstrap.py", "job_spec.json")
+                if spec_path.exists():
+                    spec = json.loads(spec_path.read_text())
+                    assert spec.get("install_llama_cpp") is True
+                    return
+        pytest.fail("No Colab job_spec.json found in generated output")
+
+    def test_campaign_colab_job_without_artifact_has_no_key(self, tmp_path: Path) -> None:
+        """A Colab campaign job without model_artifact does not get the key."""
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(name="cb-0", provider=PROVIDER_COLAB, phase="development"),
+        ])
+        campaign_path = _write_campaign(tmp_path, campaign)
+        out_dir = tmp_path / "generated"
+        result = prepare_experiment_campaign(campaign_path, out_dir)
+        for job in result["jobs"]:
+            script_rel = job.get("script")
+            if script_rel and "colab" in script_rel:
+                spec_path = out_dir / script_rel.replace("colab_bootstrap.py", "job_spec.json")
+                if spec_path.exists():
+                    spec = json.loads(spec_path.read_text())
+                    assert "model_artifact" not in spec
+                    assert spec.get("install_llama_cpp") is False
+                    return
+        pytest.fail("No Colab job_spec.json found in generated output")
+
+
+# ===========================================================================
+# 20. Campaign Kaggle rejection of model_artifact / install_llama_cpp
+# ===========================================================================
+
+
+class TestCampaignKaggleRejection:
+    """validate_campaign rejects model_artifact/install_llama_cpp on Kaggle jobs
+    and validates them on Colab jobs.
+    """
+
+    def test_kaggle_rejects_model_artifact(self) -> None:
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(
+                name="kg-0", provider=PROVIDER_KAGGLE, phase="instrument",
+                model_artifact=_valid_gguf_artifact(),
+            ),
+        ])
+        with pytest.raises(CampaignValidationError, match="model_artifact|kaggle"):
+            validate_campaign(campaign)
+
+    def test_kaggle_rejects_install_llama_cpp(self) -> None:
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(
+                name="kg-0", provider=PROVIDER_KAGGLE, phase="instrument",
+                install_llama_cpp=True,
+            ),
+        ])
+        with pytest.raises(CampaignValidationError, match="install_llama_cpp|kaggle"):
+            validate_campaign(campaign)
+
+    def test_colab_accepts_valid_model_artifact(self) -> None:
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(
+                name="cb-0", provider=PROVIDER_COLAB, phase="development",
+                model_artifact=_valid_gguf_artifact(),
+            ),
+        ])
+        validate_campaign(campaign)  # should not raise
+
+    def test_colab_accepts_install_llama_cpp(self) -> None:
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(
+                name="cb-0", provider=PROVIDER_COLAB, phase="development",
+                install_llama_cpp=True,
+            ),
+        ])
+        validate_campaign(campaign)  # should not raise
+
+    def test_colab_rejects_invalid_kind(self) -> None:
+        artifact = _valid_gguf_artifact()
+        artifact["kind"] = "onnx"
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(
+                name="cb-0", provider=PROVIDER_COLAB, phase="development",
+                model_artifact=artifact,
+            ),
+        ])
+        with pytest.raises(CampaignValidationError, match="kind"):
+            validate_campaign(campaign)
+
+    def test_colab_rejects_short_revision(self) -> None:
+        artifact = _valid_gguf_artifact()
+        artifact["revision"] = "abc123"
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(
+                name="cb-0", provider=PROVIDER_COLAB, phase="development",
+                model_artifact=artifact,
+            ),
+        ])
+        with pytest.raises(CampaignValidationError, match="revision"):
+            validate_campaign(campaign)
+
+    def test_colab_rejects_short_sha256(self) -> None:
+        artifact = _valid_gguf_artifact()
+        artifact["sha256"] = "a" * 32
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(
+                name="cb-0", provider=PROVIDER_COLAB, phase="development",
+                model_artifact=artifact,
+            ),
+        ])
+        with pytest.raises(CampaignValidationError, match="sha256"):
+            validate_campaign(campaign)
+
+    def test_colab_rejects_non_bool_install_llama_cpp(self) -> None:
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(
+                name="cb-0", provider=PROVIDER_COLAB, phase="development",
+                install_llama_cpp="yes",
+            ),
+        ])
+        with pytest.raises(CampaignValidationError, match="install_llama_cpp|boolean"):
+            validate_campaign(campaign)
+
+    def test_colab_rejects_missing_required_field(self) -> None:
+        artifact = _valid_gguf_artifact()
+        del artifact["sha256"]
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(
+                name="cb-0", provider=PROVIDER_COLAB, phase="development",
+                model_artifact=artifact,
+            ),
+        ])
+        with pytest.raises(CampaignValidationError, match="model_artifact|missing"):
+            validate_campaign(campaign)

@@ -12,7 +12,7 @@ This generator writes two artifacts into the output directory:
 * ``colab_bootstrap.py`` — self-contained Colab script.
 * ``job_spec.json`` — human-reviewable job specification.
 
-It does **not** embed credentials, does **not** use ``shell=True``, and does
+It does **not** embed credentials, does **not** invoke a shell, and does
 **not** modify frozen research/eval instruments.
 """
 
@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,18 @@ PUBLIC_REPO_URL = "https://github.com/KinoThe-Kafkaesque/oczy.git"
 
 #: 40-character lowercase hex Git SHA.
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+
+#: 64-character lowercase hex SHA-256 digest.
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+#: Valid model artifact kinds.
+_VALID_MODEL_ARTIFACT_KINDS = frozenset({"gguf", "hf_snapshot"})
+
+#: Pinned llama-cpp-python version for CPU wheel installation.
+_LLAMA_CPP_VERSION = "0.3.31"
+
+#: CPU-only wheel index for llama-cpp-python (abetlen).
+_LLAMA_CPP_WHEEL_INDEX = "https://abetlen.github.io/llama-cpp-python/whl/cpu"
 
 #: Valid claim classes.
 _VALID_CLAIM_CLASSES = frozenset({"scientific", "infrastructure"})
@@ -109,6 +122,47 @@ def _validate_module(module: str) -> None:
         )
 
 
+def _validate_model_artifact(artifact: dict[str, Any]) -> None:
+    """Validate an optional model_artifact specification.
+
+    Required fields: ``kind`` (``"gguf"`` or ``"hf_snapshot"``), ``repo_id``
+    (non-empty str), ``revision`` (40-char lowercase hex), ``filename``
+    (non-empty str), ``sha256`` (64-char lowercase hex).
+    """
+    if not isinstance(artifact, dict):
+        raise ColabPrepValueError("model_artifact must be a dict.")
+    required = ("kind", "repo_id", "revision", "filename", "sha256")
+    missing = [f for f in required if f not in artifact]
+    if missing:
+        raise ColabPrepValueError(
+            f"model_artifact missing required fields: {missing!r}."
+        )
+    kind = artifact["kind"]
+    if kind not in _VALID_MODEL_ARTIFACT_KINDS:
+        raise ColabPrepValueError(
+            f"model_artifact kind must be one of {sorted(_VALID_MODEL_ARTIFACT_KINDS)!r}, "
+            f"got {kind!r}."
+        )
+    repo_id = artifact["repo_id"]
+    if not isinstance(repo_id, str) or not repo_id:
+        raise ColabPrepValueError("model_artifact repo_id must be a non-empty string.")
+    revision = artifact["revision"]
+    if not isinstance(revision, str) or not COMMIT_PATTERN.fullmatch(revision):
+        raise ColabPrepValueError(
+            "model_artifact revision must be a 40-character lowercase hex Git SHA "
+            f"(got {revision!r})."
+        )
+    filename = artifact["filename"]
+    if not isinstance(filename, str) or not filename:
+        raise ColabPrepValueError("model_artifact filename must be a non-empty string.")
+    sha256 = artifact["sha256"]
+    if not isinstance(sha256, str) or not SHA256_PATTERN.fullmatch(sha256):
+        raise ColabPrepValueError(
+            "model_artifact sha256 must be a 64-character lowercase hex digest "
+            f"(got {sha256!r})."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Bootstrap template
 # ---------------------------------------------------------------------------
@@ -117,14 +171,18 @@ BOOTSTRAP_TEMPLATE = '''\
 """Generated Oczy Colab experiment bootstrap. Do not edit by hand.
 
 Clones the public Oczy repository at an exact commit, verifies HEAD, sets a
-strict CPU-only environment, prepends source paths, then invokes
+strict CPU-only environment, prepends source paths, optionally provisions a
+hash-verified model artifact from Hugging Face and/or installs a pinned CPU
+llama-cpp-python wheel, then invokes
 ``infrastructure.kaggle.run_experiment_module`` with an explicit subprocess
 argv.  The runner owns the structured execution report and METRIC/ASI parsing;
-this bootstrap owns environment setup and commit verification only.
+this bootstrap owns environment setup, commit verification, and model/package
+provisioning only.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
@@ -244,6 +302,139 @@ def write_provenance(payload: dict) -> None:
         pass
 
 
+def _sha256_file(path: Path) -> str:
+    """Compute SHA-256 hex digest of a file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def provision_model_artifact(artifact: dict) -> dict:
+    """Download and verify a model artifact from Hugging Face.
+
+    Temporarily permits HF network access for the exact download only,
+    verifies the SHA-256 of the downloaded file(s), sets the appropriate
+    model environment variable, then forces offline mode back on.
+
+    For ``kind=="gguf"``: downloads a single file via ``hf_hub_download``
+    at the exact revision, verifies its SHA-256, and sets
+    ``OCZY_MODEL_PATH``.
+
+    For ``kind=="hf_snapshot"``: downloads a snapshot at the exact revision
+    via ``snapshot_download``, verifies the named file's SHA-256, and sets
+    ``OCZY_HF_MODEL_DIR``.
+
+    Fails closed on any hash mismatch or download error.
+    """
+    kind = artifact["kind"]
+    repo_id = artifact["repo_id"]
+    revision = artifact["revision"]
+    filename = artifact["filename"]
+    expected_sha = artifact["sha256"]
+
+    # Temporarily permit HF network for exact download only.
+    os.environ["HF_HUB_OFFLINE"] = "0"
+    os.environ["TRANSFORMERS_OFFLINE"] = "0"
+    try:
+        from huggingface_hub import hf_hub_download, snapshot_download
+    except ImportError as exc:
+        raise RuntimeError(
+            f"huggingface_hub is required for model_artifact provisioning "
+            f"but is not installed: {exc}"
+        ) from exc
+
+    try:
+        if kind == "gguf":
+            local_path = hf_hub_download(
+                repo_id=repo_id,
+                revision=revision,
+                filename=filename,
+            )
+            actual_sha = _sha256_file(Path(local_path))
+            if actual_sha != expected_sha:
+                raise RuntimeError(
+                    f"SHA-256 mismatch for {filename}: expected {expected_sha}, "
+                    f"got {actual_sha}. Refusing to proceed."
+                )
+            os.environ["OCZY_MODEL_PATH"] = str(local_path)
+            return {
+                "kind": "gguf",
+                "repo_id": repo_id,
+                "revision": revision,
+                "filename": filename,
+                "sha256": actual_sha,
+                "sha256_verified": True,
+                "model_path": str(local_path),
+                "env_var": "OCZY_MODEL_PATH",
+            }
+        else:  # hf_snapshot
+            local_dir = snapshot_download(
+                repo_id=repo_id,
+                revision=revision,
+            )
+            target_file = Path(local_dir) / filename
+            if not target_file.is_file():
+                raise RuntimeError(
+                    f"Expected file {filename} not found in snapshot for "
+                    f"{repo_id}@{revision}."
+                )
+            actual_sha = _sha256_file(target_file)
+            if actual_sha != expected_sha:
+                raise RuntimeError(
+                    f"SHA-256 mismatch for {filename}: expected {expected_sha}, "
+                    f"got {actual_sha}. Refusing to proceed."
+                )
+            os.environ["OCZY_HF_MODEL_DIR"] = str(local_dir)
+            return {
+                "kind": "hf_snapshot",
+                "repo_id": repo_id,
+                "revision": revision,
+                "filename": filename,
+                "sha256": actual_sha,
+                "sha256_verified": True,
+                "model_dir": str(local_dir),
+                "env_var": "OCZY_HF_MODEL_DIR",
+            }
+    finally:
+        # Force offline mode back on after download.
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+
+def install_llama_cpp() -> dict:
+    """Install the pinned CPU llama-cpp-python wheel via explicit argv.
+
+    Uses ``[sys.executable, '-m', 'pip', 'install',
+    'llama-cpp-python==0.3.31', '--extra-index-url',
+    'https://abetlen.github.io/llama-cpp-python/whl/cpu']`` — no shell
+    invocation, no arbitrary pip args.  Fails closed on install error.
+    """
+    argv = [
+        sys.executable, "-m", "pip", "install",
+        "llama-cpp-python==0.3.31",
+        "--extra-index-url",
+        "https://abetlen.github.io/llama-cpp-python/whl/cpu",
+    ]
+    proc = _run(argv, timeout=600)
+    result = {
+        "package": "llama-cpp-python",
+        "version": "0.3.31",
+        "wheel_index": "https://abetlen.github.io/llama-cpp-python/whl/cpu",
+        "install_command": argv,
+        "exit_code": proc.returncode,
+        "stdout": proc.stdout[-2000:] if proc.stdout else "",
+        "stderr": proc.stderr[-2000:] if proc.stderr else "",
+    }
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"llama-cpp-python install failed (exit {proc.returncode}): "
+            f"{proc.stderr.strip()}"
+        )
+    return result
+
+
 def main() -> int:
     report: dict = {
         "schema_version": "oczy/colab-bootstrap-provenance/v1",
@@ -278,6 +469,19 @@ def main() -> int:
             }
         )
         write_provenance(report)
+
+        # --- Optional model artifact provisioning ---
+        model_artifact = JOB_SPEC.get("model_artifact")
+        if model_artifact is not None:
+            artifact_info = provision_model_artifact(model_artifact)
+            report["model_artifact"] = artifact_info
+            write_provenance(report)
+
+        # --- Optional pinned CPU llama-cpp-python install ---
+        if JOB_SPEC.get("install_llama_cpp"):
+            install_info = install_llama_cpp()
+            report["llama_cpp_install"] = install_info
+            write_provenance(report)
 
         runner_argv = [
             sys.executable, "-m", "infrastructure.kaggle.run_experiment_module",
@@ -367,6 +571,8 @@ def prepare_colab_experiment(
     output_path: str,
     timeout: float | None = None,
     force: bool = False,
+    model_artifact: dict[str, Any] | None = None,
+    install_llama_cpp: bool = False,
 ) -> dict[str, Any]:
     """Prepare a self-contained Colab bootstrap for one remote experiment job.
 
@@ -400,6 +606,19 @@ def prepare_colab_experiment(
         Optional job timeout in seconds.
     force:
         Overwrite existing generated files if True.
+    model_artifact:
+        Optional dict specifying a Hugging Face model artifact to download
+        and hash-verify at bootstrap time.  Required fields when present:
+        ``kind`` (``"gguf"`` or ``"hf_snapshot"``), ``repo_id`` (non-empty
+        str), ``revision`` (40-char lowercase hex), ``filename`` (non-empty
+        str), ``sha256`` (64-char lowercase hex).  When ``None`` (default),
+        no model provisioning occurs and the job spec omits the key — pure
+        NumPy jobs are unchanged.
+    install_llama_cpp:
+        If True, the generated bootstrap installs
+        ``llama-cpp-python==0.3.31`` from the abetlen CPU wheel index via
+        explicit argv (no shell invocation, no arbitrary pip args).  Default
+        False.
 
     Returns
     -------
@@ -429,6 +648,10 @@ def prepare_colab_experiment(
         not isinstance(timeout, (int, float)) or timeout <= 0
     ):
         raise ColabPrepValueError("timeout must be a positive number or None.")
+    if model_artifact is not None:
+        _validate_model_artifact(model_artifact)
+    if not isinstance(install_llama_cpp, bool):
+        raise ColabPrepValueError("install_llama_cpp must be a boolean.")
 
     # --- Prepare output directory ---
     output = Path(output).resolve()
@@ -452,7 +675,10 @@ def prepare_colab_experiment(
         "claim_class": claim_class,
         "output_path": output_path,
         "timeout": float(timeout) if timeout is not None else None,
+        "install_llama_cpp": install_llama_cpp,
     }
+    if model_artifact is not None:
+        job_spec["model_artifact"] = model_artifact
 
     # --- Render bootstrap ---
     rendered_spec = json.dumps(job_spec, sort_keys=True)
@@ -497,11 +723,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-path", required=True)
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--model-artifact",
+        default=None,
+        help=(
+            "JSON string specifying a model artifact: "
+            '{"kind":"gguf"|"hf_snapshot","repo_id":"...","revision":"<40hex>",'
+            '"filename":"...","sha256":"<64hex>"}'
+        ),
+    )
+    parser.add_argument(
+        "--install-llama-cpp",
+        action="store_true",
+        default=False,
+        help="Install pinned llama-cpp-python==0.3.31 from abetlen CPU wheel index.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    model_artifact = None
+    if args.model_artifact is not None:
+        try:
+            model_artifact = json.loads(args.model_artifact)
+        except json.JSONDecodeError as exc:
+            print(f"error: --model-artifact must be valid JSON: {exc}", file=sys.stderr)
+            return 2
     spec = prepare_colab_experiment(
         output=args.output,
         job_name=args.job_name,
@@ -514,6 +762,8 @@ def main() -> int:
         output_path=args.output_path,
         timeout=args.timeout,
         force=args.force,
+        model_artifact=model_artifact,
+        install_llama_cpp=args.install_llama_cpp,
     )
     print(json.dumps(spec, indent=2, sort_keys=True))
     return 0
