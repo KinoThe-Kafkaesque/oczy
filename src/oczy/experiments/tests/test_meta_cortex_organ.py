@@ -505,7 +505,154 @@ class TestEncodeTexts:
         f1 = organ.encode_texts(texts)
         f2 = organ.encode_texts(texts)
         assert torch.equal(f1, f2)
+    def test_features_feed_trainable_linear_backward(
+        self, organ: _TinyFrozenOrgan
+    ) -> None:
+        """Regression: encode_texts output must be an ordinary detached
+        tensor (not an inference tensor) so it can feed a trainable cortex
+        Linear during the outer autograd loop.
 
+        ``torch.inference_mode`` returns inference tensors that cannot be
+        saved for backward and break the outer trainer; ``torch.no_grad``
+        produces ordinary detached tensors.  This fails for inference-mode
+        features and passes only for ordinary detached features.
+        """
+        features = organ.encode_texts(["hello", "world"])
+        assert features.shape == (2, organ.feature_dim)
+        assert features.dtype == torch.float32
+        assert not features.requires_grad
+        assert not torch.is_inference(features), (
+            "encode_texts must return ordinary tensors, not inference-mode "
+            "tensors (use torch.no_grad, not torch.inference_mode)"
+        )
+        head = torch.nn.Linear(organ.feature_dim, 1)
+        loss = head(features).sum()
+        loss.backward()
+        assert head.weight.grad is not None
+        assert torch.isfinite(head.weight.grad).all()
+        assert head.weight.grad.abs().sum().item() > 0.0
+        assert head.bias.grad is not None
+        assert torch.isfinite(head.bias.grad).all()
+
+
+# ---------------------------------------------------------------------------
+# encode_texts production adapter: non-inference detached features (no model)
+# ---------------------------------------------------------------------------
+#
+# Regression for the Qwen DEV smoke failure: ``QwenFrozenOrgan.encode_texts``
+# was decorated with ``@torch.inference_mode()``, which returns inference
+# tensors that cannot feed trainable cortex layers during the outer-loop
+# autograd.  The contract is ``@torch.no_grad()`` so the detached float32
+# output is an ordinary tensor (``is_inference`` is False) usable as input
+# to a trainable ``nn.Linear`` followed by ``loss.backward()``.
+#
+# We construct the production ``QwenFrozenOrgan`` with a fake driver/model
+# that returns hidden states — no real Qwen load, no network.  This tests
+# the *exact* production wrapper (the decorator on
+# ``QwenFrozenOrgan.encode_texts``), not the tiny organ.
+
+
+class _FakeHiddenModel:
+    """Fake model returning ``hidden_states`` for ``encode_texts``.
+
+    No real weights; ``__call__`` produces a ``[1, S, D]`` tensor so the
+    production adapter's mean-pool path runs end-to-end.  The tensor is
+    created inside whatever autograd context the decorated method uses, so
+    under ``inference_mode`` it is an inference tensor and under ``no_grad``
+    it is an ordinary detached tensor — exactly the distinction under test.
+    """
+
+    training: bool = True
+
+    def __init__(self, feature_dim: int) -> None:
+        self.feature_dim = feature_dim
+
+    def eval(self) -> None:
+        self.training = False
+
+    def parameters(self):
+        return iter(())
+
+    def named_parameters(self):
+        return iter(())
+
+    def __call__(
+        self,
+        *,
+        input_ids: torch.Tensor | None = None,
+        output_hidden_states: bool = False,
+        use_cache: bool = False,
+        **_kwargs: object,
+    ) -> object:
+        seq_len = 1 if input_ids is None else int(input_ids.shape[1])
+        hidden = torch.randn(1, seq_len, self.feature_dim, dtype=torch.float32)
+
+        class _Out:
+            hidden_states: tuple[torch.Tensor, ...]
+
+        out = _Out()
+        out.hidden_states = (hidden,)
+        return out
+
+
+class _FakeHiddenDriver:
+    """Minimal driver to construct ``QwenFrozenOrgan`` without a real load."""
+
+    def __init__(self, feature_dim: int) -> None:
+        self.model_id = "fake/encode-texts-feature-mode"
+        self.n_embd = feature_dim
+        self.n_vocab = 128
+        self._model = _FakeHiddenModel(feature_dim)
+        self._tokenizer = _FakeTokenizer()
+
+
+class TestEncodeTextsProductionFeatureMode:
+    """The production ``QwenFrozenOrgan.encode_texts`` wrapper must return
+    ordinary detached (non-inference) tensors usable by the outer trainer.
+
+    No real Qwen model is loaded: a fake driver/model stand in for the
+    hidden-state forward pass.  These tests fail for inference-mode features
+    and pass only for ordinary detached features.
+    """
+
+    def test_encode_texts_non_inference_detached(self) -> None:
+        organ = QwenFrozenOrgan(
+            _FakeHiddenDriver(DEFAULT_FEATURE_DIM),
+            feature_dim=DEFAULT_FEATURE_DIM,
+        )
+        try:
+            features = organ.encode_texts(["hello", "world"])
+            assert features.shape == (2, DEFAULT_FEATURE_DIM)
+            assert features.dtype == torch.float32
+            assert not features.requires_grad
+            assert not torch.is_inference(features), (
+                "QwenFrozenOrgan.encode_texts must return ordinary tensors, "
+                "not inference-mode tensors (use torch.no_grad, not "
+                "torch.inference_mode)"
+            )
+        finally:
+            organ.close()
+
+    def test_encode_texts_feeds_trainable_linear_backward(self) -> None:
+        organ = QwenFrozenOrgan(
+            _FakeHiddenDriver(DEFAULT_FEATURE_DIM),
+            feature_dim=DEFAULT_FEATURE_DIM,
+        )
+        try:
+            features = organ.encode_texts(["hello", "world"])
+            # Inference tensors would raise on the backward-capable matmul
+            # below; assert up front so the failure mode is unambiguous.
+            assert not torch.is_inference(features)
+            head = torch.nn.Linear(DEFAULT_FEATURE_DIM, 1)
+            loss = head(features).sum()
+            loss.backward()
+            assert head.weight.grad is not None
+            assert torch.isfinite(head.weight.grad).all()
+            assert head.weight.grad.abs().sum().item() > 0.0
+            assert head.bias.grad is not None
+            assert torch.isfinite(head.bias.grad).all()
+        finally:
+            organ.close()
 
 # ---------------------------------------------------------------------------
 # Organ hash: changes on byte change, unchanged through cortex update

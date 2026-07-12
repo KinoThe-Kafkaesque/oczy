@@ -14,7 +14,9 @@ Design invariants (immutable spec — ``research/20-...:51-94``,
   from any optimizer.  Gradients may flow *through* the organ to the
   soft bank during developmental training, but organ weights never update.
 * Final-layer mean-pooled features are extracted directly under
-  ``torch.inference_mode()`` — never via ``HFDriver.peek_embedding``,
+  ``torch.no_grad()`` (not ``inference_mode``, so returned tensors are
+  ordinary non-inference tensors usable by trainable cortex layers) — never
+  via ``HFDriver.peek_embedding``,
   which caches raw prompt strings (``hf_driver.py:498-528``).  The adapter
   keeps **no** experience-text/token/embedding cache.
 * Teacher forcing follows the proven R19 ``inputs_embeds`` path
@@ -201,8 +203,9 @@ class FrozenLanguageOrgan(Protocol):
     def encode_texts(self, texts: Sequence[str]) -> torch.Tensor:
         """Return ``[N, feature_dim]`` mean-pooled final-layer features.
 
-        Runs under inference mode; output is detached float32.  No raw
-        text or embedding cache is retained.
+        Runs under ``torch.no_grad``; output is detached float32 usable as
+        input to trainable downstream layers.  No raw text or embedding
+        cache is retained.
         """
         ...
 
@@ -283,8 +286,10 @@ class QwenFrozenOrgan:
     specificity KL, and deterministic greedy generation.
 
     The adapter owns **no** experience-text/token/embedding cache.  All
-    feature extraction is done directly under ``torch.inference_mode()``
-    rather than via ``HFDriver.peek_embedding`` (which caches raw prompts).
+    feature extraction is done directly under ``torch.no_grad()`` (not
+    ``inference_mode``, so returned features are ordinary non-inference
+    tensors) rather than via ``HFDriver.peek_embedding`` (which caches raw
+    prompts).
     """
 
     def __init__(
@@ -495,14 +500,16 @@ class QwenFrozenOrgan:
     # Protocol: encode_texts
     # ------------------------------------------------------------------
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def encode_texts(self, texts: Sequence[str]) -> torch.Tensor:
         """Return ``[N, feature_dim]`` mean-pooled final-layer features.
 
         Extracts final-layer hidden states directly (not via
         ``HFDriver.peek_embedding``, which caches raw prompt strings).
-        Output is detached float32.  No text or embedding cache is
-        retained by this adapter.
+        Output is detached float32 produced under ``torch.no_grad`` (not
+        ``inference_mode``) so the returned tensors are ordinary non-inference
+        tensors that downstream trainable cortex layers can save for backward.
+        No text or embedding cache is retained by this adapter.
         """
         self._check_open()
         if not texts:
