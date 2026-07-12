@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Sequence
 from typing import Any, Protocol, cast, runtime_checkable
 
@@ -58,6 +59,56 @@ class FrozenOrganError(Exception):
     organ or organ-only mode.
     """
 
+
+# ---------------------------------------------------------------------------
+# Offline-aware model load-target resolution
+# ---------------------------------------------------------------------------
+
+
+def _resolve_load_target(model_id: str) -> str:
+    """Resolve the path/id to pass to ``HFDriver.load``.
+
+    Resolution order:
+      1. ``OCZY_MODEL_DIR`` (if set and points to a non-empty directory)
+      2. ``OCZY_HF_MODEL_DIR`` (if set and points to a non-empty directory)
+      3. ``model_id`` — but ONLY outside remote/offline mode.
+
+    A non-empty directory check (``os.listdir``) rejects arbitrary empty
+    paths that would otherwise be accepted as a valid mount point.
+
+    Under ``OCZY_REMOTE_CPU_ONLY=1``, ``HF_HUB_OFFLINE=1``, or
+    ``TRANSFORMERS_OFFLINE=1``, the hub-id fallback is forbidden: if neither
+    env var resolves to a local directory, a :class:`FrozenOrganError` is
+    raised with an actionable ASI message *before* any HuggingFace call —
+    preventing the ``LocalEntryNotFoundError`` that occurs when a hub id is
+    passed to ``from_pretrained`` with ``local_files_only=True``.
+
+    The caller's ``model_id`` is preserved separately for organ identity
+    (hashing/provenance) and is NOT mutated here; only the load target is
+    returned.
+    """
+    offline = (
+        os.environ.get("OCZY_REMOTE_CPU_ONLY") == "1"
+        or os.environ.get("HF_HUB_OFFLINE") == "1"
+        or os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+    )
+
+    for env_var in ("OCZY_MODEL_DIR", "OCZY_HF_MODEL_DIR"):
+        env_dir = os.environ.get(env_var)
+        if env_dir and os.path.isdir(env_dir) and os.listdir(env_dir):
+            return env_dir
+
+    if offline:
+        raise FrozenOrganError(
+            f"ASI offline_model_unavailable: OCZY_REMOTE_CPU_ONLY/"
+            f"HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE is active but no local "
+            f"model directory was found. Set OCZY_MODEL_DIR or "
+            f"OCZY_HF_MODEL_DIR to an existing snapshot directory for "
+            f"pinned model_id={model_id!r}. Network fallback is disabled "
+            f"in offline/remote mode."
+        )
+
+    return model_id
 
 # ---------------------------------------------------------------------------
 # Chat rendering
@@ -290,13 +341,20 @@ class QwenFrozenOrgan:
                 size mismatches, or freezing fails.  Never falls back to
                 a fake or organ-only mode.
         """
+        load_target = _resolve_load_target(model_id)
         try:
-            driver = HFDriver.load(model_id=model_id)
+            driver = HFDriver.load(model_id=load_target)
         except Exception as exc:
             raise FrozenOrganError(
-                f"Failed to load frozen language organ '{model_id}': {exc}"
+                f"Failed to load frozen language organ '{model_id}' "
+                f"(load_target={load_target!r}): {exc}"
             ) from exc
-        return cls(driver, feature_dim=feature_dim)
+        organ = cls(driver, feature_dim=feature_dim)
+        # Preserve the explicit model_id as organ identity (hashing/
+        # provenance) even when the actual load target was a verified
+        # local directory (OCZY_MODEL_DIR/OCZY_HF_MODEL_DIR).
+        organ._model_id = model_id
+        return organ
 
     # ------------------------------------------------------------------
     # Internal helpers

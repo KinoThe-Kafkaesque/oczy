@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import os
+from pathlib import Path
 
 import pytest
 import torch
@@ -677,5 +678,281 @@ class TestQwenFrozenOrgan:
             assert features.shape == (2, DEFAULT_FEATURE_DIM)
             assert features.dtype == torch.float32
             assert not features.requires_grad
+        finally:
+            organ.close()
+
+
+
+# ---------------------------------------------------------------------------
+# Offline-aware load-target resolution (no real model / no network)
+# ---------------------------------------------------------------------------
+#
+# These tests defend the fail-closed remote behavior and local-path precedence
+# of ``QwenFrozenOrgan.load`` by monkeypatching ``HFDriver.load`` so that no
+# real model is ever downloaded.  The contract:
+#
+#   - ``OCZY_MODEL_DIR`` (non-empty dir) takes precedence over
+#     ``OCZY_HF_MODEL_DIR`` (non-empty dir), which takes precedence over the
+#     hub ``model_id`` — but ONLY outside offline/remote mode.
+#   - Under ``OCZY_REMOTE_CPU_ONLY=1`` / ``HF_HUB_OFFLINE=1`` /
+#     ``TRANSFORMERS_OFFLINE=1``, the hub-id fallback is forbidden: if no
+#     local dir resolves, ``FrozenOrganError`` is raised BEFORE
+#     ``HFDriver.load`` is ever called.
+#   - The organ's recorded identity (``organ.model_id``) is always the
+#     ORIGINAL requested ``model_id``; only ``HFDriver.load`` receives the
+#     resolved local path.
+#
+# This mirrors the already-fixed R19 convention (s19_language_organ.py) and
+# fixes the Kaggle DEV smoke failure where a hub id was passed to
+# ``from_pretrained`` with ``local_files_only=True``.
+#
+#
+# --- Fake HFDriver for monkeypatching ---------------------------------
+#
+
+class _FakeHFDriver:
+    """Minimal HFDriver stand-in recording the model_id passed to ``load``.
+
+    No real model is instantiated.  The returned instance carries just
+    enough attributes for ``QwenFrozenOrgan.__init__`` to succeed so we can
+    assert on ``organ.model_id`` afterwards.
+    """
+
+    last_loaded_id: str | None = None
+
+    @classmethod
+    def load(cls, *, model_id: str = "", **_kwargs: object) -> _FakeHFDriver:
+        cls.last_loaded_id = model_id
+        return cls()
+
+    def __init__(self) -> None:
+        self.model_id = _FakeHFDriver.last_loaded_id or ""
+        self.n_embd = DEFAULT_FEATURE_DIM
+        self.n_vocab = 128
+        self._model = _FakeModel()
+        self._tokenizer = _FakeTokenizer()
+
+
+class _FakeModel:
+    """Bare-minimum model stub for organ construction and hashing.
+
+    ``named_parameters()`` yields nothing (no params to freeze/hash),
+    ``eval()`` flips ``training=False``, and ``config`` is absent so
+    ``parameter_hash`` uses an empty config dict.
+    """
+
+    training: bool = True
+
+    def eval(self) -> None:
+        self.training = False
+
+    def parameters(self):
+        return iter(())
+
+    def named_parameters(self):
+        return iter(())
+
+
+class _FakeTokenizer:
+    """Bare-minimum tokenizer stub for organ construction."""
+
+    def encode(self, _text: str, add_special_tokens: bool = True) -> list[int]:
+        return [1, 2, 3]
+
+
+class TestOfflineLoadTargetResolution:
+    """Tests for ``QwenFrozenOrgan.load`` offline resolution, monkeypatching
+    ``HFDriver.load`` so no real model/network load occurs.
+    """
+
+    _HUB_ID = "Qwen/Qwen2.5-0.5B-Instruct"
+
+    @pytest.fixture(autouse=True)
+    def _clean_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Strip every offline/local env var before each test so they start
+        from a clean baseline; individual tests set what they need."""
+        for var in (
+            "OCZY_MODEL_DIR",
+            "OCZY_HF_MODEL_DIR",
+            "OCZY_REMOTE_CPU_ONLY",
+            "HF_HUB_OFFLINE",
+            "TRANSFORMERS_OFFLINE",
+        ):
+            monkeypatch.delenv(var, raising=False)
+
+    @pytest.fixture(autouse=True)
+    def _patch_hf_driver(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Monkeypatch ``HFDriver.load`` in the organ module so no real
+        model is ever loaded."""
+        import oczy.experiments.meta_cortex.organ as organ_mod
+
+        _FakeHFDriver.last_loaded_id = None
+        monkeypatch.setattr(organ_mod.HFDriver, "load", _FakeHFDriver.load)
+
+    # -- environment precedence ------------------------------------------
+
+    def test_model_dir_takes_precedence_over_hf_model_dir(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """OCZY_MODEL_DIR wins over OCZY_HF_MODEL_DIR when both are set and
+        non-empty.  HFDriver.load receives the OCZY_MODEL_DIR path."""
+
+        model_dir = tmp_path / "model_dir"
+        hf_model_dir = tmp_path / "hf_model_dir"
+        model_dir.mkdir()
+        (model_dir / "marker").write_text("x")
+        hf_model_dir.mkdir()
+        (hf_model_dir / "marker").write_text("x")
+        monkeypatch.setenv("OCZY_MODEL_DIR", str(model_dir))
+        monkeypatch.setenv("OCZY_HF_MODEL_DIR", str(hf_model_dir))
+
+        organ = QwenFrozenOrgan.load(model_id=self._HUB_ID)
+        try:
+            assert _FakeHFDriver.last_loaded_id == str(model_dir)
+            assert organ.model_id == self._HUB_ID
+        finally:
+            organ.close()
+
+    def test_hf_model_dir_used_when_model_dir_unset(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """When OCZY_MODEL_DIR is unset, OCZY_HF_MODEL_DIR is used if it is
+        a non-empty directory."""
+        hf_model_dir = tmp_path / "hf_model"
+        hf_model_dir.mkdir()
+        (hf_model_dir / "marker").write_text("x")
+        monkeypatch.setenv("OCZY_HF_MODEL_DIR", str(hf_model_dir))
+
+        organ = QwenFrozenOrgan.load(model_id=self._HUB_ID)
+        try:
+            assert _FakeHFDriver.last_loaded_id == str(hf_model_dir)
+            assert organ.model_id == self._HUB_ID
+        finally:
+            organ.close()
+
+    # -- invalid / missing local path -----------------------------------
+
+    def test_empty_local_dir_rejected_falls_through_to_hub(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """An empty OCZY_MODEL_DIR directory is rejected (non-empty check);
+        in non-offline mode the resolver falls through to the hub id."""
+
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+        monkeypatch.setenv("OCZY_MODEL_DIR", str(empty_dir))
+
+        organ = QwenFrozenOrgan.load(model_id=self._HUB_ID)
+        try:
+            assert _FakeHFDriver.last_loaded_id == self._HUB_ID
+            assert organ.model_id == self._HUB_ID
+        finally:
+            organ.close()
+
+    def test_nonexistent_local_dir_rejected_falls_through_to_hub(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A nonexistent OCZY_MODEL_DIR is rejected; in non-offline mode the
+        resolver falls through to the hub id."""
+        monkeypatch.setenv("OCZY_MODEL_DIR", "/nonexistent/path/abc")
+
+        organ = QwenFrozenOrgan.load(model_id=self._HUB_ID)
+        try:
+            assert _FakeHFDriver.last_loaded_id == self._HUB_ID
+            assert organ.model_id == self._HUB_ID
+        finally:
+            organ.close()
+
+    # -- explicit offline refusal (fail-closed) -------------------------
+
+    def test_offline_no_local_dir_raises_before_hfdriver(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Under HF_HUB_OFFLINE=1 with no valid local dir, load must raise
+        FrozenOrganError BEFORE HFDriver.load is ever called."""
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        monkeypatch.setenv("OCZY_MODEL_DIR", "/nonexistent/path/abc")
+        monkeypatch.setenv("OCZY_HF_MODEL_DIR", "/nonexistent/path/xyz")
+
+        with pytest.raises(FrozenOrganError, match="offline_model_unavailable"):
+            QwenFrozenOrgan.load(model_id=self._HUB_ID)
+        assert _FakeHFDriver.last_loaded_id is None, (
+            "HFDriver.load must not be called when offline and no local dir"
+        )
+
+    def test_remote_cpu_only_no_env_vars_fail_closed(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Under OCZY_REMOTE_CPU_ONLY=1 with no env vars set at all, load
+        must raise FrozenOrganError before HFDriver.load."""
+        monkeypatch.setenv("OCZY_REMOTE_CPU_ONLY", "1")
+
+        with pytest.raises(FrozenOrganError, match="offline_model_unavailable"):
+            QwenFrozenOrgan.load(model_id=self._HUB_ID)
+        assert _FakeHFDriver.last_loaded_id is None
+
+    def test_transformers_offline_empty_dir_fail_closed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """Under TRANSFORMERS_OFFLINE=1 with only an empty local dir, load
+        must raise FrozenOrganError (empty dirs are not valid mounts)."""
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+        monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+        monkeypatch.setenv("OCZY_MODEL_DIR", str(empty_dir))
+
+        with pytest.raises(FrozenOrganError, match="offline_model_unavailable"):
+            QwenFrozenOrgan.load(model_id=self._HUB_ID)
+        assert _FakeHFDriver.last_loaded_id is None
+
+    # -- online model-id fallback ----------------------------------------
+
+    def test_online_no_env_vars_falls_back_to_hub_id(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """In non-offline mode with no local env dirs set, the resolver
+        falls back to the original hub model_id, and the organ identity
+        matches."""
+        organ = QwenFrozenOrgan.load(model_id=self._HUB_ID)
+        try:
+            assert _FakeHFDriver.last_loaded_id == self._HUB_ID
+            assert organ.model_id == self._HUB_ID
+        finally:
+            organ.close()
+
+    def test_online_invalid_local_dir_falls_back_to_hub_id(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """In non-offline mode with an invalid OCZY_MODEL_DIR, the resolver
+        falls back to the hub id (network resolution still allowed)."""
+        monkeypatch.setenv("OCZY_MODEL_DIR", "/nonexistent/path/abc")
+
+        organ = QwenFrozenOrgan.load(model_id=self._HUB_ID)
+        try:
+            assert _FakeHFDriver.last_loaded_id == self._HUB_ID
+            assert organ.model_id == self._HUB_ID
+        finally:
+            organ.close()
+
+    # -- organ identity preservation under local resolution -------------
+
+    def test_organ_identity_is_requested_id_not_local_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """When a local dir resolves, the organ's recorded identity
+        (``model_id``) must be the ORIGINAL requested model_id, not the
+        local path — while HFDriver.load received the local path."""
+
+        local_dir = tmp_path / "models" / "Qwen2.5-0.5B-Instruct"
+        local_dir.mkdir(parents=True)
+        (local_dir / "marker").write_text("x")
+        monkeypatch.setenv("OCZY_MODEL_DIR", str(local_dir))
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+
+        organ = QwenFrozenOrgan.load(model_id=self._HUB_ID)
+        try:
+            assert _FakeHFDriver.last_loaded_id == str(local_dir)
+            assert organ.model_id == self._HUB_ID
+            assert organ.model_id != str(local_dir)
         finally:
             organ.close()
