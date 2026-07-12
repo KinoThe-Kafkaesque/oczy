@@ -1,9 +1,9 @@
 # Oczy — Current Project State
 
-**Last updated:** 2026-07-11
+**Last updated:** 2026-07-12
 
 **Evidence cutoff:** repository and local experiment artifacts inspected through
-2026-07-11
+2026-07-12
 
 **Purpose:** canonical living handoff for what Oczy is, what has actually been
 demonstrated, what changed in the research direction, and where the remaining
@@ -262,13 +262,35 @@ Per-seed `distill_delta_holdout`: {0.3333, 0.3333, 0.0, 0.3333,
 deltas are infrastructure-confirmed but scientifically inadmissible
 because the teacher gate failed.
 
-**Next mechanism-level work:** teacher ceiling diagnostics (why is
-`teacher_dev_delta` stuck at 0.1765 across all seeds?),
-prompt-contract diagnostics (is the teacher task prompt contract
-limiting the dev delta?), and trajectory diagnostics (why does seed 2
-produce `distill_delta_holdout=0.0` while the other four produce
-0.3333?). No threshold changes are prescribed; the 0.2 gate is
-unchanged.
+**Mechanism diagnosis COMPLETE (2026-07-12, commit `33169cc`):**
+teacher ceiling, prompt-contract, and trajectory diagnostics ran on
+Kaggle CPU. The teacher gate remains FAILED; no H-DISTILL verdict is
+permitted.
+
+- **Teacher ceiling** (n=17): vanilla=0, raw_prefix=0.17647058823529413,
+  chat_template=0. Neither reaches the 0.2 gate. The registered chat
+  fallback (0) is worse than raw_prefix (0.1765).
+- **Prompt-contract audit:** issue/malformed/missing/truncated/
+  answer-leak/mismatch counts all 0; `teacher_correct_rate=0.17647058823529413`;
+  raw and chat-template prompt accuracies 0. No structural prompt defect.
+- **Training trajectory:** the first submission failed with HTTP 400
+  (long kernel slug); the short-slug retry succeeded (exit 0 after
+  ~12798 s) and is the run of record — both preserved. Train loss falls
+  ~0.70 → ~0.16; mean slope -0.0615; second-half slope -0.0190;
+  underfit=1, instability=1, saturation=0; max final-loss divergence
+  0.01259. Optimization fits token loss, but DEV behavior is
+  unstable/weak and not saturated.
+- **Final DEV student accuracies** (seeds 0–4) =
+  {0.117647, 0, 0, 0, 0.117647}. Teacher remains 0.17647. Seed 2 is
+  not uniquely divergent — seeds 1 and 3 also score 0.
+
+**Conclusion:** no structural prompt defect; registered chat fallback
+is worse than raw_prefix; the teacher expressivity/prompt-task ceiling
+is the blocker. Optimization fits token loss but DEV behavior is
+unstable/weak and not saturated. Further identical R18 reruns are
+retired — they will not clear the unchanged teacher gate. Next work
+points to R19 DEV calibration while signed evaluation (Research/20
+meta-test) remains gated. No threshold, metric, or eval changes.
 
 ## 5. Current research direction
 
@@ -278,7 +300,7 @@ the core premise test; Research/21 is conditional on it.
 
 | Order | Work | Role | Current state |
 |---|---|---|---|
-| 1 | [`research/18-consolidation-as-distillation.md`](research/18-consolidation-as-distillation.md) | Plastic-LM-weight comparator: distill transient context into LoRA, delete traces, test survival | **BLOCKED** (teacher gate failed): 5-seed run complete (exit 0), `teacher_dev_delta=0.1765` < 0.2 gate all seeds; `distill_delta_holdout` mean=0.2667, 4/5 positive (seed 2 null); no H-DISTILL verdict permitted; next work is teacher ceiling, prompt-contract, and trajectory diagnostics; no threshold changes |
+| 1 | [`research/18-consolidation-as-distillation.md`](research/18-consolidation-as-distillation.md) | Plastic-LM-weight comparator: distill transient context into LoRA, delete traces, test survival | **BLOCKED** (teacher gate failed): 5-seed run complete (exit 0), `teacher_dev_delta=0.1765` < 0.2 gate all seeds; `distill_delta_holdout` mean=0.2667, 4/5 positive (seed 2 null); no H-DISTILL verdict permitted. Mechanism diagnosis complete (2026-07-12, commit `33169cc`): teacher ceiling vanilla=0/raw_prefix=0.1765/chat_template=0 (none reach gate), prompt-contract audit all-zero (no structural defect), trajectory underfit+unstable (loss falls but DEV behavior weak); seed 2 not uniquely divergent. Further identical R18 reruns retired; next work is R19 DEV calibration; no threshold changes |
 | 2 | [`research/19-lm-as-language-organ.md`](research/19-lm-as-language-organ.md) | Direct diagnostic with matched label-prefix and latent-control articulation arms | Amended 2026-07-09; **unimplemented** |
 | 3 | [`research/20-meta-trained-cortex-frozen-language-organ.md`](research/20-meta-trained-cortex-frozen-language-organ.md) | Core test: meta-learn write/read/consolidate/articulate, then learn an unseen rule online through state only | New specification; **unimplemented**; meta-test blocked on human sign-off |
 | 4 | [`research/21-cortex-routed-frozen-specialist-organs.md`](research/21-cortex-routed-frozen-specialist-organs.md) | Conditional extension: cortex routes between frozen language and action/tool organs using recurrent goal state | New specification; do not start before Research/20 accepts |
@@ -447,13 +469,25 @@ For commit `f48dccc`, the explicitly authorized scoped guard passed with
    `distill_delta_holdout=0.26666666666666666`; mean
    `specificity_delta=0.02608695652173913`. The 4/5 positive holdout
    deltas are infrastructure-confirmed but scientifically inadmissible.
-   **Next mechanism-level work:** teacher ceiling diagnostics (why is
-   `teacher_dev_delta` stuck at 0.1765?), prompt-contract diagnostics
-   (is the teacher task prompt contract limiting the dev delta?), and
-   trajectory diagnostics (why does seed 2 produce 0.0?). No threshold
-   changes prescribed; the 0.2 gate is unchanged. **Acceptance met:**
-   5-seed run complete with per-seed values; null seed 2 preserved;
-   no threshold change.
+   **Mechanism diagnosis COMPLETE (2026-07-12, commit `33169cc`):**
+   teacher ceiling (n=17) vanilla=0, raw_prefix=0.17647058823529413,
+   chat_template=0 — none reach the 0.2 gate; registered chat fallback
+   is worse than raw_prefix. Prompt-contract audit: all
+   issue/malformed/missing/truncated/answer-leak/mismatch counts 0;
+   no structural prompt defect. Training trajectory: loss falls
+   ~0.70→~0.16, mean slope -0.0615, second-half -0.0190, underfit=1,
+   instability=1, saturation=0, max final-loss divergence 0.01259;
+   optimization fits token loss but DEV behavior is unstable/weak and
+   not saturated. Final DEV student accuracies (seeds 0–4) =
+   {0.117647, 0, 0, 0, 0.117647}; seed 2 is not uniquely divergent.
+   Conclusion: the blocker is teacher expressivity/prompt-task ceiling,
+   not a prompt bug. Further identical R18 reruns are retired — they
+   will not clear the unchanged teacher gate. Next work is R19 DEV
+   calibration; R19 signed evaluation remains gated on human approval,
+   and the Research/20 meta-test remains separately blocked. No
+   threshold, metric, or eval changes. **Acceptance met:** 5-seed run
+   complete with per-seed values; mechanism diagnosis
+   complete; null seed 2 preserved; no threshold change.
 5. **S4.1: complete honest reruns.** Re-run every June 26–29 result that
    depended on the broken scope-slot reranker or leakage-era paths on eval
    v2. **Acceptance:** every INVALIDATED/SUPERSEDED ledger row points to a

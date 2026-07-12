@@ -381,9 +381,23 @@ extension.
 > all seeds; `distill_delta_holdout` {0.3333, 0.3333, 0.0, 0.3333,
 > 0.3333} (mean=0.2667), 4/5 positive, seed 2 null; mean
 > `specificity_delta=0.0261`. No H-DISTILL verdict is permitted
-> because the teacher gate failed after registered fallback. Next
-> mechanism-level work: teacher ceiling, prompt-contract, and
-> trajectory diagnostics. No threshold changes. Evidence:
+> because the teacher gate failed after registered fallback.
+> **Mechanism diagnosis COMPLETE (2026-07-12, commit `33169cc`):**
+> teacher ceiling (n=17) vanilla=0, raw_prefix=0.17647058823529413,
+> chat_template=0 — none reach the 0.2 gate; registered chat fallback
+> is worse than raw_prefix. Prompt-contract audit: all
+> issue/malformed/missing/truncated/answer-leak/mismatch counts 0;
+> no structural prompt defect. Training trajectory: loss falls
+> ~0.70→~0.16, mean slope -0.0615, second-half -0.0190, underfit=1,
+> instability=1, saturation=0, max final-loss divergence 0.01259;
+> optimization fits token loss but DEV behavior is unstable/weak and
+> not saturated. Final DEV student accuracies (seeds 0–4) =
+> {0.117647, 0, 0, 0, 0.117647}; seed 2 is not uniquely divergent.
+> Conclusion: the blocker is teacher expressivity/prompt-task ceiling,
+> not a prompt bug. Further identical R18 reruns are retired — they
+> will not clear the unchanged teacher gate. Next work points to R19
+> signed evaluation remains gated on human approval; the Research/20
+> meta-test remains separately blocked. No threshold, metric, or eval changes. Evidence:
 > `experiments_logs/2026-07-11_campaign_0d48130.md`.
 - [ ] **S5.2 — research/19: direct cortex learning, two articulation arms.** — **unimplemented**
   The same ≤64k-param online-trained cortex is evaluated through (A) a
@@ -443,13 +457,25 @@ remains frozen unless an item explicitly calls for the governance path.
    (preserved). Mean `distill_delta_holdout=0.26666666666666666`;
    mean `specificity_delta=0.02608695652173913`. The 4/5 positive
    holdout deltas are infrastructure-confirmed but scientifically
-   inadmissible. **Next mechanism-level work:** teacher ceiling
-   diagnostics (why is `teacher_dev_delta` stuck at 0.1765?),
-   prompt-contract diagnostics (is the teacher task prompt contract
-   limiting the dev delta?), and trajectory diagnostics (why does
-   seed 2 produce 0.0?). No threshold changes prescribed; the 0.2
-   gate is unchanged. **Acceptance met:** 5-seed run complete with
-   per-seed values; null seed 2 preserved; no threshold change.
+   inadmissible.
+   **Mechanism diagnosis COMPLETE (2026-07-12, commit `33169cc`):**
+   teacher ceiling (n=17) vanilla=0, raw_prefix=0.17647058823529413,
+   chat_template=0 — none reach the 0.2 gate; registered chat fallback
+   is worse than raw_prefix. Prompt-contract audit: all counts 0; no
+   structural prompt defect. Training trajectory: loss falls
+   ~0.70→~0.16, mean slope -0.0615, second-half -0.0190, underfit=1,
+   instability=1, saturation=0, max final-loss divergence 0.01259;
+   optimization fits token loss but DEV behavior is unstable/weak and
+   not saturated. Final DEV student accuracies (seeds 0–4) =
+   {0.117647, 0, 0, 0, 0.117647}; seed 2 is not uniquely divergent.
+   Conclusion: the blocker is teacher expressivity/prompt-task ceiling,
+   not a prompt bug. Further identical R18 reruns are retired — they
+   will not clear the unchanged teacher gate. Next work points to R19
+   signed evaluation remains gated on human approval; the Research/20
+   meta-test remains separately blocked. No threshold, metric, or eval
+   changes. **Acceptance
+   met:** 5-seed run complete with per-seed values; mechanism diagnosis
+   complete; null seed 2 preserved; no threshold change.
 
 3. **S4.1: complete honest reruns.**
    Re-run every June 26–29 result that depended on the broken scope-slot
