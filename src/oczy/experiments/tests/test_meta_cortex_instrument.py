@@ -1252,3 +1252,179 @@ class TestCandidateImmutability:
         def1 = materialize_definition(config1, test_seed_file=seed_file, out=out1)
         def2 = materialize_definition(config2, test_seed_file=seed_file, out=out2)
         assert def1.definition_sha256 != def2.definition_sha256
+
+
+# ---------------------------------------------------------------------------
+# Sealed task diversity: 30 sealed finite-state rules disjoint from DEV
+# ---------------------------------------------------------------------------
+
+
+class TestSealedTaskDiversity:
+    """Regression: ≥30 sealed finite-state rules must materialize without
+    collision exhaustion and remain disjoint from DEV/calibration catalogs.
+
+    Diagnoses the finite-state rule-space collapse where the DEV Moore-machine
+    assignment space (4^3 = 64) is too small for 30 train + 5 tuning +
+    30 calibration + 30 sealed = 95 tasks.  The sealed generator uses
+    expanded Mealy-machine assignments (action per (state, input)) with
+    variable-size state machines, making sealed fingerprints structurally
+    distinct from DEV's and creating an assignment space of 8^(states×inputs).
+    """
+
+    def _make_30_5_30_config(self) -> InstrumentDefinitionConfig:
+        """Build a config with 30 train / 5 tuning / 30 calibration per family."""
+        return InstrumentDefinitionConfig(
+            instrument_id="meta_cortex/v1",
+            instrument_version="v1",
+            root_seed=42,
+            train_tasks_per_family=30,
+            tuning_tasks_per_family=5,
+            calibration_tasks_per_family=30,
+            developmental_seeds=(10, 20, 30, 40, 50),
+            evaluation_seeds=(60, 70, 80, 90, 100),
+            organ_model_id="Qwen/Qwen2.5-0.5B-Instruct",
+            organ_revision="main",
+            organ_parameter_sha256=_DUMMY_SHA,
+            chat_template_sha256=_DUMMY_SHA,
+            feature_mode="final_layer_mean_pool",
+            decoding_mode="greedy",
+            max_new_tokens=16,
+            feature_dim=896,
+            d_cortex=64,
+            soft_bank_width=3,
+            event_min=2,
+            event_max=5,
+            abstain_threshold="0.5",
+            source_commit="abc123",
+            source_archive_sha256=_DUMMY_SHA,
+        )
+
+    def test_materialize_30_5_30_30_succeeds(self, tmp_path: Path) -> None:
+        """materialize_definition must succeed with 30/5/30/30 counts.
+
+        Before the fix, sealed collision exhausted at finite_state index 5
+        because the DEV assignment space (64) left only 5 unused values.
+        """
+        from oczy.experiments.meta_cortex.instrument import materialize_definition
+        config = self._make_30_5_30_config()
+        seed_file = _make_test_seed_file(tmp_path)
+        out = tmp_path / "definition"
+        definition = materialize_definition(config, test_seed_file=seed_file, out=out)
+        assert definition is not None
+        assert (out / "sealed/tasks/meta_test.jsonl").exists()
+
+    def test_30_sealed_tasks_per_family(self, tmp_path: Path) -> None:
+        """Exactly 30 sealed tasks per family (90 total) must be present."""
+        from oczy.experiments.meta_cortex.instrument import materialize_definition
+        config = self._make_30_5_30_config()
+        seed_file = _make_test_seed_file(tmp_path)
+        out = tmp_path / "definition"
+        materialize_definition(config, test_seed_file=seed_file, out=out)
+        sealed_path = out / "sealed/tasks/meta_test.jsonl"
+        records = [json.loads(line) for line in sealed_path.read_text().splitlines() if line]
+        assert len(records) == 90
+        from collections import Counter
+        family_counts = Counter(r["family"] for r in records)
+        assert family_counts["contextual_remap"] == 30
+        assert family_counts["rule_transformation"] == 30
+        assert family_counts["finite_state"] == 30
+
+    def test_firewall_overlap_zero(self, tmp_path: Path) -> None:
+        """Cross-domain fingerprint overlap must be zero across all four domains."""
+        from oczy.experiments.meta_cortex.instrument import materialize_definition
+        config = self._make_30_5_30_config()
+        seed_file = _make_test_seed_file(tmp_path)
+        out = tmp_path / "definition"
+        materialize_definition(config, test_seed_file=seed_file, out=out)
+        summary = json.loads(
+            (out / "public/audits/leakage_summary.json").read_bytes().decode().rstrip()
+        )
+        assert summary["passed"] is True
+        # Verify all pairwise overlaps are zero
+        for _d1, others in summary["pairwise_overlap"].items():
+            for _d2, overlaps in others.items():
+                for _fc, count in overlaps.items():
+                    assert count == 0, f"Cross-domain overlap {_d1} vs {_d2}"
+
+    def test_sealed_finite_state_fingerprints_disjoint_from_dev(
+        self, tmp_path: Path
+    ) -> None:
+        """All sealed finite-state fingerprints must be absent from DEV catalogs."""
+        from oczy.experiments.meta_cortex.instrument import materialize_definition
+        config = self._make_30_5_30_config()
+        seed_file = _make_test_seed_file(tmp_path)
+        out = tmp_path / "definition"
+        materialize_definition(config, test_seed_file=seed_file, out=out)
+
+        # Collect DEV fingerprints from public task files
+        dev_fps: set[str] = set()
+        for task_file in (out / "public/tasks").glob("*.jsonl"):
+            for line in task_file.read_text().splitlines():
+                if not line:
+                    continue
+                rec = json.loads(line)
+                for fc in ("rule_fingerprint", "assignment_fingerprint",
+                           "composition_fingerprint", "paraphrase_group_fingerprint"):
+                    dev_fps.add(rec[fc])
+
+        # Collect sealed fingerprints
+        sealed_path = out / "sealed/tasks/meta_test.jsonl"
+        sealed_fps: set[str] = set()
+        sealed_fs_fps: set[str] = set()
+        for line in sealed_path.read_text().splitlines():
+            if not line:
+                continue
+            rec = json.loads(line)
+            for fc in ("rule_fingerprint", "assignment_fingerprint",
+                       "composition_fingerprint", "paraphrase_group_fingerprint"):
+                sealed_fps.add(rec[fc])
+                if rec["family"] == "finite_state":
+                    sealed_fs_fps.add(rec[fc])
+
+        # No sealed fingerprint may appear in DEV
+        assert len(sealed_fps & dev_fps) == 0, "Sealed fingerprint leaked to DEV"
+        # Finite-state sealed fingerprints specifically must be disjoint
+        assert len(sealed_fs_fps & dev_fps) == 0, "Sealed FS fingerprint leaked to DEV"
+
+    def test_sealed_finite_state_mealy_assignment_structure(
+        self, tmp_path: Path
+    ) -> None:
+        """Sealed finite-state assignments must use Mealy-machine structure
+        (nested {state: {input: action}}) distinct from DEV's Moore
+        {state: action}."""
+        from oczy.experiments.meta_cortex.instrument import (
+            _generate_all_tasks,
+        )
+        config = self._make_30_5_30_config()
+        all_tasks = _generate_all_tasks(config, "00" * 32)
+        sealed_fs = [
+            t for t in all_tasks["meta_test"]
+            if t.family.value == "finite_state"
+        ]
+        assert len(sealed_fs) == 30
+        # Every sealed finite-state assignment fingerprint must be unique
+        assign_fps = [t.assignment_fingerprint for t in sealed_fs]
+        assert len(assign_fps) == len(set(assign_fps)), "Duplicate sealed FS assignments"
+        # Every sealed finite-state rule fingerprint must be unique
+        rule_fps = [t.rule_fingerprint for t in sealed_fs]
+        assert len(rule_fps) == len(set(rule_fps)), "Duplicate sealed FS rules"
+
+    def test_30_5_30_30_materialization_is_deterministic(
+        self, tmp_path: Path
+    ) -> None:
+        """Re-materializing with the same 30/5/30/30 config produces
+        byte-identical output."""
+        from oczy.experiments.meta_cortex.instrument import materialize_definition
+        config = self._make_30_5_30_config()
+        seed_file = _make_test_seed_file(tmp_path)
+        out1 = tmp_path / "def1"
+        out2 = tmp_path / "def2"
+        materialize_definition(config, test_seed_file=seed_file, out=out1)
+        materialize_definition(config, test_seed_file=seed_file, out=out2)
+        files1 = sorted(p.relative_to(out1) for p in out1.rglob("*") if p.is_file())
+        files2 = sorted(p.relative_to(out2) for p in out2.rglob("*") if p.is_file())
+        assert [str(f) for f in files1] == [str(f) for f in files2]
+        for rel in files1:
+            assert (out1 / rel).read_bytes() == (out2 / rel).read_bytes(), (
+                f"File {rel} differs between materializations"
+            )

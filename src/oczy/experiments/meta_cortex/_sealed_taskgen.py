@@ -71,6 +71,21 @@ _INPUTS = ("a", "b")
 _ACTIONS = ("proceed", "wait", "yield", "hold")
 _RULE_TEMPLATES = ("permutation", "substitution", "conditional", "composition")
 
+# ---------------------------------------------------------------------------
+# Sealed finite-state pools — expanded beyond DEV for semantic diversity.
+# DEV uses 3 states / 2 inputs / 4 actions (Moore machine: action per state).
+# Sealed uses up to 6 states / 3 inputs / 8 actions with Mealy-machine
+# assignment (action per (state, input)).  This makes sealed fingerprints
+# structurally distinct from DEV's and creates an assignment space of
+# 8^(states×inputs) — far exceeding the 30-task requirement.
+# ---------------------------------------------------------------------------
+_SEALED_STATES = ("q0", "q1", "q2", "q3", "q4", "q5")
+_SEALED_INPUTS = ("a", "b", "c")
+_SEALED_ACTIONS = (
+    "proceed", "wait", "yield", "hold",
+    "advance", "retreat", "observe", "commit",
+)
+
 
 class _SealedHashStream:
     """Counter-mode SHA-256 over canonical bytes with sealed domain separation.
@@ -458,82 +473,156 @@ def _build_rule_transformation(
 def _build_finite_state(
     stream: _SealedHashStream, config: TaskGeneratorConfig
 ) -> MetaTask:
-    states = list(_STATES)
-    inputs = list(_INPUTS)
-    actions = list(_ACTIONS)
+    """Build a sealed finite-state task with expanded semantic diversity.
 
-    graph = {s: {inp: stream.choice(states) for inp in inputs} for s in states}
-    action_map = {s: stream.choice(actions) for s in states}
+    Uses variable-size Mealy machines (action per (state, input)) drawn
+    from expanded sealed pools — structurally distinct from DEV's
+    fixed 3-state Moore machines.  The variable topology (3–5 states,
+    2–3 inputs, 8 actions) and Mealy assignment create an assignment
+    space of 8^(states×inputs), ensuring ≥30 disjoint sealed rules.
+    """
+    n_states = stream.randint(3, 5)
+    n_inputs = stream.randint(2, 3)
+    states = stream.sample(_SEALED_STATES, n_states)
+    inputs = stream.sample(_SEALED_INPUTS, n_inputs)
+    actions = list(_SEALED_ACTIONS)
+
+    # Complete transition graph: {state: {input: next_state}}
+    graph: dict[str, dict[str, str]] = {}
+    for s in states:
+        graph[s] = {}
+        for inp in inputs:
+            graph[s][inp] = stream.choice(states)
+
+    # Mealy-machine action assignment: {state: {input: action}}
+    # Structurally distinct from DEV's Moore {state: action}.
+    action_map: dict[str, dict[str, str]] = {}
+    for s in states:
+        action_map[s] = {}
+        for inp in inputs:
+            action_map[s][inp] = stream.choice(actions)
+
     goal_state = stream.choice(states)
     start_state = states[0]
 
     rule_spec = {
-        "states": sorted(states), "inputs": sorted(inputs),
-        "transitions": {s: {inp: graph[s][inp] for inp in sorted(inputs)} for s in sorted(states)},
-        "actions": {s: action_map[s] for s in sorted(states)},
-        "start_state": start_state, "goal_state": goal_state,
+        "states": sorted(states),
+        "inputs": sorted(inputs),
+        "transitions": {
+            s: {inp: graph[s][inp] for inp in sorted(inputs)}
+            for s in sorted(states)
+        },
+        "actions": {
+            s: {inp: action_map[s][inp] for inp in sorted(inputs)}
+            for s in sorted(states)
+        },
+        "start_state": start_state,
+        "goal_state": goal_state,
     }
-    assignment = json.loads(json.dumps(action_map, sort_keys=True))
+    assignment = {
+        s: {inp: action_map[s][inp] for inp in sorted(inputs)}
+        for s in sorted(states)
+    }
 
+    # Composition: follow at least two transitions
     comp_input_1 = stream.choice(inputs)
     comp_input_2 = stream.choice(inputs)
     comp_mid = graph[start_state][comp_input_1]
     comp_final = graph[comp_mid][comp_input_2]
     composition_spec = {
-        "start": start_state, "input_1": comp_input_1, "mid_state": comp_mid,
-        "input_2": comp_input_2, "final_state": comp_final,
-        "final_action": action_map[comp_final],
-    }
-    paraphrase_group = {
-        "family": TaskFamily.FINITE_STATE.value, "states": sorted(states),
-        "inputs": sorted(inputs),
-        "transitions": {s: {inp: graph[s][inp] for inp in sorted(inputs)} for s in sorted(states)},
-        "actions": {s: action_map[s] for s in sorted(states)}, "goal_state": goal_state,
+        "start": start_state,
+        "input_1": comp_input_1,
+        "mid_state": comp_mid,
+        "input_2": comp_input_2,
+        "final_state": comp_final,
+        "final_action": action_map[comp_final][comp_input_2],
     }
 
+    paraphrase_group = {
+        "family": TaskFamily.FINITE_STATE.value,
+        "states": sorted(states),
+        "inputs": sorted(inputs),
+        "transitions": {
+            s: {inp: graph[s][inp] for inp in sorted(inputs)}
+            for s in sorted(states)
+        },
+        "actions": {
+            s: {inp: action_map[s][inp] for inp in sorted(inputs)}
+            for s in sorted(states)
+        },
+        "goal_state": goal_state,
+    }
+
+    # Events: teach corrected transitions
     n_events = stream.randint(config.min_events, config.max_events)
     all_transitions = [(s, inp, graph[s][inp]) for s in states for inp in inputs]
     taught = stream.sample(all_transitions, min(n_events, len(all_transitions)))
-    events = []
+    events: list[LearningEvent] = []
     for s, inp, next_s in taught:
         events.append(LearningEvent(
-            observation_messages=(DialogueMessage(role="user",
-                content=f"State: {s}. Input: {inp}. What is the next state?"),),
+            observation_messages=(DialogueMessage(
+                role="user",
+                content=f"State: {s}. Input: {inp}. What is the next state?",
+            ),),
             attempted_behavior=s,
             correction=f"From {s}, input {inp} transitions to {next_s}.",
             outcome=OutcomeCode.CORRECTED,
         ))
 
+    # Probes
     pre = (ProbeCase(
-        messages=(DialogueMessage(role="user",
-            content=f"State: {states[0]}. Input: {inputs[0]}. What is the next state?"),),
-        expected_response=graph[states[0]][inputs[0]], kind=ProbeKind.PRE,
+        messages=(DialogueMessage(
+            role="user",
+            content=f"State: {states[0]}. Input: {inputs[0]}. What is the next state?",
+        ),),
+        expected_response=graph[states[0]][inputs[0]],
+        kind=ProbeKind.PRE,
     ),)
+
     same_rule = tuple(ProbeCase(
-        messages=(DialogueMessage(role="user",
-            content=f"Given current state {s} and signal {inp}, which state follows?"),),
-        expected_response=next_s, kind=ProbeKind.SAME_RULE,
+        messages=(DialogueMessage(
+            role="user",
+            content=f"Given current state {s} and signal {inp}, which state follows?",
+        ),),
+        expected_response=next_s,
+        kind=ProbeKind.SAME_RULE,
     ) for s, inp, next_s in taught[:2])
 
     taught_set = {(s, inp) for s, inp, _ in taught}
-    unseen = [(s, inp, graph[s][inp]) for s in states for inp in inputs if (s, inp) not in taught_set]
+    unseen = [
+        (s, inp, graph[s][inp])
+        for s in states for inp in inputs
+        if (s, inp) not in taught_set
+    ]
     transfer = tuple(ProbeCase(
-        messages=(DialogueMessage(role="user",
-            content=f"State: {s}. Signal: {inp}. Next state?"),),
-        expected_response=next_s, kind=ProbeKind.TRANSFER,
+        messages=(DialogueMessage(
+            role="user",
+            content=f"State: {s}. Signal: {inp}. Next state?",
+        ),),
+        expected_response=next_s,
+        kind=ProbeKind.TRANSFER,
     ) for s, inp, next_s in unseen[:2])
 
     composition = (ProbeCase(
-        messages=(DialogueMessage(role="user",
-            content=f"Start at {start_state}. First input: {comp_input_1}. Then input: {comp_input_2}. What is the result?"),),
-        expected_response=f"{comp_final} {action_map[comp_final]}", kind=ProbeKind.COMPOSITION,
+        messages=(DialogueMessage(
+            role="user",
+            content=(
+                f"Start at {start_state}. First input: {comp_input_1}. "
+                f"Then input: {comp_input_2}. What is the result?"
+            ),
+        ),),
+        expected_response=f"{comp_final} {action_map[comp_final][comp_input_2]}",
+        kind=ProbeKind.COMPOSITION,
     ),)
 
-    other_goals = [s for s in _STATES if s != goal_state] or [goal_state]
+    other_goals = [s for s in states if s != goal_state] or [goal_state]
     specificity = (ProbeCase(
-        messages=(DialogueMessage(role="user",
-            content=f"State: {_STATES[0]}. Input: {_INPUTS[0]}. What is the next state?"),),
-        expected_response=stream.choice(other_goals), kind=ProbeKind.SPECIFICITY,
+        messages=(DialogueMessage(
+            role="user",
+            content=f"State: {states[0]}. Input: {inputs[0]}. What is the next state?",
+        ),),
+        expected_response=stream.choice(other_goals),
+        kind=ProbeKind.SPECIFICITY,
     ),)
 
     lines = ["Complete transition graph:"]
@@ -542,21 +631,30 @@ def _build_finite_state(
             lines.append(f"  {s} + {inp} -> {graph[s][inp]}")
     lines.append("Actions:")
     for s in sorted(action_map.keys()):
-        lines.append(f"  {s}: {action_map[s]}")
+        for inp in sorted(action_map[s].keys()):
+            lines.append(f"  {s} + {inp}: {action_map[s][inp]}")
     lines.append(f"Goal: reach {goal_state}.")
     oracle_context = (ProbeCase(
         messages=(
             DialogueMessage(role="user", content="\n".join(lines)),
-            DialogueMessage(role="user",
-                content=f"Given the above graph, from {sorted(graph.keys())[0]} with input {sorted(graph[sorted(graph.keys())[0]].keys())[0]}, what is the next state?"),
+            DialogueMessage(
+                role="user",
+                content=(
+                    f"Given the above graph, from {sorted(graph.keys())[0]} "
+                    f"with input {sorted(graph[sorted(graph.keys())[0]].keys())[0]}, "
+                    "what is the next state?"
+                ),
+            ),
         ),
         expected_response=graph[sorted(graph.keys())[0]][sorted(graph[sorted(graph.keys())[0]].keys())[0]],
         kind=ProbeKind.ORACLE_CONTEXT,
     ),)
 
-    probes = ProbeBattery(pre=pre, same_rule=same_rule, transfer=transfer,
-                          composition=composition, specificity=specificity,
-                          oracle_context=oracle_context)
+    probes = ProbeBattery(
+        pre=pre, same_rule=same_rule, transfer=transfer,
+        composition=composition, specificity=specificity,
+        oracle_context=oracle_context,
+    )
 
     return MetaTask(
         family=TaskFamily.FINITE_STATE,
