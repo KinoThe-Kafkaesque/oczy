@@ -349,6 +349,68 @@ spec was changed.
 
 Evidence: [`experiments_logs/2026-07-12_r19_dev_calibration.json`](experiments_logs/2026-07-12_r19_dev_calibration.json)
 
+### R20 DEV-only smoke (2026-07-12, source `e26d8291879d`)
+
+Research/20's DEV-only implementation is complete under
+[`src/oczy/experiments/meta_cortex/`](src/oczy/experiments/meta_cortex/).
+The package exposes exactly three CLI commands — `train-dev`,
+`validate-dev`, `audit-dev` — and no `evaluate`, `meta-test`,
+`run-meta-test`, `materialize`, `freeze`, `signoff`, `manifest`, `C7`,
+or `C8` command. The `DevSplit` enum has `meta_train` and
+`meta_validation` only; there is intentionally no test member. Parser
+help labels every command "DEV only / not a scientific meta-test."
+
+Three remote submission attempts were required; the history is preserved:
+
+| Attempt | Source commit | Outcome | Classification |
+|---|---|---|---|
+| v1 | `e77314b` | Failed: offline model loader could not resolve Qwen | Infrastructure |
+| v2 | `e38f91d` | Failed: inference-tensor/autograd mismatch in feature path | Infrastructure |
+| v3 | `e26d8291879d` | Succeeded (exit 0, audit_status ok) | — |
+
+v1 and v2 are infrastructure failures (no DEV smoke produced). v3
+succeeded after fixing the offline loader and the feature-tensor
+autograd path. The v3 DEV smoke ran on Kaggle CPU (kernel
+`abdellahkadem/oczy-r20-dev-v3-e26d8291879d`, source archive SHA
+`686c3b6a3de6e093f3646a3cdea6d0097d5de49cc6ef7231e262cf08643d99d5`).
+
+**v3 audit results** (infrastructure/mechanism smoke only — not a
+scientific result):
+
+- exit 0, `audit_status=ok`
+- frozen organ hash identical before and after training
+  (`d8a3a3b262b3397f8948f13da10d3394e1a36b98a2ea374dc8711333d8d2b278`)
+- 207,364 theta parameters / 829,456 bytes
+- F/S matrices 64×64; latent bank 3×896
+- optimizer steps: 1
+- checkpoint theta hash
+  `8d6c41c5dacbf31394e381dbdb5d6b8e496565bf14c2dedbbaa36f4987301d17`
+- best DEV validation score: 0.0 after one step
+- trace count: 0 after deletion
+- online optimizer counts unchanged
+- causal DEV deltas: trained-vs-update 0, untrained 0, shuffled 0,
+  zeroed 0, swapped 0.0666667
+
+**This is infrastructure/mechanism smoke only.** A best DEV validation
+score of 0.0 after one optimizer step is not evidence of learning; the
+causal deltas are mechanism checks, not scientific results. No ACCEPT
+or REFUTE verdict is issued. The meta-test remains **BLOCKED**.
+
+**Meta-test prerequisites still blocked.** The following do not exist
+and must be built and signed off before any meta-test run:
+
+1. a frozen `meta_cortex/v1` measuring instrument (separate task
+   generator, task-level train/dev/test split)
+2. a hash-checked manifest with leakage audit
+3. threshold distributions measured against real data
+4. power analysis
+5. explicit human signoff
+
+No signoff has been requested or granted. The next legitimate step is
+to propose and freeze the instrument and obtain human signoff — not to
+run the meta-test. No threshold, metric, baseline, episode, scoring,
+eval manifest, or research spec was changed.
+
 ## 5. Current research direction
 
 The July 9 conversation and repository audit produced a dependency-ordered
@@ -359,7 +421,7 @@ the core premise test; Research/21 is conditional on it.
 |---|---|---|---|
 | 1 | [`research/18-consolidation-as-distillation.md`](research/18-consolidation-as-distillation.md) | Plastic-LM-weight comparator: distill transient context into LoRA, delete traces, test survival | **BLOCKED** (teacher gate failed): 5-seed run complete (exit 0), `teacher_dev_delta=0.1765` < 0.2 gate all seeds; `distill_delta_holdout` mean=0.2667, 4/5 positive (seed 2 null); no H-DISTILL verdict permitted. Mechanism diagnosis complete (2026-07-12, commit `33169cc`): teacher ceiling vanilla=0/raw_prefix=0.1765/chat_template=0 (none reach gate), prompt-contract audit all-zero (no structural defect), trajectory underfit+unstable (loss falls but DEV behavior weak); seed 2 not uniquely divergent. Further identical R18 reruns retired; next work is R19 DEV calibration; no threshold changes |
 | 2 | [`research/19-lm-as-language-organ.md`](research/19-lm-as-language-organ.md) | Direct diagnostic with matched label-prefix and latent-control articulation arms | Implemented; DEV calibration **BLOCKED** at pre-registered DEV articulation gate (2026-07-12, source `bd1ead9a`): v4 infrastructure succeeded (exit 0, artifacts collected), but `signoff_dev_articulation_gate=false`; `holdout_accessed=false`, no signoff requested. `parameter_total=60388/64000`, `dev_confidence_mean=0.0525482`, `dev_specificity_acc=0.134328`, `oracle_ceiling=0.357143`, `raw_trace_count=0`. No scientific verdict beyond BLOCKED. R20 remains separately blocked. |
-| 3 | [`research/20-meta-trained-cortex-frozen-language-organ.md`](research/20-meta-trained-cortex-frozen-language-organ.md) | Core test: meta-learn write/read/consolidate/articulate, then learn an unseen rule online through state only | New specification; **unimplemented**; meta-test blocked on human sign-off |
+| 3 | [`research/20-meta-trained-cortex-frozen-language-organ.md`](research/20-meta-trained-cortex-frozen-language-organ.md) | Core test: meta-learn write/read/consolidate/articulate, then learn an unseen rule online through state only | **DEV-only implementation complete and smoke-verified** (2026-07-12); meta-test remains **BLOCKED** — no frozen `meta_cortex/v1` instrument, distribution checks, power analysis, manifest, or human signoff exists |
 | 4 | [`research/21-cortex-routed-frozen-specialist-organs.md`](research/21-cortex-routed-frozen-specialist-organs.md) | Conditional extension: cortex routes between frozen language and action/tool organs using recurrent goal state | New specification; do not start before Research/20 accepts |
 
 [`experiments/09-meta-trained-cortex-frozen-language-organ/README.md`](experiments/09-meta-trained-cortex-frozen-language-organ/README.md)
@@ -369,8 +431,21 @@ consolidation gate, query-conditioned reads, and a fixed-width soft latent bank
 into the frozen Qwen language organ. Outer-loop development spans contextual
 remapping, rule transformation, and finite-state behavior. Meta-test freezes
 all parameters and permits only cortex fast/slow state to change.
+
+The DEV-only implementation is complete under
+[`src/oczy/experiments/meta_cortex/`](src/oczy/experiments/meta_cortex/) with
+three CLI commands — `train-dev`, `validate-dev`, `audit-dev` — and no
+`evaluate`, `meta-test`, `run-meta-test`, `materialize`, `freeze`, `signoff`,
+`manifest`, `C7`, or `C8` command. The `DevSplit` enum has `meta_train` and
+`meta_validation` only; there is intentionally no test member. Parser help
+labels every command "DEV only / not a scientific meta-test."
+
 **The R20 meta-test requires explicit human sign-off before any meta-test
-run begins and MUST NOT run without it.**
+run begins and MUST NOT run without it.** No signoff has been requested or
+granted. The next legitimate step is to propose and freeze the
+`meta_cortex/v1` measuring instrument (task generator, train/dev/test split,
+manifest, leakage audit, threshold distributions, power analysis) and obtain
+human signoff — not to run the meta-test.
 
 The primary meta-test must exclude retrieval, online backpropagation, raw
 trace replay, answer/label text, correction text, and language-model weight
@@ -389,7 +464,7 @@ side channel.
 | Minimal-loop/forgetting harnesses | Implemented; primary loop refuted, gated successors blocked | [`src/oczy/experiments/minimal_loop.py`](src/oczy/experiments/minimal_loop.py), [`src/oczy/experiments/minimal_loop_forgetting.py`](src/oczy/experiments/minimal_loop_forgetting.py) |
 | Organ ablations | Implemented and adjudicated | [`src/oczy/experiments/organ_ablation.py`](src/oczy/experiments/organ_ablation.py), [`src/oczy/experiments/organ_additive_retrieval.py`](src/oczy/experiments/organ_additive_retrieval.py) |
 | Research/19 direct cortex | Implemented; DEV calibration complete and BLOCKED at DEV articulation gate | [`src/oczy/experiments/s19_language_organ.py`](src/oczy/experiments/s19_language_organ.py); evidence [`experiments_logs/2026-07-12_r19_dev_calibration.json`](experiments_logs/2026-07-12_r19_dev_calibration.json) |
-| Research/20 / Experiment 09 | Specification only; meta-test blocked on human sign-off | Planned module: `src/oczy/experiments/meta_cortex/` — currently absent |
+| Research/20 / Experiment 09 | DEV-only implementation complete; smoke-verified on Kaggle CPU (2026-07-12); meta-test blocked (no frozen instrument/signoff) | [`src/oczy/experiments/meta_cortex/`](src/oczy/experiments/meta_cortex/) — `model.py`, `organ.py`, `training.py`, `contracts.py`, `taskgen.py`, `artifacts.py`, `cli.py`, `__main__.py`; tests in `src/oczy/experiments/tests/test_meta_cortex_*.py` |
 | Research/21 multi-organ router | Specification only | No implementation module yet |
 | Remote compute pool | Mixed Kaggle/Colab CPU; Kaggle verified v4 smoke/probe/bootstrap; Colab CLI 0.6.0 verified v2 queue-starvation fix; GPU (T4/P100/L4) archived; TPU not wired | [`infrastructure/kaggle/`](infrastructure/kaggle/) |
 | Pi tool-use work / Experiment 08 | Code-backed 6-stage dataset/scorer/validator implemented; live augmented run still pending; external result remains 0/3 | [`src/oczy/experiments/tool_calling_curriculum/`](src/oczy/experiments/tool_calling_curriculum/) plus [`benchmarks/pi/`](benchmarks/pi/) |
@@ -462,9 +537,10 @@ full evidence and acceptance contract, and
 [`infrastructure/kaggle/RESEARCH_GUIDE.md`](infrastructure/kaggle/RESEARCH_GUIDE.md)
 for the required workflow.
 
-No real Research/20 job can be generated from current work until the
-`meta_cortex` module is implemented and the intended source is committed
-cleanly.
+The `meta_cortex` DEV-only module is implemented and the DEV smoke has
+run on Kaggle CPU (see the R20 DEV smoke subsection in §4). No meta-test
+job can be generated or run until the `meta_cortex/v1` measuring instrument
+is frozen and human signoff is recorded.
 
 - Branch: `autoresearch/session-20260625`.
 - The historical local branch was fast-forward published to
@@ -593,19 +669,35 @@ metabolism, or vanilla.
 
 ### P2 — Build and adjudicate the core cortex experiment
 
-Implement [`experiments/09-meta-trained-cortex-frozen-language-organ/`](experiments/09-meta-trained-cortex-frozen-language-organ/)
-under the planned `src/oczy/experiments/meta_cortex/` package.
+The DEV-only implementation of
+[`experiments/09-meta-trained-cortex-frozen-language-organ/`](experiments/09-meta-trained-cortex-frozen-language-organ/)
+is complete under [`src/oczy/experiments/meta_cortex/`](src/oczy/experiments/meta_cortex/).
+The package exposes `train-dev`, `validate-dev`, and `audit-dev` only —
+no meta-test command. The DEV smoke ran on Kaggle CPU (2026-07-12,
+source `e26d8291879d`, exit 0, audit_status ok; see §4 R20 DEV-only
+smoke). This is infrastructure/mechanism smoke only; no ACCEPT or
+REFUTE verdict is issued.
 
-Required order:
+The meta-test remains **BLOCKED**. The following do not exist and must
+be built and signed off before any meta-test run:
 
-1. Build the separate `meta_cortex/v1` task generator, task-level train/dev/test
-   split, manifest, leakage audit, threshold distributions, and power analysis.
-2. Obtain explicit human sign-off before freezing or changing that measuring
-   instrument.
-3. Pass the oracle latent-articulation gate. If the frozen mouth cannot express
+1. a frozen `meta_cortex/v1` measuring instrument (separate task
+   generator, task-level train/dev/test split)
+2. a hash-checked manifest with leakage audit
+3. threshold distributions measured against real data
+4. power analysis
+5. explicit human sign-off
+
+No signoff has been requested or granted. The next legitimate step is
+to propose and freeze the instrument and obtain human signoff — not to
+run the meta-test.
+
+After signoff, the remaining adjudication order is:
+
+1. Pass the oracle latent-articulation gate. If the frozen mouth cannot express
    the task under oracle control, repair or kill the interface before training
    the cortex.
-4. Meta-train write, read, consolidation, and latent articulation across the
+2. Meta-train write, read, consolidation, and latent articulation across the
    development task families. Use the verified Kaggle CPU path for instrument,
    scoring, and frozen-organ/outer-loop batches; pin
    a clean source artifact with
@@ -614,9 +706,9 @@ Required order:
    [`prepare_research_kernel.py`](infrastructure/kaggle/prepare_research_kernel.py)
    using `--profile cpu`. The pinned Qwen model source has passed its local
    CPU frozen-gradient probe and was verified remotely (v1, 2026-07-10).
-5. Freeze all learned parameters and run one-shot held-out meta-test with only
+3. Freeze all learned parameters and run one-shot held-out meta-test with only
    fast/slow cortex state mutable.
-6. Run all causal state and deletion controls, multiple seeds, trajectories,
+4. Run all causal state and deletion controls, multiple seeds, trajectories,
    confidence intervals, and per-byte accounting.
 
 Research/20 must stand or fall without retrieval rescuing its primary arm.

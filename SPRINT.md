@@ -436,14 +436,49 @@ extension.
   and explicit classification of every answer path. This table adjudicates the
   direct mechanisms; it does not close Research/20 before the learned update
   rule has been tested.
-- [ ] **S5.4 — research/20 / experiment/09: meta-trained cortex over a frozen
-  language organ.** — **unimplemented**; meta-test blocked on human sign-off.
+- [x] **S5.4 — research/20 / experiment/09: meta-trained cortex over a frozen
+  language organ.** — **DEV-only implementation complete and smoke-verified; meta-test BLOCKED.**
   Developmentally learn write, read, consolidation, and
   latent articulation rules across task families; freeze them; then learn an
   unseen rule online with no backprop, retrieval, trace, label text, or LM
   update in the primary condition. Require transfer, composition, deletion,
   and state-causal controls. **The meta-test MUST NOT run without explicit
   human sign-off.**
+> **DEV-only implementation (2026-07-12):** the `meta_cortex` package is
+> implemented under `src/oczy/experiments/meta_cortex/` with exactly three
+> CLI commands — `train-dev`, `validate-dev`, `audit-dev` — and no
+> `evaluate`, `meta-test`, `run-meta-test`, `materialize`, `freeze`,
+> `signoff`, `manifest`, `C7`, or `C8` command. The `DevSplit` enum has
+> `meta_train` and `meta_validation` only; there is intentionally no
+> test member. Parser help labels every command "DEV only / not a
+> scientific meta-test." Tests live in
+> `src/oczy/experiments/tests/test_meta_cortex_*.py` (organ, training,
+> taskgen, model, artifacts/CLI).
+>
+> **Remote DEV smoke (2026-07-12, source `e26d8291879d`):** three
+> submission attempts — v1 failed (offline model loader), v2 failed
+> (inference-tensor/autograd mismatch), v3 succeeded after fixes.
+> v3 ran on Kaggle CPU (kernel
+> `abdellahkadem/oczy-r20-dev-v3-e26d8291879d`, archive SHA
+> `686c3b6a…`, exit 0, audit_status ok). v3 audit: frozen organ hash
+> identical before/after
+> (`d8a3a3b2…`), 207,364 theta params / 829,456 bytes, F/S 64×64,
+> bank 3×896, optimizer steps 1, checkpoint theta hash
+> `8d6c41c5…`, best DEV validation score 0.0 after one step, trace
+> count 0 after deletion, online optimizer counts unchanged, causal
+> DEV deltas: trained-vs-update 0, untrained 0, shuffled 0, zeroed 0,
+> swapped 0.0666667. **This is infrastructure/mechanism smoke only —
+> no ACCEPT or REFUTE verdict is issued.**
+>
+> **Meta-test remains BLOCKED.** The following do not exist and must
+> be built and signed off before any meta-test run: (1) a frozen
+> `meta_cortex/v1` measuring instrument (task generator, train/dev/test
+> split), (2) a hash-checked manifest with leakage audit, (3) threshold
+> distributions measured against real data, (4) power analysis, (5)
+> explicit human signoff. No signoff has been requested or granted.
+> The next legitimate step is to propose and freeze the instrument and
+> obtain human signoff — not to run the meta-test. No threshold, metric,
+> baseline, episode, scoring, eval manifest, or research spec was changed.
 - [ ] **S5.5 — research/21: cortex-routed frozen specialist organs.** Begin
   only if S5.4 accepts. Add a separately frozen action/tool organ, opaque tool
   families, learned routing, and recurrent goal state. Existing Pi tasks become
@@ -551,14 +586,27 @@ remains frozen unless an item explicitly calls for the governance path.
    the table with all columns filled and every path classified as
    retrieval, metabolism, or vanilla.
 
-6. **Research/20: materialize `meta_cortex/v1` Phase 0 instrument and
-   obtain human sign-off before meta-test.**
-   Build the separate task generator, task-level train/dev/test split,
-   manifest, leakage audit, threshold distributions, and power analysis.
-   **The R20 meta-test requires explicit human sign-off and MUST NOT run
-   without it.** **Acceptance:** the Phase 0 instrument exists under
-   `src/oczy/experiments/meta_cortex/`, the manifest verifies, and a
-   human sign-off is recorded before any meta-test run begins.
+6. **Research/20: DEV-only implementation COMPLETE and smoke-verified;
+   meta-test BLOCKED on instrument/signoff.**
+   The `meta_cortex` package is implemented under
+   `src/oczy/experiments/meta_cortex/` with `train-dev`, `validate-dev`,
+   and `audit-dev` only — no meta-test command. The DEV smoke ran on
+   Kaggle CPU (2026-07-12, source `e26d8291879d`, exit 0, audit_status
+   ok; v1 failed offline loader, v2 failed inference-tensor/autograd,
+   v3 succeeded). This is infrastructure/mechanism smoke only; no
+   ACCEPT or REFUTE verdict is issued. **The R20 meta-test requires
+   explicit human sign-off and MUST NOT run without it.** The
+   following do not exist and must be built and signed off before any
+   meta-test run: (1) a frozen `meta_cortex/v1` measuring instrument
+   (task generator, train/dev/test split), (2) a hash-checked manifest
+   with leakage audit, (3) threshold distributions, (4) power
+   analysis, (5) human signoff. No signoff has been requested or
+   granted. The next legitimate step is to propose and freeze the
+   instrument and obtain human signoff — not to run the meta-test.
+   **Acceptance (DEV smoke):** met — exit 0, audit ok, frozen organ
+   hash stable, 207,364 theta params, checkpoint hash recorded.
+   **Acceptance (meta-test):** not met — instrument not frozen, no
+   signoff recorded.
 
 7. **External battery / second model.**
    After honest baselines (items 3–5) are in place, run the frozen eval on

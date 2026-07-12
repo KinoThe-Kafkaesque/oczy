@@ -1,6 +1,6 @@
 # Experiments Logs Ledger — Authoritative Index
 
-**Date:** 2026-07-12 (updated through campaign `0d48130` adjudication, Exp03 `ad77e93` real-driver closure, R18 5-seed diagnostic clarification, R18 5-seed diagnostic adjudication, R18 mechanism diagnostics adjudication, and R19 DEV calibration adjudication)
+**Date:** 2026-07-12 (updated through campaign `0d48130` adjudication, Exp03 `ad77e93` real-driver closure, R18 5-seed diagnostic clarification, R18 5-seed diagnostic adjudication, R18 mechanism diagnostics adjudication, R19 DEV calibration adjudication, and R20 DEV implementation/smoke adjudication)
 **Purpose:** This ledger classifies every experiment log against three
 invalidation events:
 
@@ -110,12 +110,13 @@ v2.2 difficulty curve. The 13.5x drift claim (`044cb51`) remains retracted
 | 2026-07-11 | `2026-07-11_r18_five_seed_diagnostic.json` | VALID | **R18 5-seed diagnostic adjudication.** Durable execution/adjudication JSON: commit `5b5e93c63d769fea7854073a4e6c359e5d36606f`, Kaggle CPU, kernel `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, exit 0, 5 seeds. Per-seed `distill_delta_holdout` {0.3333, 0.3333, 0.0, 0.3333, 0.3333} (4/5 positive, seed 2 null); `teacher_dev_delta=0.17647058823529413` identical across all seeds. Mean `distill_delta_holdout=0.2667`, mean `specificity_delta=0.0261`. Gate comparison: `0.1765 < 0.2` → FAILED. Scientific classification: **BLOCKED** at teacher validity gate / diagnostic only. No H-DISTILL verdict permitted (teacher gate failed after registered fallback). 4/5 conditional signal and seed-2 null both visible. No threshold, metric, or research spec changed. | — |
 | 2026-07-12 | `2026-07-11_r18_mechanism_diagnostics.json` | VALID | **R18 mechanism diagnostics adjudication.** Durable execution/adjudication JSON: commit `33169cc0340bf752a67adf63721ec64cb5f3c9f8`, Kaggle CPU. Three diagnostic jobs (teacher ceiling, prompt-contract, training trajectory), all exit 0. Teacher ceiling (n=17): vanilla=0, raw_prefix=0.17647058823529413, chat_template=0; neither reaches 0.2 gate; registered chat fallback (0) worse than raw_prefix (0.1765). Prompt-contract audit: all six defect counts (issue/malformed/missing/truncated/answer-leak/mismatch) = 0; teacher_correct_rate=0.17647058823529413; raw/chat prompt accuracies 0; no structural prompt defect. Training trajectory: first submission failed HTTP 400 (long slug, preserved); short-slug retry exit 0 after ~12798s (run of record, preserved). Train loss 0.70→0.16, mean slope -0.0615, second-half -0.0190; underfit=1, instability=1, saturation=0, max final-loss divergence 0.01259. Final DEV student accuracies seeds 0–4: {0.117647, 0, 0, 0, 0.117647}; teacher 0.17647; seed 2 not uniquely divergent (seeds 1, 3 also 0). Adjudication decomposes failed gate into three axes: (1) prompt integrity — NO DEFECT; (2) capability ceiling — teacher expressivity/prompt-task ceiling IS THE BLOCKER; (3) optimization dynamics — token loss fits but DEV behavior unstable/weak, not saturated. Classification: **BLOCKED** at teacher validity gate / diagnostic only. No H-DISTILL verdict permitted. No threshold/spec/eval changes. All nulls visible. | — |
 | 2026-07-12 | `2026-07-12_r19_dev_calibration.json` | VALID | **R19 DEV calibration adjudication.** Durable execution/adjudication JSON: commit `bd1ead9a8358b675af5e929c53a01eb505839639`, Kaggle CPU. calibrate-dev v4 exit 0, all metrics collected. Manifest SHA-256 `77ef4607…`, parameter_total 60,388/64,000. DEV articulation gate **FAILED** (Arm B latent-control DEV accuracy ≤ C1 random-cortex DEV accuracy); oracle ceiling 0.357143 > 0 (PASSED independently). No signoff requested; no holdout accessed. Three prior infrastructure-failed attempts (v1 offline model resolution, v2 source-path/provenance + feature explosion, v3 artifacts not rooted in `/kaggle/working`); v4 infrastructure-successful but scientifically BLOCKED. C7 adapter discrepancy: manifest `c7_available=true` but `_try_s3m2a_retrieval_adapter()` returns None. R20 remains separately blocked on human signoff. No H-LATENT or H-LABEL verdict permitted. | — |
+| 2026-07-12 | `2026-07-12_r20_dev_smoke.json` | VALID | **R20 DEV implementation/smoke adjudication.** Durable execution/adjudication JSON: commit `e26d8291879d078b701f19802f72041e08cfd6a6`, Kaggle CPU, kernel `abdellahkadem/oczy-r20-dev-v3-e26d8291879d`, exit 0, audit_status ok. Infrastructure/mechanism smoke only — no scientific verdict. Three attempts: v1 failed (offline loader failure), v2 failed (inference-tensor/autograd failure), v3 succeeded after fixes. Audit invariants: frozen organ hash identical before/after `d8a3a3b…`, checkpoint theta hash `8d6c41c5…`, trace count 0 after deletion, online optimizer counts unchanged. 207,364 theta params / 829,456 bytes, F/S 64×64, bank 3×896, optimizer steps 1, best DEV validation score 0.0. Causal DEV deltas: trained-vs-update 0, untrained 0, shuffled 0, zeroed 0, swapped 0.0666667 — recorded as observed mechanism smoke. Test suites: focused 262 passed/2 skipped, organ 54 passed/2 skipped. **Meta-test remains BLOCKED**: no frozen `meta_cortex/v1` instrument, distribution checks, power analysis, manifest, or human signoff exists. No ACCEPT/REFUTE verdict permitted. No threshold, metric, baseline, episode, scoring, eval manifest, or research spec changed. No holdout accessed; no signoff requested. | — |
 
 ## Summary
 
 | Classification | Count |
 |----------------|-------|
-| VALID | 60 |
+| VALID | 61 |
 | PARTIAL | 9 |
 | INVALIDATED (pure) | 0 |
 | SUPERSEDED (pure) | 0 |
@@ -294,6 +295,123 @@ research spec was changed.
 
 Source: `2026-07-11_campaign_0d48130.md` § R19 DEV calibration and
 `2026-07-12_r19_dev_calibration.json`. No threshold changes or causal
+claims beyond measured metrics.
+
+## R20 DEV Implementation/Smoke Adjudication (2026-07-12)
+
+**Full curated evidence log:**
+`2026-07-11_campaign_0d48130.md` § R20 DEV implementation/smoke. **Durable
+execution/adjudication JSON:**
+`2026-07-12_r20_dev_smoke.json`.
+
+Research/20 (`research/20-meta-trained-cortex-frozen-language-organ.md`)
+DEV-only implementation/smoke ran from source commit
+`e26d8291879d078b701f19802f72041e08cfd6a6` on Kaggle CPU
+(Qwen/Qwen2.5-0.5B-Instruct, frozen). **Infrastructure: COMPLETE** (exit 0,
+audit_status ok, all invariants verified). **Scientific verdict: none —
+meta-test remains BLOCKED.** This is infrastructure/mechanism smoke only.
+
+### Attempt history
+
+| Attempt | Outcome | Root cause |
+|---------|---------|------------|
+| v1 | INFRASTRUCTURE FAILURE | Offline loader failure — frozen organ could not be loaded under `HF_HUB_OFFLINE=1`. |
+| v2 | INFRASTRUCTURE FAILURE | Inference-tensor/autograd failure — tensor dtype or autograd graph mismatch during outer-loop forward/backward. |
+| v3 | INFRASTRUCTURE SUCCESS | All invariants verified, exit 0, audit_status ok. |
+
+Attempts v1 and v2 were infrastructure failures with no valid evidence
+collected. They are not scientific nulls or refutations. The v3 run was
+infrastructure-successful; the meta-test remains BLOCKED.
+
+### v3 smoke results
+
+| Field | Value |
+|-------|-------|
+| Source commit | `e26d8291879d078b701f19802f72041e08cfd6a6` |
+| Source archive SHA-256 | `686c3b6a3de6e093f3646a3cdea6d0097d5de49cc6ef7231e262cf08643d99d5` |
+| Kernel | `abdellahkadem/oczy-r20-dev-v3-e26d8291879d` |
+| Exit code | 0 |
+| Audit status | ok |
+| Theta parameter count | 207,364 (829,456 bytes) |
+| Fast/slow state dim | 64 × 64 |
+| Bank width × feature dim | 3 × 896 |
+| Optimizer steps | 1 |
+| Best DEV validation score | 0.0 (after one outer step — observed smoke, not a passed threshold) |
+| Trace count after deletion | 0 (deletion verified) |
+| Online optimizer counts | unchanged |
+
+### Audit invariants
+
+| Invariant | Value |
+|-----------|-------|
+| Frozen organ hash before | `d8a3a3b262b3397f8948f13da10d3394e1a36b98a2ea374dc8711333d8d2b278` |
+| Frozen organ hash after | `d8a3a3b262b3397f8948f13da10d3394e1a36b98a2ea374dc8711333d8d2b278` |
+| Frozen organ hash identical | true |
+| Checkpoint theta hash | `8d6c41c5dacbf31394e381dbdb5d6b8e496565bf14c2dedbbaa36f4987301d17` |
+| Trace count after deletion | 0 |
+| Online optimizer counts unchanged | true |
+
+### Causal DEV deltas (observed mechanism smoke, not scientific results)
+
+| Intervention | Delta |
+|--------------|-------|
+| Trained vs update | 0.0 |
+| Untrained | 0.0 |
+| Shuffled | 0.0 |
+| Zeroed | 0.0 |
+| Swapped | 0.0666667 |
+
+These DEV-level causal intervention deltas are from the validate-dev phase.
+They are recorded as observed mechanism smoke confirming that the causal
+intervention pipeline runs and produces output. They are not scientific
+results and cannot be used for an ACCEPT or REFUTE verdict.
+
+### Test suite results (engineering quality checks, not scientific evidence)
+
+| Suite | Passed | Skipped | Note |
+|-------|--------|---------|------|
+| Focused | 262 | 2 | before extra regression tests |
+| Organ | 54 | 2 | after extra regression tests |
+
+### Meta-test block status
+
+The R20 meta-test remains **BLOCKED**. The pre-registered protocol
+(§ Instrument freeze and threshold distribution check) requires all of the
+following before any meta-test run:
+
+1. a frozen `meta_cortex/v1` instrument (generators, seeds, family split,
+   scorers, probe counts);
+2. distribution checks (no-update and repeated-run distributions on
+   meta-validation);
+3. a power analysis freezing sample size from meta-validation effect sizes;
+4. a manifest with SHA-256 hashes; and
+5. human sign-off on the manifest, margin, and sample size.
+
+None of these exist. The DEV-only smoke (train-dev, validate-dev, audit-dev)
+does not constitute a meta-test run and cannot produce a scientific verdict.
+No holdout or meta-test data was accessed. No signoff was requested or
+granted.
+
+### R19 vs R20 signoff separation
+
+R19 signed evaluation is BLOCKED at the DEV articulation gate. R20
+(meta-trained cortex) remains separately blocked for lack of a frozen
+instrument, manifest, and human signoff. R19 signoff and R20 signoff are
+distinct: neither has been requested or granted. The R20 DEV smoke does not
+change R20's blocked status.
+
+### Explicit non-claim
+
+No ACCEPT or REFUTE verdict is claimed for H-META-CORTEX. The meta-test
+remains BLOCKED. The DEV smoke is infrastructure/mechanism verification
+only. The best DEV validation score (0.0), causal DEV deltas, frozen organ
+hash, trace count, and test suite results are recorded as observed
+infrastructure/mechanism smoke, not as scientific results. No threshold,
+metric, baseline, episode, scoring, eval manifest, or research spec was
+changed.
+
+Source: `2026-07-11_campaign_0d48130.md` § R20 DEV implementation/smoke and
+`2026-07-12_r20_dev_smoke.json`. No threshold changes or causal
 claims beyond measured metrics.
 
 ## Notes (conceptual, non-log)
