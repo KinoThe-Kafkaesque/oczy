@@ -399,11 +399,38 @@ extension.
 > signed evaluation remains gated on human approval; the Research/20
 > meta-test remains separately blocked. No threshold, metric, or eval changes. Evidence:
 > `experiments_logs/2026-07-11_campaign_0d48130.md`.
-- [ ] **S5.2 — research/19: direct cortex learning, two articulation arms.** — **unimplemented**
+- [x] **S5.2 — research/19: direct cortex learning, two articulation arms.** — **Implemented; DEV calibration BLOCKED at pre-registered DEV articulation gate**
   The same ≤64k-param online-trained cortex is evaluated through (A) a
   label-prefix parametric-retrieval readout and (B) a fixed-width latent-control
   readout into a frozen LM. Only B can support the cortex premise; zero/swap/
   shuffled-feedback interventions must prove causal dependence on cortex state.
+> **DEV calibration adjudication (2026-07-12, source `bd1ead9a`):** the
+> two-arm experiment is implemented under
+> `src/oczy/experiments/s19_language_organ.py`. DEV-only calibration ran
+> on Kaggle CPU (Qwen/Qwen2.5-0.5B-Instruct, frozen). Four submission
+> attempts: v1 failed (offline model resolution), v2 failed
+> (source-path/provenance failure plus feature explosion), v3 succeeded
+> but artifacts not rooted in `/kaggle/working`, v4 succeeded and
+> collected. v4 infrastructure is fully successful (exit 0, artifacts
+> collected, manifest hash `77ef4607…`, source archive SHA
+> `1afe7573…`), but `signoff_dev_articulation_gate=false` — the
+> pre-registered DEV gate is not passed. No signoff request was made;
+> no holdout access was attempted (`holdout_accessed=false`).
+> `parameter_total=60388/64000`, `dev_repeatability_std=0.0`,
+> `dev_confidence_mean=0.0525482` (std `0.0002893`, range
+> `0.0520694`–`0.0528929`), `dev_specificity_acc=0.134328`,
+> `oracle_ceiling=0.357143`, `raw_trace_count=0`. No scientific
+> verdict beyond BLOCKED is permitted. The DEV confidence and
+> specificity distributions are measured; coupler and label phrasing
+> are frozen on DEV. Next mechanism-level direction: the gate failure
+> points to the Arm B latent-control interface not yet producing DEV
+> articulation that clears the pre-registered gate; the oracle ceiling
+> (0.357143) bounds what the frozen organ can express on these DEV
+> tasks. R19 signed evaluation remains gated on the DEV articulation
+> gate passing. R20 remains separately blocked for lack of explicit
+> human signoff. No threshold, metric, baseline, episode, scoring, eval
+> manifest, or research spec was changed. Evidence:
+> `experiments_logs/2026-07-12_r19_dev_calibration.json`.
 - [ ] **S5.3 — Diagnostic head-to-head table:** 18 vs both 19 arms vs
   retrieval-baseline vs vanilla, with deletion audits, CIs, per-byte accounting,
   and explicit classification of every answer path. This table adjudicates the
@@ -484,15 +511,37 @@ remains frozen unless an item explicitly calls for the governance path.
    INVALIDATED/SUPERSEDED ledger row points to a dated honest rerun log
    or is explicitly labeled "no longer relevant."
 
-4. **Research/19: implement matched label-prefix vs latent-control arms.**
-   Build the two-arm diagnostic under a dedicated module in
-   `src/oczy/experiments/`. Arm A: online-trained cortex decoded to a label
-   prefix (parametric retrieval). Arm B: same cortex state through a
-   fixed-width learned latent coupler into the frozen LM, no label text.
-   Include zero-state, swapped-state, shuffled-feedback, vanilla, retrieval,
-   and oracle conditions. **Acceptance:** a dated log with both arms scored
-   on eval v2 held-out, multi-seed, vanilla column; Arm B causal controls
-   pass or fail explicitly.
+4. **Research/19: implement matched label-prefix vs latent-control arms —
+   IMPLEMENTED; DEV calibration COMPLETE and BLOCKED at DEV articulation gate
+   (2026-07-12).**
+   The two-arm diagnostic is implemented under
+   `src/oczy/experiments/s19_language_organ.py`. Arm A: online-trained cortex
+   decoded to a label prefix (parametric retrieval). Arm B: same cortex state
+   through a fixed-width learned latent coupler into the frozen LM, no label
+   text. Zero-state, swapped-state, shuffled-feedback, vanilla, retrieval, and
+   oracle conditions are specified. DEV-only calibration ran on Kaggle CPU
+   (Qwen/Qwen2.5-0.5B-Instruct, frozen, source `bd1ead9a`). Four attempts:
+   v1 failed (offline model resolution), v2 failed (source-path/provenance
+   failure plus feature explosion), v3 succeeded but artifacts not rooted in
+   `/kaggle/working`, v4 succeeded and collected. v4 infrastructure is fully
+   successful (exit 0, manifest hash `77ef4607…`, source archive SHA
+   `1afe7573…`), but `signoff_dev_articulation_gate=false` — the
+   pre-registered DEV gate is not passed. No signoff request was made; no
+   holdout access was attempted (`holdout_accessed=false`).
+   `parameter_total=60388/64000`, `dev_repeatability_std=0.0`,
+   `dev_confidence_mean=0.0525482`, `dev_specificity_acc=0.134328`,
+   `oracle_ceiling=0.357143`, `raw_trace_count=0`. No scientific verdict
+   beyond BLOCKED is permitted. Next mechanism-level direction: the gate
+   failure points to the Arm B latent-control interface not yet producing DEV
+   articulation that clears the pre-registered gate; the oracle ceiling
+   (0.357143) bounds what the frozen organ can express on these DEV tasks.
+   R19 signed evaluation remains gated on the DEV articulation gate passing.
+   R20 remains separately blocked for lack of explicit human signoff. No
+   threshold, metric, baseline, episode, scoring, eval manifest, or research
+   spec was changed. **Acceptance partially met:** implementation and DEV
+   calibration complete with durable evidence at
+   `experiments_logs/2026-07-12_r19_dev_calibration.json`; held-out scoring
+   remains blocked on the DEV articulation gate passing.
 
 5. **S5.3: build the diagnostic head-to-head comparison table.**
    One table: R18 (consolidation-as-distillation) vs both R19 arms vs

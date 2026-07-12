@@ -291,6 +291,63 @@ unstable/weak and not saturated. Further identical R18 reruns are
 retired — they will not clear the unchanged teacher gate. Next work
 points to R19 DEV calibration while signed evaluation (Research/20
 meta-test) remains gated. No threshold, metric, or eval changes.
+### R19 DEV calibration (2026-07-12, source `bd1ead9a`)
+
+Research/19's DEV-only calibration ran on Kaggle CPU (Qwen/Qwen2.5-0.5B-Instruct,
+frozen). Four submission attempts were required; the history is preserved:
+
+| Attempt | Source commit | Outcome | Classification |
+|---|---|---|---|
+| v1 | `0d628118` | Failed: offline model resolution failure | Infrastructure |
+| v2 | `4b737809` | Failed: source-path/provenance failure plus feature explosion | Infrastructure |
+| v3 | `bd1ead9a` | Execution succeeded (exit 0) but artifacts written to a relative path, not rooted in `/kaggle/working` | Infrastructure (collection) |
+| v4 | `bd1ead9a` | Succeeded and collected (exit 0, artifacts in `/kaggle/working/`) | — |
+
+v1 and v2 are infrastructure failures (no manifest produced). v3 is an
+infrastructure collection failure (execution succeeded but artifacts not
+rooted in `/kaggle/working`, superseded by v4). v4 succeeded at both
+execution and collection. The scientific DEV articulation gate is independent
+of infrastructure success.
+
+**v4 gate metrics** (DEV-only, `holdout_accessed=false`):
+
+- `parameter_total=60388` / 64000 budget (W_perceive 14336, W_coupler 43008,
+  b_coupler 2688, W_label 320, b_label 20, warm_state 16)
+- `dev_repeatability_std=0.0`
+- `dev_confidence_mean=0.0525482`, std `0.0002893`, range
+  `0.0520694`–`0.0528929`
+- `dev_specificity_acc=0.134328`
+- `oracle_ceiling=0.357143` (upper bound on DEV with frozen organ)
+- `raw_traces_deleted=true`, `raw_trace_count=0`
+- `signoff_dev_articulation_gate=false`
+
+**Scientific verdict: BLOCKED at the pre-registered DEV articulation gate.**
+The v4 infrastructure is fully successful (exit 0, artifacts collected,
+manifest hash `77ef4607…`, source archive SHA
+`1afe7573…`), but `signoff_dev_articulation_gate=false` means the
+pre-registered DEV gate is not passed. No signoff request was made. No
+holdout access was attempted (`holdout_accessed=false`). No scientific
+verdict beyond BLOCKED is permitted.
+
+The `dev_confidence_mean` (0.0525482) and `dev_specificity_acc` (0.134328)
+are recorded as observed DEV metrics, not as passed thresholds. The
+`oracle_ceiling` (0.357143) is an upper bound on DEV performance with the
+frozen language organ, not a claimed result. The proposed confidence
+threshold and specificity margin are calibration proposals, not accepted
+thresholds.
+
+**Next mechanism-level direction:** the DEV confidence and specificity
+distributions are now measured; the articulation coupler and label phrasing
+are frozen on DEV. The gate failure points to the latent-control interface
+(Arm B) not yet producing DEV articulation that clears the pre-registered
+gate. The oracle ceiling (0.357143) bounds what the frozen organ can express
+on these DEV tasks. R19 signed evaluation remains gated on the DEV
+articulation gate passing; no signoff request is appropriate until it does.
+R20 remains separately blocked for lack of explicit human signoff. No
+threshold, metric, baseline, episode, scoring, eval manifest, or research
+spec was changed.
+
+Evidence: [`experiments_logs/2026-07-12_r19_dev_calibration.json`](experiments_logs/2026-07-12_r19_dev_calibration.json)
 
 ## 5. Current research direction
 
@@ -301,7 +358,7 @@ the core premise test; Research/21 is conditional on it.
 | Order | Work | Role | Current state |
 |---|---|---|---|
 | 1 | [`research/18-consolidation-as-distillation.md`](research/18-consolidation-as-distillation.md) | Plastic-LM-weight comparator: distill transient context into LoRA, delete traces, test survival | **BLOCKED** (teacher gate failed): 5-seed run complete (exit 0), `teacher_dev_delta=0.1765` < 0.2 gate all seeds; `distill_delta_holdout` mean=0.2667, 4/5 positive (seed 2 null); no H-DISTILL verdict permitted. Mechanism diagnosis complete (2026-07-12, commit `33169cc`): teacher ceiling vanilla=0/raw_prefix=0.1765/chat_template=0 (none reach gate), prompt-contract audit all-zero (no structural defect), trajectory underfit+unstable (loss falls but DEV behavior weak); seed 2 not uniquely divergent. Further identical R18 reruns retired; next work is R19 DEV calibration; no threshold changes |
-| 2 | [`research/19-lm-as-language-organ.md`](research/19-lm-as-language-organ.md) | Direct diagnostic with matched label-prefix and latent-control articulation arms | Amended 2026-07-09; **unimplemented** |
+| 2 | [`research/19-lm-as-language-organ.md`](research/19-lm-as-language-organ.md) | Direct diagnostic with matched label-prefix and latent-control articulation arms | Implemented; DEV calibration **BLOCKED** at pre-registered DEV articulation gate (2026-07-12, source `bd1ead9a`): v4 infrastructure succeeded (exit 0, artifacts collected), but `signoff_dev_articulation_gate=false`; `holdout_accessed=false`, no signoff requested. `parameter_total=60388/64000`, `dev_confidence_mean=0.0525482`, `dev_specificity_acc=0.134328`, `oracle_ceiling=0.357143`, `raw_trace_count=0`. No scientific verdict beyond BLOCKED. R20 remains separately blocked. |
 | 3 | [`research/20-meta-trained-cortex-frozen-language-organ.md`](research/20-meta-trained-cortex-frozen-language-organ.md) | Core test: meta-learn write/read/consolidate/articulate, then learn an unseen rule online through state only | New specification; **unimplemented**; meta-test blocked on human sign-off |
 | 4 | [`research/21-cortex-routed-frozen-specialist-organs.md`](research/21-cortex-routed-frozen-specialist-organs.md) | Conditional extension: cortex routes between frozen language and action/tool organs using recurrent goal state | New specification; do not start before Research/20 accepts |
 
@@ -331,7 +388,7 @@ side channel.
 | HF driver and S1 probes | Implemented and run | [`src/oczy/lm/hf_driver.py`](src/oczy/lm/hf_driver.py), [`src/oczy/experiments/hf_kv_slot_experiment.py`](src/oczy/experiments/hf_kv_slot_experiment.py), [`src/oczy/experiments/hf_layer_probe.py`](src/oczy/experiments/hf_layer_probe.py) |
 | Minimal-loop/forgetting harnesses | Implemented; primary loop refuted, gated successors blocked | [`src/oczy/experiments/minimal_loop.py`](src/oczy/experiments/minimal_loop.py), [`src/oczy/experiments/minimal_loop_forgetting.py`](src/oczy/experiments/minimal_loop_forgetting.py) |
 | Organ ablations | Implemented and adjudicated | [`src/oczy/experiments/organ_ablation.py`](src/oczy/experiments/organ_ablation.py), [`src/oczy/experiments/organ_additive_retrieval.py`](src/oczy/experiments/organ_additive_retrieval.py) |
-| Research/19 direct cortex | Specification only | No dedicated implementation module yet |
+| Research/19 direct cortex | Implemented; DEV calibration complete and BLOCKED at DEV articulation gate | [`src/oczy/experiments/s19_language_organ.py`](src/oczy/experiments/s19_language_organ.py); evidence [`experiments_logs/2026-07-12_r19_dev_calibration.json`](experiments_logs/2026-07-12_r19_dev_calibration.json) |
 | Research/20 / Experiment 09 | Specification only; meta-test blocked on human sign-off | Planned module: `src/oczy/experiments/meta_cortex/` — currently absent |
 | Research/21 multi-organ router | Specification only | No implementation module yet |
 | Remote compute pool | Mixed Kaggle/Colab CPU; Kaggle verified v4 smoke/probe/bootstrap; Colab CLI 0.6.0 verified v2 queue-starvation fix; GPU (T4/P100/L4) archived; TPU not wired | [`infrastructure/kaggle/`](infrastructure/kaggle/) |
@@ -493,18 +550,37 @@ For commit `f48dccc`, the explicitly authorized scoped guard passed with
    v2. **Acceptance:** every INVALIDATED/SUPERSEDED ledger row points to a
    dated honest rerun log or is labeled "no longer relevant."
 
-### P1 — Run the cheap interface diagnostic
+### P1 — Run the cheap interface diagnostic — DEV calibration COMPLETE; BLOCKED at DEV articulation gate
 
-Implement Research/19 as a matched two-arm test:
+Research/19 is implemented as a matched two-arm test under
+[`src/oczy/experiments/s19_language_organ.py`](src/oczy/experiments/s19_language_organ.py).
+Arm A: online-trained cortex decoded to a label prefix (parametric retrieval).
+Arm B: the same cortex state read through a fixed-width learned latent coupler
+into the frozen LM, with no label text. Zero-state, swapped-state,
+shuffled/permuted-feedback, vanilla, retrieval, and oracle conditions are
+specified.
 
-- Arm A: online-trained cortex decoded to a label prefix. Keep it, but classify
-  it as parametric retrieval.
-- Arm B: the same cortex state read through a fixed-width learned latent
-  coupler into the frozen LM, with no label text.
-- Include zero-state, swapped-state, shuffled/permuted-feedback, vanilla,
-  retrieval, and oracle conditions.
-- Put code under a dedicated module in [`src/oczy/experiments/`](src/oczy/experiments/)
-  and write results to a new dated file in [`experiments_logs/`](experiments_logs/).
+The DEV-only calibration ran on Kaggle CPU (2026-07-12, source `bd1ead9a`).
+Four submission attempts: v1 failed (offline model resolution), v2 failed
+(source-path/provenance failure plus feature explosion), v3 succeeded but
+artifacts not rooted in `/kaggle/working`, v4 succeeded and collected. The
+v4 infrastructure is fully successful (exit 0, artifacts collected, manifest
+hash `77ef4607…`, source archive SHA `1afe7573…`), but the pre-registered
+DEV articulation gate is not passed
+(`signoff_dev_articulation_gate=false`). No signoff request was made; no
+holdout access was attempted (`holdout_accessed=false`). `parameter_total=60388/64000`,
+`dev_confidence_mean=0.0525482`, `dev_specificity_acc=0.134328`,
+`oracle_ceiling=0.357143`, `raw_trace_count=0`. No scientific verdict beyond
+BLOCKED is permitted. The DEV confidence and specificity distributions are
+measured; the coupler and label phrasing are frozen on DEV. Next
+mechanism-level direction: the gate failure points to the Arm B latent-control
+interface not yet producing DEV articulation that clears the pre-registered
+gate; the oracle ceiling (0.357143) bounds what the frozen organ can express
+on these DEV tasks. R19 signed evaluation remains gated on the DEV
+articulation gate passing. R20 remains separately blocked for lack of
+explicit human signoff. No threshold, metric, baseline, episode, scoring, eval
+manifest, or research spec was changed. Evidence:
+[`experiments_logs/2026-07-12_r19_dev_calibration.json`](experiments_logs/2026-07-12_r19_dev_calibration.json).
 
 ### P1b — Build the S5.3 diagnostic head-to-head table
 

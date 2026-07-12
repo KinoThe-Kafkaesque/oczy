@@ -1,6 +1,6 @@
 # Experiments Logs Ledger — Authoritative Index
 
-**Date:** 2026-07-12 (updated through campaign `0d48130` adjudication, Exp03 `ad77e93` real-driver closure, R18 5-seed diagnostic clarification, R18 5-seed diagnostic adjudication, and R18 mechanism diagnostics adjudication)
+**Date:** 2026-07-12 (updated through campaign `0d48130` adjudication, Exp03 `ad77e93` real-driver closure, R18 5-seed diagnostic clarification, R18 5-seed diagnostic adjudication, R18 mechanism diagnostics adjudication, and R19 DEV calibration adjudication)
 **Purpose:** This ledger classifies every experiment log against three
 invalidation events:
 
@@ -109,12 +109,13 @@ v2.2 difficulty curve. The 13.5x drift claim (`044cb51`) remains retracted
 | 2026-07-11 | `2026-07-11_live_runner_queue.json` | VALID | **Live runner queue launch provenance and completion record.** Durable record of the live experiment queue at implementation commit `5b5e93c63d769fea7854073a4e6c359e5d36606f`. Records UTC launch date, live local state paths under `/tmp/oczy-live-queue/` (batch, state, campaign, campaign_manifest — explicitly labeled as non-tracked live local state), scheduler flags (`--watch-batch --watch-interval 30`), additive provider capacity contract (10 Kaggle hard-cap + AIMD-learned Colab X, no global cap), source dataset/archive provenance (`abdellahkadem/oczy-source-5b5e93c63d76`, sha256 `bc1ff926…`), and the first job `r18-distillation-5seed-diagnostic` (Kaggle, kernel `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, module `oczy.experiments.consolidation_distillation`, args `--seeds 5 --max-steps 10 --stage stage_0_grounding`). **Job completed** (exit 0, state=succeeded, completed 2026-07-11T15:04:52Z, collected 2026-07-11T15:04:54Z). Scientific classification: **BLOCKED** at teacher validity gate (`teacher_dev_delta=0.17647058823529413` < 0.2, identical across all 5 seeds). No positive scientific verdict claimed. Full adjudication in `2026-07-11_r18_five_seed_diagnostic.json`. | — |
 | 2026-07-11 | `2026-07-11_r18_five_seed_diagnostic.json` | VALID | **R18 5-seed diagnostic adjudication.** Durable execution/adjudication JSON: commit `5b5e93c63d769fea7854073a4e6c359e5d36606f`, Kaggle CPU, kernel `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, exit 0, 5 seeds. Per-seed `distill_delta_holdout` {0.3333, 0.3333, 0.0, 0.3333, 0.3333} (4/5 positive, seed 2 null); `teacher_dev_delta=0.17647058823529413` identical across all seeds. Mean `distill_delta_holdout=0.2667`, mean `specificity_delta=0.0261`. Gate comparison: `0.1765 < 0.2` → FAILED. Scientific classification: **BLOCKED** at teacher validity gate / diagnostic only. No H-DISTILL verdict permitted (teacher gate failed after registered fallback). 4/5 conditional signal and seed-2 null both visible. No threshold, metric, or research spec changed. | — |
 | 2026-07-12 | `2026-07-11_r18_mechanism_diagnostics.json` | VALID | **R18 mechanism diagnostics adjudication.** Durable execution/adjudication JSON: commit `33169cc0340bf752a67adf63721ec64cb5f3c9f8`, Kaggle CPU. Three diagnostic jobs (teacher ceiling, prompt-contract, training trajectory), all exit 0. Teacher ceiling (n=17): vanilla=0, raw_prefix=0.17647058823529413, chat_template=0; neither reaches 0.2 gate; registered chat fallback (0) worse than raw_prefix (0.1765). Prompt-contract audit: all six defect counts (issue/malformed/missing/truncated/answer-leak/mismatch) = 0; teacher_correct_rate=0.17647058823529413; raw/chat prompt accuracies 0; no structural prompt defect. Training trajectory: first submission failed HTTP 400 (long slug, preserved); short-slug retry exit 0 after ~12798s (run of record, preserved). Train loss 0.70→0.16, mean slope -0.0615, second-half -0.0190; underfit=1, instability=1, saturation=0, max final-loss divergence 0.01259. Final DEV student accuracies seeds 0–4: {0.117647, 0, 0, 0, 0.117647}; teacher 0.17647; seed 2 not uniquely divergent (seeds 1, 3 also 0). Adjudication decomposes failed gate into three axes: (1) prompt integrity — NO DEFECT; (2) capability ceiling — teacher expressivity/prompt-task ceiling IS THE BLOCKER; (3) optimization dynamics — token loss fits but DEV behavior unstable/weak, not saturated. Classification: **BLOCKED** at teacher validity gate / diagnostic only. No H-DISTILL verdict permitted. No threshold/spec/eval changes. All nulls visible. | — |
+| 2026-07-12 | `2026-07-12_r19_dev_calibration.json` | VALID | **R19 DEV calibration adjudication.** Durable execution/adjudication JSON: commit `bd1ead9a8358b675af5e929c53a01eb505839639`, Kaggle CPU. calibrate-dev v4 exit 0, all metrics collected. Manifest SHA-256 `77ef4607…`, parameter_total 60,388/64,000. DEV articulation gate **FAILED** (Arm B latent-control DEV accuracy ≤ C1 random-cortex DEV accuracy); oracle ceiling 0.357143 > 0 (PASSED independently). No signoff requested; no holdout accessed. Three prior infrastructure-failed attempts (v1 offline model resolution, v2 source-path/provenance + feature explosion, v3 artifacts not rooted in `/kaggle/working`); v4 infrastructure-successful but scientifically BLOCKED. C7 adapter discrepancy: manifest `c7_available=true` but `_try_s3m2a_retrieval_adapter()` returns None. R20 remains separately blocked on human signoff. No H-LATENT or H-LABEL verdict permitted. | — |
 
 ## Summary
 
 | Classification | Count |
 |----------------|-------|
-| VALID | 59 |
+| VALID | 60 |
 | PARTIAL | 9 |
 | INVALIDATED (pure) | 0 |
 | SUPERSEDED (pure) | 0 |
@@ -216,6 +217,84 @@ from `/tmp/oczy-exp03-real-run-v2/`), and
 `2026-07-11_r18_five_seed_diagnostic.json` (5-seed diagnostic adjudication,
 from `/tmp/oczy-live-queue/` live state). No threshold changes or
 causal claims beyond measured metrics.
+
+## R19 DEV Calibration Adjudication (2026-07-12)
+
+**Full curated evidence log:**
+`2026-07-11_campaign_0d48130.md` § R19 DEV calibration. **Durable
+execution/adjudication JSON:**
+`2026-07-12_r19_dev_calibration.json`.
+
+Research/19 calibrate-dev phase ran from source commit
+`bd1ead9a8358b675af5e929c53a01eb505839639` on Kaggle CPU. **Infrastructure:
+COMPLETE** (exit 0, all metrics collected, manifest hash verified). **Scientific
+verdict: BLOCKED at the pre-registered DEV articulation gate.**
+
+### Attempt history
+
+| Attempt | Outcome | Root cause |
+|---------|---------|------------|
+| v1 | INFRASTRUCTURE FAILURE | `LocalEntryNotFoundError`: hub ID used instead of local path under `HF_HUB_OFFLINE=1`. Fixed by `_resolve_load_target` resolver. |
+| v2 | INFRASTRUCTURE FAILURE | Source archive mount path unavailable + feature explosion (`label_loss_mean=5.5358e21`, confidence saturated at 1.0). Fixed by SHA precedence and L2 normalization. |
+| v3 | INFRASTRUCTURE FAILURE (artifact collection) | Artifacts not rooted in `/kaggle/working`; sentinel could not collect them. Fixed by rooting output paths. |
+| v4 | INFRASTRUCTURE SUCCESS | All metrics collected, manifest hash `77ef4607…`. |
+
+Attempts v1–v3 were infrastructure failures with no valid scientific evidence.
+The v4 run was infrastructure-successful but scientifically BLOCKED.
+
+### v4 calibration metrics
+
+| Field | Value |
+|-------|-------|
+| Manifest SHA-256 | `77ef4607ff95c116b5b7b088a7f5cfa811b855d76feed9c329eb551ac586a1e2` |
+| Parameter total | 60,388 / 64,000 (within budget) |
+| DEV repeatability std | 0.0 |
+| DEV confidence mean / std | 0.0525482 / 0.0002893 |
+| DEV confidence range | 0.0520694 – 0.0528929 |
+| DEV specificity acc | 0.134328 |
+| Oracle ceiling (DEV) | 0.357143 (> 0 → PASSED) |
+| DEV articulation gate | **FAILED** |
+| Raw traces deleted / count | true / 0 |
+| Holdout accessed | false |
+| Signoff requested | false |
+
+### Gate analysis
+
+The oracle ceiling (0.357143 > 0) passes: the frozen LM can express the
+taught behavior with a direct text prefix. The blocker is the DEV
+articulation gate: the learned coupler (Arm B latent control) does not
+produce a measurable improvement over the no-update baseline (C1 random
+cortex) on DEV. No H-LATENT or H-LABEL verdict is permitted. No signoff
+was requested; no holdout was accessed.
+
+### C7 adapter discrepancy
+
+The manifest carries `c7_available=true` (hardcoded in calibrate-dev),
+but `_try_s3m2a_retrieval_adapter()` returns `None` — no real S3.M2a
+adapter exists. The evaluate phase would block on C7 independently of
+the articulation gate. This must be resolved before any new claim run.
+
+### R19 vs R20 signoff separation
+
+R19 signed evaluation is BLOCKED at the DEV articulation gate. No
+signoff was requested and no holdout was accessed. R20 (meta-trained
+cortex) remains separately blocked for lack of explicit human signoff.
+R19 signoff and R20 signoff are distinct: neither has been requested or
+granted. The R19 articulation gate failure does not change R20's
+blocked status.
+
+### Direction reassessment
+
+Do not spend signed-eval or R20 budget. Before any new claim run,
+diagnose at DEV level: (1) why the learned coupler does not improve
+over the no-update baseline — coupler learning signal, latent interface,
+or articulation path; (2) resolve the C7 adapter discrepancy. No
+threshold, metric, baseline, episode, scoring, eval manifest, or
+research spec was changed.
+
+Source: `2026-07-11_campaign_0d48130.md` § R19 DEV calibration and
+`2026-07-12_r19_dev_calibration.json`. No threshold changes or causal
+claims beyond measured metrics.
 
 ## Notes (conceptual, non-log)
 
