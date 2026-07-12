@@ -5,7 +5,9 @@ pipeline for the meta-trained cortex with a frozen language organ.  It is
 intentionally scoped to ``train-dev``, ``validate-dev``, and ``audit-dev``
 commands plus unsigned candidate/instrument materialization and calibration
 commands (``materialize-definition``, ``verify-definition``,
-``calibrate-dev``, ``finalize-candidate``, ``verify-candidate``).
+``calibrate-dev``, ``collect-calibration-shard``,
+``merge-calibration-records``, ``finalize-candidate``,
+``verify-candidate``).
 
 No meta-test generator, sealed loader, sign-off, authorization, or
 scientific verdict is exported from this package.  The CLI entrypoint

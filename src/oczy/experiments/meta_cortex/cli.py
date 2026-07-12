@@ -20,6 +20,10 @@ Unsigned candidate/instrument (``_build_candidate_parser``):
 - ``verify-definition``     : Strictly verify a materialized definition.
 - ``calibrate-dev``         : Run DEV calibration on CALIBRATION_VIEW only;
   writes DEV_DISTRIBUTIONS.json and POWER_ANALYSIS.json.
+- ``collect-calibration-shard``: Collect a DEV calibration shard for
+  parallel remote execution (subset of seeds/tasks).
+- ``merge-calibration-records`` : Strictly merge calibration shards into
+  canonical record files accepted by calibrate-dev.
 - ``finalize-candidate``    : Create a new complete unsigned candidate
   bundle with CANDIDATE_MANIFEST.json binding all bytes, margin, and N.
 - ``verify-candidate``      : Strictly verify a finalized candidate.
@@ -375,6 +379,8 @@ _CANDIDATE_COMMANDS = frozenset(
         "materialize-definition",
         "verify-definition",
         "calibrate-dev",
+        "collect-calibration-shard",
+        "merge-calibration-records",
         "finalize-candidate",
         "verify-candidate",
     }
@@ -546,6 +552,101 @@ def _build_candidate_parser() -> argparse.ArgumentParser:
         help="Expected candidate manifest SHA-256 (must match exactly)",
     )
 
+    # -- collect-calibration-shard ----------------------------------------
+    ccs = subparsers.add_parser(
+        "collect-calibration-shard",
+        help=f"Collect a DEV calibration shard for parallel execution. {_CANDIDATE_LABEL}",
+        description=(
+            "Run the calibration runner on a subset of developmental seeds, "
+            "evaluation seeds, and tasks to produce a shard file. The shard "
+            "is later merged by merge-calibration-records. No meta-test "
+            "execution, no sealed content. "
+            + _CANDIDATE_LABEL
+        ),
+    )
+    ccs.add_argument(
+        "--calibration-view",
+        required=True,
+        help="Path to CALIBRATION_VIEW.json (held-back calibration rules)",
+    )
+    ccs.add_argument(
+        "--checkpoint",
+        required=True,
+        help="Path to the developmental checkpoint directory for this dev seed",
+    )
+    ccs.add_argument(
+        "--model-id",
+        default="Qwen/Qwen2.5-0.5B-Instruct",
+        help="HuggingFace model ID for the frozen language organ",
+    )
+    ccs.add_argument(
+        "--organ-hash",
+        required=True,
+        help="64-char hex SHA-256 of the frozen organ parameters",
+    )
+    ccs.add_argument(
+        "--dev-seed-index",
+        type=int,
+        required=True,
+        help="Developmental seed index (0-4) for this shard",
+    )
+    ccs.add_argument(
+        "--eval-seed-indices",
+        required=True,
+        help="Comma-separated evaluation seed indices (e.g. '0,1,2,3,4')",
+    )
+    ccs.add_argument(
+        "--task-start",
+        type=int,
+        default=0,
+        help="Start task index (inclusive) into view.tasks",
+    )
+    ccs.add_argument(
+        "--task-end",
+        type=int,
+        default=None,
+        help="End task index (exclusive) into view.tasks; default: all tasks",
+    )
+    ccs.add_argument(
+        "--output",
+        required=True,
+        help="Output path for the shard JSON file",
+    )
+
+    # -- merge-calibration-records ----------------------------------------
+    mcr = subparsers.add_parser(
+        "merge-calibration-records",
+        help=f"Merge DEV calibration shards into canonical record files. {_CANDIDATE_LABEL}",
+        description=(
+            "Strictly merge calibration shard files into canonical "
+            "NO_UPDATE_REPEAT_RECORDS.json, SEED_CELL_RECORDS.json, and "
+            "THETA_HASHES.json accepted by calibrate-dev. Rejects "
+            "duplicates, missing cells, partial 20-repeat coverage, "
+            "hash mismatches, and any sealed reference. "
+            + _CANDIDATE_LABEL
+        ),
+    )
+    mcr.add_argument(
+        "--calibration-view",
+        required=True,
+        help="Path to CALIBRATION_VIEW.json (held-back calibration rules)",
+    )
+    mcr.add_argument(
+        "--shards",
+        required=True,
+        nargs="+",
+        help="Paths to shard JSON files (space-separated)",
+    )
+    mcr.add_argument(
+        "--organ-hash",
+        required=True,
+        help="64-char hex SHA-256 of the frozen organ parameters",
+    )
+    mcr.add_argument(
+        "--output-dir",
+        required=True,
+        help="Output directory for canonical record files",
+    )
     return parser
 
 
@@ -1374,6 +1475,223 @@ def _verify_candidate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _collect_calibration_shard(args: argparse.Namespace) -> int:
+    """Collect a DEV calibration shard for parallel execution.
+
+    Loads the CalibrationInstrumentView, loads the checkpoint for the
+    specified dev seed, runs the calibration runner to produce a
+    ShardCollection, and writes it as a shard JSON file.
+    No meta-test execution, no sealed content.
+    """
+    print("# Research/20 — collect-calibration-shard phase", file=sys.stderr)
+    print(f"# {_CANDIDATE_LABEL}", file=sys.stderr)
+
+    calibration_view_path = Path(args.calibration_view)
+    checkpoint_dir = Path(args.checkpoint)
+    model_id = args.model_id
+    organ_hash = args.organ_hash
+    dev_seed_index = args.dev_seed_index
+    eval_seed_indices_str = args.eval_seed_indices
+    task_start = args.task_start
+    task_end = args.task_end
+    output_path = Path(args.output)
+
+    for label, path in [
+        ("calibration-view", calibration_view_path),
+        ("checkpoint", checkpoint_dir),
+    ]:
+        if not path.exists():
+            print(f"ERROR: {label} not found: {path}", file=sys.stderr)
+            print("METRIC collect_shard_status=FAILED")
+            return 1
+
+    # Parse eval seed indices.
+    try:
+        eval_seed_indices = [int(x.strip()) for x in eval_seed_indices_str.split(",")]
+    except ValueError:
+        print(
+            f"ERROR: invalid --eval-seed-indices: {eval_seed_indices_str}",
+            file=sys.stderr,
+        )
+        print("METRIC collect_shard_status=FAILED")
+        return 1
+
+    if not (0 <= dev_seed_index < 5):
+        print(
+            f"ERROR: --dev-seed-index must be 0-4, got {dev_seed_index}",
+            file=sys.stderr,
+        )
+        print("METRIC collect_shard_status=FAILED")
+        return 1
+
+    for esi in eval_seed_indices:
+        if not (0 <= esi < 5):
+            print(
+                f"ERROR: eval seed indices must be 0-4, got {esi}",
+                file=sys.stderr,
+            )
+            print("METRIC collect_shard_status=FAILED")
+            return 1
+
+    # Lazy imports.
+    try:
+        from .calibration import write_calibration_shard
+        from .instrument import load_calibration_view
+    except ImportError as exc:
+        print(f"ERROR: calibration/instrument module not available: {exc}", file=sys.stderr)
+        print("METRIC collect_shard_status=FAILED")
+        return 1
+
+    # 1. Load the calibration view.
+    print(f"# Loading calibration view: {calibration_view_path}", file=sys.stderr)
+    try:
+        view = load_calibration_view(calibration_view_path.parent)
+    except Exception as exc:
+        print(f"ERROR: calibration view load failed: {exc}", file=sys.stderr)
+        print("METRIC collect_shard_status=FAILED")
+        return 1
+
+    print(f"ASI calibration_view_sha256={view.calibration_view_sha256}", file=sys.stderr)
+
+    # 2. Determine task indices.
+    n_tasks = len(view.tasks)
+    if task_end is None:
+        task_end = n_tasks
+    if task_start < 0 or task_end > n_tasks or task_start >= task_end:
+        print(
+            f"ERROR: task range [{task_start}, {task_end}) invalid for "
+            f"{n_tasks} tasks",
+            file=sys.stderr,
+        )
+        print("METRIC collect_shard_status=FAILED")
+        return 1
+    task_indices = list(range(task_start, task_end))
+
+    # 3. Run the calibration runner.
+    try:
+        from .calibration_runner import collect_calibration_shard as _collect
+    except ImportError as exc:
+        print(f"ERROR: calibration_runner module not available: {exc}", file=sys.stderr)
+        print("METRIC collect_shard_status=FAILED")
+        return 1
+
+    print(
+        f"# Collecting shard: dev_seed_index={dev_seed_index}, "
+        f"eval_seed_indices={eval_seed_indices}, "
+        f"task_indices={task_indices}",
+        file=sys.stderr,
+    )
+    try:
+        collection = _collect(
+            view=view,
+            checkpoint_dir=checkpoint_dir,
+            model_id=model_id,
+            dev_seed_indices=[dev_seed_index],
+            eval_seed_indices=eval_seed_indices,
+            task_indices=task_indices,
+        )
+    except Exception as exc:
+        print(f"ERROR: shard collection failed: {exc}", file=sys.stderr)
+        print("METRIC collect_shard_status=FAILED")
+        return 1
+
+    # 4. Write the shard file.
+    try:
+        sha = write_calibration_shard(
+            output_path,
+            view=view,
+            collection=collection,
+            organ_hash=organ_hash,
+        )
+    except Exception as exc:
+        print(f"ERROR: shard write failed: {exc}", file=sys.stderr)
+        print("METRIC collect_shard_status=FAILED")
+        return 1
+
+    print(f"ASI shard_path={output_path}", file=sys.stderr)
+    print(f"ASI shard_sha256={sha}", file=sys.stderr)
+    print(f"ASI n_no_update_repeat_records={len(collection.no_update_repeat_records)}", file=sys.stderr)
+    print(f"ASI n_seed_cell_records={len(collection.seed_cell_records)}", file=sys.stderr)
+    print(f"ASI n_theta_hashes={len(collection.theta_hashes)}", file=sys.stderr)
+    print("METRIC collect_shard_status=OK")
+    print("AUDIT collect_shard_complete=1")
+    return 0
+
+
+def _merge_calibration_records(args: argparse.Namespace) -> int:
+    """Merge DEV calibration shards into canonical record files.
+
+    Loads each shard, validates headers against the calibration view,
+    performs strict completeness/duplicate/hash checks, and writes
+    NO_UPDATE_REPEAT_RECORDS.json, SEED_CELL_RECORDS.json, and
+    THETA_HASHES.json. No meta-test execution, no sealed content.
+    """
+    print("# Research/20 — merge-calibration-records phase", file=sys.stderr)
+    print(f"# {_CANDIDATE_LABEL}", file=sys.stderr)
+
+    calibration_view_path = Path(args.calibration_view)
+    shard_paths = [Path(s) for s in args.shards]
+    organ_hash = args.organ_hash
+    output_dir = Path(args.output_dir)
+
+    if not calibration_view_path.exists():
+        print(f"ERROR: calibration-view not found: {calibration_view_path}", file=sys.stderr)
+        print("METRIC merge_status=FAILED")
+        return 1
+
+    for sp in shard_paths:
+        if not sp.exists():
+            print(f"ERROR: shard not found: {sp}", file=sys.stderr)
+            print("METRIC merge_status=FAILED")
+            return 1
+
+    # Lazy imports.
+    try:
+        from .calibration import merge_calibration_shards
+        from .instrument import load_calibration_view
+    except ImportError as exc:
+        print(f"ERROR: calibration/instrument module not available: {exc}", file=sys.stderr)
+        print("METRIC merge_status=FAILED")
+        return 1
+
+    # 1. Load the calibration view.
+    print(f"# Loading calibration view: {calibration_view_path}", file=sys.stderr)
+    try:
+        view = load_calibration_view(calibration_view_path.parent)
+    except Exception as exc:
+        print(f"ERROR: calibration view load failed: {exc}", file=sys.stderr)
+        print("METRIC merge_status=FAILED")
+        return 1
+
+    print(f"ASI calibration_view_sha256={view.calibration_view_sha256}", file=sys.stderr)
+
+    # 2. Merge shards.
+    print(f"# Merging {len(shard_paths)} shard(s)...", file=sys.stderr)
+    try:
+        result = merge_calibration_shards(
+            view=view,
+            shard_paths=shard_paths,
+            expected_organ_hash=organ_hash,
+            output_dir=output_dir,
+        )
+    except Exception as exc:
+        print(f"ERROR: merge failed: {exc}", file=sys.stderr)
+        print("METRIC merge_status=FAILED")
+        return 1
+
+    # 3. Emit results.
+    print(f"ASI no_update_records_path={result.no_update_records_path}", file=sys.stderr)
+    print(f"ASI seed_cell_records_path={result.seed_cell_records_path}", file=sys.stderr)
+    print(f"ASI theta_hashes_path={result.theta_hashes_path}", file=sys.stderr)
+    print(f"ASI n_no_update_records={result.n_no_update_records}", file=sys.stderr)
+    print(f"ASI n_seed_cell_records={result.n_seed_cell_records}", file=sys.stderr)
+    print(f"ASI n_theta_hashes={result.n_theta_hashes}", file=sys.stderr)
+    print(f"ASI n_shards_merged={result.n_shards_merged}", file=sys.stderr)
+    print("METRIC merge_status=OK")
+    print("AUDIT merge_complete=1")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Main entrypoint
 # ---------------------------------------------------------------------------
@@ -1402,6 +1720,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _verify_definition(args)
         elif args.command == "calibrate-dev":
             return _calibrate_dev(args)
+        elif args.command == "collect-calibration-shard":
+            return _collect_calibration_shard(args)
+        elif args.command == "merge-calibration-records":
+            return _merge_calibration_records(args)
         elif args.command == "finalize-candidate":
             return _finalize_candidate(args)
         elif args.command == "verify-candidate":

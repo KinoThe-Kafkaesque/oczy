@@ -1045,8 +1045,9 @@ class TestCanonicalHashing:
 class TestCandidateCLIParser:
     """Test the separate candidate parser — unsigned instrument commands only.
 
-    The candidate parser must have exactly 5 commands:
+    The candidate parser must have exactly 7 commands:
     materialize-definition, verify-definition, calibrate-dev,
+    collect-calibration-shard, merge-calibration-records,
     finalize-candidate, verify-candidate.
 
     It must NOT have: signoff, promote-and-sign, evaluate, meta-test,
@@ -1054,16 +1055,18 @@ class TestCandidateCLIParser:
     """
 
     def test_candidate_commands_set(self) -> None:
-        """_CANDIDATE_COMMANDS must be exactly the 5 unsigned commands."""
+        """_CANDIDATE_COMMANDS must be exactly the 7 unsigned commands."""
         assert _CANDIDATE_COMMANDS == {
             "materialize-definition",
             "verify-definition",
             "calibrate-dev",
+            "collect-calibration-shard",
+            "merge-calibration-records",
             "finalize-candidate",
             "verify-candidate",
         }
 
-    def test_candidate_parser_has_exactly_5_commands(self) -> None:
+    def test_candidate_parser_has_exactly_7_commands(self) -> None:
         parser = _build_candidate_parser()
         subparsers_action = None
         for action in parser._actions:
@@ -1076,6 +1079,8 @@ class TestCandidateCLIParser:
             "materialize-definition",
             "verify-definition",
             "calibrate-dev",
+            "collect-calibration-shard",
+            "merge-calibration-records",
             "finalize-candidate",
             "verify-candidate",
         }
@@ -1161,6 +1166,48 @@ class TestCandidateCLIParser:
         ])
         assert args.command == "finalize-candidate"
 
+    def test_collect_calibration_shard_has_required_args(self) -> None:
+        parser = _build_candidate_parser()
+        args = parser.parse_args([
+            "collect-calibration-shard",
+            "--calibration-view", "/tmp/cal.json",
+            "--checkpoint", "/tmp/ckpt",
+            "--organ-hash", "a" * 64,
+            "--dev-seed-index", "0",
+            "--eval-seed-indices", "0,1,2,3,4",
+            "--output", "/tmp/shard.json",
+        ])
+        assert args.command == "collect-calibration-shard"
+        assert args.dev_seed_index == 0
+        assert args.eval_seed_indices == "0,1,2,3,4"
+        assert args.output == "/tmp/shard.json"
+
+    def test_collect_calibration_shard_default_model_id(self) -> None:
+        parser = _build_candidate_parser()
+        args = parser.parse_args([
+            "collect-calibration-shard",
+            "--calibration-view", "/tmp/cal.json",
+            "--checkpoint", "/tmp/ckpt",
+            "--organ-hash", "a" * 64,
+            "--dev-seed-index", "0",
+            "--eval-seed-indices", "0,1,2,3,4",
+            "--output", "/tmp/shard.json",
+        ])
+        assert "Qwen" in args.model_id
+
+    def test_merge_calibration_records_has_required_args(self) -> None:
+        parser = _build_candidate_parser()
+        args = parser.parse_args([
+            "merge-calibration-records",
+            "--calibration-view", "/tmp/cal.json",
+            "--shards", "/tmp/shard1.json", "/tmp/shard2.json",
+            "--organ-hash", "a" * 64,
+            "--output-dir", "/tmp/out",
+        ])
+        assert args.command == "merge-calibration-records"
+        assert args.shards == ["/tmp/shard1.json", "/tmp/shard2.json"]
+        assert args.output_dir == "/tmp/out"
+
 
 class TestCLIDispatchSeparation:
     """The main entrypoint must dispatch correctly between DEV and candidate parsers."""
@@ -1178,6 +1225,8 @@ class TestCLIDispatchSeparation:
         # Just verify the command is in the candidate set.
         assert "materialize-definition" in _CANDIDATE_COMMANDS
         assert "calibrate-dev" in _CANDIDATE_COMMANDS
+        assert "collect-calibration-shard" in _CANDIDATE_COMMANDS
+        assert "merge-calibration-records" in _CANDIDATE_COMMANDS
         assert "finalize-candidate" in _CANDIDATE_COMMANDS
 
     def test_dev_command_not_in_candidate_set(self) -> None:

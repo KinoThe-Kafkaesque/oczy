@@ -91,10 +91,19 @@ __all__ = [
     # Record loaders and schema
     "CALIBRATION_RECORDS_SCHEMA",
     "CALIBRATION_THETA_HASHES_SCHEMA",
+    "CALIBRATION_SHARD_SCHEMA",
     "load_no_update_repeat_records",
     "load_seed_cell_records",
     "load_theta_hashes",
     "normalize_seed_input",
+    # Shard collection and merge
+    "ShardThetaHash",
+    "ShardCollection",
+    "CalibrationShard",
+    "MergeResult",
+    "write_calibration_shard",
+    "load_calibration_shard",
+    "merge_calibration_shards",
     # Main entry point
     "run_dev_calibration",
     # Canonical decimal
@@ -503,6 +512,7 @@ class CalibrationResult:
 
 CALIBRATION_RECORDS_SCHEMA = "oczy/meta-cortex/calibration-records/v1"
 CALIBRATION_THETA_HASHES_SCHEMA = "oczy/meta-cortex/calibration-theta-hashes/v1"
+CALIBRATION_SHARD_SCHEMA = "oczy/meta-cortex/calibration-shard/v1"
 
 
 def _probe_count_from_json(obj: dict[str, Any]) -> ProbeCount:
@@ -2294,4 +2304,527 @@ def run_dev_calibration(
         calibration_view_sha256=view.calibration_view_sha256,
         dev_distributions_path=str(dev_dist_path),
         power_analysis_path=str(power_path),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Calibration shard collection, writing, loading, and strict merge
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ShardThetaHash:
+    """One developmental checkpoint theta hash within a shard.
+
+    Each shard covers one or more ``developmental_seed_index`` values;
+    each contributes one theta hash for that index.
+    """
+
+    developmental_seed_index: int
+    theta_hash: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.developmental_seed_index, int) or isinstance(
+            self.developmental_seed_index, bool
+        ):
+            raise ValueError("ShardThetaHash.developmental_seed_index must be int")
+        if not (0 <= self.developmental_seed_index < 5):
+            raise ValueError(
+                f"ShardThetaHash.developmental_seed_index must be in [0,5), "
+                f"got {self.developmental_seed_index}"
+            )
+        if not isinstance(self.theta_hash, str) or len(self.theta_hash) != 64:
+            raise ValueError("ShardThetaHash.theta_hash must be 64-char hex")
+
+    def to_json_obj(self) -> dict[str, Any]:
+        return {
+            "developmental_seed_index": self.developmental_seed_index,
+            "theta_hash": self.theta_hash,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ShardCollection:
+    """In-memory collection of records produced by one shard run.
+
+    Returned by the calibration runner, consumed by
+    ``write_calibration_shard``.
+    """
+
+    no_update_repeat_records: tuple[NoUpdateRepeatRecord, ...]
+    seed_cell_records: tuple[SeedCellRecord, ...]
+    theta_hashes: tuple[ShardThetaHash, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.no_update_repeat_records, tuple):
+            object.__setattr__(
+                self, "no_update_repeat_records", tuple(self.no_update_repeat_records)
+            )
+        if not isinstance(self.seed_cell_records, tuple):
+            object.__setattr__(
+                self, "seed_cell_records", tuple(self.seed_cell_records)
+            )
+        if not isinstance(self.theta_hashes, tuple):
+            object.__setattr__(self, "theta_hashes", tuple(self.theta_hashes))
+        for r in self.no_update_repeat_records:
+            if not isinstance(r, NoUpdateRepeatRecord):
+                raise ValueError("no_update_repeat_records must contain NoUpdateRepeatRecord")
+        for r in self.seed_cell_records:
+            if not isinstance(r, SeedCellRecord):
+                raise ValueError("seed_cell_records must contain SeedCellRecord")
+        for th in self.theta_hashes:
+            if not isinstance(th, ShardThetaHash):
+                raise ValueError("theta_hashes must contain ShardThetaHash")
+
+
+@dataclass(frozen=True, slots=True)
+class CalibrationShard:
+    """A loaded/verified calibration shard file.
+
+    The in-memory representation after ``load_calibration_shard``.
+    """
+
+    definition_sha256: str
+    calibration_view_sha256: str
+    scorer_sha256: str
+    organ_hash: str
+    no_update_repeat_records: tuple[NoUpdateRepeatRecord, ...]
+    seed_cell_records: tuple[SeedCellRecord, ...]
+    theta_hashes: tuple[ShardThetaHash, ...]
+
+    def __post_init__(self) -> None:
+        for fp_name in (
+            "definition_sha256", "calibration_view_sha256",
+            "scorer_sha256", "organ_hash",
+        ):
+            fp = getattr(self, fp_name)
+            if not isinstance(fp, str) or len(fp) != 64:
+                raise ValueError(f"CalibrationShard.{fp_name} must be 64-char hex")
+        if not isinstance(self.no_update_repeat_records, tuple):
+            object.__setattr__(
+                self, "no_update_repeat_records", tuple(self.no_update_repeat_records)
+            )
+        if not isinstance(self.seed_cell_records, tuple):
+            object.__setattr__(
+                self, "seed_cell_records", tuple(self.seed_cell_records)
+            )
+        if not isinstance(self.theta_hashes, tuple):
+            object.__setattr__(self, "theta_hashes", tuple(self.theta_hashes))
+
+
+@dataclass(frozen=True, slots=True)
+class MergeResult:
+    """Result of merging calibration shards into canonical record files."""
+
+    no_update_records_path: str
+    seed_cell_records_path: str
+    theta_hashes_path: str
+    n_no_update_records: int
+    n_seed_cell_records: int
+    n_theta_hashes: int
+    n_shards_merged: int
+
+
+def _shard_theta_hash_from_json(obj: dict[str, Any]) -> ShardThetaHash:
+    """Deserialize a ShardThetaHash from JSON."""
+    return ShardThetaHash(
+        developmental_seed_index=int(obj["developmental_seed_index"]),
+        theta_hash=str(obj["theta_hash"]),
+    )
+
+
+def write_calibration_shard(
+    path: Path,
+    *,
+    view: CalibrationViewProtocol,
+    collection: ShardCollection,
+    organ_hash: str,
+) -> str:
+    """Write a calibration shard to a canonical JSON file.
+
+    The file header binds ``definition_sha256``,
+    ``calibration_view_sha256``, and ``scorer_sha256`` from *view*,
+    plus the ``organ_hash``.  Records are serialized via their
+    ``to_json_obj`` methods.
+
+    Returns the SHA-256 of the written file.
+    """
+    path = Path(path)
+    if not isinstance(collection, ShardCollection):
+        raise ValueError("collection must be a ShardCollection")
+    if not isinstance(organ_hash, str) or len(organ_hash) != 64:
+        raise ValueError("organ_hash must be 64-char hex")
+
+    obj: dict[str, Any] = {
+        "schema": CALIBRATION_SHARD_SCHEMA,
+        "definition_sha256": view.definition_sha256,
+        "calibration_view_sha256": view.calibration_view_sha256,
+        "scorer_sha256": view.scorer_sha256,
+        "organ_hash": organ_hash,
+        "no_update_repeat_records": [
+            r.to_json_obj() for r in collection.no_update_repeat_records
+        ],
+        "seed_cell_records": [
+            r.to_json_obj() for r in collection.seed_cell_records
+        ],
+        "theta_hashes": [
+            th.to_json_obj() for th in collection.theta_hashes
+        ],
+    }
+
+    sha = _hash_json_obj(obj, "shard_sha256")
+    obj["shard_sha256"] = sha
+    json_str = _canonical_json_compact(obj)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json_str, encoding="utf-8")
+    os.replace(tmp, path)
+    return sha
+
+
+def load_calibration_shard(
+    path: Path,
+    view: CalibrationViewProtocol,
+) -> CalibrationShard:
+    """Load and verify a calibration shard file.
+
+    Verifies the shard schema and header hashes against *view*, then
+    deserializes records.  Rejects any file whose path or content
+    references sealed material.
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Calibration shard not found: {path}")
+
+    # Reject sealed references in the path.
+    if "sealed" in str(path):
+        raise ValueError(f"Calibration shard path references sealed: {path}")
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+
+    # Verify shard schema.
+    schema = data.get("schema")
+    if schema != CALIBRATION_SHARD_SCHEMA:
+        raise ValueError(
+            f"Shard schema must be {CALIBRATION_SHARD_SCHEMA!r}, got {schema!r}"
+        )
+
+    # Verify header hashes against the view.
+    _verify_record_header(data, view, expected_schema=CALIBRATION_SHARD_SCHEMA)
+
+    # Verify organ hash.
+    organ_hash = data.get("organ_hash")
+    if not isinstance(organ_hash, str) or len(organ_hash) != 64:
+        raise ValueError("Shard organ_hash must be 64-char hex")
+
+    # Reject sealed references in content.
+    raw_text = path.read_text(encoding="utf-8")
+    if "sealed" in raw_text.lower():
+        raise ValueError(f"Calibration shard {path} references sealed material")
+
+    # Deserialize records.
+    raw_nu = data.get("no_update_repeat_records")
+    if not isinstance(raw_nu, list):
+        raise ValueError("Shard missing 'no_update_repeat_records' list")
+    no_update_records = tuple(
+        _no_update_repeat_record_from_json(r) for r in raw_nu
+    )
+
+    raw_sc = data.get("seed_cell_records")
+    if not isinstance(raw_sc, list):
+        raise ValueError("Shard missing 'seed_cell_records' list")
+    seed_cell_records = tuple(
+        _seed_cell_record_from_json(r) for r in raw_sc
+    )
+
+    raw_th = data.get("theta_hashes")
+    if not isinstance(raw_th, list):
+        raise ValueError("Shard missing 'theta_hashes' list")
+    theta_hashes = tuple(
+        _shard_theta_hash_from_json(th) for th in raw_th
+    )
+
+    return CalibrationShard(
+        definition_sha256=data["definition_sha256"],
+        calibration_view_sha256=data["calibration_view_sha256"],
+        scorer_sha256=data["scorer_sha256"],
+        organ_hash=organ_hash,
+        no_update_repeat_records=no_update_records,
+        seed_cell_records=seed_cell_records,
+        theta_hashes=theta_hashes,
+    )
+
+
+def _build_expected_task_keys(
+    view: CalibrationViewProtocol,
+) -> set[tuple[str, str]]:
+    """Build the set of (family, rule_fingerprint) keys from the view."""
+    expected: set[tuple[str, str]] = set()
+    for task in view.tasks:
+        fam = task.family.value if isinstance(task.family, TaskFamily) else str(task.family)
+        expected.add((fam, task.rule_fingerprint))
+    return expected
+
+
+def merge_calibration_shards(
+    *,
+    view: CalibrationViewProtocol,
+    shard_paths: Sequence[Path],
+    expected_organ_hash: str | None = None,
+    output_dir: Path,
+) -> MergeResult:
+    """Merge calibration shard files into canonical record files.
+
+    Reads each shard JSON, validates headers against *view*, collects
+    no_update_repeat_records, seed_cell_records, and theta_hashes, then
+    performs strict completeness/duplicate/hash checks and writes three
+    canonical output files accepted by the existing loaders.
+
+    Output files (in *output_dir*):
+    - ``NO_UPDATE_REPEAT_RECORDS.json`` — loadable by ``load_no_update_repeat_records``
+    - ``SEED_CELL_RECORDS.json`` — loadable by ``load_seed_cell_records``
+    - ``THETA_HASHES.json`` — loadable by ``load_theta_hashes``
+
+    Raises ``ValueError`` on any completeness/duplicate/hash violation.
+    No output files are written if any check fails (fail-closed).
+    """
+    output_dir = Path(output_dir)
+
+    if len(shard_paths) == 0:
+        raise ValueError("merge_calibration_shards requires at least one shard path")
+
+    # --- Phase 1: Load all shards ---
+    shards: list[CalibrationShard] = []
+    for sp in shard_paths:
+        sp = Path(sp)
+        shard = load_calibration_shard(sp, view)
+        shards.append(shard)
+
+    # --- Phase 2: Verify organ hash consistency ---
+    organ_hash = shards[0].organ_hash
+    for i, shard in enumerate(shards):
+        if shard.organ_hash != organ_hash:
+            raise ValueError(
+                f"Shard {i} organ_hash {shard.organ_hash} != "
+                f"shard 0 organ_hash {organ_hash}"
+            )
+    if expected_organ_hash is not None and organ_hash != expected_organ_hash:
+        raise ValueError(
+            f"Shard organ_hash {organ_hash} != expected organ_hash "
+            f"{expected_organ_hash}"
+        )
+
+    # --- Phase 3: Collect and deduplicate records ---
+    # No-update repeat records: key = (family, rule_fp, dev_seed_idx, repeat_idx)
+    nu_seen: dict[
+        tuple[str, str, int, int], NoUpdateRepeatRecord
+    ] = {}
+    for si, shard in enumerate(shards):
+        for rec in shard.no_update_repeat_records:
+            key = (
+                rec.family,
+                rec.rule_fingerprint,
+                rec.developmental_seed_index,
+                rec.repeat_index,
+            )
+            if key in nu_seen:
+                raise ValueError(
+                    f"Duplicate no-update repeat record in shard {si}: "
+                    f"{key}"
+                )
+            nu_seen[key] = rec
+    all_nu_records = list(nu_seen.values())
+
+    # Seed cell records: key = (family, rule_fp, dev_seed_idx, eval_seed_idx)
+    sc_seen: dict[
+        tuple[str, str, int, int], SeedCellRecord
+    ] = {}
+    for si, shard in enumerate(shards):
+        for rec in shard.seed_cell_records:
+            key = (
+                rec.family,
+                rec.rule_fingerprint,
+                rec.developmental_seed_index,
+                rec.evaluation_seed_index,
+            )
+            if key in sc_seen:
+                raise ValueError(
+                    f"Duplicate seed cell record in shard {si}: {key}"
+                )
+            sc_seen[key] = rec
+    all_sc_records = list(sc_seen.values())
+
+    # Theta hashes: key = developmental_seed_index
+    th_seen: dict[int, str] = {}
+    for si, shard in enumerate(shards):
+        for th in shard.theta_hashes:
+            if th.developmental_seed_index in th_seen:
+                if th_seen[th.developmental_seed_index] != th.theta_hash:
+                    raise ValueError(
+                        f"Theta hash conflict at index "
+                        f"{th.developmental_seed_index}: "
+                        f"shard {si} has {th.theta_hash}, "
+                        f"earlier shard has "
+                        f"{th_seen[th.developmental_seed_index]}"
+                    )
+                # Exact duplicate (same index, same hash) is OK —
+                # can happen when shards overlap on dev_seed_indices.
+            else:
+                th_seen[th.developmental_seed_index] = th.theta_hash
+
+    # --- Phase 4: Completeness checks ---
+    expected_task_keys = _build_expected_task_keys(view)
+    n_tasks = len(expected_task_keys)
+
+    # Theta hashes: exactly 5, indices [0,5).
+    if len(th_seen) != 5:
+        raise ValueError(
+            f"Expected 5 theta hashes (indices 0-4), got {len(th_seen)}: "
+            f"indices {sorted(th_seen.keys())}"
+        )
+    expected_th_indices = set(range(5))
+    actual_th_indices = set(th_seen.keys())
+    missing_th = expected_th_indices - actual_th_indices
+    if missing_th:
+        raise ValueError(
+            f"Missing theta hashes for indices: {sorted(missing_th)}"
+        )
+    theta_hashes_ordered = [th_seen[i] for i in range(5)]
+
+    # No-update repeats: every (family, rule_fp, dev_seed_idx) group
+    # must have exactly 20 records with repeat_index covering [0,20).
+    nu_groups: dict[tuple[str, str, int], set[int]] = {}
+    for rec in all_nu_records:
+        key = (rec.family, rec.rule_fingerprint, rec.developmental_seed_index)
+        nu_groups.setdefault(key, set()).add(rec.repeat_index)
+
+    # Verify every expected task has no-update repeats for all 5 dev seeds.
+    for task_key in expected_task_keys:
+        fam, rule_fp = task_key
+        for dev_idx in range(5):
+            group_key = (fam, rule_fp, dev_idx)
+            if group_key not in nu_groups:
+                raise ValueError(
+                    f"Missing no-update repeat group for task {task_key} "
+                    f"dev_seed_index {dev_idx}"
+                )
+            repeat_indices = nu_groups[group_key]
+            if len(repeat_indices) != 20:
+                raise ValueError(
+                    f"Task {task_key} dev_seed_index {dev_idx} has "
+                    f"{len(repeat_indices)} no-update repeats, expected 20"
+                )
+            expected_repeats = set(range(20))
+            missing_repeats = expected_repeats - repeat_indices
+            if missing_repeats:
+                raise ValueError(
+                    f"Task {task_key} dev_seed_index {dev_idx} "
+                    f"missing repeat indices: {sorted(missing_repeats)}"
+                )
+
+    # Verify no extra tasks in no-update records.
+    for group_key in nu_groups:
+        fam, rule_fp, _ = group_key
+        if (fam, rule_fp) not in expected_task_keys:
+            raise ValueError(
+                f"No-update repeat group for unknown task "
+                f"{(fam, rule_fp)} not in view.tasks — "
+                f"possible sealed/META_TRAIN contamination"
+            )
+
+    expected_nu_count = n_tasks * 5 * 20
+    if len(all_nu_records) != expected_nu_count:
+        raise ValueError(
+            f"Expected {expected_nu_count} no-update repeat records "
+            f"({n_tasks} tasks * 5 dev seeds * 20 repeats), "
+            f"got {len(all_nu_records)}"
+        )
+
+    # Seed cells: every task must have exactly 25 cells covering all
+    # (dev_idx, eval_idx) in {0..4}×{0..4}.
+    sc_groups: dict[tuple[str, str], set[tuple[int, int]]] = {}
+    for rec in all_sc_records:
+        key = (rec.family, rec.rule_fingerprint)
+        cell = (rec.developmental_seed_index, rec.evaluation_seed_index)
+        sc_groups.setdefault(key, set()).add(cell)
+
+    expected_cells = {(d, e) for d in range(5) for e in range(5)}
+    for task_key in expected_task_keys:
+        if task_key not in sc_groups:
+            raise ValueError(
+                f"Task {task_key} has no seed cell records — "
+                f"missing seed cells are not allowed"
+            )
+        seen_cells = sc_groups[task_key]
+        if len(seen_cells) != 25:
+            raise ValueError(
+                f"Task {task_key} has {len(seen_cells)} seed cell records, "
+                f"expected 25"
+            )
+        missing_cells = expected_cells - seen_cells
+        if missing_cells:
+            raise ValueError(
+                f"Task {task_key} missing seed cells: {sorted(missing_cells)}"
+            )
+
+    # Verify no extra tasks in seed cell records.
+    for task_key in sc_groups:
+        if task_key not in expected_task_keys:
+            raise ValueError(
+                f"Seed cell record for unknown task {task_key} "
+                f"not in view.tasks — possible sealed/META_TRAIN contamination"
+            )
+
+    expected_sc_count = n_tasks * 25
+    if len(all_sc_records) != expected_sc_count:
+        raise ValueError(
+            f"Expected {expected_sc_count} seed cell records "
+            f"({n_tasks} tasks * 25 cells), got {len(all_sc_records)}"
+        )
+
+    # --- Phase 5: Write canonical output files ---
+    # All checks passed — now write the three canonical files.
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # NO_UPDATE_REPEAT_RECORDS.json
+    nu_obj: dict[str, Any] = {
+        "schema": CALIBRATION_RECORDS_SCHEMA,
+        "definition_sha256": view.definition_sha256,
+        "calibration_view_sha256": view.calibration_view_sha256,
+        "scorer_sha256": view.scorer_sha256,
+        "records": [rec.to_json_obj() for rec in all_nu_records],
+    }
+    nu_path = output_dir / "NO_UPDATE_REPEAT_RECORDS.json"
+    _write_artifact(nu_path, nu_obj, "artifact_sha256")
+
+    # SEED_CELL_RECORDS.json
+    sc_obj: dict[str, Any] = {
+        "schema": CALIBRATION_RECORDS_SCHEMA,
+        "definition_sha256": view.definition_sha256,
+        "calibration_view_sha256": view.calibration_view_sha256,
+        "scorer_sha256": view.scorer_sha256,
+        "records": [rec.to_json_obj() for rec in all_sc_records],
+    }
+    sc_path = output_dir / "SEED_CELL_RECORDS.json"
+    _write_artifact(sc_path, sc_obj, "artifact_sha256")
+
+    # THETA_HASHES.json
+    th_obj: dict[str, Any] = {
+        "schema": CALIBRATION_THETA_HASHES_SCHEMA,
+        "definition_sha256": view.definition_sha256,
+        "calibration_view_sha256": view.calibration_view_sha256,
+        "scorer_sha256": view.scorer_sha256,
+        "theta_hashes": theta_hashes_ordered,
+    }
+    th_path = output_dir / "THETA_HASHES.json"
+    _write_artifact(th_path, th_obj, "artifact_sha256")
+
+    return MergeResult(
+        no_update_records_path=str(nu_path),
+        seed_cell_records_path=str(sc_path),
+        theta_hashes_path=str(th_path),
+        n_no_update_records=len(all_nu_records),
+        n_seed_cell_records=len(all_sc_records),
+        n_theta_hashes=5,
+        n_shards_merged=len(shards),
     )
