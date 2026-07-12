@@ -3803,3 +3803,282 @@ class TestManifestRequiredCollectionsRejectMalformed:
         d = _make_valid_manifest_dict()
         d["parameter_breakdown"] = bad_breakdown
         self._assert_fails_closed(d, "parameter_breakdown")
+
+
+
+# ---------------------------------------------------------------------------
+# Offline model resolution tests (R19 Kaggle calibration infrastructure fix)
+# ---------------------------------------------------------------------------
+
+
+class _ResolverSentinel(Exception):
+    """Sentinel raised by a fake _resolve_load_target to prove the CLI
+    actually called the resolver before reaching HFDriver.load."""
+
+    def __init__(self, model_id: str) -> None:
+        self.model_id = model_id
+        super().__init__(model_id)
+
+
+class TestOfflineModelResolution:
+    """Tests for _resolve_load_target and its integration into both CLI phases.
+
+    Regression target: commit 0d62811 where ``_calibrate_dev`` called
+    ``HFDriver.load(model_id='Qwen/Qwen2.5-0.5B-Instruct')`` with
+    ``HF_HUB_OFFLINE=1`` and an attached local model at ``OCZY_MODEL_DIR``,
+    causing ``LocalEntryNotFoundError`` because the hub ID was used instead
+    of the verified local path.
+    """
+
+    # -- _resolve_load_target unit tests ----------------------------------
+
+    def test_kaggle_offline_resolves_to_local_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """Regression: under HF_HUB_OFFLINE=1 with OCZY_MODEL_DIR set to a
+        real directory, the resolver must return the local path, not the hub
+        ID.  This is the exact Kaggle error path that caused
+        LocalEntryNotFoundError.
+        """
+        local_dir = tmp_path / "models" / "Qwen2.5-0.5B-Instruct"
+        local_dir.mkdir(parents=True)
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        monkeypatch.setenv("OCZY_MODEL_DIR", str(local_dir))
+        monkeypatch.delenv("OCZY_HF_MODEL_DIR", raising=False)
+        monkeypatch.delenv("OCZY_REMOTE_CPU_ONLY", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+        from oczy.experiments.s19_language_organ import _resolve_load_target
+
+        result = _resolve_load_target("Qwen/Qwen2.5-0.5B-Instruct")
+        assert result == str(local_dir)
+        assert result != "Qwen/Qwen2.5-0.5B-Instruct"
+
+    def test_local_env_precedence_model_dir_over_hf_model_dir(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """OCZY_MODEL_DIR takes priority over OCZY_HF_MODEL_DIR when both
+        are set and exist.
+        """
+        model_dir = tmp_path / "model_dir"
+        hf_model_dir = tmp_path / "hf_model_dir"
+        model_dir.mkdir()
+        hf_model_dir.mkdir()
+        monkeypatch.setenv("OCZY_MODEL_DIR", str(model_dir))
+        monkeypatch.setenv("OCZY_HF_MODEL_DIR", str(hf_model_dir))
+        monkeypatch.delenv("OCZY_REMOTE_CPU_ONLY", raising=False)
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+        from oczy.experiments.s19_language_organ import _resolve_load_target
+
+        result = _resolve_load_target("Qwen/Qwen2.5-0.5B-Instruct")
+        assert result == str(model_dir)
+        assert result != str(hf_model_dir)
+
+    def test_hf_model_dir_used_when_model_dir_unset(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """When OCZY_MODEL_DIR is unset, OCZY_HF_MODEL_DIR is used if it
+        exists.
+        """
+        hf_model_dir = tmp_path / "hf_model"
+        hf_model_dir.mkdir()
+        monkeypatch.delenv("OCZY_MODEL_DIR", raising=False)
+        monkeypatch.setenv("OCZY_HF_MODEL_DIR", str(hf_model_dir))
+        monkeypatch.delenv("OCZY_REMOTE_CPU_ONLY", raising=False)
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+        from oczy.experiments.s19_language_organ import _resolve_load_target
+
+        result = _resolve_load_target("Qwen/Qwen2.5-0.5B-Instruct")
+        assert result == str(hf_model_dir)
+
+    def test_remote_missing_local_fail_closed(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Under offline mode with neither OCZY_MODEL_DIR nor
+        OCZY_HF_MODEL_DIR pointing to an existing directory, the resolver
+        must raise RuntimeError (fail closed) rather than falling back to
+        the hub ID.
+        """
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        monkeypatch.setenv("OCZY_MODEL_DIR", "/nonexistent/path/abc")
+        monkeypatch.setenv("OCZY_HF_MODEL_DIR", "/nonexistent/path/xyz")
+        monkeypatch.delenv("OCZY_REMOTE_CPU_ONLY", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+        from oczy.experiments.s19_language_organ import _resolve_load_target
+
+        with pytest.raises(RuntimeError, match="OCZY_MODEL_DIR|OCZY_HF_MODEL_DIR"):
+            _resolve_load_target("Qwen/Qwen2.5-0.5B-Instruct")
+
+    def test_remote_no_env_vars_fail_closed(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Under offline mode with no env vars set at all, the resolver
+        must raise RuntimeError.
+        """
+        monkeypatch.setenv("OCZY_REMOTE_CPU_ONLY", "1")
+        monkeypatch.delenv("OCZY_MODEL_DIR", raising=False)
+        monkeypatch.delenv("OCZY_HF_MODEL_DIR", raising=False)
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+        from oczy.experiments.s19_language_organ import _resolve_load_target
+
+        with pytest.raises(RuntimeError, match="OCZY_MODEL_DIR|OCZY_HF_MODEL_DIR"):
+            _resolve_load_target("Qwen/Qwen2.5-0.5B-Instruct")
+
+    def test_local_nonexistence_rejection_falls_through(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """When OCZY_MODEL_DIR points to a non-existent path, it is rejected
+        (skipped); the resolver falls through to OCZY_HF_MODEL_DIR if it
+        exists.
+        """
+        real_dir = tmp_path / "real_model"
+        real_dir.mkdir()
+        monkeypatch.setenv("OCZY_MODEL_DIR", "/nonexistent/path/abc")
+        monkeypatch.setenv("OCZY_HF_MODEL_DIR", str(real_dir))
+        monkeypatch.delenv("OCZY_REMOTE_CPU_ONLY", raising=False)
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+        from oczy.experiments.s19_language_organ import _resolve_load_target
+
+        result = _resolve_load_target("Qwen/Qwen2.5-0.5B-Instruct")
+        assert result == str(real_dir)
+        assert result != "/nonexistent/path/abc"
+
+    def test_local_nonexistence_rejection_to_hub_in_non_offline(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When OCZY_MODEL_DIR points to a non-existent path, no
+        OCZY_HF_MODEL_DIR is set, and we are NOT offline, the resolver
+        falls through to the hub model_id.
+        """
+        monkeypatch.setenv("OCZY_MODEL_DIR", "/nonexistent/path/abc")
+        monkeypatch.delenv("OCZY_HF_MODEL_DIR", raising=False)
+        monkeypatch.delenv("OCZY_REMOTE_CPU_ONLY", raising=False)
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+        from oczy.experiments.s19_language_organ import _resolve_load_target
+
+        result = _resolve_load_target("Qwen/Qwen2.5-0.5B-Instruct")
+        assert result == "Qwen/Qwen2.5-0.5B-Instruct"
+
+    def test_non_remote_hub_fallback(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """In non-offline mode with no local env dirs set, the resolver
+        falls back to the original model_id (hub ID).
+        """
+        monkeypatch.delenv("OCZY_MODEL_DIR", raising=False)
+        monkeypatch.delenv("OCZY_HF_MODEL_DIR", raising=False)
+        monkeypatch.delenv("OCZY_REMOTE_CPU_ONLY", raising=False)
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+        from oczy.experiments.s19_language_organ import _resolve_load_target
+
+        result = _resolve_load_target("Qwen/Qwen2.5-0.5B-Instruct")
+        assert result == "Qwen/Qwen2.5-0.5B-Instruct"
+
+    # -- logical model ID preservation -----------------------------------
+
+    def test_calibrate_dev_manifest_preserves_logical_model_id(self) -> None:
+        """The calibrate-dev manifest's model_repo_id must use the original
+        ``model_id`` (the CLI/manifest value), not the resolved local load
+        target.  This preserves provenance for reproducibility across
+        local/remote environments.
+        """
+        import inspect
+
+        from oczy.experiments.s19_language_organ import _calibrate_dev
+
+        source = inspect.getsource(_calibrate_dev)
+        # The manifest must use the original model_id for provenance.
+        assert "model_repo_id=model_id" in source
+        # Must NOT use the resolved load target for provenance.
+        assert "model_repo_id=load_target" not in source
+
+    def test_evaluate_uses_manifest_model_repo_id_for_resolver(self) -> None:
+        """The evaluate phase must pass ``manifest.model_repo_id`` (the
+        pinned logical ID) to ``_resolve_load_target``, not a hardcoded
+        hub ID or the resolved path from a previous run.
+        """
+        import inspect
+
+        from oczy.experiments.s19_language_organ import _evaluate
+
+        source = inspect.getsource(_evaluate)
+        # The resolver must receive the manifest's pinned model_repo_id.
+        assert "_resolve_load_target" in source
+        assert "manifest.model_repo_id" in source
+
+    # -- both CLI phases use the resolver --------------------------------
+
+    def test_calibrate_dev_calls_resolver(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """calibrate-dev must call _resolve_load_target before
+        HFDriver.load.  A sentinel exception proves the call site is hit.
+        """
+        monkeypatch.setenv("EVAL_CHANGE_APPROVED", "1")
+
+        def _fake_resolver(model_id: str) -> str:
+            raise _ResolverSentinel(model_id)
+
+        monkeypatch.setattr(
+            "oczy.experiments.s19_language_organ._resolve_load_target",
+            _fake_resolver,
+        )
+
+        from oczy.experiments.s19_language_organ import main
+
+        with pytest.raises(_ResolverSentinel) as exc_info:
+            main([
+                "calibrate-dev",
+                "--manifest-out", str(tmp_path / "manifest.json"),
+            ])
+        assert exc_info.value.model_id == "Qwen/Qwen2.5-0.5B-Instruct"
+
+    def test_evaluate_calls_resolver(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """evaluate must call _resolve_load_target before HFDriver.load.
+        A sentinel exception proves the call site is hit.
+        """
+        monkeypatch.setenv("EVAL_CHANGE_APPROVED", "1")
+
+        manifest_data = _make_valid_manifest_dict()
+        manifest_path = tmp_path / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest_data))
+
+        # Make the eval-manifest hash check pass so evaluate proceeds to
+        # the model-loading step where the resolver is called.
+        monkeypatch.setattr(
+            "oczy.experiments.s19_language_organ.hash_eval_manifest",
+            lambda: manifest_data["eval_manifest_sha256"],
+        )
+
+        def _fake_resolver(model_id: str) -> str:
+            raise _ResolverSentinel(model_id)
+
+        monkeypatch.setattr(
+            "oczy.experiments.s19_language_organ._resolve_load_target",
+            _fake_resolver,
+        )
+
+        from oczy.experiments.s19_language_organ import main
+
+        with pytest.raises(_ResolverSentinel) as exc_info:
+            main([
+                "evaluate",
+                "--manifest", str(manifest_path),
+                "--signoff-id", "human-001",
+            ])
+        assert exc_info.value.model_id == "Qwen/Qwen2.5-0.5B-Instruct"

@@ -85,6 +85,54 @@ from oczy.experiments.s19_language_organ_core import (
 from oczy.lm.hf_driver import HFDriver
 
 # ---------------------------------------------------------------------------
+# Offline-aware model load-target resolution
+# ---------------------------------------------------------------------------
+
+
+def _resolve_load_target(model_id: str) -> str:
+    """Resolve the path/id to pass to ``HFDriver.load``.
+
+    Resolution order:
+      1. ``OCZY_MODEL_DIR`` (if set and points to an existing directory)
+      2. ``OCZY_HF_MODEL_DIR`` (if set and points to an existing directory)
+      3. ``model_id`` — but ONLY outside remote/offline mode.
+
+    Under ``OCZY_REMOTE_CPU_ONLY=1``, ``HF_HUB_OFFLINE=1``, or
+    ``TRANSFORMERS_OFFLINE=1``, the hub-id fallback is forbidden: if neither
+    env var resolves to a local directory, a ``RuntimeError`` is raised with
+    an actionable ASI message *before* any HuggingFace call — preventing the
+    ``LocalEntryNotFoundError`` that occurs when a hub id is passed to
+    ``from_pretrained`` with ``local_files_only=True``.
+
+    The caller's ``model_id`` (CLI arg or manifest ``model_repo_id``) is
+    preserved separately for provenance and is NOT mutated here.
+    """
+    import os
+
+    offline = (
+        os.environ.get("OCZY_REMOTE_CPU_ONLY") == "1"
+        or os.environ.get("HF_HUB_OFFLINE") == "1"
+        or os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+    )
+
+    for env_var in ("OCZY_MODEL_DIR", "OCZY_HF_MODEL_DIR"):
+        env_dir = os.environ.get(env_var)
+        if env_dir and os.path.isdir(env_dir):
+            return env_dir
+
+    if offline:
+        raise RuntimeError(
+            f"ASI offline_model_unavailable: OCZY_REMOTE_CPU_ONLY/"
+            f"HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE is active but no local "
+            f"model directory was found. Set OCZY_MODEL_DIR or "
+            f"OCZY_HF_MODEL_DIR to an existing snapshot directory for "
+            f"pinned model_id={model_id!r}. Network fallback is disabled "
+            f"in offline/remote mode."
+        )
+
+    return model_id
+
+# ---------------------------------------------------------------------------
 # Calibrate-dev phase
 # ---------------------------------------------------------------------------
 
@@ -117,9 +165,12 @@ def _calibrate_dev(args: argparse.Namespace) -> int:
     print(f"ASI eval_manifest_hash={eval_manifest_hash}", file=sys.stderr)
 
     # 2. Load frozen LM.
+    # Resolve local load target (OCZY_MODEL_DIR/OCZY_HF_MODEL_DIR) under
+    # offline/remote mode; keep model_id for provenance only.
     model_id = args.model_id
-    print(f"# Loading frozen LM: {model_id}", file=sys.stderr)
-    driver = HFDriver.load(model_id=model_id)
+    load_target = _resolve_load_target(model_id)
+    print(f"# Loading frozen LM: {load_target} (provenance id={model_id})", file=sys.stderr)
+    driver = HFDriver.load(model_id=load_target)
     model_hash_before = hash_model(driver)
     print(f"ASI model_hash_before={model_hash_before}", file=sys.stderr)
 
@@ -650,9 +701,12 @@ def _evaluate(args: argparse.Namespace) -> int:
     print(f"ASI eval_manifest_sha256_verified={eval_manifest_hash}", file=sys.stderr)
 
     # 3. Load frozen LM.
+    # Resolve local load target (OCZY_MODEL_DIR/OCZY_HF_MODEL_DIR) under
+    # offline/remote mode; keep model_id for provenance only.
     model_id = manifest.model_repo_id
-    print(f"# Loading frozen LM: {model_id}", file=sys.stderr)
-    driver = HFDriver.load(model_id=model_id)
+    load_target = _resolve_load_target(model_id)
+    print(f"# Loading frozen LM: {load_target} (provenance id={model_id})", file=sys.stderr)
+    driver = HFDriver.load(model_id=load_target)
     model_hash_before = hash_model(driver)
     model_safetensors_sha = hash_model_safetensors(driver)
     print(f"ASI model_hash_before={model_hash_before}", file=sys.stderr)
