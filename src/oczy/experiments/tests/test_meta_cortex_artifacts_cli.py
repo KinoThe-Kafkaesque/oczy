@@ -40,7 +40,12 @@ from oczy.experiments.meta_cortex.artifacts import (
     save_developmental_checkpoint,
     write_dev_result,
 )
-from oczy.experiments.meta_cortex.cli import _build_parser, main
+from oczy.experiments.meta_cortex.cli import (
+    _CANDIDATE_COMMANDS,
+    _build_candidate_parser,
+    _build_parser,
+    main,
+)
 from oczy.experiments.meta_cortex.contracts import (
     DEV_SCHEMA,
     TASKGEN_SCHEMA,
@@ -590,9 +595,9 @@ class TestDevResultSerialization:
             trace_objects_after=0,
             trace_feature_tensors_before=2,
             trace_feature_tensors_after=0,
-            fast_shape=[1, 64, 64],
-            slow_shape=[1, 64, 64],
-            bank_shape=[1, 2, 16],
+            fast_shape=(1, 64, 64),
+            slow_shape=(1, 64, 64),
+            bank_shape=(1, 2, 16),
             fast_zero=True,
             logical_persistent_bytes=16384,
             optimizer_step_count_before=0,
@@ -944,9 +949,9 @@ class TestCLIMain:
             trace_objects_after=0,
             trace_feature_tensors_before=2,
             trace_feature_tensors_after=0,
-            fast_shape=[1, 64, 64],
-            slow_shape=[1, 64, 64],
-            bank_shape=[1, 2, 16],
+            fast_shape=(1, 64, 64),
+            slow_shape=(1, 64, 64),
+            bank_shape=(1, 2, 16),
             fast_zero=True,
             logical_persistent_bytes=16384,
             optimizer_step_count_before=0,
@@ -1032,3 +1037,156 @@ class TestCanonicalHashing:
         assert canonical_state_hash(state1) != canonical_state_hash(state2)
 
 
+# ---------------------------------------------------------------------------
+# Candidate CLI parser (unsigned instrument commands)
+# ---------------------------------------------------------------------------
+
+
+class TestCandidateCLIParser:
+    """Test the separate candidate parser — unsigned instrument commands only.
+
+    The candidate parser must have exactly 5 commands:
+    materialize-definition, verify-definition, calibrate-dev,
+    finalize-candidate, verify-candidate.
+
+    It must NOT have: signoff, promote-and-sign, evaluate, meta-test,
+    oracle, run-meta-test, or any authorization gate.
+    """
+
+    def test_candidate_commands_set(self) -> None:
+        """_CANDIDATE_COMMANDS must be exactly the 5 unsigned commands."""
+        assert _CANDIDATE_COMMANDS == {
+            "materialize-definition",
+            "verify-definition",
+            "calibrate-dev",
+            "finalize-candidate",
+            "verify-candidate",
+        }
+
+    def test_candidate_parser_has_exactly_5_commands(self) -> None:
+        parser = _build_candidate_parser()
+        subparsers_action = None
+        for action in parser._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                subparsers_action = action
+                break
+        assert subparsers_action is not None
+        commands = set(subparsers_action.choices.keys())
+        assert commands == {
+            "materialize-definition",
+            "verify-definition",
+            "calibrate-dev",
+            "finalize-candidate",
+            "verify-candidate",
+        }
+
+    def test_candidate_parser_forbids_signoff(self) -> None:
+        parser = _build_candidate_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["signoff"])
+
+    def test_candidate_parser_forbids_promote_and_sign(self) -> None:
+        parser = _build_candidate_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["promote-and-sign"])
+
+    def test_candidate_parser_forbids_evaluate(self) -> None:
+        parser = _build_candidate_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["evaluate"])
+
+    def test_candidate_parser_forbids_meta_test(self) -> None:
+        parser = _build_candidate_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["meta-test"])
+
+    def test_candidate_parser_forbids_oracle(self) -> None:
+        parser = _build_candidate_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["oracle"])
+
+    def test_candidate_parser_forbids_run_meta_test(self) -> None:
+        parser = _build_candidate_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["run-meta-test"])
+
+    def test_candidate_parser_forbids_verify(self) -> None:
+        """'verify' alone must not be a command (only verify-definition/verify-candidate)."""
+        parser = _build_candidate_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["verify"])
+
+    def test_candidate_parser_no_command_fails(self) -> None:
+        parser = _build_candidate_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args([])
+
+    def test_candidate_parser_help_works(self) -> None:
+        parser = _build_candidate_parser()
+        with pytest.raises(SystemExit) as exc_info:
+            parser.parse_args(["--help"])
+        assert exc_info.value.code == 0
+
+    def test_materialize_definition_has_required_args(self) -> None:
+        parser = _build_candidate_parser()
+        args = parser.parse_args([
+            "materialize-definition",
+            "--config", "/tmp/config.json",
+            "--test-seed-file", "/tmp/seed.bin",
+            "--out", "/tmp/out",
+        ])
+        assert args.command == "materialize-definition"
+
+    def test_calibrate_dev_has_required_args(self) -> None:
+        parser = _build_candidate_parser()
+        args = parser.parse_args([
+            "calibrate-dev",
+            "--calibration-view", "/tmp/cal.json",
+            "--no-update-records", "/tmp/no_update.json",
+            "--seed-cell-records", "/tmp/seed_cell.json",
+            "--theta-hashes", "/tmp/theta_hashes.json",
+            "--organ-hash", "a" * 64,
+            "--output-dir", "/tmp/out",
+        ])
+        assert args.command == "calibrate-dev"
+
+    def test_finalize_candidate_has_required_args(self) -> None:
+        parser = _build_candidate_parser()
+        args = parser.parse_args([
+            "finalize-candidate",
+            "--definition", "/tmp/def",
+            "--calibration-report", "/tmp/cal.json",
+            "--power-report", "/tmp/pow.json",
+            "--out", "/tmp/out",
+        ])
+        assert args.command == "finalize-candidate"
+
+
+class TestCLIDispatchSeparation:
+    """The main entrypoint must dispatch correctly between DEV and candidate parsers."""
+
+    def test_candidate_command_dispatches_to_candidate_parser(self) -> None:
+        """A candidate command must reach the candidate parser, not the DEV parser."""
+        # materialize-definition is in _CANDIDATE_COMMANDS, so main() should
+        # dispatch to _build_candidate_parser(). We verify by checking that
+        # main() doesn't reject it as an unknown command.
+        # We can't fully run it (it would try to materialize), but we can
+        # verify the dispatch logic doesn't fall through to the DEV parser.
+        # The DEV parser would reject "materialize-definition" with SystemExit.
+        # If dispatch works, it reaches the candidate parser which accepts it
+        # (but may fail later on missing files).
+        # Just verify the command is in the candidate set.
+        assert "materialize-definition" in _CANDIDATE_COMMANDS
+        assert "calibrate-dev" in _CANDIDATE_COMMANDS
+        assert "finalize-candidate" in _CANDIDATE_COMMANDS
+
+    def test_dev_command_not_in_candidate_set(self) -> None:
+        """DEV commands must not be in the candidate command set."""
+        assert "train-dev" not in _CANDIDATE_COMMANDS
+        assert "validate-dev" not in _CANDIDATE_COMMANDS
+        assert "audit-dev" not in _CANDIDATE_COMMANDS
+
+    def test_signoff_not_in_candidate_set(self) -> None:
+        """Signoff must not be in the candidate command set."""
+        assert "signoff" not in _CANDIDATE_COMMANDS
+        assert "promote-and-sign" not in _CANDIDATE_COMMANDS

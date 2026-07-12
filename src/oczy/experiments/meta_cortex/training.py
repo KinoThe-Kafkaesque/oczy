@@ -972,13 +972,28 @@ def _run_condition_untrained(
     organ: FrozenLanguageOrgan,
     task: MetaTask,
     boundary: OptimizationBoundary,
+    *,
+    evaluation_seed: int = 0,
 ) -> ConditionResult:
-    """UNTRAINED_RULE: fresh deterministic theta, events enabled, no optimization."""
+    """UNTRAINED_RULE: fresh deterministic theta, events enabled, no optimization.
+
+    The fresh theta is seeded from the evaluation seed and task fingerprint
+    so that different evaluation seeds produce genuinely distinct untrained
+    baselines, while keeping capacity/config identical to the trained model.
+    """
     # Save current theta (clone to avoid in-place mutation issues).
     saved_state_dict = {k: v.clone() for k, v in model.state_dict().items()}
 
-    # Fresh theta with a different seed.
-    fresh_model = MetaCortex(model.config)
+    # Derive a fresh seed from evaluation_seed and task fingerprint.
+    import hashlib
+    fresh_seed_material = f"untrained_rule|{evaluation_seed}|{task.rule_fingerprint}"
+    fresh_seed = int.from_bytes(
+        hashlib.sha256(fresh_seed_material.encode("utf-8")).digest()[:8],
+        "big",
+    ) & ((1 << 63) - 1)
+
+    # Fresh theta with the derived seed.
+    fresh_model = MetaCortex(model.config, init_seed=fresh_seed)
     # Swap in the fresh model temporarily.
     model.load_state_dict(fresh_model.state_dict())
 
@@ -1638,12 +1653,24 @@ class OuterTrainer:
         last_val_result: DevValidationResult | None = None
 
         step = 0
+        # Seed-derived task ordering: use config.seed to produce a
+        # reproducible but genuinely distinct task order per seed.
+        # A simple seeded permutation via Fisher-Yates with a local LCG.
+        _order_state = self.config.seed & ((1 << 63) - 1)
+        if _order_state == 0:
+            _order_state = 1
+        _task_order = list(range(len(train_tasks)))
+        for _i in range(len(_task_order) - 1, 0, -1):
+            _order_state = (_order_state * 6364136223846793005 + 1442695040888963407) & ((1 << 63) - 1)
+            _j = (_order_state >> 1) % (_i + 1)
+            _task_order[_i], _task_order[_j] = _task_order[_j], _task_order[_i]
+
         for outer_step in range(self.config.outer_steps):
-            # Select tasks for this step (deterministic round-robin).
+            # Select tasks for this step using the seed-derived order.
             start_idx = (outer_step * self.config.tasks_per_step) % len(train_tasks)
             step_tasks: list[MetaTask] = []
             for i in range(self.config.tasks_per_step):
-                step_tasks.append(train_tasks[(start_idx + i) % len(train_tasks)])
+                step_tasks.append(train_tasks[_task_order[(start_idx + i) % len(train_tasks)]])
 
             # Train step.
             step_result = self.train_step(step_tasks)

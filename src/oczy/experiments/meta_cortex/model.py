@@ -171,9 +171,10 @@ class MetaCortex(nn.Module):
     At C=64: ``129*D + 64*L + 91_588``.
     """
 
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, config: ModelConfig, *, init_seed: int = 20260709) -> None:
         super().__init__()
         self.config = config
+        self.init_seed = init_seed
         D = config.feature_dim
         C = config.d_cortex
         L = config.bank_width
@@ -181,11 +182,13 @@ class MetaCortex(nn.Module):
         # Local seeded generator for Parameter tensors — never touches the
         # global RNG.  ``nn.Linear`` layers use the global RNG internally,
         # so we fork it (save/restore) to avoid mutating the process state.
+        # The init_seed is an explicit parameter so developmental seeds
+        # produce genuinely distinct theta trajectories.
         gen = torch.Generator(device="cpu")
-        gen.manual_seed(20260709)
+        gen.manual_seed(init_seed)
 
         with torch.random.fork_rng(devices=[]):
-            torch.manual_seed(20260709)
+            torch.manual_seed(init_seed)
 
             # 1. Shared feature projection and role embeddings.
             self.feature_projection = nn.Linear(D, C)

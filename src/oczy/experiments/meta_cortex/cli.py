@@ -2,6 +2,7 @@
 
 Commands
 --------
+DEV training/validation/audit (``_build_parser``):
 - ``train-dev``   : Build/audit the in-memory DEV catalog, load real Qwen,
   outer-train on meta-train, select on meta-validation, and write a
   developmental checkpoint + DEV result.
@@ -12,10 +13,25 @@ Commands
   the DEV split in memory, and inspect result/state artifacts.  Does not
   load task text from disk or run training.
 
-There is **no** ``evaluate``, ``meta-test``, ``run-meta-test``,
-``materialize``, ``freeze``, ``signoff``, ``manifest``, ``C7``, or ``C8``
-command/option.  There is no ``--driver mock`` fallback.  Parser help
-labels every command "DEV only / not a scientific meta-test."
+Unsigned candidate/instrument (``_build_candidate_parser``):
+- ``materialize-definition``: Materialize a hashed DEFINITION.json,
+  DEV_VIEW.json, CALIBRATION_VIEW.json, registries, and sealed meta-test
+  records from an independent test seed.
+- ``verify-definition``     : Strictly verify a materialized definition.
+- ``calibrate-dev``         : Run DEV calibration on CALIBRATION_VIEW only;
+  writes DEV_DISTRIBUTIONS.json and POWER_ANALYSIS.json.
+- ``finalize-candidate``    : Create a new complete unsigned candidate
+  bundle with CANDIDATE_MANIFEST.json binding all bytes, margin, and N.
+- ``verify-candidate``      : Strictly verify a finalized candidate.
+
+The DEV parser has exactly three commands and forbids ``evaluate``,
+``meta-test``, ``signoff``, ``manifest``, ``C7``, and ``C8``.  The
+candidate parser exposes only unsigned instrument materialization and
+calibration; it does **not** expose ``evaluate``, ``meta-test``,
+``run-meta-test``, ``signoff``, ``promote-and-sign``, ``oracle``, or any
+authorization gate.  No sealed content is printed.  There is no
+``--driver mock`` fallback.  Parser help labels every command
+"DEV only / not a scientific meta-test."
 
 Invalid commands fail through argparse before model/task loading.  Real
 organ load errors return nonzero with no synthetic fallback.
@@ -349,6 +365,191 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 # ---------------------------------------------------------------------------
+# Candidate parser (instrument materialization and calibration)
+# ---------------------------------------------------------------------------
+
+_CANDIDATE_LABEL = "DEV only / unsigned candidate / not a scientific meta-test"
+
+_CANDIDATE_COMMANDS = frozenset(
+    {
+        "materialize-definition",
+        "verify-definition",
+        "calibrate-dev",
+        "finalize-candidate",
+        "verify-candidate",
+    }
+)
+
+
+def _build_candidate_parser() -> argparse.ArgumentParser:
+    """Build the argparse parser for unsigned candidate/instrument commands.
+
+    These commands are DEV-only: they materialize, verify, calibrate, and
+    finalize candidate instrument assets.  They do **not** expose
+    ``evaluate``, ``meta-test``, ``signoff``, ``oracle``, ``run-meta-test``,
+    or any authorization gate.  No sealed content is printed.
+    """
+    parser = argparse.ArgumentParser(
+        prog="oczy.experiments.meta_cortex",
+        description=(
+            "Research/20: meta-cortex instrument candidate commands "
+ "(DEV-only, unsigned). Commands: materialize-definition, "
+            "verify-definition, calibrate-dev, finalize-candidate, "
+            "verify-candidate."
+        ),
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # -- materialize-definition -------------------------------------------
+    mat = subparsers.add_parser(
+        "materialize-definition",
+        help=f"Materialize a hashed instrument definition. {_CANDIDATE_LABEL}",
+        description=(
+            "Materialize DEFINITION.json, DEV_VIEW.json, CALIBRATION_VIEW.json, "
+            "prompt/scorer/endpoint registries, seed commitments, and sealed "
+            "meta-test task records from an independent test seed. "
+            + _CANDIDATE_LABEL
+        ),
+    )
+    mat.add_argument(
+        "--config",
+        required=True,
+        help="Path to InstrumentDefinitionConfig JSON",
+    )
+    mat.add_argument(
+        "--test-seed-file",
+        required=True,
+        help="Path to independent 256-bit test seed file (never logged)",
+    )
+    mat.add_argument(
+        "--out",
+        required=True,
+        help="Output directory for the materialized definition",
+    )
+
+    # -- verify-definition ------------------------------------------------
+    ver = subparsers.add_parser(
+        "verify-definition",
+        help=f"Verify a materialized instrument definition. {_CANDIDATE_LABEL}",
+        description=(
+            "Strictly verify a materialized definition: re-read/validate "
+            "DEFINITION.json, per-file hashes, and leakage audit. "
+            + _CANDIDATE_LABEL
+        ),
+    )
+    ver.add_argument(
+        "--definition",
+        required=True,
+        help="Path to the definition root directory",
+    )
+    ver.add_argument(
+        "--expected-definition-sha256",
+        required=True,
+        help="Expected definition SHA-256 (must match exactly)",
+    )
+
+    # -- calibrate-dev ----------------------------------------------------
+    cal = subparsers.add_parser(
+        "calibrate-dev",
+        help=f"Run DEV calibration on CALIBRATION_VIEW only. {_CANDIDATE_LABEL}",
+        description=(
+            "Run no-update repeatability, matched-condition effect estimation, "
+            "and power analysis on held-back calibration rules. Consumes "
+ "CALIBRATION_VIEW.json plus verified canonical no-update/seed-cell "
+            "record files and theta hashes; writes DEV_DISTRIBUTIONS.json and "
+            "POWER_ANALYSIS.json. No meta-test execution. "
+            + _CANDIDATE_LABEL
+        ),
+    )
+    cal.add_argument(
+        "--calibration-view",
+        required=True,
+        help="Path to CALIBRATION_VIEW.json (held-back calibration rules)",
+    )
+    cal.add_argument(
+        "--no-update-records",
+        required=True,
+        help="Path to canonical no-update repeat records JSON file",
+    )
+    cal.add_argument(
+        "--seed-cell-records",
+        required=True,
+        help="Path to canonical seed-cell records JSON file",
+    )
+    cal.add_argument(
+        "--theta-hashes",
+        required=True,
+        help="Path to canonical theta hashes JSON file (exactly 5 hashes)",
+    )
+    cal.add_argument(
+        "--organ-hash",
+        required=True,
+        help="64-char hex SHA-256 of the frozen organ parameters",
+    )
+    cal.add_argument(
+        "--output-dir",
+        required=True,
+        help="Output directory for DEV_DISTRIBUTIONS.json and POWER_ANALYSIS.json",
+    )
+
+    # -- finalize-candidate -----------------------------------------------
+    fin = subparsers.add_parser(
+        "finalize-candidate",
+        help=f"Finalize an unsigned candidate bundle. {_CANDIDATE_LABEL}",
+        description=(
+            "Create a new complete candidate directory with "
+            "CANDIDATE_MANIFEST.json binding all instrument bytes, "
+            "empirical margin, and powered task count. Does not sign. "
+            + _CANDIDATE_LABEL
+        ),
+    )
+    fin.add_argument(
+        "--definition",
+        required=True,
+        help="Path to the definition root directory",
+    )
+    fin.add_argument(
+        "--calibration-report",
+        required=True,
+        help="Path to DEV_DISTRIBUTIONS.json",
+    )
+    fin.add_argument(
+        "--power-report",
+        required=True,
+        help="Path to POWER_ANALYSIS.json",
+    )
+    fin.add_argument(
+        "--out",
+        required=True,
+        help="Output directory for the candidate bundle",
+    )
+
+    # -- verify-candidate -------------------------------------------------
+    vc = subparsers.add_parser(
+        "verify-candidate",
+        help=f"Verify a finalized candidate bundle. {_CANDIDATE_LABEL}",
+        description=(
+            "Strictly verify a candidate: re-read/validate "
+            "CANDIDATE_MANIFEST.json, per-file hashes, evidence hashes, "
+            "and leakage audit. Does not sign or access meta-test. "
+            + _CANDIDATE_LABEL
+        ),
+    )
+    vc.add_argument(
+        "--candidate",
+        required=True,
+        help="Path to the candidate root directory",
+    )
+    vc.add_argument(
+        "--expected-manifest-sha256",
+        required=True,
+        help="Expected candidate manifest SHA-256 (must match exactly)",
+    )
+
+    return parser
+
+
+# ---------------------------------------------------------------------------
 # Config builders
 # ---------------------------------------------------------------------------
 
@@ -494,7 +695,7 @@ def _train_dev(args: argparse.Namespace) -> int:
 
     try:
         # 4. Build model.
-        model = MetaCortex(model_config)
+        model = MetaCortex(model_config, init_seed=outer_config.seed)
         param_count = model.parameter_count()
         param_bytes = param_count * 4  # float32
         print(f"ASI parameter_count={param_count}", file=sys.stderr)
@@ -877,14 +1078,340 @@ def _audit_dev(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Candidate commands (instrument materialization and calibration)
+# ---------------------------------------------------------------------------
+
+
+def _materialize_definition(args: argparse.Namespace) -> int:
+    """Materialize a hashed instrument definition."""
+    print("# Research/20 — materialize-definition phase", file=sys.stderr)
+    print(f"# {_CANDIDATE_LABEL}", file=sys.stderr)
+
+    config_path = Path(args.config)
+    test_seed_file = Path(args.test_seed_file)
+    out = Path(args.out)
+
+    if not config_path.exists():
+        print(f"ERROR: config file not found: {config_path}", file=sys.stderr)
+        print("METRIC materialize_status=FAILED")
+        return 1
+    if not test_seed_file.exists():
+        print(f"ERROR: test seed file not found: {test_seed_file}", file=sys.stderr)
+        print("METRIC materialize_status=FAILED")
+        return 1
+
+    try:
+        from .instrument import materialize_definition
+        from .instrument_contracts import InstrumentDefinitionConfig
+    except ImportError as exc:
+        print(f"ERROR: instrument module not available: {exc}", file=sys.stderr)
+        print("METRIC materialize_status=FAILED")
+        return 1
+
+    import json
+
+    try:
+        config_obj = json.loads(config_path.read_text(encoding="utf-8"))
+        config = InstrumentDefinitionConfig.from_json_obj(config_obj)
+    except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        print(f"ERROR: invalid config: {exc}", file=sys.stderr)
+        print("METRIC materialize_status=FAILED")
+        return 1
+
+    try:
+        definition = materialize_definition(config, test_seed_file=test_seed_file, out=out)
+    except Exception as exc:
+        print(f"ERROR: materialization failed: {exc}", file=sys.stderr)
+        print("METRIC materialize_status=FAILED")
+        return 1
+
+    print(f"ASI definition_path={out}", file=sys.stderr)
+    print(f"ASI definition_sha256={definition.definition_sha256}", file=sys.stderr)
+    print("METRIC materialize_status=OK")
+    print("AUDIT materialize_complete=1")
+    return 0
+
+
+def _verify_definition(args: argparse.Namespace) -> int:
+    """Verify a materialized instrument definition."""
+    print("# Research/20 — verify-definition phase", file=sys.stderr)
+    print(f"# {_CANDIDATE_LABEL}", file=sys.stderr)
+
+    try:
+        from .instrument import verify_definition
+    except ImportError as exc:
+        print(f"ERROR: instrument module not available: {exc}", file=sys.stderr)
+        print("METRIC verify_definition_status=FAILED")
+        return 1
+
+    definition_root = Path(args.definition)
+    expected_hash = args.expected_definition_sha256
+
+    try:
+        definition = verify_definition(definition_root)
+    except Exception as exc:
+        print(f"ERROR: definition verification failed: {exc}", file=sys.stderr)
+        print("METRIC verify_definition_status=FAILED")
+        return 1
+
+    if definition.definition_sha256 != expected_hash:
+        print(
+            f"ERROR: definition hash mismatch: expected {expected_hash}, "
+            f"got {definition.definition_sha256}",
+            file=sys.stderr,
+        )
+        print("METRIC verify_definition_status=FAILED")
+        return 1
+
+    print(f"ASI definition_sha256={definition.definition_sha256}", file=sys.stderr)
+    print("METRIC verify_definition_status=OK")
+    print("AUDIT verify_definition_complete=1")
+    return 0
+
+
+def _calibrate_dev(args: argparse.Namespace) -> int:
+    """Run DEV calibration on CALIBRATION_VIEW only.
+
+    Loads the CalibrationInstrumentView from CALIBRATION_VIEW.json, loads
+    verified canonical no-update/seed-cell record files and theta hashes,
+    verifies their header hashes against the view, and runs calibration.
+    No meta-test execution, no sealed content printed.  No organ loading
+    — the organ hash is supplied directly.  No free overrides for
+    counts/seeds/alpha/power — those come from the view.
+    """
+    print("# Research/20 — calibrate-dev phase", file=sys.stderr)
+    print(f"# {_CANDIDATE_LABEL}", file=sys.stderr)
+
+    calibration_view_path = Path(args.calibration_view)
+    no_update_records_path = Path(args.no_update_records)
+    seed_cell_records_path = Path(args.seed_cell_records)
+    theta_hashes_path = Path(args.theta_hashes)
+    organ_hash = args.organ_hash
+    output_dir = Path(args.output_dir)
+
+    for label, path in [
+        ("calibration-view", calibration_view_path),
+        ("no-update-records", no_update_records_path),
+        ("seed-cell-records", seed_cell_records_path),
+        ("theta-hashes", theta_hashes_path),
+    ]:
+        if not path.exists():
+            print(f"ERROR: {label} not found: {path}", file=sys.stderr)
+            print("METRIC calibrate_status=FAILED")
+            return 1
+
+    # Lazy imports — instrument/calibration modules may not exist yet.
+    try:
+        from .calibration import (
+            load_no_update_repeat_records,
+            load_seed_cell_records,
+            load_theta_hashes,
+            run_dev_calibration,
+        )
+        from .instrument import load_calibration_view
+    except ImportError as exc:
+        print(f"ERROR: instrument/calibration module not available: {exc}", file=sys.stderr)
+        print("METRIC calibrate_status=FAILED")
+        return 1
+
+    # 1. Load the calibration view (held-back calibration rules only).
+    print(f"# Loading calibration view: {calibration_view_path}", file=sys.stderr)
+    try:
+        view = load_calibration_view(calibration_view_path.parent)
+    except Exception as exc:
+        print(f"ERROR: calibration view load failed: {exc}", file=sys.stderr)
+        print("METRIC calibrate_status=FAILED")
+        return 1
+
+    print(f"ASI calibration_view_sha256={view.calibration_view_sha256}", file=sys.stderr)
+
+    # 2. Load and verify canonical record files.
+    print(f"# Loading no-update records: {no_update_records_path}", file=sys.stderr)
+    try:
+        no_update_records = load_no_update_repeat_records(
+            no_update_records_path, view
+        )
+    except Exception as exc:
+        print(f"ERROR: no-update records load failed: {exc}", file=sys.stderr)
+        print("METRIC calibrate_status=FAILED")
+        return 1
+
+    print(f"# Loading seed-cell records: {seed_cell_records_path}", file=sys.stderr)
+    try:
+        seed_cell_records = load_seed_cell_records(
+            seed_cell_records_path, view
+        )
+    except Exception as exc:
+        print(f"ERROR: seed-cell records load failed: {exc}", file=sys.stderr)
+        print("METRIC calibrate_status=FAILED")
+        return 1
+
+    print(f"# Loading theta hashes: {theta_hashes_path}", file=sys.stderr)
+    try:
+        theta_hashes = load_theta_hashes(theta_hashes_path, view)
+    except Exception as exc:
+        print(f"ERROR: theta hashes load failed: {exc}", file=sys.stderr)
+        print("METRIC calibrate_status=FAILED")
+        return 1
+
+    print(f"ASI organ_hash={organ_hash}", file=sys.stderr)
+
+    # 3. Run calibration.
+    try:
+        print("# Running DEV calibration (CALIBRATION_VIEW only)...", file=sys.stderr)
+        result = run_dev_calibration(
+            view=view,
+            no_update_repeat_records=no_update_records,
+            seed_cell_records=seed_cell_records,
+            theta_hashes=theta_hashes,
+            organ_hash=organ_hash,
+            output_dir=output_dir,
+        )
+    except Exception as exc:
+        print(f"ERROR: calibration failed: {exc}", file=sys.stderr)
+        print("METRIC calibrate_status=FAILED")
+        return 1
+
+    # 4. Emit results — no sealed content.
+    print(f"ASI dev_distributions_path={result.dev_distributions_path}", file=sys.stderr)
+    print(f"ASI power_analysis_path={result.power_analysis_path}", file=sys.stderr)
+    print(f"ASI equivalence_margin={result.equivalence_margin}", file=sys.stderr)
+    print(
+        f"ASI sample_size_tasks_per_family={result.sample_size_tasks_per_family}",
+        file=sys.stderr,
+    )
+    print(f"ASI definition_sha256={result.definition_sha256}", file=sys.stderr)
+    print("METRIC calibrate_status=OK")
+    print("AUDIT calibrate_complete=1")
+    return 0
+
+
+def _finalize_candidate(args: argparse.Namespace) -> int:
+    """Finalize an unsigned candidate bundle."""
+    print("# Research/20 — finalize-candidate phase", file=sys.stderr)
+    print(f"# {_CANDIDATE_LABEL}", file=sys.stderr)
+
+    definition_root = Path(args.definition)
+    calibration_report = Path(args.calibration_report)
+    power_report = Path(args.power_report)
+    out = Path(args.out)
+
+    for label, path in [
+        ("definition", definition_root),
+        ("calibration-report", calibration_report),
+        ("power-report", power_report),
+    ]:
+        if not path.exists():
+            print(f"ERROR: {label} not found: {path}", file=sys.stderr)
+            print("METRIC finalize_status=FAILED")
+            return 1
+
+    try:
+        from .instrument import finalize_candidate
+    except ImportError as exc:
+        print(f"ERROR: instrument module not available: {exc}", file=sys.stderr)
+        print("METRIC finalize_status=FAILED")
+        return 1
+
+    try:
+        manifest = finalize_candidate(
+            definition_root,
+            calibration_report=calibration_report,
+            power_report=power_report,
+            out=out,
+        )
+    except Exception as exc:
+        print(f"ERROR: candidate finalization failed: {exc}", file=sys.stderr)
+        print("METRIC finalize_status=FAILED")
+        return 1
+
+    print(f"ASI candidate_path={out}", file=sys.stderr)
+    print(f"ASI manifest_sha256={manifest.manifest_sha256}", file=sys.stderr)
+    print(f"ASI equivalence_margin={manifest.equivalence_margin}", file=sys.stderr)
+    print(
+        f"ASI sample_size_tasks_per_family={manifest.sample_size_tasks_per_family}",
+        file=sys.stderr,
+    )
+    print("METRIC finalize_status=OK")
+    print("AUDIT finalize_complete=1")
+    return 0
+
+
+def _verify_candidate(args: argparse.Namespace) -> int:
+    """Verify a finalized candidate bundle."""
+    print("# Research/20 — verify-candidate phase", file=sys.stderr)
+    print(f"# {_CANDIDATE_LABEL}", file=sys.stderr)
+
+    try:
+        from .instrument import verify_candidate
+    except ImportError as exc:
+        print(f"ERROR: instrument module not available: {exc}", file=sys.stderr)
+        print("METRIC verify_candidate_status=FAILED")
+        return 1
+
+    candidate_root = Path(args.candidate)
+    expected_hash = args.expected_manifest_sha256
+
+    try:
+        manifest = verify_candidate(candidate_root)
+    except Exception as exc:
+        print(f"ERROR: candidate verification failed: {exc}", file=sys.stderr)
+        print("METRIC verify_candidate_status=FAILED")
+        return 1
+
+    if manifest.manifest_sha256 != expected_hash:
+        print(
+            f"ERROR: manifest hash mismatch: expected {expected_hash}, "
+            f"got {manifest.manifest_sha256}",
+            file=sys.stderr,
+        )
+        print("METRIC verify_candidate_status=FAILED")
+        return 1
+
+    print(f"ASI manifest_sha256={manifest.manifest_sha256}", file=sys.stderr)
+    print("METRIC verify_candidate_status=OK")
+    print("AUDIT verify_candidate_complete=1")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main entrypoint
 # ---------------------------------------------------------------------------
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """CLI entrypoint. Returns process exit code."""
+    """CLI entrypoint. Returns process exit code.
+
+    Dispatches between the DEV-only training/validation/audit parser and
+    the unsigned candidate/instrument parser based on the first argument.
+    When *argv* is ``None`` the real ``sys.argv[1:]`` is used so that
+    ``python -m oczy.experiments.meta_cortex materialize-definition ...``
+    reaches the candidate parser.
+    """
+    effective_argv: list[str] = (
+        list(sys.argv[1:]) if argv is None else list(argv)
+    )
+
+    if len(effective_argv) > 0 and effective_argv[0] in _CANDIDATE_COMMANDS:
+        parser = _build_candidate_parser()
+        args = parser.parse_args(effective_argv)
+
+        if args.command == "materialize-definition":
+            return _materialize_definition(args)
+        elif args.command == "verify-definition":
+            return _verify_definition(args)
+        elif args.command == "calibrate-dev":
+            return _calibrate_dev(args)
+        elif args.command == "finalize-candidate":
+            return _finalize_candidate(args)
+        elif args.command == "verify-candidate":
+            return _verify_candidate(args)
+        else:
+            parser.error(f"Unknown command: {args.command}")
+            return 1
+
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(effective_argv)
 
     if args.command == "train-dev":
         return _train_dev(args)
@@ -896,3 +1423,4 @@ def main(argv: Sequence[str] | None = None) -> int:
         # argparse with required=True should never reach here.
         parser.error(f"Unknown command: {args.command}")
         return 1
+

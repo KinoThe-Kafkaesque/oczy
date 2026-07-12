@@ -40,6 +40,15 @@ from .contracts import (
     ModelConfig,
     OuterLoopConfig,
 )
+from .instrument_contracts import (
+    CANDIDATE_MANIFEST_SCHEMA,
+    CandidateManifest,
+    ContractError,
+    InstrumentFileEntry,
+    strict_canonical_json,
+    strict_json_loads,
+    validate_sha256_hex,
+)
 from .model import CORTEX_DIM, CortexState, MetaCortex
 
 __all__ = [
@@ -52,6 +61,11 @@ __all__ = [
     "canonical_theta_hash",
     "canonical_state_hash",
     "ArtifactError",
+    # Candidate manifest persistence/verification
+    "write_candidate_manifest",
+    "read_candidate_manifest",
+    "verify_candidate_manifest_files",
+    "compute_manifest_sha256",
 ]
 
 
@@ -682,3 +696,289 @@ def read_dev_result(
     json.dumps(data, allow_nan=False)
 
     return data
+
+
+# ---------------------------------------------------------------------------
+# Candidate manifest persistence and verification
+# ---------------------------------------------------------------------------
+
+
+def compute_manifest_sha256(manifest: CandidateManifest) -> str:
+    """Compute the canonical SHA-256 self-hash of a candidate manifest.
+
+    The hash covers the canonical JSON encoding of the manifest with only
+    its ``manifest_sha256`` field omitted.  This is the authoritative
+    binding hash for the instrument.
+    """
+    payload = manifest.to_json_obj()
+    return hashlib.sha256(strict_canonical_json(payload)).hexdigest()
+
+
+def write_candidate_manifest(
+    path: str | Path,
+    manifest: CandidateManifest,
+    *,
+    overwrite: bool = False,
+) -> None:
+    """Write a candidate manifest as canonical JSON atomically.
+
+    The manifest is written with strict canonical encoding (sorted keys,
+    compact separators, ``allow_nan=False``, ``ensure_ascii=False``) and
+    a single trailing newline.
+
+    The ``manifest_sha256`` field in *manifest* must already be set to
+    the correct self-hash.  If it is empty or does not match the computed
+    hash, :class:`ArtifactError` is raised.
+
+    By default this is write-once: if the destination exists and
+    ``overwrite`` is ``False``, it is rejected.  Candidate overwrite is
+    prohibited to preserve byte-identity of signed instruments.
+
+    Args:
+        path: Destination file path.
+        manifest: The :class:`CandidateManifest` to serialize.
+        overwrite: If ``True``, allow overwriting an existing file.
+            Default is ``False`` — candidate overwrite is prohibited.
+
+    Raises:
+        ArtifactError: On hash mismatch, existing file, or write failure.
+    """
+    path = Path(path)
+    if path.exists() and not overwrite:
+        raise ArtifactError(
+            f"Candidate manifest already exists: {path}. "
+            f"Candidate overwrite is prohibited — use a new version."
+        )
+
+    # Verify self-hash matches computed hash.
+    computed = compute_manifest_sha256(manifest)
+    if manifest.manifest_sha256 != computed:
+        raise ArtifactError(
+            f"Manifest self-hash mismatch: stored {manifest.manifest_sha256!r}, "
+            f"computed {computed!r}"
+        )
+
+    # Build full dict including manifest_sha256.
+    full_dict = manifest.to_json_obj()
+    full_dict["manifest_sha256"] = manifest.manifest_sha256
+
+    # Write atomically.
+    canonical_bytes = strict_canonical_json(full_dict) + b"\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_bytes(canonical_bytes)
+    os.replace(tmp, path)
+
+
+def read_candidate_manifest(path: str | Path) -> CandidateManifest:
+    """Read and strictly validate a candidate manifest JSON file.
+
+    Validates schema, lifecycle_state, self-hash, canonical encoding, and
+    all field types.  Returns a reconstructed :class:`CandidateManifest`.
+
+    Does NOT open any sealed files — this is a metadata-only read.
+
+    Args:
+        path: Path to ``MANIFEST.json`` or ``CANDIDATE_MANIFEST.json``.
+
+    Returns:
+        The validated :class:`CandidateManifest`.
+
+    Raises:
+        ArtifactError: On any corruption, schema mismatch, or hash failure.
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise ArtifactError(f"Candidate manifest not found: {path}")
+    raw_bytes = path.read_bytes()
+    try:
+        data = strict_json_loads(raw_bytes)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ArtifactError(
+            f"Candidate manifest is not valid strict JSON: {exc}"
+        ) from exc
+
+    # Validate schema.
+    schema = data.get("schema")
+    if schema != CANDIDATE_MANIFEST_SCHEMA:
+        raise ArtifactError(
+            f"Manifest schema must be {CANDIDATE_MANIFEST_SCHEMA!r}, "
+            f"got {schema!r}"
+        )
+
+    # Validate lifecycle_state.
+    lifecycle_state = data.get("lifecycle_state")
+    if lifecycle_state != "candidate":
+        raise ArtifactError(
+            f"Manifest lifecycle_state must be 'candidate', "
+            f"got {lifecycle_state!r}"
+        )
+
+    # Validate and verify self-hash.
+    stored_hash = data.get("manifest_sha256")
+    if not isinstance(stored_hash, str) or not stored_hash:
+        raise ArtifactError("Manifest missing manifest_sha256 field")
+    validate_sha256_hex(stored_hash, field_name="manifest_sha256")
+    payload = {k: v for k, v in data.items() if k != "manifest_sha256"}
+    computed_hash = hashlib.sha256(strict_canonical_json(payload)).hexdigest()
+    if computed_hash != stored_hash:
+        raise ArtifactError(
+            f"Manifest self-hash mismatch: stored {stored_hash!r}, "
+            f"computed {computed_hash!r}"
+        )
+
+    # Verify on-disk bytes match canonical encoding (allow trailing newline).
+    canonical_bytes = strict_canonical_json(data)
+    if raw_bytes != canonical_bytes and raw_bytes != canonical_bytes + b"\n":
+        raise ArtifactError(
+            "Manifest on-disk bytes do not match canonical encoding; "
+            "whitespace/duplicate-key variants are rejected"
+        )
+
+    # Reconstruct CandidateManifest.
+    files_data = data.get("files", [])
+    if not isinstance(files_data, list):
+        raise ArtifactError("Manifest files must be a list")
+    files = tuple(
+        InstrumentFileEntry(
+            path=entry["path"],
+            sha256=entry["sha256"],
+            size_bytes=entry["size_bytes"],
+            visibility=entry["visibility"],
+            role=entry["role"],
+        )
+        for entry in files_data
+    )
+    try:
+        return CandidateManifest(
+            schema=data["schema"],
+            instrument_id=data["instrument_id"],
+            instrument_version=data["instrument_version"],
+            lifecycle_state=data["lifecycle_state"],
+            definition_sha256=data["definition_sha256"],
+            dev_view_sha256=data["dev_view_sha256"],
+            calibration_view_sha256=data["calibration_view_sha256"],
+            source_commit=data["source_commit"],
+            source_archive_sha256=data["source_archive_sha256"],
+            taskgen_schema=data["taskgen_schema"],
+            generator_algorithm=data["generator_algorithm"],
+            generator_source_sha256=data["generator_source_sha256"],
+            prompt_schema=data["prompt_schema"],
+            prompt_registry_sha256=data["prompt_registry_sha256"],
+            scorer_schema=data["scorer_schema"],
+            scorer_registry_sha256=data["scorer_registry_sha256"],
+            endpoint_schema=data["endpoint_schema"],
+            endpoint_registry_sha256=data["endpoint_registry_sha256"],
+            organ_model_id=data["organ_model_id"],
+            organ_revision=data["organ_revision"],
+            organ_parameter_sha256=data["organ_parameter_sha256"],
+            chat_template_sha256=data["chat_template_sha256"],
+            feature_mode=data["feature_mode"],
+            decoding_mode=data["decoding_mode"],
+            max_new_tokens=data["max_new_tokens"],
+            feature_dim=data["feature_dim"],
+            d_cortex=data["d_cortex"],
+            soft_bank_width=data["soft_bank_width"],
+            abstain_threshold=data["abstain_threshold"],
+            event_min=data["event_min"],
+            event_max=data["event_max"],
+            family_order=tuple(data["family_order"]),
+            probe_counts_by_split_family_kind=data["probe_counts_by_split_family_kind"],
+            train_tasks_per_family=data["train_tasks_per_family"],
+            tuning_tasks_per_family=data["tuning_tasks_per_family"],
+            calibration_tasks_per_family=data["calibration_tasks_per_family"],
+            sample_size_tasks_per_family=data["sample_size_tasks_per_family"],
+            meta_test_tasks_by_family=dict(data["meta_test_tasks_by_family"]),
+            developmental_seeds=tuple(data["developmental_seeds"]),
+            evaluation_seeds=tuple(data["evaluation_seeds"]),
+            equivalence_margin=data["equivalence_margin"],
+            calibration_report_sha256=data["calibration_report_sha256"],
+            power_report_sha256=data["power_report_sha256"],
+            calibration_holdout_accessed=data["calibration_holdout_accessed"],
+            independent_sample_unit=data["independent_sample_unit"],
+            leakage_audit_sha256=data["leakage_audit_sha256"],
+            leakage_audit_passed=data["leakage_audit_passed"],
+            meta_test_seed_sha256=data["meta_test_seed_sha256"],
+            files=files,
+            manifest_sha256=data["manifest_sha256"],
+        )
+    except (ContractError, KeyError, TypeError) as exc:
+        raise ArtifactError(
+            f"Candidate manifest field validation failed: {exc}"
+        ) from exc
+
+
+def verify_candidate_manifest_files(
+    root: str | Path,
+    manifest: CandidateManifest,
+) -> None:
+    """Verify SHA-256 and size of every listed file in the manifest.
+
+    Reads each file listed in ``manifest.files`` beneath *root* and
+    verifies its SHA-256 hash and byte size match the manifest entry.
+    Rejects symlinks, path traversal, absolute paths, duplicate paths,
+    and files resolving outside *root*.
+
+    This function does NOT distinguish public/calibration/sealed
+    visibility — it verifies all listed files.  Callers are responsible
+    for ensuring authorization has succeeded before calling this on
+    manifests containing sealed entries.
+
+    Args:
+        root: Root directory containing the instrument files.
+        manifest: The :class:`CandidateManifest` with file entries.
+
+    Raises:
+        ArtifactError: On any hash, size, path, or file-type mismatch.
+    """
+    root = Path(root)
+    root_resolved = root.resolve(strict=True)
+    seen_paths: set[str] = set()
+
+    for entry in manifest.files:
+        # Reject duplicate paths.
+        if entry.path in seen_paths:
+            raise ArtifactError(
+                f"Duplicate file path in manifest: {entry.path!r}"
+            )
+        seen_paths.add(entry.path)
+
+        # Resolve beneath root.
+        file_path = root / entry.path
+        try:
+            resolved = file_path.resolve(strict=True)
+        except OSError as exc:
+            raise ArtifactError(
+                f"Cannot resolve file {entry.path!r}: {exc}"
+            ) from exc
+
+        # Ensure resolved path is under root.
+        if not str(resolved).startswith(str(root_resolved) + os.sep):
+            raise ArtifactError(
+                f"File {entry.path!r} resolves outside instrument root"
+            )
+
+        # Reject symlinks.
+        if file_path.is_symlink():
+            raise ArtifactError(
+                f"File {entry.path!r} is a symlink — symlinks are rejected"
+            )
+
+        if not resolved.is_file():
+            raise ArtifactError(
+                f"File {entry.path!r} is not a regular file"
+            )
+
+        # Read and hash.
+        raw = resolved.read_bytes()
+        actual_hash = hashlib.sha256(raw).hexdigest()
+        if actual_hash != entry.sha256:
+            raise ArtifactError(
+                f"Hash mismatch for {entry.path!r}: "
+                f"expected {entry.sha256}, got {actual_hash}"
+            )
+        if len(raw) != entry.size_bytes:
+            raise ArtifactError(
+                f"Size mismatch for {entry.path!r}: "
+                f"expected {entry.size_bytes}, got {len(raw)}"
+            )
