@@ -156,6 +156,49 @@ def _calibrate_dev(args: argparse.Namespace) -> int:
     """
     print("# Research 19 — calibrate-dev phase", file=sys.stderr)
     print("# DEV only; holdout IDs are discarded.", file=sys.stderr)
+    # 0. Validate source provenance inputs (fail before any heavy work).
+    import os
+    import re
+
+    _SHA256_RE = re.compile(r"[0-9a-f]{64}")
+
+    # Validate CLI --source-archive-sha256 format.
+    sha_cli = getattr(args, "source_archive_sha256", None)
+    if sha_cli is not None:
+        if not _SHA256_RE.fullmatch(sha_cli):
+            print(
+                "ERROR: --source-archive-sha256 must be exactly 64 lowercase hex characters",
+                file=sys.stderr,
+            )
+            return 1
+        # Prefer explicit SHA over opening archive path; sets env var so
+        # derive_source_provenance() uses it directly instead of hashing the
+        # archive file (which may be on an unavailable mount in remote runs).
+        os.environ["OCZY_SOURCE_ARCHIVE_SHA256"] = sha_cli
+
+    # Validate env var SHA format if present.
+    archive_sha = os.environ.get("OCZY_SOURCE_ARCHIVE_SHA256", "")
+    if archive_sha and not _SHA256_RE.fullmatch(archive_sha):
+        print(
+            "ERROR: OCZY_SOURCE_ARCHIVE_SHA256 must be exactly 64 lowercase hex characters",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Require commit + (valid SHA or existing path) — do not weaken provenance.
+    commit = getattr(args, "source_commit", None) or os.environ.get("OCZY_SOURCE_COMMIT", "")
+    archive_path = getattr(args, "source_archive", None) or os.environ.get("OCZY_SOURCE_ARCHIVE", "")
+
+    if not commit:
+        print("ERROR: --source-commit (or OCZY_SOURCE_COMMIT) is required", file=sys.stderr)
+        return 1
+    if not archive_sha and not (archive_path and Path(archive_path).exists()):
+        print(
+            "ERROR: --source-archive-sha256 or --source-archive "
+            "(or OCZY_SOURCE_ARCHIVE_SHA256 / OCZY_SOURCE_ARCHIVE) is required",
+            file=sys.stderr,
+        )
+        return 1
 
     # 1. Verify eval manifest.
     from eval.v2 import verify_manifest  # type: ignore[missing-import]
@@ -1277,6 +1320,9 @@ def main(argv: list[str] | None = None) -> int:
                       help="Git commit SHA for source provenance (or OCZY_SOURCE_COMMIT env)")
     cal.add_argument("--source-archive", default=None,
                       help="Path to source archive for SHA-256 (or OCZY_SOURCE_ARCHIVE env)")
+    cal.add_argument("--source-archive-sha256", default=None,
+                      help="Explicit SHA-256 of source archive (64 lowercase hex chars; "
+                           "preferred over --source-archive path; or OCZY_SOURCE_ARCHIVE_SHA256 env)")
     cal.add_argument("--lr", type=float, default=0.01, help="Base learning rate")
     cal.add_argument("--coupler-lr", type=float, default=0.001, help="Coupler learning rate")
     cal.add_argument("--label-lr", type=float, default=0.05, help="Label head learning rate")

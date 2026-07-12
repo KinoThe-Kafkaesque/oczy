@@ -216,6 +216,10 @@ def hash_coupler_state(cortex: SharedCortex) -> tuple[str, int]:
     return hashlib.sha256(payload).hexdigest(), len(payload)
 
 
+def _is_valid_sha256(value: str) -> bool:
+    """Return True only when *value* is exactly 64 lowercase hex characters."""
+    return len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
 def derive_source_provenance(
     source_commit: str | None,
     source_archive: str | None,
@@ -227,24 +231,32 @@ def derive_source_provenance(
       2. Environment variables OCZY_SOURCE_COMMIT / OCZY_SOURCE_ARCHIVE.
       3. ``"unavailable"`` sentinel — never invented.
 
-    When an archive path is provided, its SHA-256 is computed from the file.
-    When only the hash is available (OCZY_SOURCE_ARCHIVE_SHA256), that is used
-    directly.
+    When an archive path is provided and exists as a regular file, its SHA-256
+    is computed from the file contents. When only the hash is available
+    (OCZY_SOURCE_ARCHIVE_SHA256), it is used directly — but only when it is an
+    exact 64-character lowercase hexadecimal SHA-256; malformed values are
+    rejected and fall back to the unavailable sentinel. Missing or non-file
+    archive paths never raise; they yield the unavailable sentinel.
     """
     import os
 
     commit = source_commit or os.environ.get("OCZY_SOURCE_COMMIT", "")
     archive_path = source_archive or os.environ.get("OCZY_SOURCE_ARCHIVE", "")
-    archive_sha = os.environ.get("OCZY_SOURCE_ARCHIVE_SHA256", "")
+    env_sha = os.environ.get("OCZY_SOURCE_ARCHIVE_SHA256", "")
 
-    if not commit:
-        commit = "unavailable"
-    if not archive_sha and archive_path:
+    archive_sha = ""
+    if env_sha and _is_valid_sha256(env_sha):
+        archive_sha = env_sha
+
+    if not archive_sha and archive_path and os.path.isfile(archive_path):
         h = hashlib.sha256()
         with open(archive_path, "rb") as f:
             for chunk in iter(lambda: f.read(65536), b""):
                 h.update(chunk)
         archive_sha = h.hexdigest()
+
+    if not commit:
+        commit = "unavailable"
     if not archive_sha:
         archive_sha = "unavailable"
 
@@ -366,8 +378,20 @@ class SharedCortex:
 
         Returns:
             (d_cortex,) cortex activation tensor.
+
+        Request features are L2-normalized (with epsilon) before projection
+        so that logits are scale-invariant under positive scalar rescaling
+        of the frozen features.  Nonfinite inputs fail closed (ValueError)
+        to prevent silent garbage propagation through the label head.
         """
         x = torch.from_numpy(request_features).float()
+        if not torch.isfinite(x).all():
+            raise ValueError(
+                "request_features contains nonfinite values (NaN/Inf); "
+                "cannot project to cortex activation."
+            )
+        norm = x.norm(2)
+        x = x / (norm + 1e-8)
         return x @ self.W_perceive + self.warm_state
 
     def predict_label(self, cortex_act: torch.Tensor) -> tuple[int, float]:
@@ -401,6 +425,17 @@ class SharedCortex:
             params.extend([self.W_coupler, self.b_coupler])
         return [p for p in params if p.requires_grad]
 
+    def perception_parameters(self) -> list[torch.nn.Parameter]:
+        """Return only the perception/label/state parameters (never coupler).
+
+        Used by train_label_head to ensure the coupler is never updated by
+        label-head corrections, regardless of the coupler freeze state.
+        """
+        return [
+            p for p in (self.W_perceive, self.W_label, self.b_label, self.warm_state)
+            if p.requires_grad
+        ]
+
     def train_label_head(
         self,
         request_features: np.ndarray,
@@ -409,7 +444,7 @@ class SharedCortex:
         """One online correction step on the label head.
 
         Cross-entropy loss against the corrected label index.  Updates
-        W_perceive, W_label, b_label, warm_state (and coupler if not frozen).
+        only W_perceive, W_label, b_label, warm_state — never the coupler.
         """
         cortex_act = self.perceive(request_features)
         logits = cortex_act @ self.W_label + self.b_label
@@ -417,7 +452,7 @@ class SharedCortex:
         loss = F.cross_entropy(logits.unsqueeze(0), target)
 
         opt = torch.optim.SGD(
-            self.trainable_parameters(),
+            self.perception_parameters(),
             lr=self.config.label_lr,
         )
         opt.zero_grad()
@@ -947,6 +982,7 @@ def teach_cortex(
         perm = list(range(len(labels)))
 
     label_losses: list[float] = []
+    feature_norms: list[float] = []
 
     for ep in teach_order:
         # Record raw trace.
@@ -960,6 +996,7 @@ def teach_cortex(
         # Get request features.
         features = driver.peek_embedding(ep.initial_request, last_token_only=False)
         trace_store.add_cached_feature(ep.initial_request, features)
+        feature_norms.append(float(np.linalg.norm(features)))
 
         # Determine label index (possibly permuted for C6).
         true_idx = label_index[ep.corrected_label]
@@ -973,6 +1010,13 @@ def teach_cortex(
         "n_episodes": len(teach_order),
         "label_loss_mean": float(np.mean(label_losses)) if label_losses else 0.0,
         "permuted": permuted_labels,
+        "feature_norm_audit": {
+            "count": len(feature_norms),
+            "mean": float(np.mean(feature_norms)) if feature_norms else 0.0,
+            "std": float(np.std(feature_norms)) if feature_norms else 0.0,
+            "min": float(np.min(feature_norms)) if feature_norms else 0.0,
+            "max": float(np.max(feature_norms)) if feature_norms else 0.0,
+        },
     }
 
 

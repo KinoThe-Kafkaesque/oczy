@@ -4043,6 +4043,8 @@ class TestOfflineModelResolution:
             main([
                 "calibrate-dev",
                 "--manifest-out", str(tmp_path / "manifest.json"),
+                "--source-commit", "0123456789abcdef0123456789abcdef01234567",
+                "--source-archive-sha256", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             ])
         assert exc_info.value.model_id == "Qwen/Qwen2.5-0.5B-Instruct"
 
@@ -4082,3 +4084,502 @@ class TestOfflineModelResolution:
                 "--signoff-id", "human-001",
             ])
         assert exc_info.value.model_id == "Qwen/Qwen2.5-0.5B-Instruct"
+
+
+# ---------------------------------------------------------------------------
+# Feature normalization: L2 scale invariance / nonfinite failure / coupler
+# exclusion from label updates
+# ---------------------------------------------------------------------------
+
+
+class TestFeatureNormalization:
+    """Tests that frozen request features are L2-normalized before cortex
+    projection, nonfinite features fail closed, and the coupler is excluded
+    from label-head updates.
+
+    Regression target: R19 calibrate-dev v2 where mean-pooled HF features
+    were fed unnormalized into the jointly trained projection/label head,
+    producing label_loss_mean=5.5358e21 and confidence identically 1.0
+    (softmax saturation).
+    """
+
+    def test_perceive_is_l2_scale_invariant(self) -> None:
+        """perceive must produce scale-invariant cortex activations.
+
+        Mean-pooled HF features can have arbitrary norm.  Without L2
+        normalization before projection, scaling features by a constant
+        scales the cortex activation, changing label predictions and
+        causing exploding loss.
+        """
+        import torch
+
+        from oczy.experiments.s19_language_organ_core import SharedCortex
+
+        cortex = SharedCortex(seed=42)
+        rng = np.random.default_rng(0)
+        features = rng.normal(0, 1, size=896).astype(np.float32)
+        scaled = features * 1000.0
+
+        act_base = cortex.perceive(features)
+        act_scaled = cortex.perceive(scaled)
+
+        assert torch.allclose(act_base, act_scaled, atol=1e-5), (
+            f"perceive is not L2-scale-invariant: "
+            f"base_norm={act_base.norm():.4f}, scaled_norm={act_scaled.norm():.4f}"
+        )
+
+    def test_perceive_scale_invariant_label_prediction(self) -> None:
+        """Label prediction must be identical regardless of feature scale."""
+        from oczy.experiments.s19_language_organ_core import SharedCortex
+
+        cortex = SharedCortex(seed=42)
+        rng = np.random.default_rng(7)
+        features = rng.normal(0, 1, size=896).astype(np.float32)
+
+        # Train on unit-norm features.
+        cortex.freeze_coupler()
+        cortex.train_label_head(features, label_idx=3)
+
+        # Predict on scaled features — label must not change.
+        idx_base, conf_base = cortex.predict_label(cortex.perceive(features))
+        idx_scaled, conf_scaled = cortex.predict_label(cortex.perceive(features * 500.0))
+
+        assert idx_base == idx_scaled, (
+            f"Label prediction changed with feature scale: "
+            f"{idx_base} -> {idx_scaled}"
+        )
+        assert abs(conf_base - conf_scaled) < 1e-4, (
+            f"Confidence changed with feature scale: "
+            f"{conf_base} -> {conf_scaled}"
+        )
+
+    def test_train_label_head_loss_finite_for_large_norm(self) -> None:
+        """train_label_head must produce finite, non-exploding loss even
+        for large-norm features.
+
+        The observed v2 blocker: label_loss_mean=5.5358e21 because
+        unnormalized mean-pooled HF features produced extreme logits.
+        """
+        from oczy.experiments.s19_language_organ_core import SharedCortex
+
+        cortex = SharedCortex(seed=42)
+        cortex.freeze_coupler()
+
+        # Simulate large-norm mean-pooled HF features.
+        rng = np.random.default_rng(0)
+        features = (rng.normal(0, 1, size=896).astype(np.float32) * 1000.0)
+
+        loss = cortex.train_label_head(features, label_idx=0)
+
+        assert np.isfinite(loss), f"Loss is not finite: {loss}"
+        assert loss < 100.0, f"Loss is exploding (expected < 100): {loss}"
+
+    def test_train_label_head_confidence_not_saturated(self) -> None:
+        """After training with large-norm features, confidence must not
+        be identically 1.0 (softmax saturation).
+
+        The observed v2 blocker: confidence identically 1.0 because
+        unnormalized features produce extreme logits.
+        """
+        from oczy.experiments.s19_language_organ_core import SharedCortex
+
+        cortex = SharedCortex(seed=42)
+        cortex.freeze_coupler()
+
+        rng = np.random.default_rng(0)
+        features = (rng.normal(0, 1, size=896).astype(np.float32) * 1000.0)
+
+        cortex.train_label_head(features, label_idx=0)
+
+        cortex_act = cortex.perceive(features)
+        _, conf = cortex.predict_label(cortex_act)
+
+        assert conf < 0.9999, (
+            f"Confidence is saturated at {conf} — softmax saturation "
+            f"from unnormalized large-norm features"
+        )
+
+    def test_perceive_rejects_nan_features(self) -> None:
+        """perceive must fail closed when request features contain NaN.
+
+        Silent NaN replacement would allow corrupted frozen features to
+        train or evaluate a cortex state that cannot be reproduced from
+        valid source activations.
+        """
+        from oczy.experiments.s19_language_organ_core import SharedCortex
+
+        cortex = SharedCortex(seed=42)
+        nan_features = np.full(896, np.nan, dtype=np.float32)
+
+        with pytest.raises(ValueError, match="nonfinite"):
+            cortex.perceive(nan_features)
+
+    def test_perceive_rejects_inf_features(self) -> None:
+        """perceive must fail closed when request features contain Inf."""
+        from oczy.experiments.s19_language_organ_core import SharedCortex
+
+        cortex = SharedCortex(seed=42)
+        inf_features = np.full(896, np.inf, dtype=np.float32)
+
+        with pytest.raises(ValueError, match="nonfinite"):
+            cortex.perceive(inf_features)
+
+    def test_train_label_head_rejects_nonfinite_features(self) -> None:
+        """train_label_head must fail closed when features are nonfinite."""
+        from oczy.experiments.s19_language_organ_core import SharedCortex
+
+        cortex = SharedCortex(seed=42)
+        cortex.freeze_coupler()
+
+        nan_features = np.full(896, np.nan, dtype=np.float32)
+
+        with pytest.raises(ValueError, match="nonfinite"):
+            cortex.train_label_head(nan_features, label_idx=0)
+
+    def test_train_label_head_excludes_coupler_when_not_frozen(self) -> None:
+        """train_label_head must NOT update coupler parameters, even when
+        the coupler is not explicitly frozen.
+
+        The label head training should only update W_perceive, W_label,
+        b_label, and warm_state.  The coupler is trained separately
+        during calibrate-dev and must not be corrupted by label-head
+        updates.  The current implementation uses trainable_parameters()
+        which includes the coupler when it is not frozen — this is the
+        coupler-exclusion bug.
+        """
+        import torch
+
+        from oczy.experiments.s19_language_organ_core import SharedCortex
+
+        cortex = SharedCortex(seed=42)
+        # Deliberately do NOT freeze the coupler.
+        assert not cortex.coupler_frozen
+
+        w_coupler_before = cortex.W_coupler.detach().clone()
+        b_coupler_before = cortex.b_coupler.detach().clone()
+
+        rng = np.random.default_rng(0)
+        features = rng.normal(0, 1, size=896).astype(np.float32)
+        cortex.train_label_head(features, label_idx=0)
+
+        assert torch.equal(cortex.W_coupler.detach(), w_coupler_before), (
+            "train_label_head updated W_coupler — coupler must be excluded "
+            "from label-head updates even when not frozen"
+        )
+        assert torch.equal(cortex.b_coupler.detach(), b_coupler_before), (
+            "train_label_head updated b_coupler — coupler must be excluded "
+            "from label-head updates even when not frozen"
+        )
+
+    def test_train_label_head_excludes_coupler_when_frozen(self) -> None:
+        """train_label_head must NOT update coupler parameters when the
+        coupler is frozen (the normal evaluate-phase path)."""
+        import torch
+
+        from oczy.experiments.s19_language_organ_core import SharedCortex
+
+        cortex = SharedCortex(seed=42)
+        cortex.freeze_coupler()
+
+        w_coupler_before = cortex.W_coupler.detach().clone()
+        b_coupler_before = cortex.b_coupler.detach().clone()
+
+        rng = np.random.default_rng(0)
+        features = rng.normal(0, 1, size=896).astype(np.float32)
+        cortex.train_label_head(features, label_idx=0)
+
+        assert torch.equal(cortex.W_coupler.detach(), w_coupler_before)
+        assert torch.equal(cortex.b_coupler.detach(), b_coupler_before)
+
+    def test_teach_cortex_label_loss_mean_finite(self) -> None:
+        """teach_cortex must return a finite label_loss_mean.
+
+        The observed v2 blocker: label_loss_mean=5.5358e21 from
+        unnormalized features fed through the projection/label head.
+        """
+        from oczy.experiments.s19_language_organ_core import (
+            SharedCortex,
+            TraceStore,
+            build_label_index,
+            extract_stage_labels,
+            teach_cortex,
+        )
+
+        stage = _make_stage(n_episodes=1, name="stage_0")
+        labels = extract_stage_labels(stage)
+        label_index = build_label_index(labels)
+
+        cortex = SharedCortex(seed=42)
+        cortex.freeze_coupler()
+        driver = _FakeHFDriver(reply="unknown")
+        trace_store = TraceStore()
+
+        stats = teach_cortex(
+            driver, cortex, stage, labels, label_index, seed=0,
+            trace_store=trace_store,
+        )
+
+        assert np.isfinite(stats["label_loss_mean"]), (
+            f"label_loss_mean is not finite: {stats['label_loss_mean']}"
+        )
+        assert stats["label_loss_mean"] < 100.0, (
+            f"label_loss_mean is exploding: {stats['label_loss_mean']}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Source archive SHA validation / precedence / path fallback
+# ---------------------------------------------------------------------------
+
+
+class TestSourceProvenanceSha:
+    """Tests for explicit source archive SHA validation, precedence over
+    path computation, and graceful path fallback.
+
+    Regression target: R19 calibrate-dev v2 where the run failed after
+    calibration because the source archive mount path was unavailable,
+    even though the source archive SHA was already known from campaign
+    provenance.
+    """
+
+    def test_sha_env_precedence_over_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """When OCZY_SOURCE_ARCHIVE_SHA256 is set, it takes precedence
+        over computing the SHA from the archive path — no file is opened."""
+        from oczy.experiments.s19_language_organ_core import derive_source_provenance
+
+        sha = "a" * 64
+        monkeypatch.setenv("OCZY_SOURCE_ARCHIVE_SHA256", sha)
+        monkeypatch.delenv("OCZY_SOURCE_COMMIT", raising=False)
+        monkeypatch.delenv("OCZY_SOURCE_ARCHIVE", raising=False)
+
+        missing_path = str(tmp_path / "nonexistent_archive.tar.gz")
+
+        # Patch open to detect any file access.
+        import builtins
+        original_open = builtins.open
+        open_calls: list[str] = []
+
+        def _tracking_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+            open_calls.append(str(file))
+            return original_open(file, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", _tracking_open)
+
+        commit, archive_sha = derive_source_provenance("abc123", missing_path)
+
+        monkeypatch.setattr(builtins, "open", original_open)
+
+        assert archive_sha == sha
+        assert not any("nonexistent" in c for c in open_calls), (
+            f"open() was called despite SHA being supplied via env: {open_calls}"
+        )
+
+    def test_sha_env_used_when_path_also_provided(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """Even when a valid archive path is provided, the env SHA takes
+        precedence — the path file is never opened."""
+        from oczy.experiments.s19_language_organ_core import derive_source_provenance
+
+        sha = "c" * 64
+        monkeypatch.setenv("OCZY_SOURCE_ARCHIVE_SHA256", sha)
+        monkeypatch.delenv("OCZY_SOURCE_COMMIT", raising=False)
+        monkeypatch.delenv("OCZY_SOURCE_ARCHIVE", raising=False)
+
+        # Create a real archive file — it should NOT be opened.
+        archive_path = tmp_path / "real_archive.tar.gz"
+        archive_path.write_bytes(b"archive content")
+
+        import builtins
+        original_open = builtins.open
+        open_calls: list[str] = []
+
+        def _tracking_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+            open_calls.append(str(file))
+            return original_open(file, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", _tracking_open)
+
+        commit, archive_sha = derive_source_provenance("abc123", str(archive_path))
+
+        monkeypatch.setattr(builtins, "open", original_open)
+
+        assert archive_sha == sha
+        assert not any("real_archive" in c for c in open_calls), (
+            f"Archive file was opened despite SHA being supplied: {open_calls}"
+        )
+
+    def test_path_fallback_when_missing_no_sha(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """When the archive path is unavailable and no SHA is supplied,
+        derive_source_provenance must fall back to 'unavailable' instead
+        of crashing with FileNotFoundError.
+
+        The observed v2 blocker: run failed after calibration because
+        source archive mount path was unavailable.
+        """
+        from oczy.experiments.s19_language_organ_core import derive_source_provenance
+
+        monkeypatch.delenv("OCZY_SOURCE_ARCHIVE_SHA256", raising=False)
+        monkeypatch.delenv("OCZY_SOURCE_COMMIT", raising=False)
+        monkeypatch.delenv("OCZY_SOURCE_ARCHIVE", raising=False)
+
+        missing_path = str(tmp_path / "nonexistent_archive.tar.gz")
+
+        # Must not raise.
+        commit, archive_sha = derive_source_provenance("abc123", missing_path)
+
+        assert archive_sha == "unavailable", (
+            f"Expected 'unavailable' for missing path, got: {archive_sha}"
+        )
+
+    def test_path_fallback_when_env_path_missing_no_sha(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """When OCZY_SOURCE_ARCHIVE env var points to a missing path and
+        no SHA is supplied, the function must fall back to 'unavailable'."""
+        from oczy.experiments.s19_language_organ_core import derive_source_provenance
+
+        monkeypatch.delenv("OCZY_SOURCE_ARCHIVE_SHA256", raising=False)
+        monkeypatch.delenv("OCZY_SOURCE_COMMIT", raising=False)
+        monkeypatch.setenv("OCZY_SOURCE_ARCHIVE", str(tmp_path / "missing.tar.gz"))
+
+        commit, archive_sha = derive_source_provenance(None, None)
+
+        assert archive_sha == "unavailable"
+
+    def test_exact_retry_no_open_when_sha_supplied(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """Exact retry regression: when the source archive SHA is supplied
+        (from campaign provenance via OCZY_SOURCE_ARCHIVE_SHA256), no
+        missing mount path is opened.
+
+        This simulates the v2 retry scenario where the source archive
+        mount path was unavailable but the SHA was already known from
+        campaign provenance.  The function must use the SHA directly
+        without attempting to open the unavailable path.
+        """
+        from oczy.experiments.s19_language_organ_core import derive_source_provenance
+
+        known_sha = "b" * 64
+        monkeypatch.setenv("OCZY_SOURCE_ARCHIVE_SHA256", known_sha)
+        monkeypatch.setenv("OCZY_SOURCE_COMMIT", "def456")
+        monkeypatch.delenv("OCZY_SOURCE_ARCHIVE", raising=False)
+
+        # The mount path is unavailable (does not exist).
+        missing_mount = "/mnt/unavailable/source_archive.tar.gz"
+
+        import builtins
+        original_open = builtins.open
+        open_was_called_on_missing = False
+
+        def _guard_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+            nonlocal open_was_called_on_missing
+            if str(file) == missing_mount:
+                open_was_called_on_missing = True
+            return original_open(file, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", _guard_open)
+
+        commit, archive_sha = derive_source_provenance("def456", missing_mount)
+
+        monkeypatch.setattr(builtins, "open", original_open)
+
+        assert commit == "def456"
+        assert archive_sha == known_sha
+        assert not open_was_called_on_missing, (
+            "open() was called on the missing mount path despite SHA "
+            "being supplied — the exact retry must not access the path"
+        )
+
+    def test_sha_validation_rejects_non_hex(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An invalid SHA (not a 64-char hex string) must be rejected
+        and treated as 'unavailable' rather than accepted as-is."""
+        from oczy.experiments.s19_language_organ_core import derive_source_provenance
+
+        monkeypatch.setenv("OCZY_SOURCE_ARCHIVE_SHA256", "not-a-valid-sha")
+        monkeypatch.delenv("OCZY_SOURCE_COMMIT", raising=False)
+        monkeypatch.delenv("OCZY_SOURCE_ARCHIVE", raising=False)
+
+        commit, archive_sha = derive_source_provenance("abc123", None)
+
+        assert archive_sha == "unavailable", (
+            f"Invalid SHA was accepted as-is: {archive_sha}"
+        )
+
+    def test_sha_validation_rejects_wrong_length(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A SHA with wrong length (not 64 hex chars) must be rejected."""
+        from oczy.experiments.s19_language_organ_core import derive_source_provenance
+
+        monkeypatch.setenv("OCZY_SOURCE_ARCHIVE_SHA256", "abc123")
+        monkeypatch.delenv("OCZY_SOURCE_COMMIT", raising=False)
+        monkeypatch.delenv("OCZY_SOURCE_ARCHIVE", raising=False)
+
+        commit, archive_sha = derive_source_provenance("abc123", None)
+
+        assert archive_sha == "unavailable", (
+            f"Wrong-length SHA was accepted: {archive_sha}"
+        )
+
+    def test_sha_computed_from_valid_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """When no SHA env var is set but a valid archive path is provided,
+        the SHA is computed from the file contents."""
+        from oczy.experiments.s19_language_organ_core import derive_source_provenance
+
+        monkeypatch.delenv("OCZY_SOURCE_ARCHIVE_SHA256", raising=False)
+        monkeypatch.delenv("OCZY_SOURCE_COMMIT", raising=False)
+        monkeypatch.delenv("OCZY_SOURCE_ARCHIVE", raising=False)
+
+        archive_path = tmp_path / "source.tar.gz"
+        content = b"deterministic archive content"
+        archive_path.write_bytes(content)
+
+        expected_sha = hashlib.sha256(content).hexdigest()
+
+        commit, archive_sha = derive_source_provenance("abc123", str(archive_path))
+
+        assert archive_sha == expected_sha
+
+    def test_sha_precedence_cli_over_env(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """When SHA is supplied via env var, it takes precedence over
+        a CLI-provided path — the path file is never opened even if it
+        exists."""
+        from oczy.experiments.s19_language_organ_core import derive_source_provenance
+
+        env_sha = "d" * 64
+        monkeypatch.setenv("OCZY_SOURCE_ARCHIVE_SHA256", env_sha)
+        monkeypatch.delenv("OCZY_SOURCE_COMMIT", raising=False)
+        monkeypatch.delenv("OCZY_SOURCE_ARCHIVE", raising=False)
+
+        # Create a real file — it should NOT be opened.
+        archive_path = tmp_path / "cli_archive.tar.gz"
+        archive_path.write_bytes(b"cli archive content")
+
+        import builtins
+        original_open = builtins.open
+        open_calls: list[str] = []
+
+        def _tracking_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+            open_calls.append(str(file))
+            return original_open(file, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", _tracking_open)
+
+        commit, archive_sha = derive_source_provenance("abc123", str(archive_path))
+
+        monkeypatch.setattr(builtins, "open", original_open)
+
+        assert archive_sha == env_sha
+        assert not any("cli_archive" in c for c in open_calls)
