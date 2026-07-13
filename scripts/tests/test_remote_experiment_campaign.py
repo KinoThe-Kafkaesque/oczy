@@ -3437,6 +3437,7 @@ class TestProvisionModelArtifactRuntime:
         artifact = _valid_hf_snapshot_artifact(sha256=expected_sha)
         source = self._generate_bootstrap(tmp_path, artifact)
         ns = _exec_bootstrap(source)
+        artifact.pop("files", None)  # exercise legacy snapshot_download path
 
         fake_hf = types.ModuleType("huggingface_hub")
         fake_hf.hf_hub_download = lambda **kw: str(config_file)
@@ -3531,6 +3532,7 @@ class TestProvisionModelArtifactRuntime:
         artifact = _valid_hf_snapshot_artifact(sha256="0" * 64)
         source = self._generate_bootstrap(tmp_path, artifact)
         ns = _exec_bootstrap(source)
+        artifact.pop("files", None)  # exercise legacy snapshot_download path
 
         fake_hf = types.ModuleType("huggingface_hub")
         fake_hf.hf_hub_download = lambda **kw: str(tmp_path / "x")
@@ -4275,6 +4277,7 @@ class TestPublicHFDownloadNoImplicitToken:
         artifact = _valid_hf_snapshot_artifact(sha256=expected_sha)
         source = self._generate_bootstrap(tmp_path, artifact)
         ns = _exec_bootstrap(source)
+        artifact.pop("files", None)  # exercise legacy snapshot_download path
 
         captured: dict[str, Any] = {}
 
@@ -4805,6 +4808,7 @@ class TestDirectGGUFProvisioning:
         artifact = _valid_hf_snapshot_artifact(sha256=expected_sha)
         source = self._generate_bootstrap(tmp_path, artifact)
         ns = _exec_bootstrap(source)
+        artifact.pop("files", None)  # exercise legacy snapshot_download path
 
         fake_hf = self._make_fake_hf(snapshot_download_return=str(snapshot_dir))
 
@@ -4844,6 +4848,7 @@ class TestDirectGGUFProvisioning:
         artifact = _valid_hf_snapshot_artifact(sha256=expected_sha)
         source = self._generate_bootstrap(tmp_path, artifact)
         ns = _exec_bootstrap(source)
+        artifact.pop("files", None)  # exercise legacy snapshot_download path
 
         captured: dict[str, Any] = {}
         fake_hf = self._make_fake_hf(
@@ -4883,6 +4888,7 @@ class TestDirectGGUFProvisioning:
         artifact = _valid_hf_snapshot_artifact(sha256=expected_sha)
         source = self._generate_bootstrap(tmp_path, artifact)
         ns = _exec_bootstrap(source)
+        artifact.pop("files", None)  # exercise legacy snapshot_download path
 
         captured: dict[str, Any] = {}
         fake_hf = self._make_fake_hf(
@@ -4921,6 +4927,7 @@ class TestDirectGGUFProvisioning:
         artifact = _valid_hf_snapshot_artifact(sha256="0" * 64)  # wrong SHA
         source = self._generate_bootstrap(tmp_path, artifact)
         ns = _exec_bootstrap(source)
+        artifact.pop("files", None)  # exercise legacy snapshot_download path
 
         fake_hf = self._make_fake_hf(snapshot_download_return=str(snapshot_dir))
 
