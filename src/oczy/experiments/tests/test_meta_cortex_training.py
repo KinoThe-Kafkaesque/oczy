@@ -183,6 +183,19 @@ class _TinyFrozenOrgan:
             next_token = int(logits.argmax().item())
         return "".join(generated)
 
+    def generate_batch(self, messages_batch, soft_banks, max_new_tokens):
+        """Batched generate via per-example scalar dispatch."""
+        B = soft_banks.shape[0]
+        if B != len(messages_batch):
+            raise FrozenOrganError(
+                f"messages_batch length {len(messages_batch)} != "
+                f"soft_banks batch {B}"
+            )
+        return [
+            self.generate(msgs, soft_banks[i : i + 1], max_new_tokens)
+            for i, msgs in enumerate(messages_batch)
+        ]
+
     def parameter_hash(self) -> str:
         parts: list[str] = []
         for name, tensor in sorted([

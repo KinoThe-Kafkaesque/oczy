@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import os
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -206,6 +207,26 @@ class _TinyFrozenOrgan:
             next_token = int(logits.argmax().item())
 
         return "".join(generated)
+
+    # -- Protocol: generate_batch ----------------------------------------
+
+    def generate_batch(
+        self,
+        messages_batch: Sequence[Sequence[DialogueMessage]],
+        soft_banks: torch.Tensor,
+        max_new_tokens: int,
+    ) -> list[str]:
+        """Batched generate via per-example scalar dispatch."""
+        B = soft_banks.shape[0]
+        if B != len(messages_batch):
+            raise FrozenOrganError(
+                f"messages_batch length {len(messages_batch)} != "
+                f"soft_banks batch {B}"
+            )
+        return [
+            self.generate(msgs, soft_banks[i : i + 1], max_new_tokens)
+            for i, msgs in enumerate(messages_batch)
+        ]
 
     # -- Protocol: parameter_hash ----------------------------------------
 
@@ -464,6 +485,89 @@ class TestGenerate:
         out_b = organ.generate(messages, bank_b, max_new_tokens=8)
         assert out_a != out_b
 
+
+
+class TestGenerateBatch:
+    """Batched generate produces exactly the same output as per-example scalar."""
+
+    def test_batched_matches_scalar_tokens(
+        self, organ: _TinyFrozenOrgan,
+    ) -> None:
+        """``generate_batch`` returns identical decoded strings to calling
+        ``generate`` individually for each example in the batch."""
+        msgs_a = _make_messages()
+        msgs_b = [
+            DialogueMessage(role="user", content="Different question?"),
+        ]
+        bank_a = _make_bank(requires_grad=False)
+        bank_b = _make_bank(requires_grad=False)
+
+        # Scalar
+        scalar_a = organ.generate(msgs_a, bank_a, max_new_tokens=8)
+        scalar_b = organ.generate(msgs_b, bank_b, max_new_tokens=8)
+
+        # Batched
+        soft_banks = torch.cat([bank_a, bank_b], dim=0)  # [2, L, D]
+        batched = organ.generate_batch(
+            [msgs_a, msgs_b], soft_banks, max_new_tokens=8
+        )
+
+        assert len(batched) == 2
+        assert batched[0] == scalar_a, (
+            f"batched[0]={batched[0]!r} != scalar_a={scalar_a!r}"
+        )
+        assert batched[1] == scalar_b, (
+            f"batched[1]={batched[1]!r} != scalar_b={scalar_b!r}"
+        )
+
+    def test_batched_single_example_matches_scalar(
+        self, organ: _TinyFrozenOrgan,
+    ) -> None:
+        """Single-example batch returns same result as scalar generate."""
+        messages = _make_messages()
+        bank = _make_bank(requires_grad=False)
+
+        scalar = organ.generate(messages, bank, max_new_tokens=4)
+        batched = organ.generate_batch(
+            [messages], bank, max_new_tokens=4,
+        )
+
+        assert len(batched) == 1
+        assert batched[0] == scalar
+
+    def test_batched_empty_batch_returns_empty_list(
+        self, organ: _TinyFrozenOrgan,
+    ) -> None:
+        """Empty batch returns empty list."""
+        result = organ.generate_batch(
+            [], torch.empty(0, 2, 16), max_new_tokens=4,
+        )
+        assert result == []
+
+    def test_batched_length_mismatch_rejected(
+        self, organ: _TinyFrozenOrgan,
+    ) -> None:
+        """Mismatch between messages_batch and soft_banks batch sizes raises."""
+        messages = _make_messages()
+        bank = _make_bank(requires_grad=False)  # [1, L, D]
+
+        with pytest.raises(FrozenOrganError, match="messages_batch length"):
+            organ.generate_batch(
+                [messages, messages], bank, max_new_tokens=4,
+            )
+
+    def test_batched_deterministic(
+        self, organ: _TinyFrozenOrgan,
+    ) -> None:
+        """Batched generate is deterministic (same inputs → same outputs)."""
+        msgs = [_make_messages(), _make_messages()]
+        bank_a = _make_bank(requires_grad=False)
+        bank_b = _make_bank(requires_grad=False)
+        soft_banks = torch.cat([bank_a, bank_b], dim=0)
+
+        r1 = organ.generate_batch(msgs, soft_banks, max_new_tokens=4)
+        r2 = organ.generate_batch(msgs, soft_banks, max_new_tokens=4)
+        assert r1 == r2
 
 # ---------------------------------------------------------------------------
 # encode_texts: mean-pooled, detached, correct width

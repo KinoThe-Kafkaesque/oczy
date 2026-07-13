@@ -195,18 +195,77 @@ def _score_battery_exact(
     *,
     max_new_tokens: int = 16,
 ) -> ProbeCount:
-    """Return ``ProbeCount(correct, total)`` for a battery via exact scoring."""
-    correct = 0
+    """Return ``ProbeCount(correct, total)`` for a battery via exact scoring.
+
+    Query features are extracted in a single batched ``organ.encode_texts``
+    call.  Read, couple, and generate are also batched — one LM forward
+    pass serves the entire battery.
+
+    Falls back to per-probe scalar ``organ.generate`` when the organ does
+    not expose ``generate_batch``.
+    """
     total = len(battery)
     if total == 0:
         raise ValueError("Battery must be nonempty")
-    for probe in battery:
-        if _score_probe_exact(
-            model, organ, state, probe, scorer, max_new_tokens=max_new_tokens
-        ):
-            correct += 1
-    return ProbeCount(correct=correct, total=total)
 
+    # Batch query feature extraction: collect all message texts,
+    # encode once, then mean-pool per probe.
+    device = state.fast.device
+    dtype = state.fast.dtype
+    all_texts: list[str] = []
+    probe_msg_counts: list[int] = []
+    for probe in battery:
+        texts = [m.content for m in probe.messages]
+        all_texts.extend(texts)
+        probe_msg_counts.append(len(texts))
+
+    all_features = organ.encode_texts(all_texts)  # [total_msgs, D]
+
+    # Distribute back to per-probe [1, D] query features.
+    offset = 0
+    query_feats: list[torch.Tensor] = []
+    for n_msgs in probe_msg_counts:
+        chunk = all_features[offset : offset + n_msgs]  # [n_msgs, D]
+        pooled = chunk.mean(dim=0, keepdim=True).detach().to(
+            device=device, dtype=dtype
+        )  # [1, D]
+        query_feats.append(pooled)
+        offset += n_msgs
+
+    # -- Batched read / couple / generate -----------------------------------
+    if hasattr(organ, "generate_batch"):
+        # Stack query features: [B, D]
+        query_stacked = torch.cat(query_feats, dim=0)  # [B, D]
+
+        with torch.inference_mode():
+            readouts = model.read(state, query_stacked)  # [B, d_cortex]
+            soft_banks = model.couple(readouts)  # [B, L, D]
+
+        # Collect per-probe messages for the batched generate call.
+        messages_batch = [probe.messages for probe in battery]
+        generated_list = organ.generate_batch(
+            messages_batch, soft_banks, max_new_tokens
+        )
+
+        # Score each generated string.
+        correct = 0
+        for probe, generated in zip(battery, generated_list, strict=True):
+            if scorer.score_response(probe.expected_response, generated):
+                correct += 1
+
+        return ProbeCount(correct=correct, total=total)
+
+    # -- Fallback: per-probe scalar generate --------------------------------
+    correct = 0
+    for probe, query_feat in zip(battery, query_feats, strict=True):
+        with torch.inference_mode():
+            readout = model.read(state, query_feat)
+            soft_bank = model.couple(readout)
+            generated = organ.generate(probe.messages, soft_bank, max_new_tokens)
+        if scorer.score_response(probe.expected_response, generated):
+            correct += 1
+
+    return ProbeCount(correct=correct, total=total)
 
 def _score_all_kinds_exact(
     model: MetaCortex,

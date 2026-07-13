@@ -259,6 +259,24 @@ class FrozenLanguageOrgan(Protocol):
         """
         ...
 
+    def generate_batch(
+        self,
+        messages_batch: Sequence[Sequence[DialogueMessage]],
+        soft_banks: torch.Tensor,
+        max_new_tokens: int,
+    ) -> list[str]:
+        """Batched greedy generation for a probe battery.
+
+        ``soft_banks`` is ``[B, L, D]`` — one soft bank per example.
+        Returns one decoded string per example.  Must produce exactly
+        the same token outputs as calling :meth:`generate` individually
+        for each ``(messages, soft_bank)`` pair.
+
+        Runs under inference mode with ``temperature=0`` only.  No
+        caching or memoization across calls.
+        """
+        ...
+
     def parameter_hash(self) -> str:
         """Return SHA-256 over model ID, config, tokenizer, and weights."""
         ...
@@ -315,7 +333,7 @@ class QwenFrozenOrgan:
                 f"got driver.n_embd={driver.n_embd}"
             )
         self._driver = driver
-        self._model = driver._model
+        self._model: Any = driver._model
         self._tokenizer = driver._tokenizer
         self._model_id = driver.model_id
         self.feature_dim: int = int(feature_dim)
@@ -754,6 +772,146 @@ class QwenFrozenOrgan:
         if not generated_ids:
             return ""
         return self._tokenizer.decode(generated_ids)
+
+    # ------------------------------------------------------------------
+    # Protocol: generate_batch
+    # ------------------------------------------------------------------
+
+    @torch.inference_mode()
+    def generate_batch(
+        self,
+        messages_batch: Sequence[Sequence[DialogueMessage]],
+        soft_banks: torch.Tensor,
+        max_new_tokens: int,
+    ) -> list[str]:
+        """Batched greedy generation via ``model.generate()`` + ``inputs_embeds``.
+
+        Left-pads prompts to the longest in the batch and prepends each
+        example's soft bank.  Uses explicit ``position_ids`` computed from
+        the attention mask (standard HF cumsum pattern) so that every
+        example sees the same position encoding it would in scalar mode.
+
+        Proven equivalent to :meth:`generate` for Qwen2.5-0.5B-Instruct
+        (verified token-by-token on variable-length prompt pairs).
+        """
+        self._check_open()
+        B = soft_banks.shape[0]
+        L = soft_banks.shape[1]
+
+        # Validate per-example soft banks.
+        for i in range(B):
+            self._validate_soft_bank(soft_banks[i : i + 1])
+
+        if B == 0:
+            return []
+        if len(messages_batch) != B:
+            raise FrozenOrganError(
+                f"messages_batch length {len(messages_batch)} != soft_banks "
+                f"batch {B}"
+            )
+        if any(not msgs for msgs in messages_batch):
+            raise FrozenOrganError(
+                "generate_batch received empty messages in one or more entries"
+            )
+        if max_new_tokens <= 0:
+            raise FrozenOrganError(
+                f"max_new_tokens must be positive, got {max_new_tokens}"
+            )
+
+        # -- Render and tokenize every prompt -------------------------------
+        prompt_texts: list[str] = []
+        prompt_ids_list: list[list[int]] = []
+        for msgs in messages_batch:
+            pt = render_chat(msgs, self._tokenizer)
+            prompt_texts.append(pt)
+            ids = self._tokenizer.encode(pt, add_special_tokens=True)
+            if not ids:
+                raise FrozenOrganError(
+                    "prompt tokenization produced empty list"
+                )
+            prompt_ids_list.append(ids)
+
+        prompt_lengths = [len(ids) for ids in prompt_ids_list]
+        max_S = max(prompt_lengths)
+
+        # -- Left-pad prompts; build attention_mask and position_ids --------
+        # Determine target device from the model's embedding layer.
+        embed_fn = self._embed_fn()
+        emb_weight = next(embed_fn.parameters())
+        target_device = emb_weight.device
+
+        padded_ids = torch.zeros(B, max_S, dtype=torch.long, device=target_device)
+        attention_mask = torch.zeros(
+            B, L + max_S, dtype=torch.long, device=target_device
+        )
+        attention_mask[:, :L] = 1  # bank positions are always real
+
+        for i, (ids, S) in enumerate(zip(prompt_ids_list, prompt_lengths, strict=True)):
+            pad_len = max_S - S
+            if pad_len > 0:
+                padded_ids[i, pad_len:] = torch.tensor(
+                    ids, dtype=torch.long, device=target_device
+                )
+            else:
+                padded_ids[i] = torch.tensor(
+                    ids, dtype=torch.long, device=target_device
+                )
+            attention_mask[i, L + pad_len :] = 1  # real prompt positions
+
+        # Standard HF position-ids from attention mask: cumsum so that
+        # padding positions don't advance the counter.
+        position_ids = attention_mask.long().cumsum(-1) - 1
+        position_ids.masked_fill_(attention_mask == 0, 1)
+
+        # -- Embed ----------------------------------------------------------
+        prompt_embeds = embed_fn(padded_ids)  # [B, max_S, D]
+
+        # Cast soft_banks to match prompt_embeds dtype and device.
+        soft_banks = soft_banks.to(
+            device=prompt_embeds.device, dtype=prompt_embeds.dtype
+        )
+        # soft_banks already [B, L, D]; concat: [bank | padded_prompt]
+        inputs_embeds = torch.cat([soft_banks, prompt_embeds], dim=1)
+        # -- Batched greedy generation via model.generate() -----------------
+        pad_id = (
+            self._tokenizer.pad_token_id
+            or self._tokenizer.eos_token_id
+        )
+        eos_id = self._tokenizer.eos_token_id
+
+        gen_out = self._model.generate(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            pad_token_id=pad_id,
+            eos_token_id=eos_id,
+        )
+        # -- Decode each row ------------------------------------------------
+        results: list[str] = []
+        for i in range(B):
+            row = gen_out[i].tolist()
+            if pad_id == eos_id:
+                # When pad and EOS tokens coincide, stop at the *first*
+                # occurrence of eos_id (inclusive), matching the scalar
+                # path which breaks the auto-regressive loop on EOS.
+                trimmed: list[int] = []
+                for tid in row:
+                    trimmed.append(tid)
+                    if tid == eos_id:
+                        break
+                decoded = self._tokenizer.decode(trimmed) if trimmed else ""
+            else:
+                # Trim trailing pad tokens, keeping EOS tokens intact.
+                trimmed = []
+                for tid in row:
+                    if tid == pad_id:
+                        break
+                    trimmed.append(tid)
+                decoded = self._tokenizer.decode(trimmed) if trimmed else ""
+            results.append(decoded)
+        return results
 
     # ------------------------------------------------------------------
     # Protocol: parameter_hash

@@ -36,6 +36,7 @@ import hashlib
 import json
 from fractions import Fraction
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -70,6 +71,8 @@ from oczy.experiments.meta_cortex.calibration import (
 )
 from oczy.experiments.meta_cortex.calibration_runner import (
     ShardConfig,
+    _score_battery_exact,
+    _score_probe_exact,
     collect_calibration_shard,
 )
 from oczy.experiments.meta_cortex.contracts import (
@@ -235,6 +238,24 @@ class _TinyFrozenOrgan:
             logits = ne @ self._output_proj + self._output_bias
             next_token = int(logits.argmax().item())
         return "".join(generated)
+
+    def generate_batch(
+        self,
+        messages_batch: list[list[DialogueMessage]],
+        soft_banks: torch.Tensor,
+        max_new_tokens: int,
+    ) -> list[str]:
+        """Batched generate via per-example scalar dispatch."""
+        B = soft_banks.shape[0]
+        if B != len(messages_batch):
+            raise FrozenOrganError(
+                f"messages_batch length {len(messages_batch)} != "
+                f"soft_banks batch {B}"
+            )
+        return [
+            self.generate(msgs, soft_banks[i : i + 1], max_new_tokens)
+            for i, msgs in enumerate(messages_batch)
+        ]
 
     def parameter_hash(self) -> str:
         parts: list[str] = []
@@ -867,6 +888,77 @@ class TestOptimizerProhibition:
             for cr in scr.conditions:
                 assert cr.optimizer_step_count == 0
 
+
+
+# ---------------------------------------------------------------------------
+# No-update repeat unroll count tests
+# ---------------------------------------------------------------------------
+
+
+class TestNoUpdateRepeatUnrollCount:
+    """Every no-update repeat index must trigger a genuine unroll_online_episode
+    call — the compute-once/fan-out optimization is SCIENTIFICALLY PROHIBITED
+    because repeatability must detect runtime nondeterminism.
+    """
+
+    def test_exactly_twenty_unroll_calls_per_repeat_collection(
+        self, tmp_path: Path,
+    ) -> None:
+        """For a single-task shard, unroll_online_episode is called exactly
+        20 times during no-update repeat collection (plus the 4 condition calls
+        in the seed cell — C3, C1, C2, C4 — for a total of 24).
+
+        A compute-once/fan-out path would show << 24 calls and would be
+        scientifically invalid because repeatability must detect runtime
+        nondeterminism.
+        """
+        import oczy.experiments.meta_cortex.calibration_runner as runner_mod
+
+        view = _make_view(n_tasks_per_family=30)
+        organ = _TinyFrozenOrgan(feature_dim=16)
+        model = MetaCortex(_MODEL_CONFIG)
+        ckpt_dir = _make_checkpoint(tmp_path, organ, model)
+
+        real_unroll = runner_mod.unroll_online_episode
+
+        def counting_unroll(*args: object, **kwargs: object) -> object:
+            counting_unroll.call_count += 1  # type: ignore[attr-defined]
+            return real_unroll(*args, **kwargs)  # type: ignore[arg-type]
+
+        counting_unroll.call_count = 0  # type: ignore[attr-defined]
+
+        with patch.object(
+            runner_mod, "unroll_online_episode", counting_unroll
+        ):
+            collection = collect_calibration_shard(
+                view=view,
+                checkpoint_dir=str(ckpt_dir),
+                model_id="test",
+                dev_seed_indices=(0,),
+                eval_seed_indices=(0,),
+                task_indices=(0,),
+                organ=organ,
+            )
+
+        # For 1 dev x 1 eval x 1 task:
+        #   - 20 no-update repeats  (C1, update_enabled=False)
+        #   -  4 condition runs     (C3 trained, C1 update-disabled,
+        #                             C2 untrained, C4 feedback-shuffled)
+        #   C5 (state-zeroed) and C6 (state-swapped) reuse the trained
+        #   state without calling unroll_online_episode.
+        #   No donor runs because len(shard_tasks) == 1.
+        #   Total: 24 unroll calls.
+        assert counting_unroll.call_count == 24, (
+            f"Expected 24 unroll_online_episode calls "
+            f"(20 no-update + 4 conditions), "
+            f"got {counting_unroll.call_count}"
+        )
+
+        # Verify 20 no-update repeat records were produced.
+        assert len(collection.no_update_repeat_records) == 20, (
+            f"Expected 20 no-update records, "
+            f"got {len(collection.no_update_repeat_records)}"
+        )
 
 # ---------------------------------------------------------------------------
 # Trace deletion tests
@@ -1964,3 +2056,101 @@ class TestShardCollection:
                 seed_cell_records=(),
                 theta_hashes=("not a theta hash",),  # type: ignore[arg-type]
             )
+
+
+# ---------------------------------------------------------------------------
+# Batched probe scoring tests
+# ---------------------------------------------------------------------------
+
+
+class TestBatchedProbeScoring:
+    """Batched query feature extraction produces identical per-probe scores
+    to the scalar ``_score_probe_exact`` path.
+    """
+
+    def test_batched_matches_per_probe_scoring(
+        self, tmp_path: Path,
+    ) -> None:
+        """``_score_battery_exact`` (batched features) matches calling
+        ``_score_probe_exact`` individually for every probe in the battery.
+        """
+        view = _make_view(n_tasks_per_family=30)
+        organ = _TinyFrozenOrgan(feature_dim=16)
+        model = MetaCortex(_MODEL_CONFIG)
+        ckpt_dir = _make_checkpoint(tmp_path, organ, model)
+
+        _collection = collect_calibration_shard(
+            view=view,
+            checkpoint_dir=str(ckpt_dir),
+            model_id="test",
+            dev_seed_indices=(0,),
+            eval_seed_indices=(0,),
+            task_indices=(0,),
+            organ=organ,
+        )
+
+        # Use the zero state (C1 condition — F/S both zero).
+        state = model.initial_state(1)
+        task = view.tasks[0]
+        scorer = FrozenScorer()
+
+        # Score each probe kind's battery both ways and compare.
+        for kind in ProbeKind:
+            battery = task.probes.by_kind(kind)
+            if len(battery) == 0:
+                continue
+
+            # Batched path.
+            batched = _score_battery_exact(model, organ, state, battery, scorer)
+
+            # Scalar path: score each probe individually.
+            scalar_correct = 0
+            for probe in battery:
+                if _score_probe_exact(model, organ, state, probe, scorer):
+                    scalar_correct += 1
+            scalar = ProbeCount(correct=scalar_correct, total=len(battery))
+
+            assert batched == scalar, (
+                f"kind={kind.value}: batched={batched}, scalar={scalar}"
+            )
+
+    def test_batched_scoring_handles_empty_battery(
+        self,
+    ) -> None:
+        """Empty battery raises ValueError in both paths."""
+        organ = _TinyFrozenOrgan(feature_dim=16)
+        model = MetaCortex(_MODEL_CONFIG)
+        state = model.initial_state(1)
+        scorer = FrozenScorer()
+
+        with pytest.raises(ValueError, match="Battery must be nonempty"):
+            _score_battery_exact(model, organ, state, (), scorer)
+
+    def test_batched_scoring_matches_scalar_for_specificity(
+        self, tmp_path: Path,
+    ) -> None:
+        """The specificity battery (no-update repeat path) also matches."""
+        view = _make_view(n_tasks_per_family=30)
+        organ = _TinyFrozenOrgan(feature_dim=16)
+        model = MetaCortex(_MODEL_CONFIG)
+        _ckpt_dir = _make_checkpoint(tmp_path, organ, model)
+
+        # Use the no-update repeat's state (F=0, S=0).
+        state = model.initial_state(1)
+        task = view.tasks[0]
+        specificity_battery = task.probes.by_kind(ProbeKind.SPECIFICITY)
+        scorer = FrozenScorer()
+
+        batched = _score_battery_exact(
+            model, organ, state, specificity_battery, scorer
+        )
+
+        scalar_correct = 0
+        for probe in specificity_battery:
+            if _score_probe_exact(model, organ, state, probe, scorer):
+                scalar_correct += 1
+        scalar = ProbeCount(correct=scalar_correct, total=len(specificity_battery))
+
+        assert batched == scalar, (
+            f"specificity: batched={batched}, scalar={scalar}"
+        )
