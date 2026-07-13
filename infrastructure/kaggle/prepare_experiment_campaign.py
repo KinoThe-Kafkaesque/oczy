@@ -1,8 +1,9 @@
 """Prepare a mixed Kaggle/Colab experiment campaign from a clean source commit.
 
-Reads a campaign manifest (``oczy/remote-experiment-campaign/v1``), validates
-schema/job uniqueness/phases/providers/claim classes and source provenance,
-then for each job calls the existing provider-specific preparer:
+Reads a campaign manifest (``oczy/remote-experiment-campaign/v2``), validates
+schema/job uniqueness/phases/providers/claim classes, source provenance, and
+required per-job ``runtime_manifest`` identity, then for each job calls the
+existing provider-specific preparer:
 
 * **Kaggle** → :func:`prepare_research_kernel.prepare_kernel` with
   ``module="infrastructure.kaggle.run_experiment_module"`` so the generated
@@ -12,9 +13,10 @@ then for each job calls the existing provider-specific preparer:
   generates a self-contained ``colab_bootstrap.py`` that checks out the exact
   commit from the public repo and invokes the same runner.
 
-The preparer emits a scheduler v2 batch manifest
-(``oczy/remote-parallel-batch/v2``) consumable by :func:`load_batch` in
-``parallel_scheduler.py``, plus a campaign manifest recording resolved paths.
+The preparer emits a scheduler v3 batch manifest
+(``oczy/remote-parallel-batch/v3``) consumable by :func:`load_batch` in
+``parallel_scheduler.py``, plus a campaign manifest recording resolved paths
+and inline per-job ``runtime_manifest`` identity.
 
 Old v1 tooling (``prepare_research_kernel.py`` standalone CLI) remains
 unchanged — this module composes it, it does not modify it.
@@ -37,7 +39,7 @@ if _SCRIPT_DIR not in sys.path:
 
 from parallel_scheduler import (  # noqa: E402  # type: ignore[import-not-found]
     _VALID_PROVIDERS,
-    BATCH_SCHEMA_V2,
+    BATCH_SCHEMA_VERSION,
     PROVIDER_COLAB,
     PROVIDER_KAGGLE,
 )
@@ -47,6 +49,11 @@ from prepare_research_kernel import (  # noqa: E402  # type: ignore[import-not-f
     PROFILES,
     SHA256_PATTERN,
     prepare_kernel,
+)
+from runtime_manifest import (  # noqa: E402  # type: ignore[import-not-found]
+    RuntimeManifestError,
+    strict_canonical_json,
+    validate_runtime_manifest,
 )
 
 try:
@@ -63,8 +70,8 @@ except ImportError:  # pragma: no cover — peer-built module
 # Constants
 # ---------------------------------------------------------------------------
 
-CAMPAIGN_SCHEMA_VERSION = "oczy/remote-experiment-campaign/v1"
-CAMPAIGN_MANIFEST_SCHEMA = "oczy/remote-experiment-campaign-manifest/v1"
+CAMPAIGN_SCHEMA_VERSION = "oczy/remote-experiment-campaign/v2"
+CAMPAIGN_MANIFEST_SCHEMA = "oczy/remote-experiment-campaign-manifest/v2"
 DEFAULT_SOURCE_REPO = "https://github.com/KinoThe-Kafkaesque/oczy.git"
 RUNNER_MODULE = "infrastructure.kaggle.run_experiment_module"
 DEFAULT_REPORT_FILENAME = "execution_report.json"
@@ -104,8 +111,9 @@ def validate_campaign(campaign: dict[str, Any]) -> None:
 
     Raises :class:`CampaignValidationError` on any failure: bad schema
     version, invalid/missing source commit, duplicate job names, invalid
-    providers/phases/claim classes, or missing provider-specific required
-    fields.
+    providers/phases/claim classes, malformed/missing ``runtime_manifest``,
+    provider-model-locator inconsistency, or missing provider-specific
+    required fields.
     """
     if not isinstance(campaign, dict):
         raise CampaignValidationError("campaign must be a JSON object")
@@ -208,6 +216,66 @@ def validate_campaign(campaign: dict[str, Any]) -> None:
                 f"(must be one of {sorted(_VALID_CLAIM_CLASSES)!r})"
             )
 
+        # --- runtime_manifest validation ---
+        runtime_manifest = job.get("runtime_manifest")
+        if not isinstance(runtime_manifest, dict):
+            raise CampaignValidationError(
+                f"job {name!r}: missing or invalid 'runtime_manifest' object"
+            )
+        try:
+            validate_runtime_manifest(runtime_manifest)
+        except RuntimeManifestError as exc:
+            raise CampaignValidationError(
+                f"job {name!r}: runtime_manifest validation failed: {exc}"
+            ) from exc
+
+        # Provider-locator consistency: no-model branch cannot carry
+        # model_source/model_artifact for Kaggle.  For Colab, model_artifact
+        # takes priority over manifest convention — a no-model manifest with a
+        # model_artifact is treated as model-bearing.
+        is_no_model = (
+            runtime_manifest["model"]["resolved_model_convention"] == "none"
+        )
+        model_source = job.get("model_source")
+        model_artifact = job.get("model_artifact")
+        if provider == PROVIDER_KAGGLE:
+            if is_no_model:
+                if model_source is not None:
+                    raise CampaignValidationError(
+                        f"kaggle job {name!r}: no-model runtime_manifest "
+                        f"must not carry model_source={model_source!r}"
+                    )
+            else:
+                if not model_source or not isinstance(model_source, str):
+                    raise CampaignValidationError(
+                        f"kaggle job {name!r}: model-bearing runtime_manifest "
+                        f"requires explicit 'model_source' string"
+                    )
+        elif provider == PROVIDER_COLAB:
+            if model_artifact is not None:
+                # model_artifact takes priority over manifest convention.
+                if not is_no_model:
+                    # Manifest is model-bearing: validate kind consistency.
+                    convention = runtime_manifest["model"]["resolved_model_convention"]
+                    kind = model_artifact.get("kind")
+                    if convention == "llama-cpp-gguf-file" and kind != "gguf":
+                        raise CampaignValidationError(
+                            f"colab job {name!r}: manifest convention "
+                            f"{convention!r} requires model_artifact kind 'gguf', "
+                            f"got {kind!r}"
+                        )
+                    if convention == "transformers-pretrained-directory" and kind != "hf_snapshot":
+                        raise CampaignValidationError(
+                            f"colab job {name!r}: manifest convention "
+                            f"{convention!r} requires model_artifact kind "
+                            f"'hf_snapshot', got {kind!r}"
+                        )
+            elif not is_no_model:
+                raise CampaignValidationError(
+                    f"colab job {name!r}: model-bearing runtime_manifest "
+                    f"requires 'model_artifact'"
+                )
+
         # Provider-specific required fields.
         if provider == PROVIDER_KAGGLE:
             _validate_kaggle_job_fields(name, job, phase)
@@ -216,7 +284,6 @@ def validate_campaign(campaign: dict[str, Any]) -> None:
         # Colab-only optional model provisioning fields.
         # These are rejected on Kaggle jobs to enforce the CPU-only,
         # no-external-model contract for Kaggle kernels.
-        model_artifact = job.get("model_artifact")
         install_llama_cpp = job.get("install_llama_cpp")
         if provider == PROVIDER_KAGGLE:
             if model_artifact is not None:
@@ -448,17 +515,23 @@ def _build_runner_arguments(
     """Build argv for ``run_experiment_module`` from a campaign job.
 
     The runner CLI accepts ``--module``, repeated ``--arg=<value>``,
-    ``--source-commit``, ``--provider``, ``--job-name``, and ``--report``.
+    ``--source-commit``, ``--provider``, ``--job-name``, ``--report``,
+    ``--expected-manifest-json``, and ``--observed-manifest-json``.
     Each campaign job argument becomes a single ``--arg=<value>`` token so the
     runner forwards it verbatim to the experiment module — including values
     that begin with ``-`` (e.g. ``--seed``, negative numbers, empty strings).
     """
+    expected_manifest_json = strict_canonical_json(
+        job["runtime_manifest"]
+    ).decode("utf-8")
     runner_args: list[str] = [
         "--module", job["module"],
         "--source-commit", source_commit,
         "--provider", provider,
         "--job-name", job["name"],
         "--report", DEFAULT_REPORT_FILENAME,
+        "--expected-manifest-json", expected_manifest_json,
+        "--observed-manifest-json", "{}",
     ]
     for arg in job.get("arguments", []):
         runner_args.append(f"--arg={arg}")
@@ -474,18 +547,27 @@ def _build_batch_job_entry(
     kernel_dir_rel: str | None,
     script_rel: str | None,
     output_dir_rel: str,
+    job_spec_rel: str | None = None,
 ) -> dict[str, Any]:
-    """Build a v2 batch job entry from a campaign job + resolved relative paths."""
+    """Build a v3 batch job entry from a campaign job + resolved relative paths.
+
+    Includes the inline ``runtime_manifest`` and, for Colab jobs, the
+    relative ``job_spec`` path so the scheduler can cross-validate the
+    generated provider spec against the batch identity.
+    """
     entry: dict[str, Any] = {
         "name": job["name"],
         "provider": job["provider"],
         "output_dir": output_dir_rel,
+        "runtime_manifest": job["runtime_manifest"],
     }
     if job["provider"] == PROVIDER_KAGGLE:
         entry["kernel_dir"] = kernel_dir_rel
     else:
         entry["script"] = script_rel
         entry["arguments"] = []  # bootstrap bakes them in
+        if job_spec_rel is not None:
+            entry["job_spec"] = job_spec_rel
         timeout = job.get("timeout")
         if timeout is not None:
             entry["timeout"] = float(timeout)
@@ -493,9 +575,6 @@ def _build_batch_job_entry(
 
 
 # ---------------------------------------------------------------------------
-# Campaign preparation
-# ---------------------------------------------------------------------------
-
 def prepare_experiment_campaign(
     campaign_path: str | Path,
     output_dir: str | Path,
@@ -507,8 +586,9 @@ def prepare_experiment_campaign(
     Reads the campaign manifest at *campaign_path*, validates it, calls the
     provider-specific preparer for each job, and writes:
 
-    * ``batch.json`` — scheduler v2 batch manifest
-    * ``campaign_manifest.json`` — campaign manifest with resolved paths
+    * ``batch.json`` — scheduler v3 batch manifest with inline per-job
+      ``runtime_manifest`` identity.
+    * ``campaign_manifest.json`` — campaign manifest with resolved paths.
 
     Returns a dict with ``batch_path``, ``manifest_path``, and ``jobs``.
     """
@@ -529,12 +609,13 @@ def prepare_experiment_campaign(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     batch_jobs: list[dict[str, Any]] = []
-    job_paths: dict[str, dict[str, str]] = []
+    job_paths: list[dict[str, str]] = []
 
     for job in campaign["jobs"]:
         name = job["name"]
         provider = job["provider"]
         output_dir_rel = job["output_path"]
+        runtime_manifest = job["runtime_manifest"]
 
         if provider == PROVIDER_KAGGLE:
             kernel_subdir = f"kernels/{name}"
@@ -555,6 +636,7 @@ def prepare_experiment_campaign(
                 model_source=job.get("model_source"),
                 instrument_manifest_sha256=job.get("instrument_manifest_sha256"),
                 human_signoff_id=job.get("human_signoff_id"),
+                runtime_manifest=runtime_manifest,
                 force=force,
             )
 
@@ -581,6 +663,7 @@ def prepare_experiment_campaign(
 
             colab_subdir = f"colab/{name}"
             colab_dir = output_dir / colab_subdir
+            job_spec_rel = f"{colab_subdir}/job_spec.json"
 
             prepare_colab_experiment(
                 output=colab_dir,
@@ -595,6 +678,7 @@ def prepare_experiment_campaign(
                 timeout=job.get("timeout"),
                 model_artifact=job.get("model_artifact"),
                 install_llama_cpp=job.get("install_llama_cpp", False),
+                runtime_manifest=runtime_manifest,
                 force=force,
             )
 
@@ -603,6 +687,7 @@ def prepare_experiment_campaign(
                 _build_batch_job_entry(
                     job, kernel_dir_rel=None,
                     script_rel=script_rel, output_dir_rel=output_dir_rel,
+                    job_spec_rel=job_spec_rel,
                 )
             )
             job_paths.append({
@@ -617,10 +702,10 @@ def prepare_experiment_campaign(
                 f"job {name!r} has unknown provider {provider!r}"
             )
 
-    # Write v2 batch manifest.
+    # Write v3 batch manifest.
     batch_path = output_dir / "batch.json"
     batch_manifest: dict[str, Any] = {
-        "schema_version": BATCH_SCHEMA_V2,
+        "schema_version": BATCH_SCHEMA_VERSION,
         "campaign_source_commit": source_commit,
         "jobs": batch_jobs,
     }

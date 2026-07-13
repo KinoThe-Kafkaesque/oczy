@@ -12,14 +12,14 @@ Covers the full campaign lifecycle contracts:
   ``--cuda``, ``--device cuda``, ``--accelerator`` rejected anywhere,
   even after ``--``; CPU-only applies to the target module).
 * Campaign mixed generation: validate_campaign accepts mixed providers,
-  prepare_experiment_campaign emits a v2 scheduler-compatible batch.
+  prepare_experiment_campaign emits a v3 scheduler-compatible batch.
 * Duplicate / invalid jobs rejected by the campaign validator.
 * Frozen meta-test sign-off propagation: meta-test jobs require
   instrument_manifest_sha256 + human_signoff_id and pass them through.
 * Collector provenance validation and COMPLETE / NULL / INVALID / BLOCKED
-  classification.
+  classification, including exact runtime-manifest enforcement.
 * Missing outputs (no report file, no output dir).
-* v2 scheduler compatibility: generated batch loads via load_batch.
+* v3 scheduler compatibility: generated batch loads via load_batch.
 
 All tests use fake subprocess, fake clients, and temp repos — never the
 network, real Kaggle/Colab CLI, or real GitHub.
@@ -32,6 +32,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import re
 import runpy
 import subprocess
@@ -66,10 +67,13 @@ _coll_mod = _load_module(KAGGLE_DIR / "collect_experiment_campaign.py")
 _runner_mod = _load_module(KAGGLE_DIR / "run_experiment_module.py")
 # Colab experiment preparer
 _colab_prep_mod = _load_module(KAGGLE_DIR / "prepare_colab_experiment.py")
-# Scheduler (for v2 batch compatibility)
+# Scheduler (for v3 batch compatibility)
 _sched_mod = _load_module(KAGGLE_DIR / "parallel_scheduler.py")
 # Kernel preparer (for meta-test sign-off propagation)
 _kernel_mod = _load_module(KAGGLE_DIR / "prepare_research_kernel.py")
+# Runtime manifest / report helpers
+_runtime_mod = _load_module(KAGGLE_DIR / "runtime_manifest.py")
+_report_mod = _load_module(KAGGLE_DIR / "execution_report.py")
 
 # ---------------------------------------------------------------------------
 # Constants pulled from the loaded modules
@@ -86,19 +90,19 @@ _validate_safe_relative_filename_campaign = _prep_mod.get("_validate_safe_relati
 
 classify_job_result = _coll_mod["classify_job_result"]
 collect_experiment_campaign = _coll_mod["collect_experiment_campaign"]
-# Colab sentinel / Kaggle provenance constants (may not exist in all versions).
-_COLAB_SENTINEL_PREFIX: str = _coll_mod.get("_COLAB_SENTINEL_PREFIX", "OCZY_EXECUTION_REPORT_JSON=")
-_COLAB_STDOUT_LOG: str = _coll_mod.get("_COLAB_STDOUT_LOG", "stdout.log")
-COLAB_RESULT_FILENAME: str = _coll_mod.get("COLAB_RESULT_FILENAME", "result.json")
-KAGGLE_PROVENANCE_FILENAME: str = _coll_mod.get("KAGGLE_PROVENANCE_FILENAME", "remote_run_provenance.json")
-SentinelError = _coll_mod.get("SentinelError", type("SentinelError", (Exception,), {}))
+# Execution-report / sentinel constants.
+_COLAB_SENTINEL_PREFIX: str = _report_mod["EXECUTION_REPORT_SENTINEL_PREFIX"]
+_COLAB_STDOUT_LOG: str = _report_mod["COLAB_STDOUT_LOG"]
+COLAB_RESULT_FILENAME: str = _report_mod["COLAB_RESULT_FILENAME"]
+KAGGLE_PROVENANCE_FILENAME: str = _report_mod["KAGGLE_PROVENANCE_FILENAME"]
+SentinelError = _report_mod["SentinelError"]
 
 RUNNER_SCHEMA_VERSION: str = _runner_mod["SCHEMA_VERSION"]
 parse_args = _runner_mod["parse_args"]
-run_module = _runner_mod["run_module"]
+_run_module_impl = _runner_mod["run_module"]
 DIAGNOSTIC_MAX_BYTES: int = _runner_mod.get("_DIAGNOSTIC_MAX_BYTES", 8192)
 
-prepare_colab_experiment = _colab_prep_mod["prepare_colab_experiment"]
+_prepare_colab_experiment_impl = _colab_prep_mod["prepare_colab_experiment"]
 COLAB_JOB_SCHEMA_VERSION: str = _colab_prep_mod["JOB_SPEC_SCHEMA_VERSION"]
 ColabPrepValueError = _colab_prep_mod["ColabPrepValueError"]
 _VALID_MODEL_ARTIFACT_KINDS = _colab_prep_mod.get(
@@ -114,7 +118,7 @@ _validate_model_artifact_files_colab = _colab_prep_mod.get("_validate_model_arti
 _validate_safe_relative_filename_colab = _colab_prep_mod.get("_validate_safe_relative_filename")
 _sha256_file_colab = _colab_prep_mod.get("_sha256_file")
 
-BATCH_SCHEMA_V2: str = _sched_mod["BATCH_SCHEMA_V2"]
+BATCH_SCHEMA_VERSION: str = _sched_mod["BATCH_SCHEMA_VERSION"]
 load_batch = _sched_mod["load_batch"]
 BatchValidationError = _sched_mod["BatchValidationError"]
 PROVIDER_KAGGLE: str = _sched_mod["PROVIDER_KAGGLE"]
@@ -124,6 +128,12 @@ FAILED: str = _sched_mod["FAILED"]
 
 PHASES = _kernel_mod["PHASES"]
 prepare_kernel = _kernel_mod["prepare_kernel"]
+RUNTIME_MANIFEST_SCHEMA_VERSION: str = _runtime_mod["RUNTIME_MANIFEST_SCHEMA_VERSION"]
+compute_manifest_sha256 = _runtime_mod["compute_manifest_sha256"]
+compute_component_sha256 = _runtime_mod["compute_component_sha256"]
+strict_canonical_json = _runtime_mod["strict_canonical_json"]
+validate_runtime_manifest = _runtime_mod["validate_runtime_manifest"]
+RuntimeManifestError = _runtime_mod["RuntimeManifestError"]
 
 COMMIT = "a" * 40
 COMMIT_B = "b" * 40
@@ -131,18 +141,173 @@ REPO_URL = "https://github.com/KinoThe-Kafkaesque/oczy.git"
 ARCHIVE_SHA = "c" * 64
 SOURCE_DATASET = f"owner/oczy-source-{COMMIT[:12]}"
 
-EXPECTED_CAMPAIGN_SCHEMA = "oczy/remote-experiment-campaign/v1"
-EXPECTED_RUNNER_SCHEMA = "oczy/execution-report/v1"
-EXPECTED_COLAB_JOB_SCHEMA = "oczy/colab-experiment-job/v1"
-EXPECTED_BATCH_V2 = "oczy/remote-parallel-batch/v2"
+EXPECTED_CAMPAIGN_SCHEMA = "oczy/remote-experiment-campaign/v2"
+EXPECTED_RUNNER_SCHEMA = "oczy/execution-report/v2"
+EXPECTED_COLAB_JOB_SCHEMA = "oczy/colab-experiment-job/v2"
+EXPECTED_BATCH_SCHEMA = "oczy/remote-parallel-batch/v3"
 
 MODEL_REVISION = "f" * 40
 MODEL_SHA_DUMMY = "e" * 64
 
+def _greedy_generation(**overrides: Any) -> dict[str, Any]:
+    generation = {
+        "max_new_tokens": 16,
+        "min_new_tokens": 0,
+        "do_sample": False,
+        "num_beams": 1,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "top_k": 0,
+        "repetition_penalty": 1.0,
+        "length_penalty": 1.0,
+        "no_repeat_ngram_size": 0,
+        "use_cache": True,
+        "eos_token_ids": [2],
+        "pad_token_id": 2,
+        "stop_strings": [],
+    }
+    generation.update(overrides)
+    return generation
 
+
+def _with_self_hash(manifest: dict[str, Any]) -> dict[str, Any]:
+    manifest = json.loads(json.dumps(manifest))
+    manifest["manifest_sha256"] = compute_manifest_sha256(manifest)
+    validate_runtime_manifest(manifest)
+    return manifest
+
+
+def _no_model_runtime_manifest(**overrides: Any) -> dict[str, Any]:
+    manifest: dict[str, Any] = {
+        "schema_version": RUNTIME_MANIFEST_SCHEMA_VERSION,
+        "python_version": "3.11.9",
+        "packages": {
+            "torch": "2.3.0",
+            "transformers": "4.44.0",
+            "tokenizers": "0.19.1",
+            "safetensors": "0.4.3",
+        },
+        "model": {
+            "logical_model_id": None,
+            "resolved_model_convention": "none",
+            "artifact_files": [],
+            "model_weights_sha256": None,
+            "model_config_sha256": None,
+            "tokenizer_sha256": None,
+            "chat_template_sha256": None,
+        },
+        "greedy_generation": None,
+        "manifest_sha256": "",
+    }
+    manifest.update(overrides)
+    return _with_self_hash(manifest)
+
+
+def _model_runtime_manifest(
+    *,
+    logical_model_id: str = "LiquidAI/LFM2.5-1.2B-Instruct",
+    convention: str = "llama-cpp-gguf-file",
+    artifact_files: list[dict[str, Any]] | None = None,
+    generation: dict[str, Any] | None = None,
+    packages: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    if artifact_files is None:
+        artifact_files = [
+            {
+                "path": "model.gguf",
+                "size_bytes": 11,
+                "sha256": MODEL_SHA_DUMMY,
+                "roles": ["chat_template", "config", "tokenizer", "weights"],
+            }
+        ]
+    role_hashes = {
+        role: compute_component_sha256([f for f in artifact_files if role in f["roles"]])
+        for role in ("weights", "config", "tokenizer", "chat_template")
+    }
+    manifest: dict[str, Any] = {
+        "schema_version": RUNTIME_MANIFEST_SCHEMA_VERSION,
+        "python_version": "3.11.9",
+        "packages": packages or {
+            "torch": "2.3.0",
+            "transformers": "4.44.0",
+            "tokenizers": "0.19.1",
+            "safetensors": "0.4.3",
+        },
+        "model": {
+            "logical_model_id": logical_model_id,
+            "resolved_model_convention": convention,
+            "artifact_files": artifact_files,
+            "model_weights_sha256": role_hashes["weights"],
+            "model_config_sha256": role_hashes["config"],
+            "tokenizer_sha256": role_hashes["tokenizer"],
+            "chat_template_sha256": role_hashes["chat_template"],
+        },
+        "greedy_generation": generation or _greedy_generation(),
+        "manifest_sha256": "",
+    }
+    return _with_self_hash(manifest)
+
+
+def _tamper_manifest(manifest: dict[str, Any], path: tuple[str, ...], value: Any) -> dict[str, Any]:
+    broken = json.loads(json.dumps(manifest))
+    cursor: Any = broken
+    for key in path[:-1]:
+        cursor = cursor[key]
+    cursor[path[-1]] = value
+    return broken
+
+
+def run_module(**kwargs: Any) -> dict[str, Any]:
+    kwargs.setdefault("expected_runtime_manifest", _no_model_runtime_manifest())
+    kwargs.setdefault("observed_runtime_manifest", json.loads(json.dumps(kwargs["expected_runtime_manifest"])))
+    return _run_module_impl(**kwargs)
+
+
+
+def prepare_colab_experiment(**kwargs: Any) -> dict[str, Any]:
+    if "runtime_manifest" not in kwargs or kwargs["runtime_manifest"] is None:
+        kwargs["runtime_manifest"] = _runtime_manifest_for_job(
+            PROVIDER_COLAB,
+            {"model_artifact": kwargs.get("model_artifact")},
+        )
+    return _prepare_colab_experiment_impl(**kwargs)
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
+
+def _runtime_manifest_for_job(provider: str, extra: dict[str, Any]) -> dict[str, Any]:
+    if "runtime_manifest" in extra:
+        return extra["runtime_manifest"]
+    artifact = extra.get("model_artifact")
+    if provider == PROVIDER_COLAB and isinstance(artifact, dict):
+        if artifact.get("kind") == "hf_snapshot":
+            return _model_runtime_manifest(
+                logical_model_id=artifact.get("repo_id", "test/model"),
+                convention="transformers-pretrained-directory",
+                artifact_files=sorted(
+                    [
+                        {
+                            "path": f["filename"],
+                            "size_bytes": f["size_bytes"],
+                            "sha256": f["sha256"],
+                            "roles": f.get(
+                                "roles",
+                                ["config"] if f["filename"] == "config.json"
+                                else ["chat_template"] if f["filename"].endswith(".jinja")
+                                else ["tokenizer"] if "tokenizer" in f["filename"]
+                                else ["weights"],
+                            ),
+                        }
+                        for f in artifact.get("files", [])
+                    ],
+                    key=lambda f: f["path"],
+                ) or None,
+            )
+        return _model_runtime_manifest(logical_model_id=artifact.get("repo_id", "test/model"))
+    if provider == PROVIDER_KAGGLE and extra.get("model_source"):
+        return _model_runtime_manifest(logical_model_id=extra["model_source"])
+    return _no_model_runtime_manifest()
 
 
 def _valid_campaign_job(
@@ -156,14 +321,17 @@ def _valid_campaign_job(
     claim_class: str = "scientific",
     **extra: Any,
 ) -> dict[str, Any]:
+    runtime_manifest = _runtime_manifest_for_job(provider, extra)
     job: dict[str, Any] = {
         "name": name,
         "provider": provider,
+        "_campaign_source_commit": COMMIT,
         "phase": phase,
         "module": module,
         "arguments": arguments if arguments is not None else [],
         "output_path": output_path,
         "claim_class": claim_class,
+        "runtime_manifest": runtime_manifest,
     }
     # Kaggle jobs require provenance fields (kernel_id, title, source_dataset,
     # source_archive_sha256).  The title slug must match the kernel_id suffix
@@ -245,6 +413,12 @@ def _valid_hf_snapshot_artifact(
         "revision": revision,
         "filename": filename,
         "sha256": sha256,
+        "files": [
+            {"filename": "chat_template.jinja", "size_bytes": 5, "sha256": "1" * 64},
+            {"filename": "config.json", "size_bytes": 7, "sha256": sha256},
+            {"filename": "model.safetensors", "size_bytes": 11, "sha256": "2" * 64},
+            {"filename": "tokenizer.json", "size_bytes": 13, "sha256": "3" * 64},
+        ],
     }
 
 
@@ -322,9 +496,11 @@ def _patch_popen(proc: FakeProc) -> Any:
     class _FakePopenFactory:
         def __init__(self) -> None:
             self.calls: list[list[str]] = []
+            self.kwargs: list[dict[str, Any]] = []
 
         def __call__(self, command: list[str], **kwargs: Any) -> FakeProc:
             self.calls.append(command)
+            self.kwargs.append(kwargs)
             return proc
 
     factory = _FakePopenFactory()
@@ -355,7 +531,9 @@ def _make_report(
     error: dict[str, Any] | None = None,
     timeout_seconds: float | None = None,
     schema_version: str = RUNNER_SCHEMA_VERSION,
+    runtime_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    manifest = runtime_manifest or _no_model_runtime_manifest()
     return {
         "schema_version": schema_version,
         "job_name": job_name,
@@ -374,6 +552,8 @@ def _make_report(
         "asi_scores": asi_scores if asi_scores is not None else {},
         "error": error,
         "timeout_seconds": timeout_seconds,
+        "expected_runtime_manifest_sha256": manifest["manifest_sha256"],
+        "observed_runtime_manifest": manifest,
     }
 
 
@@ -590,6 +770,54 @@ class TestRunnerReport:
             "sentinel must not leak into the child stdout log"
         )
         assert "METRIC loss=0.5" in log_text
+
+
+class TestRunnerRuntimeManifest:
+    """Runner enforces exact expected/observed runtime identity before spawning children."""
+
+    def test_matching_manifest_spawns_child_and_exports_generation(self, tmp_path: Path) -> None:
+        manifest = _model_runtime_manifest()
+        proc = FakeProc(returncode=0)
+        patcher, factory = _patch_popen(proc)
+        with patcher:
+            report = run_module(
+                module="json",
+                arguments=[],
+                source_commit=COMMIT,
+                provider=PROVIDER_KAGGLE,
+                job_name="job-a",
+                report_path=tmp_path / "execution_report.json",
+                expected_runtime_manifest=manifest,
+                observed_runtime_manifest=json.loads(json.dumps(manifest)),
+            )
+        assert report["status"] == "complete"
+        assert factory.calls
+        env = factory.kwargs[0]["env"]
+        assert json.loads(env["OCZY_GREEDY_GENERATION_JSON"]) == manifest["greedy_generation"]
+        assert report["expected_runtime_manifest_sha256"] == manifest["manifest_sha256"]
+        assert report["observed_runtime_manifest"] == manifest
+
+    def test_mismatched_manifest_writes_report_and_skips_child(self, tmp_path: Path) -> None:
+        expected = _no_model_runtime_manifest()
+        observed = _tamper_manifest(expected, ("python_version",), "3.12.0")
+        observed = _with_self_hash(observed)
+        proc = FakeProc(returncode=0)
+        patcher, factory = _patch_popen(proc)
+        with patcher:
+            report = run_module(
+                module="json",
+                arguments=[],
+                source_commit=COMMIT,
+                provider=PROVIDER_KAGGLE,
+                job_name="job-a",
+                report_path=tmp_path / "execution_report.json",
+                expected_runtime_manifest=expected,
+                observed_runtime_manifest=observed,
+            )
+        assert report["status"] == "runtime_mismatch"
+        assert report["exit_code"] == 1
+        assert "runtime manifest mismatch" in report["error"]["message"]
+        assert factory.calls == []
 
 # ===========================================================================
 # 1b. Runner report: nonzero-exit diagnostic capture
@@ -1341,15 +1569,73 @@ class TestCampaignValidation:
             validate_campaign(campaign)
 
 
+class TestCampaignRuntimeManifestCutover:
+    """Campaign validation enforces required exact runtime manifest identity."""
+
+    def test_rejects_missing_runtime_manifest(self) -> None:
+        job = _valid_campaign_job()
+        del job["runtime_manifest"]
+        with pytest.raises(CampaignValidationError, match="runtime_manifest"):
+            validate_campaign(_valid_campaign(jobs=[job]))
+
+    def test_rejects_malformed_runtime_manifest_self_hash(self) -> None:
+        job = _valid_campaign_job(runtime_manifest=_tamper_manifest(
+            _no_model_runtime_manifest(), ("python_version",), "3.12.0"
+        ))
+        with pytest.raises(CampaignValidationError, match="manifest_sha256"):
+            validate_campaign(_valid_campaign(jobs=[job]))
+
+    def test_rejects_runtime_manifest_extra_field(self) -> None:
+        manifest = _no_model_runtime_manifest()
+        manifest["extra"] = "not allowed"
+        job = _valid_campaign_job(runtime_manifest=manifest)
+        with pytest.raises(CampaignValidationError, match="unexpected"):
+            validate_campaign(_valid_campaign(jobs=[job]))
+
+    def test_rejects_model_manifest_without_kaggle_model_source(self) -> None:
+        job = _valid_campaign_job(runtime_manifest=_model_runtime_manifest())
+        with pytest.raises(CampaignValidationError, match="model_source"):
+            validate_campaign(_valid_campaign(jobs=[job]))
+
+    def test_kaggle_runtime_manifest_propagates_exactly_to_batch_and_job_spec(self, tmp_path: Path) -> None:
+        manifest = _model_runtime_manifest(logical_model_id="owner/model")
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(
+                name="kg-0",
+                provider=PROVIDER_KAGGLE,
+                model_source="owner/model",
+                runtime_manifest=manifest,
+            ),
+        ])
+        result = prepare_experiment_campaign(_write_campaign(tmp_path, campaign), tmp_path / "generated")
+        batch = json.loads(Path(result["batch_path"]).read_text())
+        spec = json.loads((tmp_path / "generated" / batch["jobs"][0]["kernel_dir"] / "job_spec.json").read_text())
+        assert batch["jobs"][0]["runtime_manifest"] == manifest
+        assert spec["runtime_manifest"] == manifest
+        assert strict_canonical_json(manifest).decode("utf-8") in spec["arguments"]
+
+    def test_rejects_no_model_kaggle_job_with_model_source(self) -> None:
+        job = _valid_campaign_job(model_source="owner/model/1")
+        job["runtime_manifest"] = _no_model_runtime_manifest()
+        with pytest.raises(CampaignValidationError, match="no-model"):
+            validate_campaign(_valid_campaign(jobs=[job]))
+
+    def test_colab_no_model_validation_does_not_crash(self) -> None:
+        campaign = _valid_campaign(jobs=[
+            _valid_campaign_job(name="cb-0", provider=PROVIDER_COLAB),
+        ])
+        validate_campaign(campaign)
+
+
 # ===========================================================================
 # 7. Campaign mixed generation
 # ===========================================================================
 
 
 class TestCampaignMixedGeneration:
-    """prepare_experiment_campaign generates a v2 scheduler-compatible batch."""
+    """prepare_experiment_campaign generates a v3 scheduler-compatible batch."""
 
-    def test_generates_v2_batch(self, tmp_path: Path) -> None:
+    def test_generates_v3_batch(self, tmp_path: Path) -> None:
         campaign = _valid_campaign(jobs=[
             _valid_campaign_job(name="kg-0", provider=PROVIDER_KAGGLE, phase="instrument"),
             _valid_campaign_job(name="cb-0", provider=PROVIDER_COLAB, phase="development"),
@@ -1361,7 +1647,7 @@ class TestCampaignMixedGeneration:
         assert "manifest_path" in result
         assert "jobs" in result
         batch = json.loads(Path(result["batch_path"]).read_text())
-        assert batch["schema_version"] == EXPECTED_BATCH_V2
+        assert batch["schema_version"] == EXPECTED_BATCH_SCHEMA
 
     def test_generated_batch_has_both_providers(self, tmp_path: Path) -> None:
         campaign = _valid_campaign(jobs=[
@@ -1418,11 +1704,11 @@ class TestCampaignMixedGeneration:
 
 
 # ===========================================================================
-# 8. v2 scheduler compatibility — generated batch loads via load_batch
+# 8. v3 scheduler compatibility — generated batch loads via load_batch
 # ===========================================================================
 
 
-class TestV2SchedulerCompatibility:
+class TestV3SchedulerCompatibility:
     """The generated batch must be loadable by the scheduler's load_batch."""
 
     def test_generated_batch_loads_via_load_batch(self, tmp_path: Path) -> None:
@@ -1436,7 +1722,7 @@ class TestV2SchedulerCompatibility:
         jobs = load_batch(result["batch_path"])
         assert len(jobs) == 1
         assert jobs[0]["provider"] == PROVIDER_KAGGLE
-        assert jobs[0]["schema_version"] == BATCH_SCHEMA_V2
+        assert jobs[0]["schema_version"] == BATCH_SCHEMA_VERSION
 
     def test_generated_mixed_batch_loads_via_load_batch(self, tmp_path: Path) -> None:
         """A generated mixed kaggle+colab batch loads via load_batch."""
@@ -1624,6 +1910,50 @@ class TestCollectorClassification:
         job_entry = _scheduler_job_entry(state=SUCCEEDED)
         campaign_job = _valid_campaign_job()
         assert classify_job_result(job_entry, report, campaign_job) == "INVALID"
+
+
+class TestCollectorRuntimeManifest:
+    """Collector rejects runtime drift before scientific classification."""
+
+    def test_matching_manifest_allows_complete(self) -> None:
+        manifest = _no_model_runtime_manifest()
+        report = _make_report(metrics={"loss": 0.5}, runtime_manifest=manifest)
+        job_entry = _scheduler_job_entry(state=SUCCEEDED)
+        campaign_job = _valid_campaign_job(runtime_manifest=manifest)
+        assert classify_job_result(
+            job_entry, report, campaign_job, expected_runtime_manifest=manifest
+        ) == "COMPLETE"
+
+    def test_package_mismatch_is_invalid_before_metrics(self) -> None:
+        expected = _no_model_runtime_manifest()
+        observed = _tamper_manifest(expected, ("packages", "torch"), "9.9.9")
+        observed = _with_self_hash(observed)
+        report = _make_report(metrics={"loss": 0.5}, runtime_manifest=observed)
+        job_entry = _scheduler_job_entry(state=SUCCEEDED)
+        campaign_job = _valid_campaign_job(runtime_manifest=expected)
+        assert classify_job_result(
+            job_entry, report, campaign_job, expected_runtime_manifest=expected
+        ) == "INVALID"
+
+    def test_generation_mismatch_is_invalid_before_metrics(self) -> None:
+        expected = _model_runtime_manifest()
+        observed = _model_runtime_manifest(generation=_greedy_generation(max_new_tokens=32))
+        report = _make_report(metrics={"loss": 0.5}, runtime_manifest=observed)
+        job_entry = _scheduler_job_entry(state=SUCCEEDED)
+        campaign_job = _valid_campaign_job(model_source="model/1", runtime_manifest=expected)
+        assert classify_job_result(
+            job_entry, report, campaign_job, expected_runtime_manifest=expected
+        ) == "INVALID"
+
+    def test_missing_observed_manifest_is_invalid(self) -> None:
+        expected = _no_model_runtime_manifest()
+        report = _make_report(metrics={"loss": 0.5}, runtime_manifest=expected)
+        del report["observed_runtime_manifest"]
+        job_entry = _scheduler_job_entry(state=SUCCEEDED)
+        campaign_job = _valid_campaign_job(runtime_manifest=expected)
+        assert classify_job_result(
+            job_entry, report, campaign_job, expected_runtime_manifest=expected
+        ) == "INVALID"
 
 
 # ===========================================================================
@@ -2049,7 +2379,7 @@ class TestColabSentinelParsing:
     # ------------------------------------------------------------------
 
     def test_result_json_fallback_without_stdout_log(self, tmp_path: Path) -> None:
-        """result.json is used as fallback only when no stdout.log exists."""
+        """result.json fallback without stdout.log is INVALID under v2 (no runtime manifest)."""
         self._make_colab_output(
             tmp_path / "reports",
             "cb-0",
@@ -2058,9 +2388,7 @@ class TestColabSentinelParsing:
         )
         summary = self._collect_colab(tmp_path)
         job = self._job(summary)
-        assert job["classification"] == "COMPLETE"
-        assert job["report_source"] == "result_fallback"
-        assert job["metrics"] == {"loss": 0.4}
+        assert job["classification"] == "INVALID"
 
     def test_result_json_fallback_provenance_mismatch_is_invalid(self, tmp_path: Path) -> None:
         """result.json fallback with wrong source_commit is INVALID."""
@@ -3737,6 +4065,10 @@ class TestArgumentTransportOptionLike:
         ns["add_source_paths"] = lambda root: None
         ns["write_provenance"] = lambda payload: None
         ns["hardware"] = lambda: {}
+        # Provide runtime_manifest.py in the fake source tree.
+        _rm_dir2 = tmp_path / "infrastructure" / "kaggle"
+        _rm_dir2.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(KAGGLE_DIR / "runtime_manifest.py", _rm_dir2 / "runtime_manifest.py")
 
         result = ns["main"]()
         assert result == 0
@@ -3790,6 +4122,10 @@ class TestArgumentTransportOptionLike:
         ns["add_source_paths"] = lambda root: None
         ns["write_provenance"] = lambda payload: None
         ns["hardware"] = lambda: {}
+        # Provide runtime_manifest.py in this test's own tmp_path.
+        _rm_dir3 = tmp_path / "infrastructure" / "kaggle"
+        _rm_dir3.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(KAGGLE_DIR / "runtime_manifest.py", _rm_dir3 / "runtime_manifest.py")
 
         ns["main"]()
         runner_cli_args = captured["runner_argv"][3:]
@@ -4660,6 +4996,11 @@ class TestBootstrapStderrDiagnostics:
         # Avoid real git / sys.path / chdir side effects.
         fake_repo = tmp_path / "fake_repo"
         fake_repo.mkdir(exist_ok=True)
+        # Provide runtime_manifest.py in the fake source tree so the
+        # bootstrap's path-based import succeeds in test mode.
+        _rm_dir = fake_repo / "infrastructure" / "kaggle"
+        _rm_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(KAGGLE_DIR / "runtime_manifest.py", _rm_dir / "runtime_manifest.py")
         ns["clone_at_commit"] = lambda *a, **kw: fake_repo
         ns["add_source_paths"] = lambda repo_root: None
 
@@ -4989,6 +5330,11 @@ class TestBootstrapRunnerOutputForwarding:
 
         fake_repo = tmp_path / "fake_repo"
         fake_repo.mkdir(exist_ok=True)
+        # Provide runtime_manifest.py in the fake source tree so the
+        # bootstrap's path-based import succeeds in test mode.
+        _rm_dir = fake_repo / "infrastructure" / "kaggle"
+        _rm_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(KAGGLE_DIR / "runtime_manifest.py", _rm_dir / "runtime_manifest.py")
         ns["clone_at_commit"] = lambda *a, **kw: fake_repo
         ns["add_source_paths"] = lambda repo_root: None
 

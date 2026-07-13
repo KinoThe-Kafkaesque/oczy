@@ -2,15 +2,17 @@
 
 The bootstrap clones the public Oczy repository at an exact 40-character
 commit, verifies HEAD, prepends repo and workspace-package source directories
-to ``sys.path``, sets a strict CPU-only environment, then invokes
-``infrastructure.kaggle.run_experiment_module`` with an explicit subprocess
-argv.  All structured information is left in stdout/stderr for provider
-collection, plus a structured ``execution_report.json`` written by the runner.
+to ``sys.path``, sets a strict CPU-only environment, optionally provisions a
+hash-verified model artifact from Hugging Face, observes the local runtime
+manifest for identity verification, then invokes
+``infrastructure.kaggle.run_experiment_module`` with expected and observed
+manifest identity.
 
 This generator writes two artifacts into the output directory:
 
 * ``colab_bootstrap.py`` — self-contained Colab script.
-* ``job_spec.json`` — human-reviewable job specification.
+* ``job_spec.json`` — human-reviewable job specification with inline
+  ``runtime_manifest``.
 
 It does **not** embed credentials, does **not** invoke a shell, and does
 **not** modify frozen research/eval instruments.
@@ -27,9 +29,8 @@ from typing import Any
 
 # ---------------------------------------------------------------------------
 # Schema and constants
-# ---------------------------------------------------------------------------
+JOB_SPEC_SCHEMA_VERSION = "oczy/colab-experiment-job/v2"
 
-JOB_SPEC_SCHEMA_VERSION = "oczy/colab-experiment-job/v1"
 
 #: The single public repository URL permitted for Colab jobs.
 PUBLIC_REPO_URL = "https://github.com/KinoThe-Kafkaesque/oczy.git"
@@ -885,6 +886,7 @@ def main() -> int:
         )
         write_provenance(report)
 
+
         # --- Optional model artifact provisioning ---
         model_artifact = JOB_SPEC.get("model_artifact")
         if model_artifact is not None:
@@ -898,6 +900,65 @@ def main() -> int:
             report["llama_cpp_install"] = install_info
             write_provenance(report)
 
+        # --- Runtime manifest observation ---
+        expected_manifest = JOB_SPEC["runtime_manifest"]
+        import importlib.util as _ilu
+        _rm_path = repo_root / "infrastructure" / "kaggle" / "runtime_manifest.py"
+        _spec = _ilu.spec_from_file_location("_runtime_manifest", _rm_path)
+        assert _spec is not None and _spec.loader is not None, f"runtime_manifest.py not found at {_rm_path}"
+        _rm_mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_rm_mod)
+        compare_runtime_manifests = _rm_mod.compare_runtime_manifests
+        observe_runtime_manifest = _rm_mod.observe_runtime_manifest
+        RuntimeManifestError = _rm_mod.RuntimeManifestError
+        strict_canonical_json = _rm_mod.strict_canonical_json
+
+        convention = expected_manifest["model"]["resolved_model_convention"]
+        # Determine model_root from provisioned artifacts.
+        model_root = None
+        if convention == "llama-cpp-gguf-file":
+            gguf_path = os.environ.get("OCZY_MODEL_PATH")
+            if gguf_path:
+                model_root = Path(gguf_path)
+        elif convention == "transformers-pretrained-directory":
+            hf_dir = os.environ.get("OCZY_HF_MODEL_DIR")
+            if hf_dir:
+                model_root = Path(hf_dir)
+
+        try:
+            observed_manifest = observe_runtime_manifest(
+                model_root=model_root,
+                logical_model_id=expected_manifest["model"]["logical_model_id"],
+                resolved_model_convention=convention,
+                generation_config=expected_manifest["greedy_generation"],
+            )
+        except RuntimeManifestError as exc:
+            report.update(
+                {
+                    "status": "observation_failure",
+                    "error": str(exc),
+                    "finished_utc": time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                    ),
+                }
+            )
+            write_provenance(report)
+            return 1
+
+        mismatches = compare_runtime_manifests(expected_manifest, observed_manifest)
+        report.update(
+            {
+                "expected_runtime_manifest_sha256": expected_manifest["manifest_sha256"],
+                "observed_runtime_manifest_sha256": observed_manifest["manifest_sha256"],
+                "runtime_manifest_mismatches": mismatches[:20] if mismatches else [],
+                "model_root": str(model_root) if model_root is not None else None,
+            }
+        )
+        write_provenance(report)
+
+        # Build runner argv with expected and observed manifests.
+        expected_json = strict_canonical_json(expected_manifest).decode("utf-8")
+        observed_json = strict_canonical_json(observed_manifest).decode("utf-8")
         runner_argv = [
             sys.executable, "-m", "infrastructure.kaggle.run_experiment_module",
             "--module", JOB_SPEC["module"],
@@ -905,6 +966,8 @@ def main() -> int:
             "--provider", "colab",
             "--job-name", JOB_SPEC["job_name"],
             "--report", "execution_report.json",
+            "--expected-manifest-json", expected_json,
+            "--observed-manifest-json", observed_json,
         ]
         for arg in JOB_SPEC["arguments"]:
             runner_argv.append(f"--arg={arg}")
@@ -995,6 +1058,7 @@ def prepare_colab_experiment(
     force: bool = False,
     model_artifact: dict[str, Any] | None = None,
     install_llama_cpp: bool = False,
+    runtime_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Prepare a self-contained Colab bootstrap for one remote experiment job.
 
@@ -1033,14 +1097,19 @@ def prepare_colab_experiment(
         and hash-verify at bootstrap time.  Required fields when present:
         ``kind`` (``"gguf"`` or ``"hf_snapshot"``), ``repo_id`` (non-empty
         str), ``revision`` (40-char lowercase hex), ``filename`` (non-empty
-        str), ``sha256`` (64-char lowercase hex).  When ``None`` (default),
-        no model provisioning occurs and the job spec omits the key — pure
-        NumPy jobs are unchanged.
+        str), ``sha256`` (64-char lowercase hex).  For ``hf_snapshot``,
+        a ``files`` manifest with full inventory is required (legacy
+        primary-file-only snapshots are rejected under v2).  When ``None``
+        (default), no model provisioning occurs — pure NumPy jobs are
+        unchanged.
     install_llama_cpp:
         If True, the generated bootstrap installs
         ``llama-cpp-python==0.3.33`` from the abetlen CPU wheel index via
         explicit argv with ``--only-binary=:all:`` (no shell invocation, no
         arbitrary pip args).  Default False.
+    runtime_manifest:
+        Required per-job ``oczy/runtime-manifest/v1`` identity dict.  Must
+        be consistent with *model_artifact* when present.
 
     Returns
     -------
@@ -1072,8 +1141,16 @@ def prepare_colab_experiment(
         raise ColabPrepValueError("timeout must be a positive number or None.")
     if model_artifact is not None:
         _validate_model_artifact(model_artifact)
+        # Require full file inventory for hf_snapshot under v2.
+        if model_artifact.get("kind") == "hf_snapshot" and "files" not in model_artifact:
+            raise ColabPrepValueError(
+                "hf_snapshot model_artifact requires a 'files' manifest "
+                "with full file inventory under v2 schema."
+            )
     if not isinstance(install_llama_cpp, bool):
         raise ColabPrepValueError("install_llama_cpp must be a boolean.")
+    if not isinstance(runtime_manifest, dict):
+        raise ColabPrepValueError("runtime_manifest must be a dict (required for v2).")
 
     # --- Prepare output directory ---
     output = Path(output).resolve()
@@ -1098,6 +1175,7 @@ def prepare_colab_experiment(
         "output_path": output_path,
         "timeout": float(timeout) if timeout is not None else None,
         "install_llama_cpp": install_llama_cpp,
+        "runtime_manifest": runtime_manifest,
     }
     if model_artifact is not None:
         job_spec["model_artifact"] = model_artifact
@@ -1160,6 +1238,11 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="Install pinned llama-cpp-python==0.3.33 (binary-only) from abetlen CPU wheel index.",
     )
+    parser.add_argument(
+        "--runtime-manifest",
+        required=True,
+        help="Path to runtime manifest JSON file.",
+    )
     return parser.parse_args()
 
 
@@ -1172,6 +1255,15 @@ def main() -> int:
         except json.JSONDecodeError as exc:
             print(f"error: --model-artifact must be valid JSON: {exc}", file=sys.stderr)
             return 2
+    runtime_manifest_path = Path(args.runtime_manifest)
+    if not runtime_manifest_path.is_file():
+        print(f"error: runtime manifest not found: {runtime_manifest_path}", file=sys.stderr)
+        return 2
+    try:
+        runtime_manifest = json.loads(runtime_manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(f"error: invalid runtime manifest JSON: {exc}", file=sys.stderr)
+        return 2
     spec = prepare_colab_experiment(
         output=args.output,
         job_name=args.job_name,
@@ -1186,6 +1278,7 @@ def main() -> int:
         force=args.force,
         model_artifact=model_artifact,
         install_llama_cpp=args.install_llama_cpp,
+        runtime_manifest=runtime_manifest,
     )
     print(json.dumps(spec, indent=2, sort_keys=True))
     return 0

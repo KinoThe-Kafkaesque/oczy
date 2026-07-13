@@ -122,8 +122,9 @@ additive provider capacity, crash-safe durable state, and automatic resume.
 
 ### Unified runner-pool inventory
 
-`runner_pool.py` provides one read-only account/job view across every configured
-Kaggle and Colab account. It also merges durable scheduler state, so local
+`runner_pool.py` provides one account/job view across every configured Kaggle
+and Colab account. Its `status` command is read-only. It also merges durable
+scheduler state, so local
 `pending`, `failed`, and collected jobs appear beside jobs discovered directly
 from the provider. One broken or unauthenticated account is reported without
 hiding healthy accounts.
@@ -144,6 +145,27 @@ uv run python infrastructure/kaggle/runner_pool.py status \
   --active-only --json
 ```
 
+For an already-reviewed batch, create a non-submitting, hash-bound account
+plan and then run it through the scheduler:
+
+```bash
+QUEUE="$HOME/.local/state/oczy/remote-queue"
+POOL="$HOME/.config/oczy/runner-pool.json"
+
+uv run python infrastructure/kaggle/runner_pool.py plan \
+  "$QUEUE/batch.json" \
+  --config "$POOL" \
+  --state "$QUEUE/state.json" \
+  --output "$QUEUE/dispatch-plan.json"
+
+uv run python infrastructure/kaggle/parallel_scheduler.py run \
+  "$QUEUE/batch.json" \
+  --state "$QUEUE/state.json" \
+  --pool-config "$POOL" \
+  --dispatch-plan "$QUEUE/dispatch-plan.json" \
+  --lease-state "$HOME/.local/state/oczy/runner-pool-leases.json"
+```
+
 The v1 config stores credential **locations**, never secrets:
 
 - each Kaggle account has its own `config_dir`, passed as
@@ -160,10 +182,19 @@ scheduler records are correlated by `(provider, remote_id)`, with both
 non-zero if an enabled account is degraded/unavailable or a state file cannot
 be read, while still printing the partial inventory.
 
-This interface does not dispatch jobs or choose experiments. The current
-scheduler submission path remains unchanged; the account registry and
-normalized snapshot are the control-plane boundary for future pool-aware
-routing.
+Planning never submits jobs or chooses experiments. The plan is bound to the
+exact batch and pool-config SHA-256 values and records one `account_id` per
+job. The scheduler verifies both hashes, persists the assignment in state v3,
+scopes provider credentials per account, acquires a shared slot lease before
+submission, and releases it only after the attempt is terminal. A per-state
+owner lock prevents two scheduler processes from writing the same queue.
+Plans produced from incomplete state or a degraded relevant account are not
+accepted for dispatch.
+
+Pool-aware dispatch deliberately rejects `--watch-batch`: changing the batch
+requires a new reviewed plan. Every scheduler sharing accounts must use the
+same `--lease-state` path. The default lease TTL is eight hours and is renewed
+while the scheduler owns an active job.
 
 ### Batch schemas
 
@@ -244,7 +275,7 @@ uv run python infrastructure/kaggle/parallel_scheduler.py status \
 | Flag | Default | Description |
 |---|---|---|
 | ``--max-parallel N`` | omitted | Omit for additive provider capacity (kaggle_max + learned Colab). Explicit N caps total concurrency for backward compatibility (must be >= 1). |
-| ``--kaggle-max N`` | 10 | Max concurrent Kaggle kernels (hard max 10) |
+| ``--kaggle-max N`` | 5 | Max concurrent Kaggle kernels (hard max 5) |
 | ``--colab-max N`` | 10 | Colab AIMD capacity ceiling (additive probe, not a hard quota) |
 | ``--colab-cooldown SEC`` | 60 | Seconds to wait after a Colab 412 rejection before retrying |
 | ``--push-timeout SEC`` | 21600 | Kaggle kernel run-time limit |
@@ -255,9 +286,9 @@ uv run python infrastructure/kaggle/parallel_scheduler.py status \
 
 **Omitting ``--max-parallel`` means additive provider capacity.** The scheduler
 imposes no global concurrency cap — Kaggle jobs fill up to ``--kaggle-max``
-(hard-capped at 10) and Colab jobs fill up to the AIMD-learned limit
-(``--colab-max`` ceiling). For example, ``--kaggle-max 10`` plus a learned
-Colab limit of X allows 10 Kaggle + X Colab jobs to run concurrently.
+(hard-capped at 5) and Colab jobs fill up to the AIMD-learned limit
+(``--colab-max`` ceiling). For example, ``--kaggle-max 5`` plus a learned
+Colab limit of X allows 5 Kaggle + X Colab jobs to run concurrently.
 
 **Explicit ``--max-parallel N`` caps total concurrency** across all providers
 for backward compatibility. When provided, N must be >= 1.

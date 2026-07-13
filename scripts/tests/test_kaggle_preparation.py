@@ -34,20 +34,133 @@ import subprocess
 import sys
 import tarfile
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 KAGGLE_DIR = Path(__file__).resolve().parents[2] / "infrastructure" / "kaggle"
-prepare_kernel = runpy.run_path(str(KAGGLE_DIR / "prepare_research_kernel.py"))["prepare_kernel"]
+_prepare_kernel_impl = runpy.run_path(str(KAGGLE_DIR / "prepare_research_kernel.py"))["prepare_kernel"]
 prepare_bundle = runpy.run_path(str(KAGGLE_DIR / "prepare_source_bundle.py"))["prepare_bundle"]
 model_probe = runpy.run_path(str(KAGGLE_DIR / "run_qwen_model_probe.py"))
 artifact_manifest = model_probe["artifact_manifest"]
 locate_model = model_probe["locate_model"]
+runtime_manifest_mod = runpy.run_path(str(KAGGLE_DIR / "runtime_manifest.py"))
+RUNTIME_MANIFEST_SCHEMA_VERSION = runtime_manifest_mod["RUNTIME_MANIFEST_SCHEMA_VERSION"]
+compute_manifest_sha256 = runtime_manifest_mod["compute_manifest_sha256"]
+compute_component_sha256 = runtime_manifest_mod["compute_component_sha256"]
+validate_runtime_manifest = runtime_manifest_mod["validate_runtime_manifest"]
 
 COMMIT = "a" * 40
 ARCHIVE_SHA = "b" * 64
 SOURCE_DATASET = f"owner/oczy-source-{COMMIT[:12]}"
+
+MODEL_SHA_DUMMY = "e" * 64
+
+
+def _greedy_generation() -> dict[str, Any]:
+    return {
+        "max_new_tokens": 16,
+        "min_new_tokens": 0,
+        "do_sample": False,
+        "num_beams": 1,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "top_k": 0,
+        "repetition_penalty": 1.0,
+        "length_penalty": 1.0,
+        "no_repeat_ngram_size": 0,
+        "use_cache": True,
+        "eos_token_ids": [2],
+        "pad_token_id": 2,
+        "stop_strings": [],
+    }
+
+
+def _with_self_hash(manifest: dict[str, Any]) -> dict[str, Any]:
+    manifest = json.loads(json.dumps(manifest))
+    manifest["manifest_sha256"] = compute_manifest_sha256(manifest)
+    validate_runtime_manifest(manifest)
+    return manifest
+
+
+def _no_model_runtime_manifest() -> dict[str, Any]:
+    return _with_self_hash(
+        {
+            "schema_version": RUNTIME_MANIFEST_SCHEMA_VERSION,
+            "python_version": "3.11.9",
+            "packages": {
+                "torch": "2.3.0",
+                "transformers": "4.44.0",
+                "tokenizers": "0.19.1",
+                "safetensors": "0.4.3",
+            },
+            "model": {
+                "logical_model_id": None,
+                "resolved_model_convention": "none",
+                "artifact_files": [],
+                "model_weights_sha256": None,
+                "model_config_sha256": None,
+                "tokenizer_sha256": None,
+                "chat_template_sha256": None,
+            },
+            "greedy_generation": None,
+            "manifest_sha256": "",
+        }
+    )
+
+
+def _model_runtime_manifest(
+    *,
+    logical_model_id: str = "qwen-lm/qwen2.5",
+    convention: str = "llama-cpp-gguf-file",
+    filename: str = "model.gguf",
+    size_bytes: int = 11,
+    sha256: str = MODEL_SHA_DUMMY,
+) -> dict[str, Any]:
+    artifact_files = [
+        {
+            "path": filename,
+            "size_bytes": size_bytes,
+            "sha256": sha256,
+            "roles": ["chat_template", "config", "tokenizer", "weights"],
+        }
+    ]
+    component = compute_component_sha256(artifact_files)
+    return _with_self_hash(
+        {
+            "schema_version": RUNTIME_MANIFEST_SCHEMA_VERSION,
+            "python_version": "3.11.9",
+            "packages": {
+                "torch": "2.3.0",
+                "transformers": "4.44.0",
+                "tokenizers": "0.19.1",
+                "safetensors": "0.4.3",
+            },
+            "model": {
+                "logical_model_id": logical_model_id,
+                "resolved_model_convention": convention,
+                "artifact_files": artifact_files,
+                "model_weights_sha256": component,
+                "model_config_sha256": component,
+                "tokenizer_sha256": component,
+                "chat_template_sha256": component,
+            },
+            "greedy_generation": _greedy_generation(),
+            "manifest_sha256": "",
+        }
+    )
+
+
+def prepare_kernel(**kwargs: Any) -> dict[str, Any]:
+    if "runtime_manifest" not in kwargs:
+        kwargs["runtime_manifest"] = (
+            _model_runtime_manifest(logical_model_id=kwargs["model_source"])
+            if kwargs.get("model_source")
+            else _no_model_runtime_manifest()
+        )
+    _prepare_kernel_impl(**kwargs)
+    return json.loads((Path(kwargs["output"]) / "job_spec.json").read_text(encoding="utf-8"))
 
 
 def _git(repo: Path, *arguments: str) -> None:
@@ -209,6 +322,7 @@ def test_generator_cli_defaults_to_cpu_profile(
         "--source-commit", COMMIT,
         "--source-archive-sha256", ARCHIVE_SHA,
         "--module", "oczy.experiments.dummy",
+        "--runtime-manifest", json.dumps(_no_model_runtime_manifest()),
     ])
     args = parse_args()
     assert args.profile == "cpu"
@@ -273,10 +387,9 @@ def test_generated_metadata_is_cpu_private_offline_for_every_phase(
 
 
 def test_generated_metadata_model_attachment_rules(tmp_path: Path) -> None:
-    """Oracle/development/meta-test phases attach the default model; others don't."""
-    # Phases that should auto-attach the default model.
-    for phase in ("oracle", "development"):
-        output = tmp_path / f"auto-{phase}"
+    """Model-bearing kernels use an explicit model_source; no-model kernels stay model-free."""
+    for phase in ("oracle", "development", "instrument", "analysis"):
+        output = tmp_path / f"no-model-{phase}"
         prepare_kernel(
             output=output,
             kernel_id=f"owner/oczy-{phase}",
@@ -294,34 +407,12 @@ def test_generated_metadata_model_attachment_rules(tmp_path: Path) -> None:
             force=False,
         )
         metadata = json.loads((output / "kernel-metadata.json").read_text())
-        assert metadata["model_sources"] == [
-            "qwen-lm/qwen2.5/transformers/0.5b-instruct/1"
-        ], f"phase {phase} should auto-attach default model"
+        spec = json.loads((output / "job_spec.json").read_text())
+        assert metadata["model_sources"] == []
+        assert spec["runtime_manifest"]["model"]["resolved_model_convention"] == "none"
 
-    # Phases that should NOT auto-attach.
-    for phase in ("instrument", "analysis"):
-        output = tmp_path / f"noauto-{phase}"
-        prepare_kernel(
-            output=output,
-            kernel_id=f"owner/oczy-{phase}",
-            title=f"Oczy {phase.title()}",
-            phase=phase,
-            profile="cpu",
-            source_dataset=SOURCE_DATASET,
-            source_commit=COMMIT,
-            source_archive_sha256=ARCHIVE_SHA,
-            module="oczy.experiments.dummy",
-            arguments=[],
-            model_source=None,
-            instrument_manifest_sha256=None,
-            human_signoff_id=None,
-            force=False,
-        )
-        metadata = json.loads((output / "kernel-metadata.json").read_text())
-        assert metadata["model_sources"] == [], f"phase {phase} should not auto-attach"
-
-    # Explicit model_source overrides.
     output = tmp_path / "explicit-model"
+    manifest = _model_runtime_manifest(logical_model_id="custom/model/1")
     prepare_kernel(
         output=output,
         kernel_id="owner/oczy-instrument",
@@ -336,10 +427,13 @@ def test_generated_metadata_model_attachment_rules(tmp_path: Path) -> None:
         model_source="custom/model/1",
         instrument_manifest_sha256=None,
         human_signoff_id=None,
+        runtime_manifest=manifest,
         force=False,
     )
     metadata = json.loads((output / "kernel-metadata.json").read_text())
+    spec = json.loads((output / "job_spec.json").read_text())
     assert metadata["model_sources"] == ["custom/model/1"]
+    assert spec["runtime_manifest"] == manifest
 
 
 def test_meta_test_kernel_requires_manifest_and_human_signoff(tmp_path: Path) -> None:
@@ -389,7 +483,8 @@ def test_meta_test_kernel_succeeds_with_signoff(tmp_path: Path) -> None:
     assert metadata["enable_internet"] is False
     assert spec["instrument_manifest_sha256"] == ARCHIVE_SHA
     assert spec["human_signoff_id"] == "researcher@example.invalid"
-    assert spec["model_source"] == "qwen-lm/qwen2.5/transformers/0.5b-instruct/1"
+    assert spec["model_source"] is None
+    assert spec["runtime_manifest"]["model"]["resolved_model_convention"] == "none"
 
 
 # ---------------------------------------------------------------------------
@@ -655,9 +750,10 @@ def test_generated_bootstrap_extracts_source_to_temp_not_persisted(tmp_path: Pat
 
 
 
-def test_generated_bootstrap_propagates_model_dir(tmp_path: Path) -> None:
-    """The bootstrap must set OCZY_MODEL_DIR when a model is found."""
+def test_generated_bootstrap_propagates_model_identity_contract(tmp_path: Path) -> None:
+    """The bootstrap must carry the exact runtime manifest and convention-specific env exports."""
     output = tmp_path / "job"
+    manifest = _model_runtime_manifest(logical_model_id="custom/model/1")
     prepare_kernel(
         output=output,
         kernel_id="owner/oczy-test",
@@ -669,14 +765,17 @@ def test_generated_bootstrap_propagates_model_dir(tmp_path: Path) -> None:
         source_archive_sha256=ARCHIVE_SHA,
         module="oczy.experiments.dummy",
         arguments=[],
-        model_source=None,
+        model_source="custom/model/1",
         instrument_manifest_sha256=None,
         human_signoff_id=None,
+        runtime_manifest=manifest,
         force=False,
     )
     source = (output / "run.py").read_text()
-    assert 'OCZY_MODEL_DIR' in source
-    assert "find_model()" in source
+    assert "_resolve_model_from_manifest" in source
+    assert "_set_model_env_vars" in source
+    assert 'os.environ["OCZY_MODEL_PATH"]' in source
+    assert json.loads((output / "job_spec.json").read_text())["runtime_manifest"] == manifest
 
 
 def test_generated_bootstrap_records_error_provenance(tmp_path: Path) -> None:
@@ -1470,175 +1569,121 @@ def _exec_bootstrap(
     return namespace
 
 
-def test_generated_bootstrap_contains_gguf_discovery_and_env_exports(
+def test_generated_bootstrap_contains_manifest_resolution_and_env_exports(
     tmp_path: Path,
 ) -> None:
-    """The generated run.py must define find_gguf_model/find_hf_model_dir and
-    export OCZY_MODEL_PATH / OCZY_HF_MODEL_DIR."""
+    """The generated run.py resolves models from the reviewed runtime manifest."""
     output = _generate_minimal_kernel(tmp_path)
     source = (output / "run.py").read_text(encoding="utf-8")
-    assert "def find_gguf_model()" in source
-    assert "def find_hf_model_dir()" in source
+    assert "def _resolve_model_from_manifest(" in source
+    assert "def _set_model_env_vars(" in source
     assert 'os.environ["OCZY_MODEL_PATH"]' in source
     assert 'os.environ["OCZY_HF_MODEL_DIR"]' in source
-    assert _GGUF_FILENAME in source
 
 
-def test_generated_bootstrap_records_gguf_provenance(tmp_path: Path) -> None:
-    """The provenance report must include gguf_model_path and hf_model_dir."""
+def test_generated_bootstrap_records_manifest_provenance(tmp_path: Path) -> None:
+    """The provenance report must include expected/observed manifest hashes and resolved root."""
     output = _generate_minimal_kernel(tmp_path)
     source = (output / "run.py").read_text(encoding="utf-8")
-    assert '"gguf_model_path"' in source
-    assert '"hf_model_dir"' in source
+    assert '"expected_runtime_manifest_sha256"' in source
+    assert '"observed_runtime_manifest_sha256"' in source
+    assert '"model_root"' in source
 
 
-def test_bootstrap_find_gguf_model_discovers_unique_artifact(
+def _write_manifest_file(path: Path, content: bytes) -> dict[str, Any]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return {
+        "filename": path.name,
+        "size_bytes": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+    }
+
+
+def test_bootstrap_resolves_exact_gguf_candidate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """find_gguf_model returns the resolved path when exactly one GGUF is mounted."""
+    """Manifest-directed resolution returns the unique file matching name, size, and hash."""
     output = _generate_minimal_kernel(tmp_path)
     kaggle_input = tmp_path / "kaggle-input"
-    dataset = kaggle_input / "lfm-gguf"
-    dataset.mkdir(parents=True)
-    gguf = dataset / _GGUF_FILENAME
-    gguf.write_bytes(b"fake-weights")
+    gguf = kaggle_input / "lfm-gguf" / _GGUF_FILENAME
+    info = _write_manifest_file(gguf, b"fake-weights")
+    manifest = _model_runtime_manifest(
+        filename=info["filename"],
+        size_bytes=info["size_bytes"],
+        sha256=info["sha256"],
+    )
 
     ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
-    result = ns["find_gguf_model"]()
+    result = ns["_resolve_model_from_manifest"](manifest)
     assert result == gguf.resolve()
 
 
-def test_bootstrap_find_gguf_model_rejects_ambiguous_matches(
+def test_bootstrap_rejects_zero_gguf_candidates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """find_gguf_model raises RuntimeError when multiple GGUFs are found."""
-    output = _generate_minimal_kernel(tmp_path)
-    kaggle_input = tmp_path / "kaggle-input"
-    ds1 = kaggle_input / "dataset-a"
-    ds1.mkdir(parents=True)
-    (ds1 / _GGUF_FILENAME).write_bytes(b"weights-a")
-    ds2 = kaggle_input / "dataset-b"
-    ds2.mkdir(parents=True)
-    (ds2 / _GGUF_FILENAME).write_bytes(b"weights-b")
-
-    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
-    with pytest.raises(RuntimeError, match="expected exactly one"):
-        ns["find_gguf_model"]()
-
-
-def test_bootstrap_find_gguf_model_returns_none_when_no_artifact(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """find_gguf_model returns None when no GGUF is mounted."""
+    """A model-bearing manifest with no byte-exact mounted candidate fails closed."""
     output = _generate_minimal_kernel(tmp_path)
     kaggle_input = tmp_path / "kaggle-input"
     kaggle_input.mkdir(parents=True)
-    (kaggle_input / "empty-dataset").mkdir()
+    manifest = _model_runtime_manifest(filename=_GGUF_FILENAME, size_bytes=7, sha256="1" * 64)
 
     ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
-    assert ns["find_gguf_model"]() is None
+    with pytest.raises(RuntimeError, match="no candidate found"):
+        ns["_resolve_model_from_manifest"](manifest)
 
 
-def test_bootstrap_find_hf_model_dir_discovers_unique_dir(
+def test_bootstrap_rejects_multiple_gguf_candidates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """find_hf_model_dir returns the directory when exactly one valid HF dir is mounted."""
+    """Two mounted files with the same reviewed bytes are ambiguous and rejected."""
     output = _generate_minimal_kernel(tmp_path)
     kaggle_input = tmp_path / "kaggle-input"
-    hf_dir = kaggle_input / "lfm-hf"
-    hf_dir.mkdir(parents=True)
-    (hf_dir / "config.json").write_text(
-        json.dumps({"model_type": "lfm2", "hidden_size": 2048}), encoding="utf-8"
+    contents = b"same-reviewed-weights"
+    first = kaggle_input / "dataset-a" / _GGUF_FILENAME
+    second = kaggle_input / "dataset-b" / _GGUF_FILENAME
+    info = _write_manifest_file(first, contents)
+    _write_manifest_file(second, contents)
+    manifest = _model_runtime_manifest(
+        filename=info["filename"],
+        size_bytes=info["size_bytes"],
+        sha256=info["sha256"],
     )
-    (hf_dir / "model.safetensors").write_bytes(b"weights")
 
     ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
-    result = ns["find_hf_model_dir"]()
-    assert result == hf_dir.resolve()
+    with pytest.raises(RuntimeError, match="ambiguous candidates"):
+        ns["_resolve_model_from_manifest"](manifest)
 
 
-def test_bootstrap_find_hf_model_dir_accepts_bin_weights(
+def test_bootstrap_resolves_hf_directory_candidate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """find_hf_model_dir must accept *.bin weight files, not just safetensors."""
+    """Transformers-directory convention resolves to the parent of the exact manifest file."""
     output = _generate_minimal_kernel(tmp_path)
     kaggle_input = tmp_path / "kaggle-input"
-    hf_dir = kaggle_input / "lfm-hf-bin"
-    hf_dir.mkdir(parents=True)
-    (hf_dir / "config.json").write_text(
-        json.dumps({"model_type": "lfm2", "hidden_size": 2048}), encoding="utf-8"
+    config = kaggle_input / "lfm-hf" / "config.json"
+    info = _write_manifest_file(config, b'{"model_type":"lfm2","hidden_size":2048}')
+    manifest = _model_runtime_manifest(
+        convention="transformers-pretrained-directory",
+        filename=info["filename"],
+        size_bytes=info["size_bytes"],
+        sha256=info["sha256"],
     )
-    (hf_dir / "pytorch_model.bin").write_bytes(b"weights")
 
     ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
-    result = ns["find_hf_model_dir"]()
-    assert result == hf_dir.resolve()
+    result = ns["_resolve_model_from_manifest"](manifest)
+    assert result == config.parent.resolve()
 
 
-def test_bootstrap_find_hf_model_dir_rejects_ambiguous_matches(
+def test_bootstrap_no_model_manifest_resolves_to_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """find_hf_model_dir raises RuntimeError when multiple HF dirs are found."""
-    output = _generate_minimal_kernel(tmp_path)
-    kaggle_input = tmp_path / "kaggle-input"
-    for name in ("hf-a", "hf-b"):
-        d = kaggle_input / name
-        d.mkdir(parents=True)
-        (d / "config.json").write_text(
-            json.dumps({"model_type": "lfm2", "hidden_size": 2048}), encoding="utf-8"
-        )
-        (d / "model.safetensors").write_bytes(b"weights")
-
-    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
-    with pytest.raises(RuntimeError, match="expected zero or one HF model directory"):
-        ns["find_hf_model_dir"]()
-
-
-def test_bootstrap_find_hf_model_dir_returns_none_when_no_dir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """find_hf_model_dir returns None when no HF directory is mounted."""
+    """The explicit no-model branch never scans mounts and returns None."""
     output = _generate_minimal_kernel(tmp_path)
     kaggle_input = tmp_path / "kaggle-input"
     kaggle_input.mkdir(parents=True)
-    (kaggle_input / "empty").mkdir()
-
     ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
-    assert ns["find_hf_model_dir"]() is None
-
-
-def test_bootstrap_find_hf_model_dir_ignores_config_without_weights(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """find_hf_model_dir must not match a directory that has config.json but no weight files."""
-    output = _generate_minimal_kernel(tmp_path)
-    kaggle_input = tmp_path / "kaggle-input"
-    d = kaggle_input / "incomplete-hf"
-    d.mkdir(parents=True)
-    (d / "config.json").write_text(
-        json.dumps({"model_type": "lfm2", "hidden_size": 2048}), encoding="utf-8"
-    )
-    # No safetensors or bin file.
-
-    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
-    assert ns["find_hf_model_dir"]() is None
-
-
-def test_bootstrap_find_hf_model_dir_ignores_config_without_model_fields(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """find_hf_model_dir must skip config.json files that lack model_type/hidden_size."""
-    output = _generate_minimal_kernel(tmp_path)
-    kaggle_input = tmp_path / "kaggle-input"
-    d = kaggle_input / "bad-config"
-    d.mkdir(parents=True)
-    (d / "config.json").write_text(
-        json.dumps({"some_other_field": 42}), encoding="utf-8"
-    )
-    (d / "model.safetensors").write_bytes(b"weights")
-
-    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
-    assert ns["find_hf_model_dir"]() is None
+    assert ns["_resolve_model_from_manifest"](_no_model_runtime_manifest()) is None
 
 
 # ---------------------------------------------------------------------------

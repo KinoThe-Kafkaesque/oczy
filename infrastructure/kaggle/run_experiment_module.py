@@ -21,10 +21,9 @@ directly as a script (``python run_experiment_module.py ...``) — no relative
 imports.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -34,7 +33,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = "oczy/execution-report/v1"
+# Import from sibling to prevent string drift. When run as a script the
+# caller already arranges sys.path so the direct import works.
+try:
+    from execution_report import EXECUTION_REPORT_SCHEMA_VERSION as _RPT_VER
+except ImportError:
+    _RPT_VER = "oczy/execution-report/v2"
+SCHEMA_VERSION: str = _RPT_VER
+
 
 # Lines must EXACTLY match these patterns (no leading/trailing junk).
 # ``name`` is a Python-style identifier; ``value`` is an int or float.
@@ -156,6 +162,8 @@ def run_module(
     job_name: str,
     report_path: Path | str = _DEFAULT_REPORT,
     timeout: float | None = None,
+    expected_runtime_manifest: dict[str, Any],
+    observed_runtime_manifest: dict[str, Any],
 ) -> dict[str, Any]:
     """Execute ``python -m module *arguments`` and write a structured report.
 
@@ -177,6 +185,10 @@ def run_module(
     timeout:
         Optional wall-clock timeout in seconds.  On timeout the child is
         killed and the report is written with ``status="timeout"``.
+    expected_runtime_manifest:
+        Reviewed runtime manifest expected by the scheduler (canonical dict).
+    observed_runtime_manifest:
+        Locally observed runtime manifest built by the provider bootstrap.
 
     Returns
     -------
@@ -190,6 +202,20 @@ def run_module(
     stderr_log = log_dir / f"{log_base}.stderr.log"
 
     command = [sys.executable, "-m", module, *arguments]
+
+    # Lazy-import runtime_manifest symbols.  These are sibling modules in
+    # infrastructure/kaggle/; the caller arranges sys.path for script use.
+    _SCRIPT_DIR = str(Path(__file__).resolve().parent)
+    if _SCRIPT_DIR not in sys.path:
+        sys.path.insert(0, _SCRIPT_DIR)
+    from runtime_manifest import (  # type: ignore[import-not-found]
+        RuntimeManifestError,
+        compute_manifest_sha256,
+        compare_runtime_manifests,
+        validate_runtime_manifest,
+    )
+
+    expected_hash = compute_manifest_sha256(expected_runtime_manifest)
 
     report: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -209,11 +235,66 @@ def run_module(
         "stderr_file": stderr_log.name,
         "timeout_seconds": timeout,
         "error": None,
+        "expected_runtime_manifest_sha256": expected_hash,
+        "observed_runtime_manifest": observed_runtime_manifest,
     }
 
     # Write the initial report so provenance exists even if we crash before
     # the child finishes.
     _write_report(report_path, report)
+
+    # --- validate runtime manifests before spawning the scientific child ---
+    try:
+        validate_runtime_manifest(expected_runtime_manifest)
+    except RuntimeManifestError as exc:
+        report["status"] = "runtime_mismatch"
+        report["exit_code"] = 1
+        report["finished_utc"] = _utc_now()
+        report["error"] = {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        }
+        _write_report(report_path, report)
+        _emit_sentinel(report)
+        return report
+
+    try:
+        validate_runtime_manifest(observed_runtime_manifest)
+    except RuntimeManifestError as exc:
+        report["status"] = "runtime_mismatch"
+        report["exit_code"] = 1
+        report["finished_utc"] = _utc_now()
+        report["error"] = {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        }
+        _write_report(report_path, report)
+        _emit_sentinel(report)
+        return report
+
+    mismatches = compare_runtime_manifests(expected_runtime_manifest, observed_runtime_manifest)
+    if mismatches:
+        report["status"] = "runtime_mismatch"
+        report["exit_code"] = 1
+        report["finished_utc"] = _utc_now()
+        report["error"] = {
+            "type": "RuntimeManifestError",
+            "message": (
+                f"runtime manifest mismatch: {mismatches[0]}"
+                + (f" (+{len(mismatches) - 1} more)" if len(mismatches) > 1 else "")
+            ),
+        }
+        _write_report(report_path, report)
+        _emit_sentinel(report)
+        return report
+
+    # Build the child environment, exporting the canonical generation JSON.
+    generation_env = os.environ.copy()
+    gen_config = expected_runtime_manifest.get("greedy_generation")
+    if gen_config is not None:
+        generation_env["OCZY_GREEDY_GENERATION_JSON"] = json.dumps(
+            gen_config, sort_keys=True, separators=(",", ":")
+        )
 
     metrics: dict[str, float] = {}
     asi_scores: dict[str, float] = {}
@@ -241,6 +322,7 @@ def run_module(
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            env=generation_env,
         )
     except OSError as exc:
         # Launch failure (e.g. bad sys.executable) — write report and return.
@@ -397,11 +479,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Optional wall-clock timeout in seconds.",
     )
+    parser.add_argument(
+        "--expected-manifest-json",
+        required=True,
+        help="Compact JSON of the reviewed expected runtime manifest.",
+    )
+    parser.add_argument(
+        "--observed-manifest-json",
+        required=True,
+        help="Compact JSON of the locally observed runtime manifest.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    expected = json.loads(args.expected_manifest_json)
+    observed = json.loads(args.observed_manifest_json)
     report = run_module(
         module=args.module,
         arguments=args.arguments,
@@ -410,6 +504,8 @@ def main(argv: list[str] | None = None) -> int:
         job_name=args.job_name,
         report_path=Path(args.report),
         timeout=args.timeout,
+        expected_runtime_manifest=expected,
+        observed_runtime_manifest=observed,
     )
     print(
         f"execution_report: {args.report} status={report['status']} "

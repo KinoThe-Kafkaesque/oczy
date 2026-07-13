@@ -50,8 +50,6 @@ _colab = _load_module(COLAB_PATH, "colab_provider")
 # Schema constants
 BATCH_SCHEMA_VERSION: str = _mod["BATCH_SCHEMA_VERSION"]
 STATE_SCHEMA_VERSION: str = _mod["STATE_SCHEMA_VERSION"]
-BATCH_SCHEMA_V2: str = _mod["BATCH_SCHEMA_V2"]
-STATE_SCHEMA_V2: str = _mod["STATE_SCHEMA_V2"]
 
 # Providers
 PROVIDER_KAGGLE: str = _mod["PROVIDER_KAGGLE"]
@@ -66,6 +64,7 @@ DEFAULT_COLAB_MAX: int = _mod["DEFAULT_COLAB_MAX"]
 DEFAULT_COLAB_COOLDOWN: float = _mod["DEFAULT_COLAB_COOLDOWN"]
 COLAB_AIMD_START: int = _mod["COLAB_AIMD_START"]
 COLAB_AIMD_MIN: int = _mod["COLAB_AIMD_MIN"]
+compute_manifest_sha256 = _mod["compute_manifest_sha256"]
 
 # Job states
 PENDING = _mod["PENDING"]
@@ -101,8 +100,51 @@ Job = _mod["Job"]
 main = _mod["main"]
 COLAB_MAX_CAPACITY_REJECTIONS: int = _mod["COLAB_MAX_CAPACITY_REJECTIONS"]
 
-EXPECTED_BATCH_V2 = "oczy/remote-parallel-batch/v2"
-EXPECTED_STATE_V2 = "oczy/remote-parallel-state/v2"
+RUNTIME_MANIFEST_SCHEMA_VERSION = "oczy/runtime-manifest/v1"
+EXECUTION_REPORT_SCHEMA_VERSION = "oczy/execution-report/v2"
+EXPECTED_BATCH_V3 = "oczy/remote-parallel-batch/v3"
+EXPECTED_STATE_V4 = "oczy/remote-parallel-state/v4"
+BATCH_SCHEMA_V2 = BATCH_SCHEMA_VERSION
+STATE_SCHEMA_V2 = STATE_SCHEMA_VERSION
+EXPECTED_BATCH_V2 = EXPECTED_BATCH_V3
+EXPECTED_STATE_V2 = EXPECTED_STATE_V4
+
+
+def _valid_runtime_manifest(**overrides: Any) -> dict[str, Any]:
+    manifest: dict[str, Any] = {
+        "schema_version": RUNTIME_MANIFEST_SCHEMA_VERSION,
+        "python_version": "3.12.0",
+        "packages": {
+            "torch": "2.6.0",
+            "transformers": "4.55.0",
+            "tokenizers": "0.21.0",
+            "safetensors": "0.5.0",
+        },
+        "model": {
+            "logical_model_id": None,
+            "resolved_model_convention": "none",
+            "artifact_files": [],
+            "model_weights_sha256": None,
+            "model_config_sha256": None,
+            "tokenizer_sha256": None,
+            "chat_template_sha256": None,
+        },
+        "greedy_generation": None,
+    }
+    manifest.update(overrides)
+    manifest["manifest_sha256"] = compute_manifest_sha256(manifest)
+    return manifest
+
+
+def _execution_report(manifest: dict[str, Any] | None = None) -> dict[str, Any]:
+    observed = manifest if manifest is not None else _valid_runtime_manifest()
+    return {
+        "schema_version": EXECUTION_REPORT_SCHEMA_VERSION,
+        "status": "complete",
+        "exit_code": 0,
+        "expected_runtime_manifest_sha256": compute_manifest_sha256(observed),
+        "observed_runtime_manifest": observed,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -136,9 +178,13 @@ def _valid_metadata(
     }
 
 
-def _valid_job_spec(profile: str = "cpu") -> dict[str, Any]:
+def _valid_job_spec(
+    profile: str = "cpu", runtime_manifest: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    manifest = runtime_manifest if runtime_manifest is not None else _valid_runtime_manifest()
     return {
-        "schema_version": "oczy/kaggle-research-job/v1",
+        "schema_version": "oczy/kaggle-research-job/v2",
+        "job_name": "test-job",
         "phase": "development",
         "profile": profile,
         "source_dataset": "owner/test-source",
@@ -149,6 +195,7 @@ def _valid_job_spec(profile: str = "cpu") -> dict[str, Any]:
         "arguments": [],
         "instrument_manifest_sha256": None,
         "human_signoff_id": None,
+        "runtime_manifest": manifest,
     }
 
 
@@ -174,15 +221,44 @@ def _make_colab_script(base: Path, name: str = "script.py") -> str:
     p.write_text("print('hello')\n", encoding="utf-8")
     return name
 
+def _make_colab_job_spec(
+    base: Path,
+    name: str,
+    runtime_manifest: dict[str, Any] | None = None,
+) -> str:
+    p = base / name
+    p.parent.mkdir(parents=True, exist_ok=True)
+    manifest = runtime_manifest if runtime_manifest is not None else _valid_runtime_manifest()
+    p.write_text(
+        json.dumps(
+            {
+                "schema_version": "oczy/colab-experiment-job/v2",
+                "job_name": p.stem,
+                "script": "script.py",
+                "arguments": [],
+                "runtime_manifest": manifest,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return name
+
 
 def _make_v2_batch(
     base: Path,
     jobs: list[dict[str, Any]],
 ) -> Path:
-    """Write a v2 batch manifest.  Each job dict should have name, provider,
-    and provider-specific fields (kernel_dir for kaggle, script for colab),
-    plus output_dir (paths relative to base)."""
-    manifest = {"schema_version": BATCH_SCHEMA_V2, "jobs": jobs}
+    """Write a v3 batch manifest with required inline runtime manifests."""
+    normalized_jobs: list[dict[str, Any]] = []
+    for job in jobs:
+        entry = dict(job)
+        entry.setdefault("runtime_manifest", _valid_runtime_manifest())
+        if entry.get("provider") == PROVIDER_COLAB and "job_spec" not in entry:
+            entry["job_spec"] = _make_colab_job_spec(
+                base, f"specs/{entry.get('name', 'job')}.json"
+            )
+        normalized_jobs.append(entry)
+    manifest = {"schema_version": BATCH_SCHEMA_VERSION, "jobs": normalized_jobs}
     p = base / "batch.json"
     p.write_text(json.dumps(manifest), encoding="utf-8")
     return p
@@ -192,8 +268,14 @@ def _make_v1_batch(
     base: Path,
     jobs: list[dict[str, Any]],
 ) -> Path:
-    """Write a v1 batch manifest (Kaggle-only)."""
-    manifest = {"schema_version": BATCH_SCHEMA_VERSION, "jobs": jobs}
+    """Write a v3 Kaggle batch; retained name covers no-Colab state tests."""
+    normalized_jobs: list[dict[str, Any]] = []
+    for job in jobs:
+        entry = dict(job)
+        entry.setdefault("provider", PROVIDER_KAGGLE)
+        entry.setdefault("runtime_manifest", _valid_runtime_manifest())
+        normalized_jobs.append(entry)
+    manifest = {"schema_version": BATCH_SCHEMA_VERSION, "jobs": normalized_jobs}
     p = base / "batch.json"
     p.write_text(json.dumps(manifest), encoding="utf-8")
     return p
@@ -226,6 +308,8 @@ def _make_mixed_batch(
             "script": script_rel,
             "output_dir": f"out/{name}",
             "arguments": ["--flag", "value"],
+            "job_spec": _make_colab_job_spec(base, f"specs/{name}.json"),
+            "runtime_manifest": _valid_runtime_manifest(),
         })
     return _make_v2_batch(base, entries), entries
 
@@ -367,11 +451,14 @@ class FakeColabClient:
         (out / "result.json").write_text(
             json.dumps(result, indent=2, sort_keys=True), encoding="utf-8"
         )
+        (out / "execution_report.json").write_text(
+            json.dumps(_execution_report(), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
         return result
 
     def stop(self, name: str, *, timeout: float | None = None) -> None:
         self.stop_calls.append(name)
-        # Match real Colab: stop() tears down the session so it no longer
         # appears in the backend's active session list.  Without this, a
         # stopped orphan lingers in sessions_list forever, making the
         # account appear full and blocking resubmission of the restarted
@@ -412,6 +499,10 @@ class FakeKaggleClient:
         self.output_calls.append((kernel_id, output_dir, timeout))
         p = Path(output_dir)
         p.mkdir(parents=True, exist_ok=True)
+        (p / "execution_report.json").write_text(
+            json.dumps(_execution_report(), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
         (p / "result.json").write_text('{"ok": true}', encoding="utf-8")
 
 
@@ -526,6 +617,27 @@ def test_v2_batch_resolves_colab_paths_relative_to_manifest(tmp_path: Path) -> N
     jobs = load_batch(manifest)
     assert Path(jobs[0]["script"]) == (sub / "scripts" / "run.py").resolve()
     assert Path(jobs[0]["output_dir"]) == (sub / "out" / "cb0").resolve()
+
+
+def test_v3_batch_rejects_colab_job_spec_runtime_manifest_mismatch(
+    tmp_path: Path,
+) -> None:
+    """The scheduler binds Colab batch entries to the generated job spec."""
+    script_rel = _make_colab_script(tmp_path, "scripts/run.py")
+    batch_manifest = _valid_runtime_manifest()
+    spec_manifest = _valid_runtime_manifest(python_version="3.13.0")
+    job_spec = _make_colab_job_spec(tmp_path, "specs/cb0.json", spec_manifest)
+    manifest = _make_v2_batch(tmp_path, [{
+        "name": "cb0",
+        "provider": PROVIDER_COLAB,
+        "script": script_rel,
+        "output_dir": "out/cb0",
+        "job_spec": job_spec,
+        "runtime_manifest": batch_manifest,
+    }])
+
+    with pytest.raises(BatchValidationError, match="differs from job_spec hash"):
+        load_batch(manifest)
 
 
 def test_v2_batch_rejects_missing_provider(tmp_path: Path) -> None:
@@ -705,18 +817,18 @@ def test_global_max_parallel_caps_total_active(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3b. Regression: additive capacity admits 10 Kaggle + learned Colab
+# 3b. Regression: additive capacity admits 5 Kaggle + learned Colab
 # ---------------------------------------------------------------------------
 
 
-def test_additive_capacity_admits_10_kaggle_plus_colab(tmp_path: Path) -> None:
-    """Regression: max_parallel=None admits 10 Kaggle plus at least one Colab
+def test_additive_capacity_admits_5_kaggle_plus_colab(tmp_path: Path) -> None:
+    """Regression: max_parallel=None admits 5 Kaggle plus at least one Colab
     concurrently, proving additive provider capacity rather than stopping at
-    10 total.
+    5 total.
 
-    With DEFAULT_KAGGLE_MAX=10 Kaggle jobs and Colab AIMD starting at 1, the
-    scheduler should concurrently run 10 Kaggle + at least 1 Colab, which
-    exceeds 10 total — impossible under a global cap of 10.
+    With DEFAULT_KAGGLE_MAX=5 Kaggle jobs and Colab AIMD starting at 1, the
+    scheduler should concurrently run 5 Kaggle + at least 1 Colab, which
+    exceeds 5 total — impossible under a global cap of 5.
     """
     manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=12, n_colab=2)
     state = tmp_path / "state.json"
@@ -796,7 +908,7 @@ def test_additive_capacity_admits_10_kaggle_plus_colab(tmp_path: Path) -> None:
     )
 
     assert summary["all_succeeded"], f"jobs failed: {summary['failed']}"
-    # 10 Kaggle jobs admitted concurrently (DEFAULT_KAGGLE_MAX)
+    # 5 Kaggle jobs admitted concurrently (DEFAULT_KAGGLE_MAX)
     assert tracker["max_kaggle"] == DEFAULT_KAGGLE_MAX, (
         f"expected {DEFAULT_KAGGLE_MAX} concurrent Kaggle, "
         f"got {tracker['max_kaggle']}"
@@ -805,7 +917,7 @@ def test_additive_capacity_admits_10_kaggle_plus_colab(tmp_path: Path) -> None:
     assert tracker["max_colab"] >= 1, (
         f"expected >=1 concurrent Colab, got {tracker['max_colab']}"
     )
-    # Total concurrency exceeded 10 — proving additive capacity, not a 10 cap
+    # Total concurrency exceeded 5 — proving additive capacity, not a 5 cap
     assert tracker["max_total"] > HARD_KAGGLE_MAX, (
         f"total concurrency {tracker['max_total']} did not exceed "
         f"hard kaggle cap {HARD_KAGGLE_MAX} — additive capacity not proven"
@@ -1692,6 +1804,66 @@ def test_cleanup_stop_called_on_success(tmp_path: Path) -> None:
     )
     sched.run(manifest, state, max_parallel=2, poll_interval=1, colab_max=5)
     assert "cb0" in colab_client.stop_calls
+
+
+def test_colab_runtime_gate_rejects_provider_ok_without_report(tmp_path: Path) -> None:
+    """Colab collect ok cannot become succeeded without execution-report/v2."""
+    class ProviderOkNoReport(FakeColabClient):
+        def collect(self, name: str, output_dir: str) -> dict[str, Any]:
+            self.collect_calls.append((name, output_dir))
+            out = Path(output_dir)
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "stdout.log").write_text("", encoding="utf-8")
+            (out / "stderr.log").write_text("", encoding="utf-8")
+            (out / "result.json").write_text('{"ok": true}', encoding="utf-8")
+            return {"ok": True}
+
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=0, n_colab=1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    colab_client = ProviderOkNoReport(
+        behaviors={"cb0": [{"stdout": "ok", "returncode": 0}]}
+    )
+    summary = ParallelScheduler(
+        FakeKaggleClient(), colab_client=colab_client, clock=clock,
+        sleeper=CountingSleeper(clock_h, interval=1.0)
+    ).run(manifest, state, max_parallel=2, poll_interval=1, colab_max=5)
+
+    job = summary["jobs"]["cb0"]
+    assert job["state"] == FAILED
+    assert job["runtime_manifest_verified"] is False
+    assert "runtime verification failed" in (job["error"] or "")
+
+
+def test_colab_runtime_gate_fails_observed_manifest_mismatch(tmp_path: Path) -> None:
+    """A Colab report with a different observed manifest is terminal failure."""
+    class MismatchReportClient(FakeColabClient):
+        def collect(self, name: str, output_dir: str) -> dict[str, Any]:
+            result = super().collect(name, output_dir)
+            expected = _valid_runtime_manifest()
+            observed = _valid_runtime_manifest(python_version="3.13.0")
+            report = _execution_report(observed)
+            report["expected_runtime_manifest_sha256"] = compute_manifest_sha256(expected)
+            Path(output_dir, "execution_report.json").write_text(
+                json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
+            )
+            return result
+
+    manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=0, n_colab=1)
+    state = tmp_path / "state.json"
+    clock_h, clock = _make_clock()
+    colab_client = MismatchReportClient(
+        behaviors={"cb0": [{"stdout": "ok", "returncode": 0}]}
+    )
+    summary = ParallelScheduler(
+        FakeKaggleClient(), colab_client=colab_client, clock=clock,
+        sleeper=CountingSleeper(clock_h, interval=1.0)
+    ).run(manifest, state, max_parallel=2, poll_interval=1, colab_max=5)
+
+    job = summary["jobs"]["cb0"]
+    assert job["state"] == FAILED
+    assert job["runtime_manifest_verified"] is False
+    assert "runtime manifest mismatch" in (job["error"] or "")
 
 
 def test_cleanup_stop_called_on_error(tmp_path: Path) -> None:
@@ -3321,7 +3493,7 @@ def test_colab_success_still_persists_diagnostics(tmp_path: Path) -> None:
 #   - Watch mode stays alive across an empty interval and can be
 #     terminated deterministically (via KeyboardInterrupt).
 #   - Non-watch mode still terminates (backward compatible).
-#   - Additive 10 Kaggle + learned Colab X admission in watch mode.
+#   - Additive 5 Kaggle + learned Colab X admission in watch mode.
 #
 # All tests avoid real network and real sleeps by injecting fake clients,
 # a deterministic clock, and a bounded or KeyboardInterrupt-raising sleeper.
@@ -3347,6 +3519,8 @@ def _append_colab_job_to_batch(
         "script": script_rel,
         "output_dir": f"out/{name}",
         "arguments": [],
+        "job_spec": _make_colab_job_spec(base, f"specs/{name}.json"),
+        "runtime_manifest": _valid_runtime_manifest(),
     })
     batch_path.write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -3368,6 +3542,7 @@ def _append_kaggle_job_to_batch(
         "provider": PROVIDER_KAGGLE,
         "kernel_dir": name,
         "output_dir": f"out/{name}",
+        "runtime_manifest": _valid_runtime_manifest(),
     })
     batch_path.write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -3526,12 +3701,24 @@ def test_watch_malformed_reload_retried_then_valid_colab_succeeds(
                     json.dumps({
                         "schema_version": BATCH_SCHEMA_V2,
                         "jobs": [
-                            {"name": "cb0", "provider": PROVIDER_COLAB,
-                             "script": "scripts/cb0.py",
-                             "output_dir": "out/cb0", "arguments": []},
-                            {"name": "cb1", "provider": PROVIDER_COLAB,
-                             "script": "scripts/cb1.py",
-                             "output_dir": "out/cb1", "arguments": []},
+                            {
+                                "name": "cb0",
+                                "provider": PROVIDER_COLAB,
+                                "script": "scripts/cb0.py",
+                                "output_dir": "out/cb0",
+                                "arguments": [],
+                                "job_spec": _make_colab_job_spec(tmp_path, "specs/cb0.json"),
+                                "runtime_manifest": _valid_runtime_manifest(),
+                            },
+                            {
+                                "name": "cb1",
+                                "provider": PROVIDER_COLAB,
+                                "script": "scripts/cb1.py",
+                                "output_dir": "out/cb1",
+                                "arguments": [],
+                                "job_spec": _make_colab_job_spec(tmp_path, "specs/cb1.json"),
+                                "runtime_manifest": _valid_runtime_manifest(),
+                            },
                         ],
                     }),
                     encoding="utf-8",
@@ -3617,14 +3804,14 @@ def test_non_watch_mode_still_terminates_colab(tmp_path: Path) -> None:
     assert len(sleeper.calls) < 50
 
 
-def test_watch_additive_capacity_10_kaggle_plus_colab(tmp_path: Path) -> None:
-    """In watch mode with max_parallel=None, the scheduler admits 10
+def test_watch_additive_capacity_5_kaggle_plus_colab(tmp_path: Path) -> None:
+    """In watch mode with max_parallel=None, the scheduler admits 5
     Kaggle + at least 1 Colab concurrently — proving additive capacity
     is preserved in watch mode.
 
     The batch starts with 12 Kaggle + 2 Colab.  The scheduler should
-    concurrently run 10 Kaggle (DEFAULT_KAGGLE_MAX) + at least 1 Colab,
-    exceeding 10 total.  Watch mode is terminated via KeyboardInterrupt.
+    concurrently run 5 Kaggle (DEFAULT_KAGGLE_MAX) + at least 1 Colab,
+    exceeding 5 total.  Watch mode is terminated via KeyboardInterrupt.
     """
     manifest, _ = _make_mixed_batch(tmp_path, n_kaggle=12, n_colab=2)
     state = tmp_path / "state.json"
@@ -3707,7 +3894,7 @@ def test_watch_additive_capacity_10_kaggle_plus_colab(tmp_path: Path) -> None:
     # If it fires mid-run, some jobs may not have completed — but with
     # 30 calls and fast fake clients, all should finish.
     assert summary["total"] == 14
-    # 10 Kaggle jobs admitted concurrently.
+    # 5 Kaggle jobs admitted concurrently.
     assert tracker["max_kaggle"] == DEFAULT_KAGGLE_MAX, (
         f"expected {DEFAULT_KAGGLE_MAX} concurrent Kaggle in watch mode, "
         f"got {tracker['max_kaggle']}"
@@ -3717,7 +3904,7 @@ def test_watch_additive_capacity_10_kaggle_plus_colab(tmp_path: Path) -> None:
         f"expected >=1 concurrent Colab in watch mode, "
         f"got {tracker['max_colab']}"
     )
-    # Total exceeded 10 — additive capacity proven in watch mode.
+    # Total exceeded 5 — additive capacity proven in watch mode.
     assert tracker["max_total"] > HARD_KAGGLE_MAX, (
         f"total concurrency {tracker['max_total']} did not exceed "
         f"hard kaggle cap {HARD_KAGGLE_MAX} in watch mode"

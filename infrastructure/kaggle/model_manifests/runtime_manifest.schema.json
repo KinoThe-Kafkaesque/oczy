@@ -1,0 +1,242 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "oczy/runtime-manifest/v1",
+  "title": "Runtime Manifest",
+  "description": "Provider-neutral runtime identity: Python/packages, model artifact inventory with cryptographic hashes, and the reviewed generation contract. The self-hash manifest_sha256 covers every field except itself via canonical JSON serialisation (sort_keys, compact separators, ensure_ascii=False, allow_nan=False). Component hashes (model_weights_sha256 etc.) are the SHA-256 of the canonical JSON of the path-sorted role-filtered {path, size_bytes, sha256} payloads.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "python_version",
+    "packages",
+    "model",
+    "greedy_generation",
+    "manifest_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "oczy/runtime-manifest/v1"
+    },
+    "python_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Exact platform.python_version()"
+    },
+    "packages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["torch", "transformers", "tokenizers", "safetensors"],
+      "properties": {
+        "torch": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact importlib.metadata.version('torch')"
+        },
+        "transformers": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact importlib.metadata.version('transformers')"
+        },
+        "tokenizers": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact importlib.metadata.version('tokenizers')"
+        },
+        "safetensors": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact importlib.metadata.version('safetensors')"
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "logical_model_id",
+        "resolved_model_convention",
+        "artifact_files",
+        "model_weights_sha256",
+        "model_config_sha256",
+        "tokenizer_sha256",
+        "chat_template_sha256"
+      ],
+      "properties": {
+        "logical_model_id": {
+          "oneOf": [
+            {"type": "string", "minLength": 1},
+            {"type": "null"}
+          ],
+          "description": "Reviewed logical model identifier (e.g. LiquidAI/LFM2.5-1.2B-Instruct) or null for model-free."
+        },
+        "resolved_model_convention": {
+          "enum": [
+            "transformers-pretrained-directory",
+            "llama-cpp-gguf-file",
+            "none"
+          ],
+          "description": "Load convention, not download transport."
+        },
+        "artifact_files": {
+          "type": "array",
+          "description": "Canonically sorted by path; unique paths; model-bearing requires at least one file for each of weights/config/tokenizer/chat_template.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "size_bytes", "sha256", "roles"],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\\\\\x00])(?!\\/)(?!.*\\/\\.\\.)(?!.*\\/\\.$)(?!\\.\\.?$)[^\\x00]+$",
+                "description": "Normalised POSIX relative path: nonempty, no leading/trailing whitespace, no backslash/NUL, not absolute, no . or .. components."
+              },
+              "size_bytes": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "description": "Positive integer file size in bytes."
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+                "description": "Lowercase 64-hex SHA-256 of file bytes."
+              },
+              "roles": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "description": "Sorted unique nonempty subset of weights/config/tokenizer/chat_template/generation_config/other.",
+                "items": {
+                  "enum": [
+                    "weights",
+                    "config",
+                    "tokenizer",
+                    "chat_template",
+                    "generation_config",
+                    "other"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "model_weights_sha256": {
+          "oneOf": [
+            {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            {"type": "null"}
+          ],
+          "description": "Component aggregate SHA-256 over path-sorted files with role=weights."
+        },
+        "model_config_sha256": {
+          "oneOf": [
+            {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            {"type": "null"}
+          ],
+          "description": "Component aggregate SHA-256 over path-sorted files with role=config."
+        },
+        "tokenizer_sha256": {
+          "oneOf": [
+            {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            {"type": "null"}
+          ],
+          "description": "Component aggregate SHA-256 over path-sorted files with role=tokenizer."
+        },
+        "chat_template_sha256": {
+          "oneOf": [
+            {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            {"type": "null"}
+          ],
+          "description": "Component aggregate SHA-256 over path-sorted files with role=chat_template."
+        }
+      }
+    },
+    "greedy_generation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "max_new_tokens",
+            "min_new_tokens",
+            "do_sample",
+            "num_beams",
+            "temperature",
+            "top_p",
+            "top_k",
+            "repetition_penalty",
+            "length_penalty",
+            "no_repeat_ngram_size",
+            "use_cache",
+            "eos_token_ids",
+            "pad_token_id",
+            "stop_strings"
+          ],
+          "properties": {
+            "max_new_tokens": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "description": "Positive integer."
+            },
+            "min_new_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "do_sample": {
+              "const": false,
+              "description": "Must be false for greedy."
+            },
+            "num_beams": {
+              "const": 1,
+              "description": "Must be 1 for greedy."
+            },
+            "temperature": {
+              "const": 0.0,
+              "description": "Must be 0.0 for greedy."
+            },
+            "top_p": {
+              "type": "number"
+            },
+            "top_k": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "repetition_penalty": {
+              "type": "number"
+            },
+            "length_penalty": {
+              "type": "number"
+            },
+            "no_repeat_ngram_size": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "use_cache": {
+              "type": "boolean"
+            },
+            "eos_token_ids": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"type": "integer"},
+              "description": "Sorted unique list of integer token IDs."
+            },
+            "pad_token_id": {
+              "type": "integer"
+            },
+            "stop_strings": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"type": "string"}
+            }
+          }
+        },
+        {"type": "null"}
+      ],
+      "description": "Generation contract for greedy decoding. null only for the explicit no-model branch."
+    },
+    "manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 of the canonical JSON of everything except this field."
+    }
+  }
+}

@@ -54,14 +54,13 @@ _mod = _load_scheduler_module()
 
 BATCH_SCHEMA_VERSION: str = _mod["BATCH_SCHEMA_VERSION"]
 STATE_SCHEMA_VERSION: str = _mod["STATE_SCHEMA_VERSION"]
-BATCH_SCHEMA_V2: str = _mod["BATCH_SCHEMA_V2"]
-STATE_SCHEMA_V2: str = _mod["STATE_SCHEMA_V2"]
 classify_status = _mod["classify_status"]
 load_batch = _mod["load_batch"]
 BatchValidationError = _mod["BatchValidationError"]
 ParallelScheduler = _mod["ParallelScheduler"]
 main = _mod["main"]
 KaggleCliClient = _mod["KaggleCliClient"]
+compute_manifest_sha256 = _mod["compute_manifest_sha256"]
 
 PROVIDER_KAGGLE: str = _mod["PROVIDER_KAGGLE"]
 PROVIDER_COLAB: str = _mod["PROVIDER_COLAB"]
@@ -77,8 +76,48 @@ COLLECTING = _mod.get("COLLECTING", "collecting")
 SUCCEEDED = _mod.get("SUCCEEDED", "succeeded")
 FAILED = _mod.get("FAILED", "failed")
 
-EXPECTED_BATCH_SCHEMA = "oczy/kaggle-parallel-batch/v1"
-EXPECTED_STATE_SCHEMA = "oczy/kaggle-parallel-state/v1"
+RUNTIME_MANIFEST_SCHEMA_VERSION = "oczy/runtime-manifest/v1"
+EXECUTION_REPORT_SCHEMA_VERSION = "oczy/execution-report/v2"
+EXPECTED_BATCH_SCHEMA = "oczy/remote-parallel-batch/v3"
+EXPECTED_STATE_SCHEMA = "oczy/remote-parallel-state/v4"
+
+
+def _valid_runtime_manifest(**overrides: Any) -> dict[str, Any]:
+    """Valid required no-model runtime manifest for scheduler fixtures."""
+    manifest: dict[str, Any] = {
+        "schema_version": RUNTIME_MANIFEST_SCHEMA_VERSION,
+        "python_version": "3.12.0",
+        "packages": {
+            "torch": "2.6.0",
+            "transformers": "4.55.0",
+            "tokenizers": "0.21.0",
+            "safetensors": "0.5.0",
+        },
+        "model": {
+            "logical_model_id": None,
+            "resolved_model_convention": "none",
+            "artifact_files": [],
+            "model_weights_sha256": None,
+            "model_config_sha256": None,
+            "tokenizer_sha256": None,
+            "chat_template_sha256": None,
+        },
+        "greedy_generation": None,
+    }
+    manifest.update(overrides)
+    manifest["manifest_sha256"] = compute_manifest_sha256(manifest)
+    return manifest
+
+
+def _execution_report(manifest: dict[str, Any] | None = None) -> dict[str, Any]:
+    observed = manifest if manifest is not None else _valid_runtime_manifest()
+    return {
+        "schema_version": EXECUTION_REPORT_SCHEMA_VERSION,
+        "status": "complete",
+        "exit_code": 0,
+        "expected_runtime_manifest_sha256": compute_manifest_sha256(observed),
+        "observed_runtime_manifest": observed,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -125,9 +164,13 @@ def _valid_metadata(
     }
 
 
-def _valid_job_spec(profile: str = "cpu") -> dict[str, Any]:
+def _valid_job_spec(
+    profile: str = "cpu", runtime_manifest: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    manifest = runtime_manifest if runtime_manifest is not None else _valid_runtime_manifest()
     return {
-        "schema_version": "oczy/kaggle-research-job/v1",
+        "schema_version": "oczy/kaggle-research-job/v2",
+        "job_name": "test-job",
         "phase": "development",
         "profile": profile,
         "source_dataset": "owner/test-source",
@@ -138,6 +181,7 @@ def _valid_job_spec(profile: str = "cpu") -> dict[str, Any]:
         "arguments": [],
         "instrument_manifest_sha256": None,
         "human_signoff_id": None,
+        "runtime_manifest": manifest,
     }
 
 
@@ -167,9 +211,15 @@ def _make_batch(
 ) -> Path:
     """Write a batch manifest. Each job dict should have name, kernel_dir,
     output_dir (paths relative to base). Returns the manifest path."""
+    normalized_jobs: list[dict[str, Any]] = []
+    for job in jobs:
+        entry = dict(job)
+        entry.setdefault("provider", PROVIDER_KAGGLE)
+        entry.setdefault("runtime_manifest", _valid_runtime_manifest())
+        normalized_jobs.append(entry)
     manifest = {
         "schema_version": schema_version or EXPECTED_BATCH_SCHEMA,
-        "jobs": jobs,
+        "jobs": normalized_jobs,
     }
     p = base / "batch.json"
     p.write_text(json.dumps(manifest), encoding="utf-8")
@@ -248,7 +298,16 @@ class FakeKaggleClient:
         self.output_calls.append((kernel_id, output_dir, timeout))
         if kernel_id in self._output_raises:
             raise self._output_raises[kernel_id]
-        files = self._output_files.get(kernel_id, {"result.json": '{"ok": true}'})
+        if kernel_id in self._output_files:
+            files = dict(self._output_files[kernel_id])
+            omit_report = files.pop("__omit_execution_report__", None) is not None
+            if not omit_report and "execution_report.json" not in files:
+                files["execution_report.json"] = json.dumps(_execution_report())
+        else:
+            files = {
+                "result.json": '{"ok": true}',
+                "execution_report.json": json.dumps(_execution_report()),
+            }
         p = Path(output_dir)
         p.mkdir(parents=True, exist_ok=True)
         for fname, content in files.items():
@@ -392,7 +451,13 @@ def test_load_batch_resolves_paths_relative_to_manifest(tmp_path: Path) -> None:
         json.dumps(
             {
                 "schema_version": EXPECTED_BATCH_SCHEMA,
-                "jobs": [{"name": "j1", "kernel_dir": "k1", "output_dir": "out/j1"}],
+                "jobs": [{
+                    "name": "j1",
+                    "provider": PROVIDER_KAGGLE,
+                    "kernel_dir": "k1",
+                    "output_dir": "out/j1",
+                    "runtime_manifest": _valid_runtime_manifest(),
+                }],
             }
         )
     )
@@ -721,7 +786,7 @@ def test_run_accepts_max_parallel_one(tmp_path: Path) -> None:
 
 
 def test_run_rejects_kaggle_max_above_hard_cap(tmp_path: Path) -> None:
-    """kaggle_max=11 must be rejected — HARD_KAGGLE_MAX=10 is still enforced."""
+    """kaggle_max=6 must be rejected — HARD_KAGGLE_MAX=5 is still enforced."""
     manifest, _ = _make_batch_with_kernels(tmp_path, 1)
     state = tmp_path / "state.json"
     holder, clock = _make_clock()
@@ -729,11 +794,11 @@ def test_run_rejects_kaggle_max_above_hard_cap(tmp_path: Path) -> None:
     client = FakeKaggleClient()
     sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
     with pytest.raises((ValueError, RuntimeError)):
-        sched.run(manifest, state, kaggle_max=11)
+        sched.run(manifest, state, kaggle_max=6)
 
 
-def test_run_default_kaggle_max_is_10(tmp_path: Path) -> None:
-    """The default kaggle_max is 10 (DEFAULT_KAGGLE_MAX), matching the hard cap."""
+def test_run_default_kaggle_max_is_5(tmp_path: Path) -> None:
+    """The default kaggle_max is 5 (DEFAULT_KAGGLE_MAX), matching the hard cap."""
     manifest, _ = _make_batch_with_kernels(tmp_path, 12)
     state = tmp_path / "state.json"
 
@@ -763,7 +828,7 @@ def test_run_default_kaggle_max_is_10(tmp_path: Path) -> None:
     sleeper = CountingSleeper(holder)
     client = ConcurrencyClient()
     sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
-    # max_parallel=None (no global cap), default kaggle_max=10
+    # max_parallel=None (no global cap), default kaggle_max=5
     sched.run(manifest, state, max_parallel=None, poll_interval=1)
     assert client.max_concurrent <= DEFAULT_KAGGLE_MAX, (
         f"exceeded default kaggle_max: {client.max_concurrent}"
@@ -1126,6 +1191,126 @@ def test_output_failure_marks_job_failed(tmp_path: Path) -> None:
     assert "output download failed" in (data["jobs"]["job0"].get("error") or "")
 
 
+
+# ---------------------------------------------------------------------------
+# 9b. Runtime manifest gate
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_gate_rejects_provider_ok_without_execution_report(tmp_path: Path) -> None:
+    """Provider output success is not scientific success without report v2."""
+    manifest, _ = _make_batch_with_kernels(tmp_path, 1)
+    state = tmp_path / "state.json"
+    holder, clock = _make_clock()
+    client = FakeKaggleClient(
+        status_sequences={"owner/k0": ["complete"]},
+        output_files={
+            "owner/k0": {
+                "__omit_execution_report__": "1",
+                "result.json": '{"ok": true}',
+            }
+        },
+    )
+
+    summary = ParallelScheduler(client, clock=clock, sleeper=CountingSleeper(holder)).run(
+        manifest, state, max_parallel=4, poll_interval=1
+    )
+
+    job = summary["jobs"]["job0"]
+    assert job["state"] == FAILED
+    assert job["runtime_manifest_verified"] is False
+    assert "no execution report" in (job["error"] or "")
+
+
+def test_runtime_gate_records_hashes_on_matching_report(tmp_path: Path) -> None:
+    """A matching report is the condition that upgrades provider success."""
+    manifest, _ = _make_batch_with_kernels(tmp_path, 1)
+    state = tmp_path / "state.json"
+    holder, clock = _make_clock()
+
+    summary = ParallelScheduler(
+        FakeKaggleClient(status_sequences={"owner/k0": ["complete"]}),
+        clock=clock,
+        sleeper=CountingSleeper(holder),
+    ).run(manifest, state, max_parallel=4, poll_interval=1)
+
+    expected_hash = _valid_runtime_manifest()["manifest_sha256"]
+    job = summary["jobs"]["job0"]
+    assert job["state"] == SUCCEEDED
+    assert job["runtime_manifest_verified"] is True
+    assert job["expected_runtime_manifest_sha256"] == expected_hash
+    assert job["observed_runtime_manifest_sha256"] == expected_hash
+
+
+def test_runtime_gate_fails_manifest_mismatch(tmp_path: Path) -> None:
+    """A report with a different observed manifest fails before success."""
+    manifest, _ = _make_batch_with_kernels(tmp_path, 1)
+    state = tmp_path / "state.json"
+    holder, clock = _make_clock()
+    expected = _valid_runtime_manifest()
+    observed = _valid_runtime_manifest(python_version="3.13.0")
+    report = _execution_report(observed)
+    report["expected_runtime_manifest_sha256"] = compute_manifest_sha256(expected)
+    client = FakeKaggleClient(
+        status_sequences={"owner/k0": ["complete"]},
+        output_files={"owner/k0": {"execution_report.json": json.dumps(report)}},
+    )
+
+    summary = ParallelScheduler(client, clock=clock, sleeper=CountingSleeper(holder)).run(
+        manifest, state, max_parallel=4, poll_interval=1
+    )
+
+    job = summary["jobs"]["job0"]
+    assert job["state"] == FAILED
+    assert job["runtime_manifest_verified"] is False
+    assert "runtime manifest mismatch" in (job["error"] or "")
+
+
+def test_resume_rejects_changed_runtime_manifest_hash(tmp_path: Path) -> None:
+    """An existing state cannot be resumed under changed runtime identity."""
+    manifest, _ = _make_batch_with_kernels(tmp_path, 1)
+    original = _valid_runtime_manifest()
+    changed = _valid_runtime_manifest(python_version="3.13.0")
+    raw_batch = json.loads(manifest.read_text(encoding="utf-8"))
+    raw_batch["jobs"][0]["runtime_manifest"] = changed
+    manifest.write_text(json.dumps(raw_batch), encoding="utf-8")
+    (tmp_path / "job0" / "job_spec.json").write_text(
+        json.dumps(_valid_job_spec(runtime_manifest=changed)),
+        encoding="utf-8",
+    )
+    state = tmp_path / "state.json"
+    state.write_text(
+        json.dumps(
+            {
+                "schema_version": EXPECTED_STATE_SCHEMA,
+                "batch_path": str(manifest.resolve()),
+                "jobs": {
+                    "job0": {
+                        "name": "job0",
+                        "kernel_dir": str((tmp_path / "job0").resolve()),
+                        "output_dir": str((tmp_path / "out" / "job0").resolve()),
+                        "kernel_id": "owner/k0",
+                        "state": RUNNING,
+                        "error": None,
+                        "submitted_at": 1000.0,
+                        "completed_at": None,
+                        "collected_at": None,
+                        "attempts": 1,
+                        "provider": PROVIDER_KAGGLE,
+                        "remote_id": "owner/k0",
+                        "expected_runtime_manifest_sha256": original["manifest_sha256"],
+                        "observed_runtime_manifest_sha256": "",
+                        "runtime_manifest_verified": False,
+                    }
+                },
+                "updated_at": 1001.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BatchValidationError, match="batch identity changed"):
+        ParallelScheduler(FakeKaggleClient()).run(manifest, state, poll_interval=1)
 # ---------------------------------------------------------------------------
 # 10. Status classification
 # ---------------------------------------------------------------------------
@@ -1355,7 +1540,7 @@ def test_cli_run_default_is_additive(tmp_path: Path) -> None:
     """The CLI --max-parallel should default to None (additive provider capacity).
 
     With 12 Kaggle jobs and no --max-parallel, concurrency is bounded only by
-    the default kaggle_max=10, not by a global cap.
+    the default kaggle_max=5, not by a global cap.
     """
     manifest, _ = _make_batch_with_kernels(tmp_path, 12)
     state = tmp_path / "state.json"
@@ -1391,7 +1576,7 @@ def test_cli_run_default_is_additive(tmp_path: Path) -> None:
         clock=clock,
         sleeper=sleeper,
     )
-    # No global cap — bounded only by default kaggle_max=10
+    # No global cap — bounded only by default kaggle_max=5
     assert client.max_concurrent <= DEFAULT_KAGGLE_MAX
 
 
@@ -1430,8 +1615,8 @@ def test_cli_run_rejects_max_parallel_zero(tmp_path: Path) -> None:
         )
 
 
-def test_cli_run_rejects_kaggle_max_above_10(tmp_path: Path) -> None:
-    """CLI --kaggle-max 11 should fail via SystemExit (parser.error)."""
+def test_cli_run_rejects_kaggle_max_above_5(tmp_path: Path) -> None:
+    """CLI --kaggle-max 6 should fail via SystemExit (parser.error)."""
     manifest, _ = _make_batch_with_kernels(tmp_path, 1)
     state = tmp_path / "state.json"
     holder, clock = _make_clock()
@@ -1439,7 +1624,7 @@ def test_cli_run_rejects_kaggle_max_above_10(tmp_path: Path) -> None:
     client = FakeKaggleClient()
     with pytest.raises(SystemExit):
         main(
-            ["run", str(manifest), "--state", str(state), "--kaggle-max", "11"],
+            ["run", str(manifest), "--state", str(state), "--kaggle-max", "6"],
             client=client,
             clock=clock,
             sleeper=sleeper,
@@ -1787,7 +1972,7 @@ def test_default_clock_produces_wall_clock_timestamps(tmp_path: Path) -> None:
 #   - Watch mode stays alive across an empty interval and can be
 #     terminated deterministically (via KeyboardInterrupt).
 #   - Non-watch mode still terminates (backward compatible).
-#   - Additive 10 Kaggle + learned Colab X admission in watch mode.
+#   - Additive 5 Kaggle + learned Colab X admission in watch mode.
 #
 # All tests avoid real network and real sleeps by injecting fake clients,
 # a deterministic clock, and a bounded or KeyboardInterrupt-raising sleeper.
@@ -1809,7 +1994,13 @@ def _append_job_to_batch(
     assert name not in existing_names, f"job {name} already in batch"
     _make_kernel_dir(base, name, kernel_id)
     manifest["jobs"].append(
-        {"name": name, "kernel_dir": name, "output_dir": f"out/{name}"}
+        {
+            "name": name,
+            "provider": PROVIDER_KAGGLE,
+            "kernel_dir": name,
+            "output_dir": f"out/{name}",
+            "runtime_manifest": _valid_runtime_manifest(),
+        }
     )
     batch_path.write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -2026,10 +2217,20 @@ def test_watch_malformed_reload_retried_then_valid_content_succeeds(
                     json.dumps({
                         "schema_version": EXPECTED_BATCH_SCHEMA,
                         "jobs": [
-                            {"name": "job0", "kernel_dir": "job0",
-                             "output_dir": "out/job0"},
-                            {"name": "job1", "kernel_dir": "job1",
-                             "output_dir": "out/job1"},
+                            {
+                                "name": "job0",
+                                "provider": PROVIDER_KAGGLE,
+                                "kernel_dir": "job0",
+                                "output_dir": "out/job0",
+                                "runtime_manifest": _valid_runtime_manifest(),
+                            },
+                            {
+                                "name": "job1",
+                                "provider": PROVIDER_KAGGLE,
+                                "kernel_dir": "job1",
+                                "output_dir": "out/job1",
+                                "runtime_manifest": _valid_runtime_manifest(),
+                            },
                         ],
                     }),
                     encoding="utf-8",

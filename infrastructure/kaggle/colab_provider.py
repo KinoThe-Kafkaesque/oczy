@@ -370,13 +370,18 @@ Runner = Callable[[list[str], float | None], subprocess.CompletedProcess]
 PopenFactory = Callable[[list[str]], subprocess.Popen]
 
 
-def _default_runner(argv: list[str], timeout: float | None) -> subprocess.CompletedProcess:
+def _default_runner(
+    argv: list[str],
+    timeout: float | None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
     """Run a colab CLI command synchronously, returning stdout.  No shell=True."""
     result = subprocess.run(
         argv,
         capture_output=True,
         text=True,
         timeout=timeout,
+        env=env,
         check=False,
     )
     if result.returncode != 0:
@@ -387,7 +392,9 @@ def _default_runner(argv: list[str], timeout: float | None) -> subprocess.Comple
     return result
 
 
-def _default_popen_factory(argv: list[str]) -> subprocess.Popen:
+def _default_popen_factory(
+    argv: list[str], env: dict[str, str] | None = None
+) -> subprocess.Popen:
     """Launch a colab CLI command with stdout/stderr redirected to temp files.
 
     Using scheduler-owned temp files instead of ``subprocess.PIPE`` ensures
@@ -409,6 +416,7 @@ def _default_popen_factory(argv: list[str]) -> subprocess.Popen:
         stdout=stdout_fh,
         stderr=stderr_fh,
         text=True,
+        env=env,
     )
     # Stash temp file paths and handles on the proc for later reading/cleanup.
     proc._colab_stdout_path = stdout_fh.name  # type: ignore[attr-defined]
@@ -434,19 +442,38 @@ class ColabCliClient:
         sessions_timeout: float = DEFAULT_COLAB_SESSIONS_TIMEOUT,
         stop_timeout: float = DEFAULT_COLAB_STOP_TIMEOUT,
         run_timeout: float = DEFAULT_COLAB_RUN_TIMEOUT,
+        argv_prefix: Sequence[str] | None = None,
+        env_overrides: dict[str, str] | None = None,
     ) -> None:
-        self._runner = runner if runner is not None else _default_runner
-        self._popen_factory = popen_factory if popen_factory is not None else _default_popen_factory
+        env = dict(os.environ)
+        if env_overrides:
+            env.update(env_overrides)
+        self._runner = (
+            runner
+            if runner is not None
+            else lambda argv, timeout: _default_runner(argv, timeout, env)
+        )
+        self._popen_factory = (
+            popen_factory
+            if popen_factory is not None
+            else lambda argv: _default_popen_factory(argv, env)
+        )
+        self._argv_prefix = list(argv_prefix or ["colab"])
+        if not self._argv_prefix or self._argv_prefix[0] != "colab":
+            raise ValueError("argv_prefix must start with 'colab'")
         self.sessions_timeout = sessions_timeout
         self.stop_timeout = stop_timeout
         self.run_timeout = run_timeout
+
+    def _argv(self, tail: Sequence[str]) -> list[str]:
+        return [*self._argv_prefix, *tail]
 
     # -- sessions ---------------------------------------------------------
 
     def sessions(self, *, timeout: float | None = None) -> list[dict[str, str]]:
         """List account-wide active Colab sessions via ``colab sessions``."""
         to = timeout if timeout is not None else self.sessions_timeout
-        result = self._runner(["colab", "sessions"], to)
+        result = self._runner(self._argv(["sessions"]), to)
         return parse_sessions(result.stdout)
 
     # -- run --------------------------------------------------------------
@@ -478,14 +505,14 @@ class ColabCliClient:
         to = timeout if timeout is not None else self.run_timeout
         # F11: clamp to >= 1 so int() truncation never yields 0.
         timeout_str = str(int(max(1, to)))
-        argv: list[str] = [
-            "colab", "run",
+        argv: list[str] = self._argv([
+            "run",
             "--keep",
             "--session", name,
             "--timeout", timeout_str,
             "--",  # F3: separator — positionals after this are not CLI flags
             script,
-        ]
+        ])
         if arguments:
             argv.extend(arguments)
         proc = self._popen_factory(argv)
@@ -568,7 +595,7 @@ class ColabCliClient:
         """
         to = timeout if timeout is not None else self.stop_timeout
         try:
-            self._runner(["colab", "stop", "--session", name], to)
+            self._runner(self._argv(["stop", "--session", name]), to)
         except (RuntimeError, subprocess.TimeoutExpired):
             # Best-effort: the session may already be gone, or the CLI may
             # time out during teardown.  Either way, the scheduler must not

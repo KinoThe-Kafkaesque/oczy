@@ -633,7 +633,7 @@ remains frozen unless an item explicitly calls for the governance path.
    `/tmp/oczy-live-queue/state.json`, campaign
    `/tmp/oczy-live-queue-campaign.json`. Source commit:
    `5b5e93c63d769fea7854073a4e6c359e5d36606f`. Capacity is
-   **additive: 10 Kaggle + learned Colab X**. The background scheduler
+   **additive: 5 Kaggle + learned Colab X**. The background scheduler
    runs with `--watch-batch --watch-interval 30`. **First job:**
    `r18-distillation-5seed-diagnostic` (Kaggle, kernel
    `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, pinned source dataset

@@ -2,47 +2,40 @@
 
 Runs many private, CPU-only Kaggle kernels and/or Google Colab CLI jobs in
 bounded parallelism with crash-safe state, resume semantics, output
-collection, and timeout handling.
+collection, runtime manifest verification, and timeout handling.
 
-Batch manifest schema v1 (``oczy/kaggle-parallel-batch/v1``) — implicit
-Kaggle only::
+Batch manifest schema v3 (``oczy/remote-parallel-batch/v3``) — required
+inline ``runtime_manifest`` per job, explicit ``provider`` field::
 
     {
-      "schema_version": "oczy/kaggle-parallel-batch/v1",
+      "schema_version": "oczy/remote-parallel-batch/v3",
       "jobs": [
-        {"name": "...", "kernel_dir": "...", "output_dir": "..."}
+        {"name": "...", "provider": "kaggle", "kernel_dir": "...",
+         "output_dir": "...", "runtime_manifest": {"schema_version": "..."}},
+        {"name": "...", "provider": "colab", "script": "...",
+         "output_dir": "...", "arguments": ["--flag"], "timeout": 3600,
+         "job_spec": "...", "runtime_manifest": {"schema_version": "..."}}
       ]
     }
 
-Batch manifest schema v2 (``oczy/remote-parallel-batch/v2``) — mixed
-providers, each job carries a ``provider`` field::
+Durable state schema v4 (``oczy/remote-parallel-state/v4``) — carries
+expected/observed runtime manifest hashes and verification boolean per job.
+Earlier state schemas are not accepted; no automatic migration.
 
-    {
-      "schema_version": "oczy/remote-parallel-batch/v2",
-      "jobs": [
-        {"name": "...", "provider": "kaggle", "kernel_dir": "...", "output_dir": "..."},
-        {"name": "...", "provider": "colab", "script": "...", "output_dir": "...",
-         "arguments": ["--flag"], "timeout": 3600}
-      ]
-    }
-
-Durable state schema v1 (``oczy/kaggle-parallel-state/v1``) — Kaggle only.
-Durable state schema v2 (``oczy/remote-parallel-state/v2``) — provider-neutral
-with ``provider``/``remote_id`` per job and ``colab_learned_limit`` at top
-level.  v1 state files migrate automatically: every job is treated as
-Kaggle with ``remote_id = kernel_id``.
-
-Lifecycle: ``pending -> submitting -> running -> collecting -> succeeded``
-with terminal ``failed``.  Resume converts interrupted ``submitting`` to
-``pending`` and ``collecting`` to ``running`` (Kaggle) safely, and never
-resubmits a kernel already recorded as ``running``.  For Colab, a running
-job on restart has no local process handle — it is failed explicitly as
+Lifecycle: ``pending -> submitting -> running -> collecting`` then
+``succeeded`` (after runtime manifest verification) or ``failed``.
+Resume converts interrupted ``submitting`` to ``pending`` and
+``collecting`` to ``running`` (Kaggle) safely, and never resubmits a
+kernel already recorded as ``running``.  For Colab, a running job on
+restart has no local process handle — it is failed explicitly as
 interrupted and the named session is best-effort stopped.
 """
 
 from __future__ import annotations
 
 import argparse
+import fcntl
+import hashlib
 import json
 import os
 import re
@@ -94,18 +87,72 @@ except ImportError:  # pragma: no cover - colab_provider is co-located
     def _read_proc_output(_proc: Any, _stream: str) -> str:  # type: ignore[no-redef]
         raise RuntimeError("colab_provider not available")
 
+try:
+    from runner_pool import (  # type: ignore[import-not-found]
+        DEFAULT_LEASE_TTL,
+        SlotLeaseStore,
+        load_dispatch_plan,
+        load_pool_config,
+    )
+    _POOL_AVAILABLE = True
+except ImportError:  # pragma: no cover - runner_pool is co-located
+    _POOL_AVAILABLE = False
+    DEFAULT_LEASE_TTL = 8 * 60 * 60.0
+    SlotLeaseStore = None  # type: ignore[assignment, misc]
+
+# ---------------------------------------------------------------------------
+# Runtime manifest and execution report (co-located; always available).
+# ---------------------------------------------------------------------------
+try:
+    from execution_report import (  # type: ignore[import-not-found]
+        SentinelError,
+        load_execution_report,
+        validate_execution_report_runtime,
+    )
+    _EXEC_REPORT_AVAILABLE = True
+except ImportError:
+    _EXEC_REPORT_AVAILABLE = False
+
+    def load_execution_report(_provider: Any, _output_dir: Any) -> Any:  # type: ignore[no-redef]
+        raise RuntimeError("execution_report not available")
+
+    def validate_execution_report_runtime(_report: Any, _expected: Any) -> None:  # type: ignore[no-redef]
+        raise RuntimeError("execution_report not available")
+
+    class SentinelError(ValueError):  # type: ignore[no-redef]
+        pass
+
+try:
+    from runtime_manifest import (  # type: ignore[import-not-found]
+        RuntimeManifestError,
+        compute_manifest_sha256,
+        validate_runtime_manifest,
+    )
+    _MANIFEST_AVAILABLE = True
+except ImportError:
+    _MANIFEST_AVAILABLE = False
+
+    class RuntimeManifestError(ValueError):  # type: ignore[no-redef]
+        pass
+
+    def compute_manifest_sha256(_manifest: Any) -> str:  # type: ignore[no-redef]
+        raise RuntimeError("runtime_manifest not available")
+
+    def validate_runtime_manifest(_manifest: Any) -> Any:  # type: ignore[no-redef]
+        raise RuntimeError("runtime_manifest not available")
+
 
 # ---------------------------------------------------------------------------
 # Schema versions — v1 constants preserved for backward compatibility.
 # ---------------------------------------------------------------------------
-BATCH_SCHEMA_VERSION = "oczy/kaggle-parallel-batch/v1"
-STATE_SCHEMA_VERSION = "oczy/kaggle-parallel-state/v1"
+# Schema versions — v3 batch / v4 state only.  Earlier versions are
+# intentionally not accepted; no in-code legacy shim.
+# ---------------------------------------------------------------------------
+BATCH_SCHEMA_VERSION = "oczy/remote-parallel-batch/v3"
+STATE_SCHEMA_VERSION = "oczy/remote-parallel-state/v4"
 
-BATCH_SCHEMA_V2 = "oczy/remote-parallel-batch/v2"
-STATE_SCHEMA_V2 = "oczy/remote-parallel-state/v2"
-
-_VALID_BATCH_SCHEMAS = frozenset({BATCH_SCHEMA_VERSION, BATCH_SCHEMA_V2})
-_VALID_STATE_SCHEMAS = frozenset({STATE_SCHEMA_VERSION, STATE_SCHEMA_V2})
+_VALID_BATCH_SCHEMAS = frozenset({BATCH_SCHEMA_VERSION})
+_VALID_STATE_SCHEMAS = frozenset({STATE_SCHEMA_VERSION})
 
 # ---------------------------------------------------------------------------
 # Providers
@@ -120,8 +167,8 @@ _VALID_PROVIDERS = frozenset({PROVIDER_KAGGLE, PROVIDER_COLAB})
 DEFAULT_MAX_PARALLEL = 8  # legacy default; max_parallel now defaults to None
 MIN_PARALLEL = 1
 
-DEFAULT_KAGGLE_MAX = 10
-HARD_KAGGLE_MAX = 10
+DEFAULT_KAGGLE_MAX = 5
+HARD_KAGGLE_MAX = 5
 MIN_KAGGLE_MAX = 1
 
 DEFAULT_COLAB_MAX = 10
@@ -188,6 +235,7 @@ class Job:
     collected_at: float | None = None
     attempts: int = 0
     provider: str = PROVIDER_KAGGLE
+    account_id: str = ""
     remote_id: str = ""
     script: str = ""
     arguments: list[str] = field(default_factory=list)
@@ -200,6 +248,13 @@ class Job:
     # batch manifest (fresh: never submitted).  Used by orphan recovery to
     # avoid claiming/stopping preexisting external sessions for fresh jobs.
     _from_state: bool = False
+    # Runtime manifest identity (transient: the full inline object from the
+    # batch entry; never serialized — reattached from the batch on resume).
+    runtime_manifest: dict[str, Any] | None = None
+    # Persisted runtime verification state.
+    expected_runtime_manifest_sha256: str = ""
+    observed_runtime_manifest_sha256: str = ""
+    runtime_manifest_verified: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -214,7 +269,11 @@ class Job:
             "collected_at": self.collected_at,
             "attempts": self.attempts,
             "provider": self.provider,
+            "account_id": self.account_id,
             "remote_id": self.remote_id or self.kernel_id,
+            "expected_runtime_manifest_sha256": self.expected_runtime_manifest_sha256,
+            "observed_runtime_manifest_sha256": self.observed_runtime_manifest_sha256,
+            "runtime_manifest_verified": self.runtime_manifest_verified,
         }
         if self.provider == PROVIDER_COLAB:
             d["script"] = self.script
@@ -226,9 +285,10 @@ class Job:
     def from_dict(cls, data: dict[str, Any]) -> Job:
         """Reconstruct a Job from a state-file dict.
 
-        v1 state (no ``provider``/``remote_id``) migrates automatically:
-        ``provider`` defaults to ``"kaggle"`` and ``remote_id`` defaults
-        to ``kernel_id``.
+        v4 state carries ``expected_runtime_manifest_sha256``,
+        ``observed_runtime_manifest_sha256``, and
+        ``runtime_manifest_verified``.  Earlier state schemas are not
+        accepted; see ``_VALID_STATE_SCHEMAS``.
         """
         provider = data.get("provider", PROVIDER_KAGGLE)
         kernel_id = data.get("kernel_id", "")
@@ -247,10 +307,20 @@ class Job:
             collected_at=data.get("collected_at"),
             attempts=data.get("attempts", 0),
             provider=provider,
+            account_id=data.get("account_id", ""),
             remote_id=remote_id,
             script=data.get("script", ""),
             arguments=list(data.get("arguments", [])),
             timeout=data.get("timeout"),
+            expected_runtime_manifest_sha256=data.get(
+                "expected_runtime_manifest_sha256", ""
+            ),
+            observed_runtime_manifest_sha256=data.get(
+                "observed_runtime_manifest_sha256", ""
+            ),
+            runtime_manifest_verified=data.get(
+                "runtime_manifest_verified", False
+            ),
         )
         job._from_state = True
         return job
@@ -282,10 +352,17 @@ class KaggleClient(Protocol):
         ...
 
 
-def _run_kaggle(argv: list[str], *, timeout: float | None) -> str:
+def _run_kaggle(
+    argv: list[str],
+    *,
+    timeout: float | None,
+    env_overrides: dict[str, str] | None = None,
+) -> str:
     """Run a kaggle CLI command, returning stdout.  No shell=True."""
     env = dict(os.environ)
     env.setdefault("KAGGLE_CONFIG_DIR", str(Path.home() / ".kaggle"))
+    if env_overrides:
+        env.update(env_overrides)
     result = subprocess.run(
         argv,
         capture_output=True,
@@ -311,10 +388,12 @@ class KaggleCliClient:
         push_timeout: float = DEFAULT_PUSH_TIMEOUT,
         status_timeout: float = DEFAULT_STATUS_TIMEOUT,
         output_timeout: float = DEFAULT_OUTPUT_TIMEOUT,
+        env_overrides: dict[str, str] | None = None,
     ) -> None:
         self.push_timeout = push_timeout
         self.status_timeout = status_timeout
         self.output_timeout = output_timeout
+        self.env_overrides = dict(env_overrides or {})
 
     def push(self, kernel_dir: str, *, timeout: float | None = None) -> str:
         """Submit a kernel, sending *timeout* as the Kaggle run-time limit."""
@@ -325,6 +404,7 @@ class KaggleCliClient:
                 "--timeout", str(int(to)),
             ],
             timeout=DEFAULT_PUSH_SUBPROCESS_TIMEOUT,
+            env_overrides=self.env_overrides,
         )
         meta_path = Path(kernel_dir) / "kernel-metadata.json"
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -333,7 +413,9 @@ class KaggleCliClient:
     def status(self, kernel_id: str, *, timeout: float | None = None) -> str:
         to = timeout if timeout is not None else self.status_timeout
         stdout = _run_kaggle(
-            ["kaggle", "kernels", "status", kernel_id], timeout=to
+            ["kaggle", "kernels", "status", kernel_id],
+            timeout=to,
+            env_overrides=self.env_overrides,
         )
         return classify_status(stdout)
 
@@ -344,6 +426,7 @@ class KaggleCliClient:
         _run_kaggle(
             ["kaggle", "kernels", "output", kernel_id, "-p", output_dir, "--force"],
             timeout=to,
+            env_overrides=self.env_overrides,
         )
 
 
@@ -373,6 +456,45 @@ def classify_status(raw: str) -> str:
 
 class BatchValidationError(ValueError):
     """Raised when a batch manifest or kernel directory fails validation."""
+
+
+class SchedulerAlreadyRunningError(RuntimeError):
+    """Raised when another process already owns the scheduler state file."""
+
+
+class SchedulerStateLock:
+    """Non-blocking process lock held for one complete scheduler run."""
+
+    def __init__(self, state_path: str | Path) -> None:
+        state = Path(state_path).resolve()
+        self.path = state.with_name(state.name + ".owner.lock")
+        self._handle: Any = None
+
+    def __enter__(self) -> SchedulerStateLock:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._handle = self.path.open("a+", encoding="utf-8")
+        try:
+            fcntl.flock(
+                self._handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
+            )
+        except BlockingIOError as exc:
+            self._handle.close()
+            self._handle = None
+            raise SchedulerAlreadyRunningError(
+                f"another scheduler owns state file lock {self.path}"
+            ) from exc
+        self._handle.seek(0)
+        self._handle.truncate()
+        self._handle.write(f"pid={os.getpid()}\n")
+        self._handle.flush()
+        return self
+
+    def __exit__(self, _exc_type: Any, _exc: Any, _tb: Any) -> None:
+        if self._handle is None:
+            return
+        fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+        self._handle.close()
+        self._handle = None
 
 
 def _title_slug(title: str) -> str:
@@ -480,13 +602,23 @@ def _validate_kernel(kernel_dir: Path) -> tuple[str, dict[str, Any], dict[str, A
 def _validate_colab_job(
     base: Path, entry: dict[str, Any], name: str
 ) -> dict[str, Any]:
-    """Validate a v2 Colab job entry.  Returns a job dict."""
+    """Validate a v3 Colab job entry.  Returns a job dict."""
     script_rel = entry.get("script")
     if not script_rel or not isinstance(script_rel, str):
         raise BatchValidationError(f"job {name!r} missing string 'script'")
     output_dir_rel = entry.get("output_dir")
     if not output_dir_rel or not isinstance(output_dir_rel, str):
         raise BatchValidationError(f"job {name!r} missing string 'output_dir'")
+
+    # v3: require job_spec path for cross-validation.
+    job_spec_rel = entry.get("job_spec")
+    if not job_spec_rel or not isinstance(job_spec_rel, str):
+        raise BatchValidationError(f"job {name!r} missing string 'job_spec'")
+    job_spec_path = _resolve(base, job_spec_rel)
+    if not job_spec_path.is_file():
+        raise BatchValidationError(
+            f"job {name!r}: job_spec does not exist: {job_spec_path}"
+        )
 
     script_path = _resolve(base, script_rel)
     output_dir = _resolve(base, output_dir_rel)
@@ -514,18 +646,18 @@ def _validate_colab_job(
     return {
         "name": name,
         "provider": PROVIDER_COLAB,
-        "schema_version": BATCH_SCHEMA_V2,
+        "schema_version": BATCH_SCHEMA_VERSION,
         "script": str(script_path),
         "arguments": list(arguments),
         "output_dir": output_dir,
         "timeout": float(timeout) if timeout is not None else None,
+        "job_spec": str(job_spec_path),
     }
 
-
 def _validate_kaggle_job(
-    base: Path, entry: dict[str, Any], name: str, schema: str
+    base: Path, entry: dict[str, Any], name: str
 ) -> dict[str, Any]:
-    """Validate a Kaggle job entry (v1 or v2).  Returns a job dict."""
+    """Validate a v3 Kaggle job entry.  Returns a job dict."""
     kernel_dir_rel = entry.get("kernel_dir")
     if not kernel_dir_rel or not isinstance(kernel_dir_rel, str):
         raise BatchValidationError(f"job {name!r} missing string 'kernel_dir'")
@@ -546,7 +678,7 @@ def _validate_kaggle_job(
     return {
         "name": name,
         "provider": PROVIDER_KAGGLE,
-        "schema_version": schema,
+        "schema_version": BATCH_SCHEMA_VERSION,
         "kernel_dir": kernel_dir,
         "output_dir": output_dir,
         "kernel_id": kernel_id,
@@ -556,18 +688,23 @@ def _validate_kaggle_job(
 
 
 def load_batch(batch_path: str | Path) -> list[dict[str, Any]]:
-    """Load and validate a batch manifest.
+    """Load and validate a v3 batch manifest.
 
-    Accepts both v1 (``oczy/kaggle-parallel-batch/v1``) and v2
-    (``oczy/remote-parallel-batch/v2``) schemas.  v1 jobs are implicitly
-    Kaggle.  v2 jobs dispatch by their ``provider`` field.
+    Accepts only ``oczy/remote-parallel-batch/v3``.  Every job entry must
+    carry an inline ``runtime_manifest`` that validates independently.
+    Kaggle jobs additionally require exact equality between the batch
+    runtime_manifest and the one in ``{kernel_dir}/job_spec.json``.
+    Colab jobs carry a ``job_spec`` path; the scheduler can cross-validate
+    at admission time.
 
     Returns a list of job dicts.  Kaggle job dicts contain:
         name, provider, schema_version, kernel_dir (Path),
-        output_dir (Path), kernel_id (str), metadata (dict), job_spec (dict).
+        output_dir (Path), kernel_id (str), metadata (dict), job_spec (dict),
+        runtime_manifest (dict).
     Colab job dicts contain:
         name, provider, schema_version, script (str), arguments (list[str]),
-        output_dir (Path), timeout (float|None).
+        output_dir (Path), timeout (float|None), job_spec (str),
+        runtime_manifest (dict).
 
     Paths in the manifest resolve relative to the manifest file's directory.
     Raises BatchValidationError on any validation failure.
@@ -606,30 +743,207 @@ def load_batch(batch_path: str | Path) -> list[dict[str, Any]]:
             raise BatchValidationError(f"duplicate job name: {name}")
         seen_names.add(name)
 
-        # Determine provider: v2 requires it, v1 implies kaggle.
-        if schema == BATCH_SCHEMA_V2:
-            provider = entry.get("provider")
-            if provider not in _VALID_PROVIDERS:
-                raise BatchValidationError(
-                    f"job {name!r} has invalid or missing 'provider' "
-                    f"(must be one of {sorted(_VALID_PROVIDERS)!r})"
-                )
-        else:
-            provider = PROVIDER_KAGGLE
+        # v3: every job requires an explicit provider.
+        provider = entry.get("provider")
+        if provider not in _VALID_PROVIDERS:
+            raise BatchValidationError(
+                f"job {name!r} has invalid or missing 'provider' "
+                f"(must be one of {sorted(_VALID_PROVIDERS)!r})"
+            )
+
+        # v3: require and validate inline runtime_manifest.
+        raw_manifest = entry.get("runtime_manifest")
+        if not isinstance(raw_manifest, dict):
+            raise BatchValidationError(
+                f"job {name!r} missing or invalid 'runtime_manifest'"
+            )
+        try:
+            validate_runtime_manifest(raw_manifest)
+        except RuntimeManifestError as exc:
+            raise BatchValidationError(
+                f"job {name!r} runtime_manifest validation failed: {exc}"
+            ) from exc
+        manifest_hash = compute_manifest_sha256(raw_manifest)
 
         if provider == PROVIDER_COLAB:
-            jobs.append(_validate_colab_job(base, entry, name))
+            job = _validate_colab_job(base, entry, name)
+            # Cross-validate Colab job_spec runtime_manifest.
+            job_spec_path = Path(job["job_spec"])
+            try:
+                job_spec = json.loads(job_spec_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as exc:
+                raise BatchValidationError(
+                    f"job {name!r}: cannot read job_spec: {exc}"
+                ) from exc
+            spec_manifest = job_spec.get("runtime_manifest") if isinstance(job_spec, dict) else None
+            if not isinstance(spec_manifest, dict):
+                raise BatchValidationError(
+                    f"job {name!r}: job_spec missing 'runtime_manifest'"
+                )
+            try:
+                validate_runtime_manifest(spec_manifest)
+            except RuntimeManifestError as exc:
+                raise BatchValidationError(
+                    f"job {name!r} job_spec runtime_manifest validation failed: {exc}"
+                ) from exc
+            spec_hash = compute_manifest_sha256(spec_manifest)
+            if manifest_hash != spec_hash:
+                raise BatchValidationError(
+                    f"job {name!r}: batch runtime_manifest hash {manifest_hash} "
+                    f"differs from job_spec hash {spec_hash}"
+                )
+            job["runtime_manifest"] = raw_manifest
+            jobs.append(job)
         else:
-            job = _validate_kaggle_job(base, entry, name, schema)
+            job = _validate_kaggle_job(base, entry, name)
             kid = job["kernel_id"]
             if kid in seen_ids:
                 raise BatchValidationError(
                     f"job {name!r}: duplicate kernel id {kid!r}"
                 )
             seen_ids.add(kid)
+            # Cross-validate Kaggle runtime_manifest against kernel's job_spec.json.
+            kaggle_spec = job["job_spec"]
+            spec_manifest = kaggle_spec.get("runtime_manifest") if isinstance(kaggle_spec, dict) else None
+            if not isinstance(spec_manifest, dict):
+                raise BatchValidationError(
+                    f"job {name!r}: kernel job_spec.json missing 'runtime_manifest'"
+                )
+            try:
+                validate_runtime_manifest(spec_manifest)
+            except RuntimeManifestError as exc:
+                raise BatchValidationError(
+                    f"job {name!r} kernel runtime_manifest validation failed: {exc}"
+                ) from exc
+            spec_hash = compute_manifest_sha256(spec_manifest)
+            if manifest_hash != spec_hash:
+                raise BatchValidationError(
+                    f"job {name!r}: batch runtime_manifest hash {manifest_hash} "
+                    f"differs from kernel job_spec hash {spec_hash}"
+                )
+            job["runtime_manifest"] = raw_manifest
             jobs.append(job)
 
     return jobs
+
+def _sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def apply_dispatch_plan(
+    batch_jobs: list[dict[str, Any]],
+    batch_path: str | Path,
+    pool_config: Any,
+    plan: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Verify a reviewed plan and attach immutable account assignments."""
+    if plan.get("schema_version") != "oczy/remote-runner-dispatch-plan/v1":
+        raise BatchValidationError("unsupported dispatch plan schema")
+    if plan.get("all_assigned") is not True or plan.get("ready_for_dispatch") is not True:
+        raise BatchValidationError("dispatch plan is incomplete or inventory-degraded")
+    resolved_batch = str(Path(batch_path).resolve())
+    if plan.get("batch_path") != resolved_batch:
+        raise BatchValidationError(
+            f"dispatch plan is bound to {plan.get('batch_path')!r}, "
+            f"not {resolved_batch!r}"
+        )
+    if plan.get("batch_sha256") != _sha256_file(resolved_batch):
+        raise BatchValidationError("dispatch plan batch SHA-256 does not match")
+    if plan.get("pool_config_path") != pool_config.source_path:
+        raise BatchValidationError("dispatch plan pool config path does not match")
+    if plan.get("pool_config_sha256") != _sha256_file(pool_config.source_path):
+        raise BatchValidationError("dispatch plan pool config SHA-256 does not match")
+
+    accounts = {account.id: account for account in pool_config.accounts}
+    assignments: dict[str, dict[str, Any]] = {}
+    for item in plan.get("assignments", []):
+        name = item.get("job_name")
+        if not isinstance(name, str) or not name:
+            raise BatchValidationError("dispatch plan assignment missing job_name")
+        if name in assignments:
+            raise BatchValidationError(f"duplicate dispatch assignment for {name!r}")
+        assignments[name] = item
+    expected = {str(job["name"]) for job in batch_jobs}
+    if set(assignments) != expected:
+        missing = sorted(expected - set(assignments))
+        extra = sorted(set(assignments) - expected)
+        raise BatchValidationError(
+            f"dispatch plan assignments differ from batch; missing={missing!r}, "
+            f"extra={extra!r}"
+        )
+
+    planned_jobs: list[dict[str, Any]] = []
+    for original in batch_jobs:
+        job = dict(original)
+        assignment = assignments[str(job["name"])]
+        account_id = assignment.get("account_id")
+        account = accounts.get(account_id)
+        provider = job.get("provider", PROVIDER_KAGGLE)
+        if account is None or not account.enabled:
+            raise BatchValidationError(
+                f"job {job['name']!r} references unavailable account {account_id!r}"
+            )
+        if account.provider != provider or assignment.get("provider") != provider:
+            raise BatchValidationError(
+                f"job {job['name']!r} provider/account mismatch"
+            )
+        if account.capacity is None:
+            raise BatchValidationError(
+                f"job {job['name']!r} account {account_id!r} has no capacity"
+            )
+        job["account_id"] = account_id
+        planned_jobs.append(job)
+    return planned_jobs
+
+
+def build_account_clients(
+    pool_config: Any,
+    *,
+    push_timeout: float = DEFAULT_PUSH_TIMEOUT,
+    account_ids: set[str] | None = None,
+) -> tuple[dict[str, Any], dict[str, int]]:
+    """Construct provider clients scoped to each configured account."""
+    clients: dict[str, Any] = {}
+    capacities: dict[str, int] = {}
+    for account in pool_config.accounts:
+        if account_ids is not None and account.id not in account_ids:
+            continue
+        if not account.enabled or account.capacity is None:
+            continue
+        capacities[account.id] = account.capacity
+        if account.provider == PROVIDER_KAGGLE:
+            clients[account.id] = KaggleCliClient(
+                push_timeout=push_timeout,
+                status_timeout=DEFAULT_STATUS_TIMEOUT,
+                output_timeout=DEFAULT_OUTPUT_TIMEOUT,
+                env_overrides={"KAGGLE_CONFIG_DIR": account.config_dir},
+            )
+            continue
+        if not _COLAB_AVAILABLE:
+            raise BatchValidationError("colab provider is unavailable")
+        if account.auth == "oauth2":
+            token = Path(account.home_dir) / ".config/colab-cli/token.json"
+            if not token.is_file():
+                raise BatchValidationError(
+                    f"Colab OAuth token not found for account {account.id!r}: {token}"
+                )
+        clients[account.id] = ColabCliClient(
+            argv_prefix=[
+                "colab",
+                "--client-oauth-config",
+                account.client_oauth_config,
+                "--config",
+                account.session_config,
+                "--auth",
+                account.auth,
+            ],
+            env_overrides={"HOME": account.home_dir},
+        )
+    return clients, capacities
 
 
 # ---------------------------------------------------------------------------
@@ -737,10 +1051,10 @@ class ParallelScheduler:
     """Mixed-provider scheduler with durable state and additive capacity.
 
     Concurrency model: provider caps are additive.  Kaggle jobs are bounded
-    by ``kaggle_max`` (hard-capped at 10) and Colab jobs by an AIMD
+    by ``kaggle_max`` (hard-capped at 5) and Colab jobs by an AIMD
     controller (``colab_max`` ceiling).  When ``max_parallel`` is ``None``
     (the default), there is no global cap — total concurrency is the sum of
-    independent provider capacities (e.g. 10 Kaggle + learned Colab X).
+    independent provider capacities (e.g. 5 Kaggle + learned Colab X).
     When ``max_parallel`` is an explicit int, it caps total concurrency
     globally for backward compatibility.  The scheduler is single-threaded
     and synchronous — remote submissions are asynchronous work, so
@@ -759,11 +1073,19 @@ class ParallelScheduler:
         client: KaggleClient,
         *,
         colab_client: Any = None,
+        account_clients: dict[str, Any] | None = None,
+        account_capacities: dict[str, int] | None = None,
+        lease_store: Any = None,
+        lease_owner_id: str = "",
         clock: Callable[[], float] = time.time,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self.client = client
         self.colab_client = colab_client
+        self.account_clients = dict(account_clients or {})
+        self.account_capacities = dict(account_capacities or {})
+        self.lease_store = lease_store
+        self.lease_owner_id = lease_owner_id
         self.clock = clock
         self.sleeper = sleeper
         # Set during run(); persists across the run for _save_state.
@@ -828,6 +1150,38 @@ class ParallelScheduler:
             if name in existing:
                 stored = existing[name]
                 job = Job.from_dict(stored)
+                planned_account = str(batch_job.get("account_id", ""))
+                if (
+                    job.account_id
+                    and planned_account
+                    and job.account_id != planned_account
+                ):
+                    raise BatchValidationError(
+                        f"job {name!r} is durably assigned to account "
+                        f"{job.account_id!r}, not {planned_account!r}"
+                    )
+                if planned_account:
+                    job.account_id = planned_account
+
+                # Immutable runtime identity on resume: reattach the full
+                # manifest from the batch and verify its hash matches the
+                # persisted expected hash.  A mismatch means batch corruption
+                # or operator drift — reject before polling/submission.
+                raw_manifest = batch_job.get("runtime_manifest")
+                if isinstance(raw_manifest, dict):
+                    batch_hash = compute_manifest_sha256(raw_manifest)
+                    stored_hash = job.expected_runtime_manifest_sha256
+                    if stored_hash and batch_hash != stored_hash:
+                        raise BatchValidationError(
+                            f"job {name!r}: batch runtime_manifest hash "
+                            f"{batch_hash} differs from persisted expected "
+                            f"hash {stored_hash}; batch identity changed "
+                            f"— cannot resume"
+                        )
+                    job.runtime_manifest = raw_manifest
+                    if not job.expected_runtime_manifest_sha256:
+                        job.expected_runtime_manifest_sha256 = batch_hash
+
                 # Update paths from batch (source of truth).
                 job.output_dir = str(batch_job["output_dir"])
                 if provider == PROVIDER_KAGGLE:
@@ -874,6 +1228,8 @@ class ParallelScheduler:
     @staticmethod
     def _new_job_from_batch(batch_job: dict[str, Any]) -> Job:
         provider = batch_job.get("provider", PROVIDER_KAGGLE)
+        raw_manifest = batch_job.get("runtime_manifest")
+        expected_hash = compute_manifest_sha256(raw_manifest) if isinstance(raw_manifest, dict) else ""
         if provider == PROVIDER_COLAB:
             return Job(
                 name=batch_job["name"],
@@ -882,7 +1238,10 @@ class ParallelScheduler:
                 arguments=list(batch_job.get("arguments", [])),
                 timeout=batch_job.get("timeout"),
                 provider=PROVIDER_COLAB,
+                account_id=str(batch_job.get("account_id", "")),
                 remote_id=batch_job["name"],
+                runtime_manifest=raw_manifest if isinstance(raw_manifest, dict) else None,
+                expected_runtime_manifest_sha256=expected_hash,
             )
         return Job(
             name=batch_job["name"],
@@ -891,6 +1250,9 @@ class ParallelScheduler:
             kernel_id=batch_job["kernel_id"],
             remote_id=batch_job["kernel_id"],
             provider=PROVIDER_KAGGLE,
+            account_id=str(batch_job.get("account_id", "")),
+            runtime_manifest=raw_manifest if isinstance(raw_manifest, dict) else None,
+            expected_runtime_manifest_sha256=expected_hash,
         )
 
     # -- scheduling primitives ---------------------------------------------
@@ -907,6 +1269,53 @@ class ParallelScheduler:
             if j.state in ACTIVE_STATES and j.provider == provider
         )
 
+    def _client_for(self, job: Job) -> Any:
+        if job.account_id:
+            client = self.account_clients.get(job.account_id)
+            if client is None:
+                raise RuntimeError(
+                    f"no client configured for account {job.account_id!r}"
+                )
+            return client
+        return self.colab_client if job.provider == PROVIDER_COLAB else self.client
+
+    def _acquire_job_lease(self, job: Job) -> bool:
+        if self.lease_store is None or not job.account_id:
+            return True
+        capacity = self.account_capacities.get(job.account_id)
+        if capacity is None:
+            raise RuntimeError(f"missing capacity for account {job.account_id!r}")
+        return bool(
+            self.lease_store.acquire(
+                account_id=job.account_id,
+                job_name=job.name,
+                owner_id=self.lease_owner_id,
+                capacity=capacity,
+            )
+        )
+
+    def _renew_job_lease(self, job: Job) -> None:
+        if self.lease_store is None or not job.account_id:
+            return
+        renewed = self.lease_store.renew(
+            account_id=job.account_id,
+            job_name=job.name,
+            owner_id=self.lease_owner_id,
+        )
+        if not renewed:
+            raise RuntimeError(
+                f"lost slot lease for {job.name!r} on {job.account_id!r}"
+            )
+
+    def _release_job_lease(self, job: Job) -> None:
+        if self.lease_store is None or not job.account_id:
+            return
+        self.lease_store.release(
+            account_id=job.account_id,
+            job_name=job.name,
+            owner_id=self.lease_owner_id,
+        )
+
     # -- Kaggle submit/poll/collect (unchanged v1 behavior) ----------------
 
     def _submit(self, job: Job, push_timeout: float) -> None:
@@ -914,7 +1323,8 @@ class ParallelScheduler:
         job.state = SUBMITTING
         job.attempts += 1
         try:
-            kernel_id = self.client.push(job.kernel_dir, timeout=push_timeout)
+            client = self._client_for(job)
+            kernel_id = client.push(job.kernel_dir, timeout=push_timeout)
             if kernel_id:
                 job.kernel_id = kernel_id
                 job.remote_id = kernel_id
@@ -938,7 +1348,7 @@ class ParallelScheduler:
                 )
                 return
         try:
-            status = self.client.status(job.kernel_id)
+            status = self._client_for(job).status(job.kernel_id)
         except Exception as exc:
             job.error = f"status poll failed: {exc}"
             return
@@ -957,15 +1367,16 @@ class ParallelScheduler:
             job.error = f"unrecognized status: {status!r}"
 
     def _collect(self, job: Job) -> None:
-        """Pull output for a completed Kaggle job, transitioning to succeeded/failed."""
+        """Pull output for a completed Kaggle job, verify runtime, then succeed/fail."""
         try:
-            self.client.output(job.kernel_id, job.output_dir)
+            self._client_for(job).output(job.kernel_id, job.output_dir)
             job.collected_at = self.clock()
-            job.state = SUCCEEDED
-            job.error = None
         except Exception as exc:
             job.state = FAILED
             job.error = f"output collection failed: {exc}"
+            return
+        # Runtime verification gate: provider download is not enough.
+        self._verify_runtime(job)
 
     # -- Colab submit/poll/collect -----------------------------------------
 
@@ -991,9 +1402,10 @@ class ParallelScheduler:
         if save_state is not None:
             save_state()
         try:
+            client = self._client_for(job)
             session_name = job.remote_id
             to = job.timeout if job.timeout is not None else job_timeout
-            proc = self.colab_client.run(
+            proc = client.run(
                 session_name,
                 job.script,
                 arguments=job.arguments or None,
@@ -1001,7 +1413,7 @@ class ParallelScheduler:
             )
             job.proc = proc
             # Let the client track the proc for collect().
-            self.colab_client.remember(session_name, proc)
+            client.remember(session_name, proc)
             job.submitted_at = self.clock()
             job.state = RUNNING
             job.error = None
@@ -1069,7 +1481,7 @@ class ParallelScheduler:
             # (e.g. external sessions that were co-occupying capacity), and
             # AIMD reduction needs the count at rejection time (F2).
             try:
-                active_colab = len(self.colab_client.sessions())
+                active_colab = len(self._client_for(job).sessions())
             except Exception:
                 active_colab = self._active_provider_count(jobs, PROVIDER_COLAB)
             # If this rejection will exhaust the retry limit, persist
@@ -1119,27 +1531,81 @@ class ParallelScheduler:
             job.error = err
 
     def _collect_colab(self, job: Job) -> None:
-        """Collect Colab output and stop the session."""
+        """Collect Colab output, verify runtime, then stop the session."""
         try:
-            result = self.colab_client.collect(job.remote_id, job.output_dir)
+            result = self._client_for(job).collect(job.remote_id, job.output_dir)
             if result.get("ok"):
                 job.collected_at = self.clock()
-                job.state = SUCCEEDED
-                job.error = None
             else:
                 job.state = FAILED
                 job.error = f"colab collection failed: {result.get('error')}"
+                return
         except Exception as exc:
             err = f"colab collection failed: {exc}"
-            # collect() may have partially written files or cleaned up
-            # temp files in its finally block.  Persist what we can —
-            # cached proc output survives _cleanup_proc_tempfiles.
             self._persist_colab_diagnostics(job, error=err)
             job.state = FAILED
             job.error = err
+            return
         finally:
             self._best_effort_stop(job)
             job.proc = None
+        # Runtime verification gate: provider collection is not enough.
+        self._verify_runtime(job)
+
+
+    def _verify_runtime(self, job: Job) -> None:
+        """Verify runtime manifest after provider collection completes.
+
+        Loads the execution report from the collected output directory,
+        validates its runtime manifest against the expected manifest from
+        the batch.  On success, marks the job SUCCEEDED.  On any failure
+        (missing report, schema mismatch, manifest mismatch), marks FAILED
+        with ``runtime_manifest_verified = False``.
+
+        A provider ``ok`` alone is never sufficient — the real execution
+        report must confirm exact runtime identity.
+        """
+        expected = job.runtime_manifest
+        if not isinstance(expected, dict):
+            job.state = FAILED
+            job.runtime_manifest_verified = False
+            job.error = (
+                "runtime verification failed: no expected runtime_manifest "
+                "on job — batch admission should have rejected this earlier"
+            )
+            return
+
+        try:
+            report = load_execution_report(job.provider, job.output_dir)
+        except (SentinelError, OSError, RuntimeError) as exc:
+            job.state = FAILED
+            job.runtime_manifest_verified = False
+            job.error = f"runtime verification failed loading report: {exc}"
+            return
+
+        if report is None:
+            job.state = FAILED
+            job.runtime_manifest_verified = False
+            job.error = "runtime verification failed: no execution report found"
+            return
+
+        try:
+            validate_execution_report_runtime(report, expected)
+        except (SentinelError, RuntimeManifestError, RuntimeError) as exc:
+            job.state = FAILED
+            job.runtime_manifest_verified = False
+            job.error = f"runtime verification failed: {exc}"
+            return
+
+        # Success: record observed hash and mark succeeded.
+        observed = report.get("observed_runtime_manifest", {})
+        if isinstance(observed, dict):
+            job.observed_runtime_manifest_sha256 = observed.get(
+                "manifest_sha256", ""
+            )
+        job.runtime_manifest_verified = True
+        job.state = SUCCEEDED
+        job.error = None
 
     def _kill_proc(self, job: Job) -> None:
         """Terminate and reap the local Colab Popen, swallowing errors.
@@ -1162,10 +1628,10 @@ class ParallelScheduler:
 
     def _best_effort_stop(self, job: Job) -> None:
         """Best-effort stop a Colab session, swallowing errors."""
-        if self.colab_client is None:
-            return
         try:
-            self.colab_client.stop(job.remote_id)
+            client = self._client_for(job)
+            if client is not None:
+                client.stop(job.remote_id)
         except Exception:
             pass
 
@@ -1289,23 +1755,22 @@ class ParallelScheduler:
             )
             return 0
 
-        # Detect schema mismatch (informational only — new jobs still merge).
+        # v3-only watch mode: existing names are immutable.
+        # Schema mismatch with v4 state is impossible (both must be the
+        # canonical version).  If the batch carries an older or bogus
+        # schema, load_batch already rejected it above.
         new_schema = (
             new_batch_jobs[0].get("schema_version", BATCH_SCHEMA_VERSION)
             if new_batch_jobs
             else BATCH_SCHEMA_VERSION
         )
-        if new_schema != self._state_schema and new_schema not in (
-            BATCH_SCHEMA_VERSION,
-            BATCH_SCHEMA_V2,
-        ):
+        if new_schema != BATCH_SCHEMA_VERSION:
             print(
-                f"[watch] batch schema changed to {new_schema!r}; "
-                f"merging new jobs under existing state schema "
-                f"{self._state_schema!r}",
+                f"[watch] batch schema {new_schema!r} is not "
+                f"{BATCH_SCHEMA_VERSION!r}; skipping reload",
                 file=_sys.stderr,
             )
-
+            return 0
         added = 0
         for batch_job in new_batch_jobs:
             name = batch_job["name"]
@@ -1331,6 +1796,16 @@ class ParallelScheduler:
         self,
         batch_path: str | Path,
         state_path: str | Path,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Run with exclusive ownership of the durable scheduler state."""
+        with SchedulerStateLock(state_path):
+            return self._run_impl(batch_path, state_path, **kwargs)
+
+    def _run_impl(
+        self,
+        batch_path: str | Path,
+        state_path: str | Path,
         *,
         max_parallel: int | None = None,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
@@ -1341,6 +1816,8 @@ class ParallelScheduler:
         colab_cooldown: float = DEFAULT_COLAB_COOLDOWN,
         watch_batch: bool = False,
         watch_interval: float = DEFAULT_WATCH_INTERVAL,
+        pool_config: Any = None,
+        dispatch_plan: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run the full scheduling loop until all jobs reach a terminal state.
 
@@ -1383,39 +1860,56 @@ class ParallelScheduler:
                 f"watch_interval must be > 0 when watch_batch is True, "
                 f"got {watch_interval}"
             )
+        if (pool_config is None) != (dispatch_plan is None):
+            raise ValueError("pool_config and dispatch_plan must be provided together")
+        if pool_config is not None and watch_batch:
+            raise ValueError(
+                "pool-aware dispatch does not support --watch-batch; generate "
+                "a new reviewed plan for every changed batch"
+            )
 
         batch_path_resolved = str(Path(batch_path).resolve())
         state_path_resolved = Path(state_path).resolve()
 
         batch_jobs = load_batch(batch_path_resolved)
+        if pool_config is not None and dispatch_plan is not None:
+            batch_jobs = apply_dispatch_plan(
+                batch_jobs, batch_path_resolved, pool_config, dispatch_plan
+            )
 
         # Determine state schema from batch schema.
-        batch_schema = (
-            batch_jobs[0].get("schema_version", BATCH_SCHEMA_VERSION)
-            if batch_jobs
-            else BATCH_SCHEMA_VERSION
-        )
-        self._state_schema = (
-            STATE_SCHEMA_V2 if batch_schema == BATCH_SCHEMA_V2 else STATE_SCHEMA_VERSION
-        )
-
+        # v4 state schema is the only accepted version.
+        self._state_schema = STATE_SCHEMA_VERSION
         jobs = self._load_or_init_state(
             state_path_resolved, batch_path_resolved, batch_jobs
         )
+        # A crash can occur after terminal state persistence but before lease
+        # cleanup.  Terminal attempts never retain capacity on resume.
+        for terminal_job in jobs.values():
+            if terminal_job.state in TERMINAL_STATES:
+                self._release_job_lease(terminal_job)
 
         # Set up Colab AIMD controller and restore learned limit from state.
         has_colab = any(j.provider == PROVIDER_COLAB for j in jobs.values())
         if has_colab:
-            if self.colab_client is None:
-                # Fail all pending Colab jobs — no client configured.
-                for job in jobs.values():
-                    if job.provider == PROVIDER_COLAB and job.state == PENDING:
-                        self._persist_colab_diagnostics(
-                            job, error="no colab client configured"
-                        )
-                        job.state = FAILED
-                        job.error = "no colab client configured"
-            else:
+            configured_colab = False
+            for job in jobs.values():
+                if job.provider != PROVIDER_COLAB:
+                    continue
+                try:
+                    configured = self._client_for(job) is not None
+                except RuntimeError:
+                    configured = False
+                if configured:
+                    configured_colab = True
+                elif job.state == PENDING:
+                    # Fail only jobs whose assigned account has no client.
+                    self._persist_colab_diagnostics(
+                        job, error="no colab client configured"
+                    )
+                    job.state = FAILED
+                    job.error = "no colab client configured"
+            if configured_colab:
                 raw = load_state(state_path_resolved)
                 restored_limit = raw.get("colab_learned_limit")
                 if restored_limit is not None and isinstance(restored_limit, int):
@@ -1431,7 +1925,7 @@ class ParallelScheduler:
 
         # Best-effort stop for Colab jobs failed as interrupted on restart,
         # and recover orphaned sessions from SUBMITTING crash windows.
-        if self.colab_client is not None:
+        if has_colab:
             for job in jobs.values():
                 if (
                     job.provider == PROVIDER_COLAB
@@ -1456,24 +1950,31 @@ class ParallelScheduler:
             # jobs (excluded from known_names) never cause external sessions
             # to be stopped (F5).  When known_names is empty (all fresh), the
             # probe returns no orphans but still counts as one call (F8).
-            known_names = {
-                job.remote_id
-                for job in jobs.values()
-                if job.provider == PROVIDER_COLAB
-                and job._from_state
-                and job.remote_id
-            }
-            try:
-                orphans = detect_orphaned_sessions(
-                    self.colab_client, known_names
-                )
-                for orphan_name in orphans:
-                    try:
-                        self.colab_client.stop(orphan_name)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+            groups: dict[str, list[Job]] = {}
+            for job in jobs.values():
+                if job.provider == PROVIDER_COLAB:
+                    groups.setdefault(job.account_id, []).append(job)
+            for group_jobs in groups.values():
+                try:
+                    group_client = self._client_for(group_jobs[0])
+                except RuntimeError:
+                    continue
+                if group_client is None:
+                    continue
+                known_names = {
+                    job.remote_id
+                    for job in group_jobs
+                    if job._from_state and job.remote_id
+                }
+                try:
+                    orphans = detect_orphaned_sessions(group_client, known_names)
+                    for orphan_name in orphans:
+                        try:
+                            group_client.stop(orphan_name)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
 
         self._save_state(state_path_resolved, batch_path_resolved, jobs)
 
@@ -1488,12 +1989,22 @@ class ParallelScheduler:
                 watch_state["size"] = sig[1]
 
         while True:
+            # Active jobs must continuously own an account slot.  Reacquiring
+            # is idempotent for the same durable queue owner after restart.
+            for active_job in jobs.values():
+                if active_job.state in ACTIVE_STATES:
+                    if not self._acquire_job_lease(active_job):
+                        raise RuntimeError(
+                            f"could not reclaim slot lease for {active_job.name!r} "
+                            f"on {active_job.account_id!r}"
+                        )
+
             # Phase 1: submit pending jobs into available slots.
             active = self._active_count(jobs)
             # Cache the account-wide Colab session count once per loop
             # iteration — sessions() spawns a subprocess with a 30s timeout,
             # so calling it per pending Colab job is wasteful (F8).
-            cached_external_active: int | None = None
+            cached_external_active: dict[str, int] = {}
             for job in jobs.values():
                 if max_parallel is not None and active >= max_parallel:
                     break
@@ -1502,22 +2013,33 @@ class ParallelScheduler:
                 if job.provider == PROVIDER_KAGGLE:
                     if self._active_provider_count(jobs, PROVIDER_KAGGLE) >= kaggle_max:
                         continue
+                    if not self._acquire_job_lease(job):
+                        continue
                     self._submit(job, push_timeout)
                     self._save_state(state_path_resolved, batch_path_resolved, jobs)
                     if job.state in ACTIVE_STATES:
                         active += 1
+                    else:
+                        self._release_job_lease(job)
                 elif job.provider == PROVIDER_COLAB:
-                    if self.colab_client is None:
-                        continue  # already failed above
+                    try:
+                        colab_client = self._client_for(job)
+                    except RuntimeError:
+                        continue
+                    if colab_client is None:
+                        continue
                     # Cooldown check.
                     if self.clock() < self._colab_cooldown_until:
                         continue
                     # External session capacity accounting (cached).
-                    if cached_external_active is None:
+                    cache_key = job.account_id or "__legacy__"
+                    if cache_key not in cached_external_active:
                         try:
-                            cached_external_active = len(self.colab_client.sessions())
+                            cached_external_active[cache_key] = len(
+                                colab_client.sessions()
+                            )
                         except Exception:
-                            cached_external_active = self._active_provider_count(
+                            cached_external_active[cache_key] = self._active_provider_count(
                                 jobs, PROVIDER_COLAB
                             )
                     effective_limit = (
@@ -1525,12 +2047,19 @@ class ParallelScheduler:
                         if self._colab_controller
                         else colab_max
                     )
-                    if cached_external_active >= effective_limit:
+                    account_limit = self.account_capacities.get(
+                        job.account_id, effective_limit
+                    )
+                    if cached_external_active[cache_key] >= min(
+                        effective_limit, account_limit
+                    ):
                         # Admission gate blocked — account is at capacity.
                         # This is normal queueing, not a rejection: keep the
                         # job pending and wait for a slot to free.  Only
                         # actual 412 TooManyAssignments rejections (handled
                         # in _poll_colab) count toward capacity_rejections.
+                        continue
+                    if not self._acquire_job_lease(job):
                         continue
                     # Pass a save callback so _submit_colab can persist the
                     # SUBMITTING intent BEFORE launching the Popen (F7).
@@ -1549,7 +2078,9 @@ class ParallelScheduler:
                         # Refresh the cached count after a successful submit
                         # so the next pending Colab job sees the updated
                         # account-wide count.
-                        cached_external_active = None
+                        cached_external_active.pop(cache_key, None)
+                    else:
+                        self._release_job_lease(job)
 
             # Phase 2: poll running jobs.
             for job in list(jobs.values()):
@@ -1558,6 +2089,8 @@ class ParallelScheduler:
                         self._poll(job, job_timeout)
                     elif job.provider == PROVIDER_COLAB:
                         self._poll_colab(job, job_timeout, jobs)
+                    if job.state not in ACTIVE_STATES:
+                        self._release_job_lease(job)
                     self._save_state(state_path_resolved, batch_path_resolved, jobs)
 
             # Phase 3: collect completed jobs.
@@ -1567,6 +2100,8 @@ class ParallelScheduler:
                         self._collect(job)
                     elif job.provider == PROVIDER_COLAB:
                         self._collect_colab(job)
+                    if job.state not in ACTIVE_STATES:
+                        self._release_job_lease(job)
                     self._save_state(state_path_resolved, batch_path_resolved, jobs)
 
             # Watch mode: check for batch file changes before deciding
@@ -1661,7 +2196,11 @@ class ParallelScheduler:
                     "kernel_id": job.kernel_id,
                     "attempts": job.attempts,
                     "provider": job.provider,
+                    "account_id": job.account_id,
                     "remote_id": job.remote_id,
+                    "expected_runtime_manifest_sha256": job.expected_runtime_manifest_sha256,
+                    "observed_runtime_manifest_sha256": job.observed_runtime_manifest_sha256,
+                    "runtime_manifest_verified": job.runtime_manifest_verified,
                 }
                 for name, job in jobs.items()
             },
@@ -1770,6 +2309,30 @@ def _build_parser() -> argparse.ArgumentParser:
             f"--watch-batch is set."
         ),
     )
+    run_p.add_argument(
+        "--pool-config",
+        type=Path,
+        help="Runner-pool config used by the reviewed dispatch plan.",
+    )
+    run_p.add_argument(
+        "--dispatch-plan",
+        type=Path,
+        help="Hash-bound account assignment emitted by runner_pool.py plan.",
+    )
+    run_p.add_argument(
+        "--lease-state",
+        type=Path,
+        help=(
+            "Shared account-slot lease JSON. Defaults beside --state when "
+            "pool-aware dispatch is enabled."
+        ),
+    )
+    run_p.add_argument(
+        "--lease-ttl",
+        type=float,
+        default=DEFAULT_LEASE_TTL,
+        help=f"Seconds before an unrenewed slot lease expires (default {DEFAULT_LEASE_TTL:g}).",
+    )
 
     status_p = sub.add_parser("status", help="Print status summary for a batch.")
     status_p.add_argument("batch", help="Path to batch manifest JSON.")
@@ -1817,6 +2380,48 @@ def main(
             parser.error(
                 "--watch-interval must be > 0 when --watch-batch is set"
             )
+        if (args.pool_config is None) != (args.dispatch_plan is None):
+            parser.error("--pool-config and --dispatch-plan must be used together")
+        if args.pool_config is not None and args.watch_batch:
+            parser.error(
+                "--watch-batch is incompatible with a hash-bound dispatch plan"
+            )
+        if args.lease_ttl <= 0:
+            parser.error("--lease-ttl must be > 0")
+
+        pool_config_obj: Any = None
+        dispatch_plan_obj: dict[str, Any] | None = None
+        account_clients: dict[str, Any] = {}
+        account_capacities: dict[str, int] = {}
+        lease_store: Any = None
+        lease_owner_id = ""
+        if args.pool_config is not None:
+            if not _POOL_AVAILABLE:
+                parser.error("runner-pool support is unavailable")
+            try:
+                pool_config_obj = load_pool_config(args.pool_config)
+                dispatch_plan_obj = load_dispatch_plan(args.dispatch_plan)
+                planned_accounts = {
+                    str(item["account_id"])
+                    for item in dispatch_plan_obj["assignments"]
+                }
+                account_clients, account_capacities = build_account_clients(
+                    pool_config_obj,
+                    push_timeout=args.push_timeout,
+                    account_ids=planned_accounts,
+                )
+                lease_path = args.lease_state or (
+                    Path(args.state).expanduser().resolve().parent
+                    / "runner-pool-leases.json"
+                )
+                lease_store = SlotLeaseStore(
+                    lease_path, ttl=args.lease_ttl, clock=clock
+                )
+                lease_owner_id = hashlib.sha256(
+                    str(Path(args.state).expanduser().resolve()).encode("utf-8")
+                ).hexdigest()
+            except Exception as exc:
+                parser.error(str(exc))
         cli_client = client or KaggleCliClient(
             push_timeout=args.push_timeout,
             status_timeout=DEFAULT_STATUS_TIMEOUT,
@@ -1825,7 +2430,11 @@ def main(
 
         # Construct Colab client if needed and not injected.
         cli_colab_client = colab_client
-        if cli_colab_client is None and _COLAB_AVAILABLE:
+        if (
+            cli_colab_client is None
+            and _COLAB_AVAILABLE
+            and pool_config_obj is None
+        ):
             # Peek at the batch to see if Colab jobs exist.
             try:
                 batch_jobs = load_batch(args.batch)
@@ -1840,22 +2449,32 @@ def main(
         scheduler = ParallelScheduler(
             cli_client,
             colab_client=cli_colab_client,
+            account_clients=account_clients,
+            account_capacities=account_capacities,
+            lease_store=lease_store,
+            lease_owner_id=lease_owner_id,
             clock=clock,
             sleeper=sleeper,
         )
-        summary = scheduler.run(
-            args.batch,
-            args.state,
-            max_parallel=args.max_parallel,
-            poll_interval=args.poll_interval,
-            push_timeout=args.push_timeout,
-            job_timeout=args.job_timeout,
-            kaggle_max=args.kaggle_max,
-            colab_max=args.colab_max,
-            colab_cooldown=args.colab_cooldown,
-            watch_batch=args.watch_batch,
-            watch_interval=args.watch_interval,
-        )
+        try:
+            summary = scheduler.run(
+                args.batch,
+                args.state,
+                max_parallel=args.max_parallel,
+                poll_interval=args.poll_interval,
+                push_timeout=args.push_timeout,
+                job_timeout=args.job_timeout,
+                kaggle_max=args.kaggle_max,
+                colab_max=args.colab_max,
+                colab_cooldown=args.colab_cooldown,
+                watch_batch=args.watch_batch,
+                watch_interval=args.watch_interval,
+                pool_config=pool_config_obj,
+                dispatch_plan=dispatch_plan_obj,
+            )
+        except SchedulerAlreadyRunningError as exc:
+            print(str(exc), file=_sys.stderr)
+            return 2
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 0 if summary["all_succeeded"] else 1
 

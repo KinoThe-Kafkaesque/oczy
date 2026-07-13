@@ -512,8 +512,8 @@ blocks) was fixed during the same session.
 
 **Default scheduler capacity (2026-07-11):** When ``--max-parallel`` is
 omitted (the default), the scheduler imposes no global concurrency cap —
-capacity is **additive: 10 Kaggle + learned Colab X**. Kaggle jobs fill up
-to ``--kaggle-max`` (default 10, hard-capped at 10); Colab jobs fill up to
+capacity is **additive: 5 Kaggle + learned Colab X**. Kaggle jobs fill up
+to ``--kaggle-max`` (default 5, hard-capped at 5); Colab jobs fill up to
 an AIMD-learned limit that starts at 1 and probes upward, capped by
 ``--colab-max`` (default 10). The learned Colab limit is not a hardcoded
 quota — it adapts to account-level session availability. Explicit
@@ -750,7 +750,7 @@ If and only if Research/20 accepts:
   `/tmp/oczy-live-queue/state.json`, campaign
   `/tmp/oczy-live-queue-campaign.json`. Source commit:
   `5b5e93c63d769fea7854073a4e6c359e5d36606f`. Capacity is
-  **additive: 10 Kaggle + learned Colab X** (same defaults as the
+  **additive: 5 Kaggle + learned Colab X** (same defaults as the
   scheduler upgrade above). The background scheduler runs with
   `--watch-batch --watch-interval 30`. **First job:**
   `r18-distillation-5seed-diagnostic` (Kaggle, kernel
