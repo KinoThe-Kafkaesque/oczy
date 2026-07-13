@@ -74,6 +74,7 @@ from .calibration import (
 )
 from .contracts import (
     DevSplit,
+    DialogueMessage,
     MetaTask,
     ModelConfig,
     ProbeCase,
@@ -198,8 +199,11 @@ def _score_battery_exact(
     """Return ``ProbeCount(correct, total)`` for a battery via exact scoring.
 
     Query features are extracted in a single batched ``organ.encode_texts``
-    call.  Read, couple, and generate are also batched — one LM forward
-    pass serves the entire battery.
+    call.  Read and couple remain per-probe (scalar) so that each probe's
+    ``[1, D]`` query matches the immutable ``CortexState`` batch of 1.
+    Soft banks are then stacked and served in one batched
+    ``organ.generate_batch`` call — one LM forward pass for the whole
+    battery.
 
     Falls back to per-probe scalar ``organ.generate`` when the organ does
     not expose ``generate_batch``.
@@ -232,17 +236,21 @@ def _score_battery_exact(
         query_feats.append(pooled)
         offset += n_msgs
 
-    # -- Batched read / couple / generate -----------------------------------
+    # -- Per-probe read / couple; batched generate --------------------------
     if hasattr(organ, "generate_batch"):
-        # Stack query features: [B, D]
-        query_stacked = torch.cat(query_feats, dim=0)  # [B, D]
+        # Read and couple per-probe (scalar) — state must stay batch-1.
+        soft_bank_list: list[torch.Tensor] = []
+        messages_batch: list[tuple[DialogueMessage, ...]] = []
+        for probe, query_feat in zip(battery, query_feats, strict=True):
+            with torch.inference_mode():
+                readout = model.read(state, query_feat)  # [1, d_cortex]
+                soft_bank = model.couple(readout)  # [1, L, D]
+            soft_bank_list.append(soft_bank)
+            messages_batch.append(probe.messages)
 
-        with torch.inference_mode():
-            readouts = model.read(state, query_stacked)  # [B, d_cortex]
-            soft_banks = model.couple(readouts)  # [B, L, D]
+        # Stack soft banks: [B, L, D]
+        soft_banks = torch.cat(soft_bank_list, dim=0)
 
-        # Collect per-probe messages for the batched generate call.
-        messages_batch = [probe.messages for probe in battery]
         generated_list = organ.generate_batch(
             messages_batch, soft_banks, max_new_tokens
         )

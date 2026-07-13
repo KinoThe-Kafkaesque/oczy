@@ -2154,3 +2154,90 @@ class TestBatchedProbeScoring:
         assert batched == scalar, (
             f"specificity: batched={batched}, scalar={scalar}"
         )
+
+    def test_batched_path_makes_one_generate_batch_call(
+        self, tmp_path: Path,
+    ) -> None:
+        """With state batch=1 and a multi-probe battery, the batched path
+        calls ``generate_batch`` exactly once — never per-probe scalar
+        ``generate``.
+        """
+        view = _make_view(n_tasks_per_family=30)
+        organ = _TinyFrozenOrgan(feature_dim=16)
+        model = MetaCortex(_MODEL_CONFIG)
+        _ckpt_dir = _make_checkpoint(tmp_path, organ, model)
+
+        # Spy on generate_batch and generate to count calls.
+        real_generate_batch = organ.generate_batch
+        real_generate = organ.generate
+        call_counts: dict[str, int] = {"generate_batch": 0, "generate": 0}
+
+        def _spy_generate_batch(messages_batch, soft_banks, max_nt):
+            call_counts["generate_batch"] += 1
+            return real_generate_batch(messages_batch, soft_banks, max_nt)
+
+        def _spy_generate(messages, soft_bank, max_nt):
+            call_counts["generate"] += 1
+            return real_generate(messages, soft_bank, max_nt)
+
+        organ.generate_batch = _spy_generate_batch  # type: ignore[method-assign]
+        organ.generate = _spy_generate  # type: ignore[method-assign]
+
+        try:
+            state = model.initial_state(1)  # batch=1
+            task = view.tasks[0]
+            scorer = FrozenScorer()
+            # Build a multi-probe battery from several probe kinds.
+            probe_list: list[ProbeCase] = []
+            for kind in (ProbeKind.SAME_RULE, ProbeKind.TRANSFER, ProbeKind.COMPOSITION):
+                probe_list.extend(task.probes.by_kind(kind))
+            battery = tuple(probe_list)
+            assert len(battery) > 1, (
+                f"Need multi-probe battery for this test, "
+                f"got {len(battery)}"
+            )
+
+            result = _score_battery_exact(
+                model, organ, state, battery, scorer,
+            )
+
+            # Exactly one generate_batch call for the whole battery.
+            assert call_counts["generate_batch"] == 1, (
+                f"Expected 1 generate_batch call, got "
+                f"{call_counts['generate_batch']}"
+            )
+            # Result must be sensible.
+            assert result.total == len(battery)
+            assert 0 <= result.correct <= result.total
+        finally:
+            organ.generate_batch = real_generate_batch  # type: ignore[method-assign]
+            organ.generate = real_generate  # type: ignore[method-assign]
+
+    def test_batched_read_and_couple_are_per_probe(
+        self, tmp_path: Path,
+    ) -> None:
+        """When state has batch=1 and the battery has B>1 probes, read and
+        couple must remain per-probe (scalar) — the CortexState batch must
+        stay 1 throughout.
+        """
+        view = _make_view(n_tasks_per_family=30)
+        organ = _TinyFrozenOrgan(feature_dim=16)
+        model = MetaCortex(_MODEL_CONFIG)
+        _ckpt_dir = _make_checkpoint(tmp_path, organ, model)
+
+        state = model.initial_state(1)  # batch=1
+        task = view.tasks[0]
+        probe_list: list[ProbeCase] = []
+        for kind in (ProbeKind.SAME_RULE, ProbeKind.TRANSFER, ProbeKind.COMPOSITION):
+            probe_list.extend(task.probes.by_kind(kind))
+        battery = tuple(probe_list)
+        assert len(battery) > 1
+
+        scorer = FrozenScorer()
+
+        # Must not raise "query_features batch != state batch".
+        result = _score_battery_exact(
+            model, organ, state, battery, scorer,
+        )
+        assert result.total == len(battery)
+        assert 0 <= result.correct <= result.total
