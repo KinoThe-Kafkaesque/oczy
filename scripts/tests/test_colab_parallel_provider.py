@@ -100,7 +100,7 @@ Job = _mod["Job"]
 main = _mod["main"]
 COLAB_MAX_CAPACITY_REJECTIONS: int = _mod["COLAB_MAX_CAPACITY_REJECTIONS"]
 
-RUNTIME_MANIFEST_SCHEMA_VERSION = "oczy/runtime-manifest/v1"
+RUNTIME_MANIFEST_SCHEMA_VERSION = "oczy/runtime-manifest/v2"
 EXECUTION_REPORT_SCHEMA_VERSION = "oczy/execution-report/v2"
 EXPECTED_BATCH_V3 = "oczy/remote-parallel-batch/v3"
 EXPECTED_STATE_V4 = "oczy/remote-parallel-state/v4"
@@ -115,6 +115,7 @@ def _valid_runtime_manifest(**overrides: Any) -> dict[str, Any]:
         "schema_version": RUNTIME_MANIFEST_SCHEMA_VERSION,
         "python_version": "3.12.0",
         "packages": {
+            "torchao": "0.17.0",
             "torch": "2.6.0",
             "transformers": "4.55.0",
             "tokenizers": "0.21.0",
@@ -123,6 +124,7 @@ def _valid_runtime_manifest(**overrides: Any) -> dict[str, Any]:
         "model": {
             "logical_model_id": None,
             "resolved_model_convention": "none",
+            "quantization": None,
             "artifact_files": [],
             "model_weights_sha256": None,
             "model_config_sha256": None,

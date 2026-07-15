@@ -1,4 +1,4 @@
-"""High-signal contract tests for the meta_cortex/v1 instrument boundary.
+"""High-signal contract tests for the meta_cortex/v2 instrument boundary.
 
 These tests defend the scientific and security boundaries of the unsigned
 candidate instrument — not plumbing.  They verify:
@@ -53,8 +53,8 @@ from oczy.experiments.meta_cortex.instrument_contracts import (
 
 _DUMMY_SHA = "a" * 64
 _DUMMY_SHA_2 = "b" * 64
-_VALID_SIGNOFF_ID = "r20-meta-cortex-v1/550e8400-e29b-41d4-a716-446655440000"
-_VALID_SIGNOFF_ID_2 = "r20-meta-cortex-v1/660e8400-e29b-42d4-a716-446655440001"
+_VALID_SIGNOFF_ID = "r20-meta-cortex-v2/550e8400-e29b-41d4-a716-446655440000"
+_VALID_SIGNOFF_ID_2 = "r20-meta-cortex-v2/660e8400-e29b-42d4-a716-446655440001"
 _FAMILY_ORDER = ("contextual_remap", "rule_transformation", "finite_state")
 _COUNT_MAP_N30 = {
     "contextual_remap": 30,
@@ -111,8 +111,8 @@ def _make_candidate_manifest(
     # Build the manifest dict to compute the self-hash.
     manifest_dict: dict = {
         "schema": CANDIDATE_MANIFEST_SCHEMA,
-        "instrument_id": "meta_cortex/v1",
-        "instrument_version": "v1",
+        "instrument_id": "meta_cortex/v2",
+        "instrument_version": "v2",
         "lifecycle_state": lifecycle_state,
         "definition_sha256": _DUMMY_SHA,
         "dev_view_sha256": _DUMMY_SHA,
@@ -309,8 +309,8 @@ class TestCandidateManifest:
     def test_valid_manifest_constructs(self) -> None:
         manifest = _make_candidate_manifest()
         assert manifest.schema == CANDIDATE_MANIFEST_SCHEMA
-        assert manifest.instrument_id == "meta_cortex/v1"
-        assert manifest.instrument_version == "v1"
+        assert manifest.instrument_id == "meta_cortex/v2"
+        assert manifest.instrument_version == "v2"
         assert manifest.lifecycle_state == "candidate"
         assert manifest.equivalence_margin == "0.05"
         assert manifest.sample_size_tasks_per_family == 30
@@ -336,13 +336,13 @@ class TestCandidateManifest:
 
     def test_reject_wrong_instrument_id(self) -> None:
         manifest_dict = _make_candidate_manifest().to_json_obj()
-        manifest_dict["instrument_id"] = "meta_cortex/v2"
+        manifest_dict["instrument_id"] = "meta_cortex/v1"
         with pytest.raises(ContractError, match="instrument_id"):
             CandidateManifest(**{**manifest_dict, "manifest_sha256": _DUMMY_SHA})
 
     def test_reject_wrong_version(self) -> None:
         manifest_dict = _make_candidate_manifest().to_json_obj()
-        manifest_dict["instrument_version"] = "v2"
+        manifest_dict["instrument_version"] = "v1"
         with pytest.raises(ContractError, match="instrument_version"):
             CandidateManifest(**{**manifest_dict, "manifest_sha256": _DUMMY_SHA})
 
@@ -680,21 +680,21 @@ class TestValidateSignoffId:
 
     def test_reject_uppercase_uuid(self) -> None:
         with pytest.raises(ContractError, match="match"):
-            validate_signoff_id("r20-meta-cortex-v1/550E8400-E29B-41D4-A716-446655440000")
+            validate_signoff_id("r20-meta-cortex-v2/550E8400-E29B-41D4-A716-446655440000")
 
     def test_reject_non_v4_uuid(self) -> None:
         """UUID version 3 must be rejected."""
         with pytest.raises(ContractError, match="version 4"):
-            validate_signoff_id("r20-meta-cortex-v1/550e8400-e29b-31d4-a716-446655440000")
+            validate_signoff_id("r20-meta-cortex-v2/550e8400-e29b-31d4-a716-446655440000")
 
     def test_reject_wrong_variant(self) -> None:
         """Variant nibble must be 8/9/a/b for RFC 4122."""
         with pytest.raises(ContractError, match="variant"):
-            validate_signoff_id("r20-meta-cortex-v1/550e8400-e29b-41d4-1716-446655440000")
+            validate_signoff_id("r20-meta-cortex-v2/550e8400-e29b-41d4-1716-446655440000")
 
     def test_reject_missing_slash(self) -> None:
         with pytest.raises(ContractError, match="match"):
-            validate_signoff_id("r20-meta-cortex-v1550e8400-e29b-41d4-a716-446655440000")
+            validate_signoff_id("r20-meta-cortex-v2550e8400-e29b-41d4-a716-446655440000")
 
     def test_reject_version_zero(self) -> None:
         with pytest.raises(ContractError, match="positive"):
@@ -709,8 +709,8 @@ class TestValidateSignoffId:
 class TestInstrumentDefinitionConfig:
     def _make_valid_config(self) -> InstrumentDefinitionConfig:
         return InstrumentDefinitionConfig(
-            instrument_id="meta_cortex/v1",
-            instrument_version="v1",
+            instrument_id="meta_cortex/v2",
+            instrument_version="v2",
             root_seed=20260709,
             train_tasks_per_family=2,
             tuning_tasks_per_family=2,
@@ -736,7 +736,7 @@ class TestInstrumentDefinitionConfig:
 
     def test_valid_config(self) -> None:
         config = self._make_valid_config()
-        assert config.instrument_id == "meta_cortex/v1"
+        assert config.instrument_id == "meta_cortex/v2"
         assert config.calibration_tasks_per_family == 30
 
     def test_reject_calibration_below_30(self) -> None:
@@ -921,8 +921,8 @@ class TestPackageExportBoundary:
 def _make_instrument_config() -> InstrumentDefinitionConfig:
     """Build a minimal valid InstrumentDefinitionConfig for materialization."""
     return InstrumentDefinitionConfig(
-        instrument_id="meta_cortex/v1",
-        instrument_version="v1",
+        instrument_id="meta_cortex/v2",
+        instrument_version="v2",
         root_seed=42,
         train_tasks_per_family=2,
         tuning_tasks_per_family=2,
@@ -967,7 +967,7 @@ class TestMaterializeDefinition:
         out = tmp_path / "definition"
         definition = materialize_definition(config, test_seed_file=seed_file, out=out)
         assert definition.schema == INSTRUMENT_DEFINITION_SCHEMA
-        assert definition.instrument_id == "meta_cortex/v1"
+        assert definition.instrument_id == "meta_cortex/v2"
         assert (out / "DEFINITION.json").exists()
         assert (out / "public/DEV_VIEW.json").exists()
         assert (out / "public/CALIBRATION_VIEW.json").exists()
@@ -1036,7 +1036,7 @@ class TestMaterializeDefinition:
         out = tmp_path / "definition"
         materialize_definition(config, test_seed_file=seed_file, out=out)
         definition = verify_definition(out)
-        assert definition.instrument_id == "meta_cortex/v1"
+        assert definition.instrument_id == "meta_cortex/v2"
 
     def test_verify_definition_detects_tamper(self, tmp_path: Path) -> None:
         """verify_definition must detect a tampered file."""
@@ -1274,8 +1274,8 @@ class TestSealedTaskDiversity:
     def _make_30_5_30_config(self) -> InstrumentDefinitionConfig:
         """Build a config with 30 train / 5 tuning / 30 calibration per family."""
         return InstrumentDefinitionConfig(
-            instrument_id="meta_cortex/v1",
-            instrument_version="v1",
+            instrument_id="meta_cortex/v2",
+            instrument_version="v2",
             root_seed=42,
             train_tasks_per_family=30,
             tuning_tasks_per_family=5,

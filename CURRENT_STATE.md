@@ -396,20 +396,46 @@ score of 0.0 after one optimizer step is not evidence of learning; the
 causal deltas are mechanism checks, not scientific results. No ACCEPT
 or REFUTE verdict is issued. The meta-test remains **BLOCKED**.
 
-**Meta-test prerequisites still blocked.** The following do not exist
-and must be built and signed off before any meta-test run:
+**Meta-test prerequisites reset by the INT8 v2 cutover.** The following must
+be regenerated and signed off before any meta-test run:
 
-1. a frozen `meta_cortex/v1` measuring instrument (separate task
-   generator, task-level train/dev/test split)
-2. a hash-checked manifest with leakage audit
-3. threshold distributions measured against real data
-4. power analysis
-5. explicit human signoff
+1. a frozen `meta_cortex/v2` instrument bound to the INT8 organ hash
+2. five fresh developmental checkpoints trained through that organ
+3. fresh DEV repeatability distributions and power analysis
+4. a hash-checked v2 candidate manifest with leakage audit
+5. explicit human signoff on the exact manifest hash, margin, and task count
 
-No signoff has been requested or granted. The next legitimate step is
-to propose and freeze the instrument and obtain human signoff — not to
-run the meta-test. No threshold, metric, baseline, episode, scoring,
-eval manifest, or research spec was changed.
+No meta-test signoff has been requested or granted. FP32 v1 checkpoints and
+calibration shards are incompatible with v2 by organ identity and hash and
+must not be merged into the new campaign.
+
+### R20 INT8 organ cutover (2026-07-15)
+
+The production `QwenFrozenOrgan` now loads the same
+`Qwen/Qwen2.5-0.5B-Instruct` source artifact and applies TorchAO v2 per-row
+INT8 weight-only quantization (`W8A32`) before any feature, teacher-forced, or
+generation call. Dynamic-activation A8W8 was rejected because it detached the
+forward result; W8A32 preserved finite, nonzero gradients to the soft bank.
+
+The differentiable teacher-forced path uses deterministic activation
+checkpointing. Without recomputation, one outer episode retains multiple full
+Qwen graphs until a single backward and exits 137 under workstation memory
+pressure. Evaluation and inference forwards remain direct.
+
+The cutover creates `meta_cortex/v2` and `oczy/runtime-manifest/v2`. Runtime
+identity now pins `torchao`, the exact quantization block, and canonical bytes
+for TorchAO tensor subclasses. Local cached-model checks passed for load/hash,
+independent-load hash determinism, final-layer feature extraction,
+teacher-forced soft-bank backpropagation, and scalar/batched greedy-generation
+parity.
+
+A complete one-step DEV `train-dev` smoke then passed in 1379.14 seconds:
+optimizer steps 1, `audit_status=ok`, peak observed RSS about 4.2 GB, checkpoint
+and result written, and frozen organ hash identical before/after at
+`60de9f75e8ae1d2507429877b4b2da48ec64c3e28eaad03db23cd3de43a1b4da`.
+Best DEV validation score was 0.0. This is a mechanism check only; no
+ACCEPT/REFUTE claim is made.
+
 
 ## 5. Current research direction
 
@@ -421,7 +447,7 @@ the core premise test; Research/21 is conditional on it.
 |---|---|---|---|
 | 1 | [`research/18-consolidation-as-distillation.md`](research/18-consolidation-as-distillation.md) | Plastic-LM-weight comparator: distill transient context into LoRA, delete traces, test survival | **BLOCKED** (teacher gate failed): 5-seed run complete (exit 0), `teacher_dev_delta=0.1765` < 0.2 gate all seeds; `distill_delta_holdout` mean=0.2667, 4/5 positive (seed 2 null); no H-DISTILL verdict permitted. Mechanism diagnosis complete (2026-07-12, commit `33169cc`): teacher ceiling vanilla=0/raw_prefix=0.1765/chat_template=0 (none reach gate), prompt-contract audit all-zero (no structural defect), trajectory underfit+unstable (loss falls but DEV behavior weak); seed 2 not uniquely divergent. Further identical R18 reruns retired; next work is R19 DEV calibration; no threshold changes |
 | 2 | [`research/19-lm-as-language-organ.md`](research/19-lm-as-language-organ.md) | Direct diagnostic with matched label-prefix and latent-control articulation arms | Implemented; DEV calibration **BLOCKED** at pre-registered DEV articulation gate (2026-07-12, source `bd1ead9a`): v4 infrastructure succeeded (exit 0, artifacts collected), but `signoff_dev_articulation_gate=false`; `holdout_accessed=false`, no signoff requested. `parameter_total=60388/64000`, `dev_confidence_mean=0.0525482`, `dev_specificity_acc=0.134328`, `oracle_ceiling=0.357143`, `raw_trace_count=0`. No scientific verdict beyond BLOCKED. R20 remains separately blocked. |
-| 3 | [`research/20-meta-trained-cortex-frozen-language-organ.md`](research/20-meta-trained-cortex-frozen-language-organ.md) | Core test: meta-learn write/read/consolidate/articulate, then learn an unseen rule online through state only | **DEV-only implementation complete and smoke-verified** (2026-07-12); meta-test remains **BLOCKED** — no frozen `meta_cortex/v1` instrument, distribution checks, power analysis, manifest, or human signoff exists |
+| 3 | [`research/20-meta-trained-cortex-frozen-language-organ.md`](research/20-meta-trained-cortex-frozen-language-organ.md) | Core test: meta-learn write/read/consolidate/articulate, then learn an unseen rule online through state only | **INT8 v2 DEV implementation complete and one-step smoke-verified** (2026-07-15); meta-test remains **BLOCKED** — v2 checkpoints, calibration distributions, power analysis, candidate manifest, and human signoff must be regenerated |
 | 4 | [`research/21-cortex-routed-frozen-specialist-organs.md`](research/21-cortex-routed-frozen-specialist-organs.md) | Conditional extension: cortex routes between frozen language and action/tool organs using recurrent goal state | New specification; do not start before Research/20 accepts |
 
 [`experiments/09-meta-trained-cortex-frozen-language-organ/README.md`](experiments/09-meta-trained-cortex-frozen-language-organ/README.md)

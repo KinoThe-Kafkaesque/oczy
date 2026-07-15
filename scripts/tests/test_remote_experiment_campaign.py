@@ -186,6 +186,7 @@ def _no_model_runtime_manifest(**overrides: Any) -> dict[str, Any]:
             "transformers": "4.44.0",
             "tokenizers": "0.19.1",
             "safetensors": "0.4.3",
+            "torchao": "0.17.0",
         },
         "model": {
             "logical_model_id": None,
@@ -195,6 +196,7 @@ def _no_model_runtime_manifest(**overrides: Any) -> dict[str, Any]:
             "model_config_sha256": None,
             "tokenizer_sha256": None,
             "chat_template_sha256": None,
+            "quantization": None,
         },
         "greedy_generation": None,
         "manifest_sha256": "",
@@ -227,11 +229,12 @@ def _model_runtime_manifest(
     manifest: dict[str, Any] = {
         "schema_version": RUNTIME_MANIFEST_SCHEMA_VERSION,
         "python_version": "3.11.9",
-        "packages": packages or {
+        "packages": {
             "torch": "2.3.0",
             "transformers": "4.44.0",
             "tokenizers": "0.19.1",
             "safetensors": "0.4.3",
+            "torchao": "0.17.0",
         },
         "model": {
             "logical_model_id": logical_model_id,
@@ -241,6 +244,7 @@ def _model_runtime_manifest(
             "model_config_sha256": role_hashes["config"],
             "tokenizer_sha256": role_hashes["tokenizer"],
             "chat_template_sha256": role_hashes["chat_template"],
+            "quantization": None,
         },
         "greedy_generation": generation or _greedy_generation(),
         "manifest_sha256": "",

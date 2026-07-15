@@ -34,9 +34,12 @@ from oczy.experiments.meta_cortex.contracts import (
 )
 from oczy.experiments.meta_cortex.model import MetaCortex
 from oczy.experiments.meta_cortex.organ import (
+    ORGAN_QUANTIZATION,
     FrozenLanguageOrgan,
     FrozenOrganError,
     QwenFrozenOrgan,
+    _quantize_int8_weight_only,
+    quantized_organ_identity,
 )
 
 _MODEL_TESTS_ENABLED = os.environ.get("OCZY_RUN_MODEL_TESTS", "") in ("1", "true")
@@ -759,6 +762,180 @@ class TestEncodeTextsProductionFeatureMode:
             organ.close()
 
 # ---------------------------------------------------------------------------
+# Production W8A32 loading and hashing without a model download
+# ---------------------------------------------------------------------------
+
+
+class _QuantizationConfig:
+    def to_dict(self) -> dict[str, str]:
+        return {"model_type": "tiny-quantization-contract"}
+
+
+class _QuantizationTokenizer:
+    chat_template = "tiny-template-v1"
+
+    def get_vocab(self) -> dict[str, int]:
+        return {"<pad>": 0, "x": 1}
+
+
+class _QuantizableModel(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.proj = torch.nn.Linear(8, 8, bias=False)
+        self.config = _QuantizationConfig()
+
+    def forward(self, values: torch.Tensor) -> torch.Tensor:
+        return self.proj(values)
+
+
+class _QuantizableDriver:
+    def __init__(self, *, seed: int = 17) -> None:
+        self.model_id = "test/quantizable"
+        self.n_embd = 8
+        self.n_vocab = 2
+        with torch.random.fork_rng():
+            torch.manual_seed(seed)
+            self._model = _QuantizableModel()
+        self._tokenizer = _QuantizationTokenizer()
+
+
+def _build_quantized_test_organ(
+    *,
+    seed: int = 17,
+    torchao_version: str = "0.17.0",
+) -> QwenFrozenOrgan:
+    driver = _QuantizableDriver(seed=seed)
+    _quantize_int8_weight_only(driver._model)
+    return QwenFrozenOrgan(
+        driver,  # type: ignore[arg-type]
+        feature_dim=8,
+        model_id="test/quantizable",
+        torchao_version=torchao_version,
+    )
+
+
+class TestInt8QwenFrozenOrgan:
+    def test_weight_only_int8_preserves_input_gradient(self) -> None:
+        model = _QuantizableModel().eval()
+        version = _quantize_int8_weight_only(model)
+        values = torch.randn(2, 8, requires_grad=True)
+        model(values).square().mean().backward()
+
+        assert version == "0.17.0"
+        assert type(model.proj.weight).__name__ == "Int8Tensor"
+        qdata = getattr(model.proj.weight, "qdata", None)
+        assert isinstance(qdata, torch.Tensor)
+        assert qdata.dtype == torch.int8
+        assert values.grad is not None
+        assert torch.isfinite(values.grad).all()
+        assert torch.count_nonzero(values.grad).item() > 0
+
+    def test_dynamic_identity_and_quantized_hash_are_explicit(self) -> None:
+        organ = _build_quantized_test_organ()
+        try:
+            assert organ.quantization == ORGAN_QUANTIZATION
+            assert organ.organ_identity == quantized_organ_identity(
+                "test/quantizable"
+            )
+            assert organ.organ_identity.endswith(f"@{ORGAN_QUANTIZATION}")
+            assert organ.initial_hash() == organ.parameter_hash()
+            assert len(organ.parameter_hash()) == 64
+            organ.assert_frozen()
+        finally:
+            organ.close()
+
+    def test_hash_is_safe_inside_inference_mode(self) -> None:
+        organ = _build_quantized_test_organ()
+        try:
+            expected = organ.parameter_hash()
+            with torch.inference_mode():
+                observed = organ.parameter_hash()
+            assert observed == expected
+        finally:
+            organ.close()
+
+    def test_hash_covers_quantized_int8_bytes(self) -> None:
+        organ = _build_quantized_test_organ()
+        try:
+            before = organ.parameter_hash()
+            weight = organ._model.proj.weight
+            qdata = getattr(weight, "qdata", None)
+            assert isinstance(qdata, torch.Tensor)
+            original = int(qdata[0, 0].item())
+            replacement = original + 1 if original < 127 else original - 1
+            qdata[0, 0] = replacement
+            assert organ.parameter_hash() != before
+        finally:
+            organ.close()
+
+    def test_hash_covers_torchao_version(self) -> None:
+        organ_a = _build_quantized_test_organ(torchao_version="0.17.0")
+        organ_b = _build_quantized_test_organ(torchao_version="0.17.1")
+        try:
+            assert organ_a.parameter_hash() != organ_b.parameter_hash()
+        finally:
+            organ_a.close()
+            organ_b.close()
+
+    def test_rejects_unquantized_linear_weight(self) -> None:
+        driver = _QuantizableDriver()
+        with pytest.raises(FrozenOrganError, match="not approved"):
+            QwenFrozenOrgan(
+                driver,  # type: ignore[arg-type]
+                feature_dim=8,
+                model_id="test/quantizable",
+                torchao_version="0.17.0",
+            )
+
+    def test_teacher_forced_forward_recomputes_during_backward(self) -> None:
+        class _CheckpointModel(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.proj = torch.nn.Linear(8, 8, bias=False)
+                self.config = _QuantizationConfig()
+                self.forward_calls = 0
+
+            def forward(
+                self,
+                *,
+                inputs_embeds: torch.Tensor,
+                use_cache: bool,
+            ) -> object:
+                del use_cache
+                self.forward_calls += 1
+
+                class _Output:
+                    logits: torch.Tensor
+
+                output = _Output()
+                output.logits = self.proj(inputs_embeds)
+                return output
+
+        driver = _QuantizableDriver()
+        driver._model = _CheckpointModel()  # type: ignore[bad-assignment]
+        _quantize_int8_weight_only(driver._model)
+        organ = QwenFrozenOrgan(
+            driver,  # type: ignore[arg-type]
+            feature_dim=8,
+            model_id="test/checkpointed",
+            torchao_version="0.17.0",
+        )
+        try:
+            inputs = torch.randn(1, 4, 8, requires_grad=True)
+            logits = organ._forward_teacher_forced(
+                inputs,
+                prompt_len=2,
+                n_answer=1,
+            )
+            logits.sum().backward()
+            assert driver._model.forward_calls == 2
+            assert inputs.grad is not None
+            assert torch.isfinite(inputs.grad).all()
+        finally:
+            organ.close()
+
+
+# ---------------------------------------------------------------------------
 # Organ hash: changes on byte change, unchanged through cortex update
 # ---------------------------------------------------------------------------
 
@@ -919,6 +1096,19 @@ class TestQwenFrozenOrgan:
         finally:
             organ.close()
 
+    def test_hash_is_stable_across_independent_loads(self) -> None:
+        hashes: list[str] = []
+        for _ in range(2):
+            organ = QwenFrozenOrgan.load(
+                model_id="Qwen/Qwen2.5-0.5B-Instruct",
+                feature_dim=DEFAULT_FEATURE_DIM,
+            )
+            try:
+                hashes.append(organ.parameter_hash())
+            finally:
+                organ.close()
+        assert hashes[0] == hashes[1]
+
     def test_encode_texts_shape(self) -> None:
         organ = QwenFrozenOrgan.load(
             model_id="Qwen/Qwen2.5-0.5B-Instruct",
@@ -929,6 +1119,54 @@ class TestQwenFrozenOrgan:
             assert features.shape == (2, DEFAULT_FEATURE_DIM)
             assert features.dtype == torch.float32
             assert not features.requires_grad
+        finally:
+            organ.close()
+
+    def test_teacher_forced_loss_backpropagates_to_soft_bank(self) -> None:
+        organ = QwenFrozenOrgan.load(
+            model_id="Qwen/Qwen2.5-0.5B-Instruct",
+            feature_dim=DEFAULT_FEATURE_DIM,
+        )
+        try:
+            soft_bank = torch.zeros(
+                1,
+                3,
+                DEFAULT_FEATURE_DIM,
+                dtype=torch.float32,
+                requires_grad=True,
+            )
+            loss = organ.teacher_forced_loss(
+                _make_messages(),
+                "delta",
+                soft_bank,
+            )
+            loss.backward()
+            assert soft_bank.grad is not None
+            assert torch.isfinite(soft_bank.grad).all()
+            assert torch.count_nonzero(soft_bank.grad).item() > 0
+        finally:
+            organ.close()
+
+    def test_batched_generation_matches_scalar_generation(self) -> None:
+        organ = QwenFrozenOrgan.load(
+            model_id="Qwen/Qwen2.5-0.5B-Instruct",
+            feature_dim=DEFAULT_FEATURE_DIM,
+        )
+        try:
+            messages = _make_messages()
+            soft_bank = torch.zeros(
+                1,
+                3,
+                DEFAULT_FEATURE_DIM,
+                dtype=torch.float32,
+            )
+            scalar = organ.generate(messages, soft_bank, max_new_tokens=4)
+            batched = organ.generate_batch(
+                [messages, messages],
+                soft_bank.repeat(2, 1, 1),
+                max_new_tokens=4,
+            )
+            assert batched == [scalar, scalar]
         finally:
             organ.close()
 
@@ -1033,12 +1271,16 @@ class TestOfflineLoadTargetResolution:
 
     @pytest.fixture(autouse=True)
     def _patch_hf_driver(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Monkeypatch ``HFDriver.load`` in the organ module so no real
-        model is ever loaded."""
+        """Patch model loading and quantization; these tests isolate path resolution."""
         import oczy.experiments.meta_cortex.organ as organ_mod
 
         _FakeHFDriver.last_loaded_id = None
         monkeypatch.setattr(organ_mod.HFDriver, "load", _FakeHFDriver.load)
+        monkeypatch.setattr(
+            organ_mod,
+            "_quantize_int8_weight_only",
+            lambda _model: "0.17.0",
+        )
 
     # -- environment precedence ------------------------------------------
 

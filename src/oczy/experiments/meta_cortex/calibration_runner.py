@@ -1,4 +1,4 @@
-"""Resumable DEV calibration record collector for the meta_cortex/v1 instrument.
+"""Resumable DEV calibration collector for the INT8 ``meta_cortex/v2`` instrument.
 
 This module implements **exact-scored collection** for one deterministic shard
 of the DEV calibration campaign.  It is the production counterpart to
@@ -1033,6 +1033,15 @@ def collect_calibration_shard(
             model_id=model_id,
             feature_dim=model_config.feature_dim,
         )
+    if organ_owned:
+        organ_identity = getattr(organ, "organ_identity", None)
+        if organ_identity != metadata.organ_identity:
+            organ.close()
+            raise ValueError(
+                f"organ identity mismatch: checkpoint has "
+                f"{metadata.organ_identity}, current organ has "
+                f"{organ_identity}"
+            )
     organ_hash = organ.parameter_hash()
 
     # Verify organ hash matches checkpoint.

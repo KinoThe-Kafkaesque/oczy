@@ -56,7 +56,11 @@ from oczy.experiments.meta_cortex.contracts import (
     TaskGeneratorConfig,
 )
 from oczy.experiments.meta_cortex.model import CORTEX_DIM, MetaCortex
-from oczy.experiments.meta_cortex.organ import FrozenOrganError, QwenFrozenOrgan
+from oczy.experiments.meta_cortex.organ import (
+    FrozenOrganError,
+    QwenFrozenOrgan,
+    quantized_organ_identity,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -894,6 +898,41 @@ class TestCLIMain:
                 "--result-out", str(tmpdir_path / "result.json"),
             ])
         assert result != 0
+
+    def test_validate_dev_rejects_legacy_fp32_organ_identity(
+        self,
+        tmpdir_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        model_id = "Qwen/Qwen2.5-0.5B-Instruct"
+        model = _make_model()
+        metadata = _make_metadata(
+            model,
+            organ_identity=model_id,
+            organ_hash="b" * 64,
+        )
+        ckpt_dir = tmpdir_path / "fp32-ckpt"
+        save_developmental_checkpoint(ckpt_dir, model, metadata)
+
+        class _IdentityOnlyOrgan:
+            organ_identity = quantized_organ_identity(model_id)
+
+            def close(self) -> None:
+                pass
+
+        with patch.object(
+            QwenFrozenOrgan,
+            "load",
+            lambda **_kwargs: _IdentityOnlyOrgan(),
+        ):
+            result = main([
+                "validate-dev",
+                "--checkpoint", str(ckpt_dir),
+                "--result-out", str(tmpdir_path / "result.json"),
+            ])
+
+        assert result != 0
+        assert "organ identity mismatch" in capsys.readouterr().err
 
     def test_audit_dev_no_checkpoint_returns_nonzero(
         self, tmpdir_path: Path

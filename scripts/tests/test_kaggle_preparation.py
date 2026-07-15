@@ -94,6 +94,7 @@ def _no_model_runtime_manifest() -> dict[str, Any]:
                 "transformers": "4.44.0",
                 "tokenizers": "0.19.1",
                 "safetensors": "0.4.3",
+                "torchao": "0.17.0",
             },
             "model": {
                 "logical_model_id": None,
@@ -103,6 +104,7 @@ def _no_model_runtime_manifest() -> dict[str, Any]:
                 "model_config_sha256": None,
                 "tokenizer_sha256": None,
                 "chat_template_sha256": None,
+                "quantization": None,
             },
             "greedy_generation": None,
             "manifest_sha256": "",
@@ -136,6 +138,7 @@ def _model_runtime_manifest(
                 "transformers": "4.44.0",
                 "tokenizers": "0.19.1",
                 "safetensors": "0.4.3",
+                "torchao": "0.17.0",
             },
             "model": {
                 "logical_model_id": logical_model_id,
@@ -145,6 +148,7 @@ def _model_runtime_manifest(
                 "model_config_sha256": component,
                 "tokenizer_sha256": component,
                 "chat_template_sha256": component,
+                "quantization": None,
             },
             "greedy_generation": _greedy_generation(),
             "manifest_sha256": "",

@@ -1,4 +1,4 @@
-"""Detached human signoff and exact authorization gate for meta_cortex/v1.
+"""Detached human signoff and exact authorization gate for meta_cortex/v2.
 
 This module implements the strict candidate-manifest schema/hash verification
 and detached ``SIGNOFF.json`` exact-tuple attestation per the R20 signoff plan.

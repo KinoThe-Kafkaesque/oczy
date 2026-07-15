@@ -35,9 +35,10 @@ build_account_clients = scheduler["build_account_clients"]
 
 def _valid_runtime_manifest() -> dict[str, Any]:
     manifest: dict[str, Any] = {
-        "schema_version": "oczy/runtime-manifest/v1",
+        "schema_version": "oczy/runtime-manifest/v2",
         "python_version": "3.12.0",
         "packages": {
+            "torchao": "0.17.0",
             "torch": "2.6.0",
             "transformers": "4.55.0",
             "tokenizers": "0.21.0",
@@ -45,6 +46,7 @@ def _valid_runtime_manifest() -> dict[str, Any]:
         },
         "model": {
             "logical_model_id": None,
+            "quantization": None,
             "resolved_model_convention": "none",
             "artifact_files": [],
             "model_weights_sha256": None,

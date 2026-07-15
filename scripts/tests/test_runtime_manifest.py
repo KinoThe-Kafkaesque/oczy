@@ -53,20 +53,40 @@ from execution_report import (  # type: ignore[import-not-found]
 # ---------------------------------------------------------------------------
 
 
+def _package_versions() -> dict[str, str]:
+    """Return the exact package block required by runtime-manifest/v2."""
+    return {
+        "torch": "2.6.0",
+        "torchao": "0.17.0",
+        "transformers": "4.55.0",
+        "tokenizers": "0.21.0",
+        "safetensors": "0.5.0",
+    }
+
+
+def _int8_quantization() -> dict[str, Any]:
+    """Return the sole approved differentiable INT8 runtime recipe."""
+    return {
+        "backend": "torchao",
+        "config_version": 2,
+        "scheme": "int8-weight-only",
+        "weight_dtype": "int8",
+        "activation_dtype": "float32",
+        "granularity": "per-row",
+        "set_inductor_config": False,
+    }
+
+
 def _no_model_manifest(**overrides: Any) -> dict[str, Any]:
     """Return a valid no-model manifest dict (no self-hash)."""
     base: dict[str, Any] = {
         "schema_version": RUNTIME_MANIFEST_SCHEMA_VERSION,
         "python_version": "3.12.0",
-        "packages": {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        },
+        "packages": _package_versions(),
         "model": {
             "logical_model_id": None,
             "resolved_model_convention": "none",
+            "quantization": None,
             "artifact_files": [],
             "model_weights_sha256": None,
             "model_config_sha256": None,
@@ -122,6 +142,7 @@ def _model_block(**overrides: Any) -> dict[str, Any]:
     block: dict[str, Any] = {
         "logical_model_id": "test/model",
         "resolved_model_convention": "transformers-pretrained-directory",
+        "quantization": None,
         "artifact_files": artifacts,
     }
     block["model_weights_sha256"] = compute_component_sha256(
@@ -495,6 +516,13 @@ class TestValidateRuntimeManifestPackages:
         with pytest.raises(RuntimeManifestError, match="missing key"):
             validate_runtime_manifest(m)
 
+    def test_rejects_missing_torchao_version(self) -> None:
+        m = _no_model_manifest()
+        del m["packages"]["torchao"]
+        m["manifest_sha256"] = compute_manifest_sha256(m)
+        with pytest.raises(RuntimeManifestError, match="missing key.*torchao"):
+            validate_runtime_manifest(m)
+
     def test_rejects_non_string_package_version(self) -> None:
         m = _no_model_manifest()
         m["packages"]["torch"] = 2.6  # type: ignore[index]
@@ -534,6 +562,27 @@ class TestValidateRuntimeManifestModel:
         m["model"]["resolved_model_convention"] = "bad-convention"  # type: ignore[index]
         m["manifest_sha256"] = compute_manifest_sha256(m)
         with pytest.raises(RuntimeManifestError, match="resolved_model_convention.*unknown"):
+            validate_runtime_manifest(m)
+
+    def test_accepts_differentiable_int8_recipe(self) -> None:
+        m = _valid_model(model=_model_block(quantization=_int8_quantization()))
+        validate_runtime_manifest(m)
+
+    def test_rejects_dynamic_activation_int8(self) -> None:
+        recipe = _int8_quantization()
+        recipe["scheme"] = "int8-dynamic-activation-int8-weight"
+        m = _valid_model(model=_model_block(quantization=recipe))
+        with pytest.raises(
+            RuntimeManifestError,
+            match="model.quantization.scheme.*int8-weight-only",
+        ):
+            validate_runtime_manifest(m)
+
+    def test_rejects_quantization_extra_key(self) -> None:
+        recipe = _int8_quantization()
+        recipe["group_size"] = None
+        m = _valid_model(model=_model_block(quantization=recipe))
+        with pytest.raises(RuntimeManifestError, match="unexpected key.*group_size"):
             validate_runtime_manifest(m)
 
 
@@ -681,6 +730,7 @@ class TestValidateRuntimeManifestComponentHashes:
         block = {
             "logical_model_id": "test/model",
             "resolved_model_convention": "transformers-pretrained-directory",
+            "quantization": None,
             "artifact_files": artifacts,
         }
         block["model_weights_sha256"] = compute_component_sha256(
@@ -705,6 +755,7 @@ class TestValidateRuntimeManifestComponentHashes:
         block = {
             "logical_model_id": "test/model",
             "resolved_model_convention": "transformers-pretrained-directory",
+            "quantization": None,
             "artifact_files": artifacts,
         }
         block["model_weights_sha256"] = compute_component_sha256(
@@ -739,6 +790,13 @@ class TestValidateRuntimeManifestNoModel:
         m["model"]["logical_model_id"] = "some/model"  # type: ignore[index]
         m["manifest_sha256"] = compute_manifest_sha256(m)
         with pytest.raises(RuntimeManifestError, match="no-model.*logical_model_id.*null"):
+            validate_runtime_manifest(m)
+
+    def test_rejects_no_model_with_quantization(self) -> None:
+        m = _valid_no_model()
+        m["model"]["quantization"] = _int8_quantization()
+        m["manifest_sha256"] = compute_manifest_sha256(m)
+        with pytest.raises(RuntimeManifestError, match="no-model.*quantization.*null"):
             validate_runtime_manifest(m)
 
     def test_rejects_no_model_with_artifacts(self) -> None:
@@ -969,12 +1027,7 @@ class TestObserveRuntimeManifestNoModel:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_builds_valid_no_model(self, mock_pkgs: Any, _mock_py: Any) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         m = observe_runtime_manifest()
         assert m["schema_version"] == RUNTIME_MANIFEST_SCHEMA_VERSION
         assert m["model"]["logical_model_id"] is None
@@ -986,36 +1039,21 @@ class TestObserveRuntimeManifestNoModel:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_rejects_model_root_when_no_model(self, mock_pkgs: Any, _mock_py: Any) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         with pytest.raises(RuntimeManifestError, match="no-model.*model_root.*None"):
             observe_runtime_manifest(model_root=Path("/tmp/fake"))
 
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_rejects_logical_id_when_no_model(self, mock_pkgs: Any, _mock_py: Any) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         with pytest.raises(RuntimeManifestError, match="no-model.*logical_model_id.*None"):
             observe_runtime_manifest(logical_model_id="test/model")
 
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_rejects_generation_when_no_model(self, mock_pkgs: Any, _mock_py: Any) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         with pytest.raises(RuntimeManifestError, match="no-model.*generation_config.*None"):
             observe_runtime_manifest(generation_config=_default_greedy())
 
@@ -1031,12 +1069,7 @@ class TestObserveRuntimeManifestHFDirectory:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_observes_hf_directory(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         model_dir = tmp_path / "model"
         sha_config = _write_file(model_dir / "config.json", b'{"arch": "test"}')
         sha_weights = _write_file(model_dir / "model.safetensors", b"\x00" * 100)
@@ -1048,9 +1081,11 @@ class TestObserveRuntimeManifestHFDirectory:
             logical_model_id="test/hf-model",
             resolved_model_convention="transformers-pretrained-directory",
             generation_config=_default_greedy(),
+            quantization=_int8_quantization(),
         )
         assert m["model"]["logical_model_id"] == "test/hf-model"
         assert m["model"]["resolved_model_convention"] == "transformers-pretrained-directory"
+        assert m["model"]["quantization"] == _int8_quantization()
 
         af = m["model"]["artifact_files"]
         assert len(af) == 4
@@ -1076,12 +1111,7 @@ class TestObserveRuntimeManifestHFDirectory:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_observes_subdirectory_files(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         model_dir = tmp_path / "model"
         subdir = model_dir / "sub"
         _write_file(subdir / "vocab.json", b"vocab")
@@ -1102,12 +1132,7 @@ class TestObserveRuntimeManifestHFDirectory:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_rejects_symlink_in_directory(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         model_dir = tmp_path / "model"
         model_dir.mkdir()
         (model_dir / "config.json").write_text("{}")
@@ -1128,12 +1153,7 @@ class TestObserveRuntimeManifestHFDirectory:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_rejects_empty_directory(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         model_dir = tmp_path / "model"
         model_dir.mkdir()
         with pytest.raises(RuntimeManifestError, match="no regular files found"):
@@ -1147,12 +1167,7 @@ class TestObserveRuntimeManifestHFDirectory:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_rejects_missing_root(self, mock_pkgs: Any, _mock_py: Any) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         with pytest.raises(RuntimeManifestError, match="does not exist"):
             observe_runtime_manifest(
                 model_root=Path("/tmp/nonexistent_xyz_123"),
@@ -1164,12 +1179,7 @@ class TestObserveRuntimeManifestHFDirectory:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_component_hashes_computed(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         model_dir = tmp_path / "model"
         _write_file(model_dir / "config.json", b"config")
         _write_file(model_dir / "model.safetensors", b"weights")
@@ -1201,12 +1211,7 @@ class TestObserveRuntimeManifestGGUF:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_observes_gguf_file(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         gguf_path = tmp_path / "model.gguf"
         sha = _write_file(gguf_path, b"\x00" * 1024)
 
@@ -1228,12 +1233,7 @@ class TestObserveRuntimeManifestGGUF:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_rejects_directory_for_gguf(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         model_dir = tmp_path / "model"
         model_dir.mkdir()
         with pytest.raises(RuntimeManifestError, match="expected regular file"):
@@ -1247,12 +1247,7 @@ class TestObserveRuntimeManifestGGUF:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_rejects_symlink_for_gguf(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         real_file = tmp_path / "real.gguf"
         real_file.write_bytes(b"data")
         link_path = tmp_path / "link.gguf"
@@ -1277,12 +1272,7 @@ class TestObserveRuntimeManifestInvalid:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_rejects_unknown_convention(self, mock_pkgs: Any, _mock_py: Any) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         with pytest.raises(RuntimeManifestError, match="unknown convention"):
             observe_runtime_manifest(
                 resolved_model_convention="bad-convention",  # type: ignore[arg-type]
@@ -1291,12 +1281,7 @@ class TestObserveRuntimeManifestInvalid:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_rejects_model_bearing_without_model_root(self, mock_pkgs: Any, _mock_py: Any) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         with pytest.raises(RuntimeManifestError, match="model-bearing.*model_root.*required"):
             observe_runtime_manifest(
                 logical_model_id="test/model",
@@ -1307,12 +1292,7 @@ class TestObserveRuntimeManifestInvalid:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_rejects_model_bearing_without_logical_id(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         model_dir = tmp_path / "model"
         model_dir.mkdir()
         _write_file(model_dir / "config.json", b"{}")
@@ -1330,12 +1310,7 @@ class TestObserveRuntimeManifestInvalid:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_rejects_model_bearing_without_generation(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         model_dir = tmp_path / "model"
         model_dir.mkdir()
         _write_file(model_dir / "config.json", b"{}")
@@ -1368,12 +1343,7 @@ class TestObserveRuntimeManifestDeterminism:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_repeated_observation_same_hash(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         model_dir = tmp_path / "model"
         _write_file(model_dir / "config.json", b"config")
         _write_file(model_dir / "model.safetensors", b"weights")
@@ -1398,12 +1368,7 @@ class TestObserveRuntimeManifestDeterminism:
     @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
     @patch("runtime_manifest._observe_packages")
     def test_different_content_different_hash(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
-        mock_pkgs.return_value = {
-            "torch": "2.6.0",
-            "transformers": "4.55.0",
-            "tokenizers": "0.21.0",
-            "safetensors": "0.5.0",
-        }
+        mock_pkgs.return_value = _package_versions()
         model_dir = tmp_path / "model"
         _write_file(model_dir / "config.json", b"config_v1")
         _write_file(model_dir / "model.safetensors", b"weights")

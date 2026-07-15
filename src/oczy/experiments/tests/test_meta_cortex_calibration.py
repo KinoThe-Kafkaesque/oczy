@@ -1,4 +1,4 @@
-"""High-signal contract tests for the meta_cortex/v1 calibration layer.
+"""High-signal contract tests for the meta_cortex/v2 calibration layer.
 
 These tests defend the scientific boundaries of the DEV calibration —
 not plumbing.  They verify:
@@ -1080,10 +1080,10 @@ class TestSchemaConstants:
         assert ENDPOINT_SCHEMA == "oczy/meta-cortex/endpoints/v1"
 
     def test_instrument_id(self) -> None:
-        assert INSTRUMENT_ID == "meta_cortex/v1"
+        assert INSTRUMENT_ID == "meta_cortex/v2"
 
     def test_instrument_version(self) -> None:
-        assert INSTRUMENT_VERSION == "v1"
+        assert INSTRUMENT_VERSION == "v2"
 
     def test_seed_derivation_schema(self) -> None:
         assert SEED_DERIVATION_SCHEMA == "oczy/meta-cortex/calibration-seeds/v1"
@@ -1266,8 +1266,8 @@ def _make_view():
 
     return CalibrationInstrumentView(
         schema=CALIBRATION_VIEW_SCHEMA,
-        instrument_id="meta_cortex/v1",
-        instrument_version="v1",
+        instrument_id="meta_cortex/v2",
+        instrument_version="v2",
         definition_sha256=_ZERO_HASH,
         calibration_view_sha256=_ZERO_HASH,
         scorer_sha256=_ZERO_HASH,
@@ -1440,8 +1440,8 @@ class TestCalibrationFailClosed:
                 tasks.append(_make_meta_task(fam, f"{fam.value}_{i:03d}" + "0" * (64 - len(fam.value) - 4)))
         view = CalibrationInstrumentView(
             schema=CALIBRATION_VIEW_SCHEMA,
-            instrument_id="meta_cortex/v1",
-            instrument_version="v1",
+            instrument_id="meta_cortex/v2",
+            instrument_version="v2",
             definition_sha256=_ZERO_HASH,
             calibration_view_sha256=_ZERO_HASH,
             scorer_sha256=_ZERO_HASH,

@@ -1,4 +1,4 @@
-"""Versioned ``meta_cortex/v1`` instrument: deterministic candidate
+"""Versioned INT8 ``meta_cortex/v2`` instrument: deterministic candidate
 materialization, view loaders, leakage audit, and candidate finalization.
 
 This module is the **only** code allowed to call the private meta-test

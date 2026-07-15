@@ -62,7 +62,13 @@ from .contracts import (
     TaskGeneratorConfig,
 )
 from .model import CortexState, EventFeatureBatch, MetaCortex
-from .organ import FrozenLanguageOrgan, FrozenOrganError, QwenFrozenOrgan
+from .organ import (
+    ORGAN_QUANTIZATION,
+    FrozenLanguageOrgan,
+    FrozenOrganError,
+    QwenFrozenOrgan,
+    quantized_organ_identity,
+)
 from .taskgen import build_dev_catalog
 from .training import OuterTrainer, run_dev_validation
 
@@ -102,9 +108,11 @@ __all__ = [
     "EventFeatureBatch",
     "MetaCortex",
     # Organ
+    "ORGAN_QUANTIZATION",
     "FrozenLanguageOrgan",
     "FrozenOrganError",
     "QwenFrozenOrgan",
+    "quantized_organ_identity",
     # Taskgen
     "build_dev_catalog",
     # Training

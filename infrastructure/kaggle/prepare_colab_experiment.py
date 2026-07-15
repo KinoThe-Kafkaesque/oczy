@@ -931,6 +931,7 @@ def main() -> int:
                 logical_model_id=expected_manifest["model"]["logical_model_id"],
                 resolved_model_convention=convention,
                 generation_config=expected_manifest["greedy_generation"],
+                quantization=expected_manifest["model"]["quantization"],
             )
         except RuntimeManifestError as exc:
             report.update(
@@ -1108,7 +1109,7 @@ def prepare_colab_experiment(
         explicit argv with ``--only-binary=:all:`` (no shell invocation, no
         arbitrary pip args).  Default False.
     runtime_manifest:
-        Required per-job ``oczy/runtime-manifest/v1`` identity dict.  Must
+        Required per-job ``oczy/runtime-manifest/v2`` identity dict.  Must
         be consistent with *model_artifact* when present.
 
     Returns

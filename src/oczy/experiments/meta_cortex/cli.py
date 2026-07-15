@@ -792,7 +792,7 @@ def _train_dev(args: argparse.Namespace) -> int:
 
     organ_hash_before = organ.parameter_hash()
     print(f"ASI organ_hash_before={organ_hash_before}", file=sys.stderr)
-    print(f"ASI organ_identity={args.model_id}", file=sys.stderr)
+    print(f"ASI organ_identity={organ.organ_identity}", file=sys.stderr)
 
     try:
         # 4. Build model.
@@ -837,7 +837,7 @@ def _train_dev(args: argparse.Namespace) -> int:
             parameter_count=param_count,
             parameter_bytes=param_bytes,
             theta_hash=theta_hash_after,
-            organ_identity=args.model_id,
+            organ_identity=organ.organ_identity,
             organ_hash=organ_hash_after,
             source_provenance=args.source_provenance,
         )
@@ -950,6 +950,18 @@ def _validate_dev(args: argparse.Namespace) -> int:
         print("AUDIT organ_load=FAIL")
         return 1
 
+
+    if metadata.organ_identity != organ.organ_identity:
+        print(
+            f"ERROR: organ identity mismatch: checkpoint has "
+            f"{metadata.organ_identity}, current organ has "
+            f"{organ.organ_identity}",
+            file=sys.stderr,
+        )
+        print("AUDIT organ_identity_mismatch=FAIL", file=sys.stderr)
+        print("METRIC dev_validate_status=FAILED")
+        organ.close()
+        return 1
     organ_hash = organ.parameter_hash()
     print(f"ASI organ_hash={organ_hash}", file=sys.stderr)
     if organ_hash != metadata.organ_hash:

@@ -1,6 +1,6 @@
 """Provider-neutral runtime manifest: identity, observation, validation.
 
-Schema ``oczy/runtime-manifest/v1``.  This is the single stdlib-only contract
+Schema ``oczy/runtime-manifest/v2``.  This is the single stdlib-only contract
 owner.  Everything that ships a manifest or checks one MUST go through this
 module — no duplicated loaders, no private validators, no optional subset
 matching.
@@ -30,7 +30,7 @@ from typing import Any
 # Public constants
 # ---------------------------------------------------------------------------
 
-RUNTIME_MANIFEST_SCHEMA_VERSION: str = "oczy/runtime-manifest/v1"
+RUNTIME_MANIFEST_SCHEMA_VERSION: str = "oczy/runtime-manifest/v2"
 
 # Recognised model load conventions (must match exactly).
 _VALID_CONVENTIONS: frozenset[str] = frozenset(
@@ -48,7 +48,13 @@ _REQUIRED_MODEL_ROLES: frozenset[str] = frozenset(
 )
 
 # Packages observed with importlib (stdlib-only fallback tries distribution name).
-_OBSERVED_PACKAGES: tuple[str, ...] = ("torch", "transformers", "tokenizers", "safetensors")
+_OBSERVED_PACKAGES: tuple[str, ...] = (
+    "torch",
+    "torchao",
+    "transformers",
+    "tokenizers",
+    "safetensors",
+)
 
 # File-hash chunk size (8 MiB, matches existing Qwen probe pattern).
 _CHUNK_SIZE: int = 8 * 1024 * 1024
@@ -349,11 +355,47 @@ def _validate_artifact_files(files: Any) -> None:
         raise RuntimeManifestError("`artifact_files` must be sorted by `path`")
 
 
+def _validate_quantization_block(quantization: Any) -> None:
+    """Validate the frozen TorchAO W8A32 recipe or explicit FP32/null."""
+    if quantization is None:
+        return
+    if not isinstance(quantization, dict):
+        raise RuntimeManifestError("`model.quantization` must be an object or null")
+    expected = {
+        "backend": "torchao",
+        "config_version": 2,
+        "scheme": "int8-weight-only",
+        "weight_dtype": "int8",
+        "activation_dtype": "float32",
+        "granularity": "per-row",
+        "set_inductor_config": False,
+    }
+    actual_keys = set(quantization)
+    if actual_keys != set(expected):
+        extra = actual_keys - set(expected)
+        missing = set(expected) - actual_keys
+        parts: list[str] = []
+        if extra:
+            parts.append(f"unexpected key(s): {sorted(extra)}")
+        if missing:
+            parts.append(f"missing key(s): {sorted(missing)}")
+        raise RuntimeManifestError(
+            "`model.quantization` key set mismatch: " + "; ".join(parts)
+        )
+    for key, value in expected.items():
+        if type(quantization[key]) is not type(value) or quantization[key] != value:
+            raise RuntimeManifestError(
+                f"`model.quantization.{key}` must be {value!r}, "
+                f"got {quantization[key]!r}"
+            )
+
+
 def _validate_model_block(model: dict[str, Any]) -> None:
     """Validate the ``model`` block."""
     required = [
         "logical_model_id",
         "resolved_model_convention",
+        "quantization",
         "artifact_files",
         "model_weights_sha256",
         "model_config_sha256",
@@ -384,6 +426,8 @@ def _validate_model_block(model: dict[str, Any]) -> None:
     if logical_id is not None and not isinstance(logical_id, str):
         raise RuntimeManifestError("`logical_model_id` must be a string or null")
 
+
+    _validate_quantization_block(model["quantization"])
     _validate_artifact_files(model["artifact_files"])
 
     artifacts: list[dict[str, Any]] = model["artifact_files"]
@@ -396,6 +440,10 @@ def _validate_model_block(model: dict[str, Any]) -> None:
             )
         if artifacts:
             raise RuntimeManifestError("no-model branch: `artifact_files` must be empty")
+        if model["quantization"] is not None:
+            raise RuntimeManifestError(
+                "no-model branch: `quantization` must be null"
+            )
         for role_hash_key in ("model_weights_sha256", "model_config_sha256",
                               "tokenizer_sha256", "chat_template_sha256"):
             if model[role_hash_key] is not None:
@@ -468,7 +516,7 @@ def _validate_packages(packages: Any) -> None:
 
 
 def validate_runtime_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
-    """Fully validate *manifest* against ``oczy/runtime-manifest/v1``.
+    """Fully validate *manifest* against ``oczy/runtime-manifest/v2``.
 
     Checks:
     * Exact key set (no extras, no missing)
@@ -794,6 +842,7 @@ def observe_runtime_manifest(
     logical_model_id: str | None = None,
     resolved_model_convention: str = "none",
     generation_config: dict[str, Any] | None = None,
+    quantization: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Observe and build the local runtime manifest.
 
@@ -810,6 +859,9 @@ def observe_runtime_manifest(
         or ``"none"``.
     generation_config:
         The reviewed generation contract, or ``None`` for model-free.
+    quantization:
+        Frozen model-loading quantization recipe, or ``None`` for FP32,
+        GGUF-managed quantization, and model-free jobs.
 
     Returns
     -------
@@ -829,7 +881,13 @@ def observe_runtime_manifest(
         if logical_model_id is not None:
             raise RuntimeManifestError("no-model branch: `logical_model_id` must be None")
         if generation_config is not None:
-            raise RuntimeManifestError("no-model branch: `generation_config` must be None")
+            raise RuntimeManifestError(
+                "no-model branch: `generation_config` must be None"
+            )
+        if quantization is not None:
+            raise RuntimeManifestError(
+                "no-model branch: `quantization` must be None"
+            )
     else:
         if model_root is None:
             raise RuntimeManifestError("model-bearing: `model_root` is required")
@@ -852,6 +910,7 @@ def observe_runtime_manifest(
     model_block: dict[str, Any] = {
         "logical_model_id": logical_model_id,
         "resolved_model_convention": resolved_model_convention,
+        "quantization": quantization,
         "artifact_files": artifact_files,
         "model_weights_sha256": component_hashes.get("model_weights_sha256"),
         "model_config_sha256": component_hashes.get("model_config_sha256"),

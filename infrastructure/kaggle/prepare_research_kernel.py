@@ -267,6 +267,7 @@ def main() -> int:
                 logical_model_id=expected_manifest["model"]["logical_model_id"],
                 resolved_model_convention=convention,
                 generation_config=expected_manifest["greedy_generation"],
+                quantization=expected_manifest["model"]["quantization"],
             )
         except RuntimeManifestError as exc:
             report.update(

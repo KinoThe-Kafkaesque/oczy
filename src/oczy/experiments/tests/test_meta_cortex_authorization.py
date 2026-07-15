@@ -1,4 +1,4 @@
-"""High-signal contract tests for the meta_cortex/v1 detached signoff gate.
+"""High-signal contract tests for the meta_cortex/v2 detached signoff gate.
 
 These tests defend the security boundary of the exact-tuple authorization —
 not plumbing.  They verify:
@@ -55,8 +55,8 @@ from oczy.experiments.meta_cortex.instrument_contracts import (
 
 _DUMMY_SHA = "a" * 64
 _DUMMY_SHA_2 = "b" * 64
-_VALID_SIGNOFF_ID = "r20-meta-cortex-v1/550e8400-e29b-41d4-a716-446655440000"
-_VALID_SIGNOFF_ID_2 = "r20-meta-cortex-v1/660e8400-e29b-42d4-a716-446655440001"
+_VALID_SIGNOFF_ID = "r20-meta-cortex-v2/550e8400-e29b-41d4-a716-446655440000"
+_VALID_SIGNOFF_ID_2 = "r20-meta-cortex-v2/660e8400-e29b-42d4-a716-446655440001"
 _FAMILY_ORDER = ("contextual_remap", "rule_transformation", "finite_state")
 _N = 30
 _COUNT_MAP = {
@@ -114,8 +114,8 @@ def _make_manifest_dict(
 
     manifest_dict: dict = {
         "schema": CANDIDATE_MANIFEST_SCHEMA,
-        "instrument_id": "meta_cortex/v1",
-        "instrument_version": "v1",
+        "instrument_id": "meta_cortex/v2",
+        "instrument_version": "v2",
         "lifecycle_state": lifecycle_state,
         "definition_sha256": _DUMMY_SHA,
         "dev_view_sha256": _DUMMY_SHA,
@@ -214,7 +214,7 @@ def _make_signoff_dict(
     meta_test_tasks_by_family: dict[str, int] | None = None,
     human_signoff_id: str = _VALID_SIGNOFF_ID,
     lifecycle_state: str = "signed",
-    instrument_version: str = "v1",
+    instrument_version: str = "v2",
     signoff_sha256: str | None = None,
 ) -> dict:
     """Build a synthetic signoff dict with computed self-hash."""
@@ -223,7 +223,7 @@ def _make_signoff_dict(
 
     signoff_dict: dict = {
         "schema": SIGNOFF_SCHEMA,
-        "instrument_id": "meta_cortex/v1",
+        "instrument_id": "meta_cortex/v2",
         "instrument_version": instrument_version,
         "lifecycle_state": lifecycle_state,
         "instrument_manifest_sha256": instrument_manifest_sha256,
@@ -339,19 +339,19 @@ class TestValidateSignoffId:
     def test_reject_uppercase_uuid(self) -> None:
         with pytest.raises(ContractError, match="match"):
             validate_signoff_id(
-                "r20-meta-cortex-v1/550E8400-E29B-41D4-A716-446655440000"
+                "r20-meta-cortex-v2/550E8400-E29B-41D4-A716-446655440000"
             )
 
     def test_reject_non_v4_uuid(self) -> None:
         with pytest.raises(ContractError, match="version 4"):
             validate_signoff_id(
-                "r20-meta-cortex-v1/550e8400-e29b-31d4-a716-446655440000"
+                "r20-meta-cortex-v2/550e8400-e29b-31d4-a716-446655440000"
             )
 
     def test_reject_wrong_variant(self) -> None:
         with pytest.raises(ContractError, match="variant"):
             validate_signoff_id(
-                "r20-meta-cortex-v1/550e8400-e29b-41d4-1716-446655440000"
+                "r20-meta-cortex-v2/550e8400-e29b-41d4-1716-446655440000"
             )
 
     def test_reject_version_mismatch(self) -> None:
@@ -360,13 +360,16 @@ class TestValidateSignoffId:
             _validate_signoff_id_with_version,
         )
         with pytest.raises(SignoffError, match="version"):
-            _validate_signoff_id_with_version(_VALID_SIGNOFF_ID, "v2")
+            _validate_signoff_id_with_version(
+                "r20-meta-cortex-v1/550e8400-e29b-41d4-a716-446655440000",
+                "v2",
+            )
 
     def test_version_match_accepted(self) -> None:
         from oczy.experiments.meta_cortex.authorization import (
             _validate_signoff_id_with_version,
         )
-        _validate_signoff_id_with_version(_VALID_SIGNOFF_ID, "v1")
+        _validate_signoff_id_with_version(_VALID_SIGNOFF_ID, "v2")
 
 
 # ---------------------------------------------------------------------------
@@ -591,13 +594,13 @@ class TestRecordSignoff:
             )
 
     def test_reject_version_mismatched_id(self, tmp_path: Path) -> None:
-        """A v2 signoff ID must not authorize a v1 manifest."""
+        """A v1 signoff ID must not authorize the v2 manifest."""
         root = tmp_path / "candidate"
         manifest_dict = _make_manifest_dict()
         _write_manifest(root, manifest_dict)
 
         dest = tmp_path / "signoff" / "SIGNOFF.json"
-        v2_id = "r20-meta-cortex-v2/550e8400-e29b-41d4-a716-446655440000"
+        v1_id = "r20-meta-cortex-v1/550e8400-e29b-41d4-a716-446655440000"
         with pytest.raises((SignoffError, ContractError)):
             record_signoff(
                 root,
@@ -605,7 +608,7 @@ class TestRecordSignoff:
                 expected_manifest_sha256=manifest_dict["manifest_sha256"],
                 expected_equivalence_margin=_MARGIN,
                 expected_sample_size_tasks_per_family=_N,
-                human_signoff_id=v2_id,
+                human_signoff_id=v1_id,
             )
 
     def test_candidate_not_mutated(self, tmp_path: Path) -> None:
@@ -906,10 +909,10 @@ class TestVerifyRunAuthorization:
         manifest_dict = _make_manifest_dict()
         _write_manifest(root, manifest_dict)
 
-        # Create a signoff with v2 version.
+        # Create an obsolete v1 signoff for the v2 manifest.
         signoff_dict = _make_signoff_dict(
             instrument_manifest_sha256=manifest_dict["manifest_sha256"],
-            instrument_version="v2",
+            instrument_version="v1",
         )
         _write_signoff(root / "SIGNOFF.json", signoff_dict)
 
@@ -1202,8 +1205,8 @@ class TestSignoffAttestation:
     def test_valid_attestation(self) -> None:
         att = SignoffAttestation(
             schema=SIGNOFF_SCHEMA,
-            instrument_id="meta_cortex/v1",
-            instrument_version="v1",
+            instrument_id="meta_cortex/v2",
+            instrument_version="v2",
             lifecycle_state="signed",
             instrument_manifest_sha256=_DUMMY_SHA,
             equivalence_margin=_MARGIN,
@@ -1228,8 +1231,8 @@ class TestSignoffAttestation:
     def test_to_json_obj_excludes_self_hash(self) -> None:
         att = SignoffAttestation(
             schema=SIGNOFF_SCHEMA,
-            instrument_id="meta_cortex/v1",
-            instrument_version="v1",
+            instrument_id="meta_cortex/v2",
+            instrument_version="v2",
             lifecycle_state="signed",
             instrument_manifest_sha256=_DUMMY_SHA,
             equivalence_margin=_MARGIN,
@@ -1246,8 +1249,8 @@ class TestSignoffAttestation:
         import dataclasses
         att = SignoffAttestation(
             schema=SIGNOFF_SCHEMA,
-            instrument_id="meta_cortex/v1",
-            instrument_version="v1",
+            instrument_id="meta_cortex/v2",
+            instrument_version="v2",
             lifecycle_state="signed",
             instrument_manifest_sha256=_DUMMY_SHA,
             equivalence_margin=_MARGIN,

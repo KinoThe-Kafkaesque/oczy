@@ -1,4 +1,4 @@
-"""Instrument-only contracts for the ``meta_cortex/v1`` evaluation instrument.
+"""Instrument contracts for the INT8 ``meta_cortex/v2`` evaluation instrument.
 
 This module is separate from ``contracts.py`` (which stays DEV-only).
 It owns the schema constants, strict serialization helpers, and frozen
@@ -38,6 +38,8 @@ __all__ = [
     "PROMPT_SCHEMA",
     "SCORER_SCHEMA",
     "ENDPOINT_SCHEMA",
+    "INSTRUMENT_ID",
+    "INSTRUMENT_VERSION",
     # Strict serialization
     "strict_canonical_json",
     "strict_json_loads",
@@ -60,6 +62,13 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Schema constants
 # ---------------------------------------------------------------------------
+
+INSTRUMENT_ID = "meta_cortex/v2"
+INSTRUMENT_VERSION = "v2"
+
+# Serialization layouts are unchanged from v1.  The instrument identity is
+# v2 because the frozen organ changed; schema versions describe JSON shape,
+# not the scientific candidate version.
 
 INSTRUMENT_DEFINITION_SCHEMA = "oczy/meta-cortex/instrument-definition/v1"
 DEV_VIEW_SCHEMA = "oczy/meta-cortex/instrument-dev-view/v1"
@@ -387,10 +396,12 @@ class CalibrationInstrumentView:
             raise ContractError(
                 f"schema must be {CALIBRATION_VIEW_SCHEMA!r}, got {self.schema!r}"
             )
-        if self.instrument_id != "meta_cortex/v1":
-            raise ContractError("instrument_id must be 'meta_cortex/v1'")
-        if self.instrument_version != "v1":
-            raise ContractError("instrument_version must be 'v1'")
+        if self.instrument_id != INSTRUMENT_ID:
+            raise ContractError(f"instrument_id must be {INSTRUMENT_ID!r}")
+        if self.instrument_version != INSTRUMENT_VERSION:
+            raise ContractError(
+                f"instrument_version must be {INSTRUMENT_VERSION!r}"
+            )
         validate_sha256_hex(self.definition_sha256, field_name="definition_sha256")
         validate_sha256_hex(
             self.calibration_view_sha256, field_name="calibration_view_sha256"
@@ -485,13 +496,15 @@ class InstrumentDefinitionConfig:
     source_archive_sha256: str
 
     def __post_init__(self) -> None:
-        if self.instrument_id != "meta_cortex/v1":
+        if self.instrument_id != INSTRUMENT_ID:
             raise ContractError(
-                f"instrument_id must be 'meta_cortex/v1', got {self.instrument_id!r}"
+                f"instrument_id must be {INSTRUMENT_ID!r}, "
+                f"got {self.instrument_id!r}"
             )
-        if self.instrument_version != "v1":
+        if self.instrument_version != INSTRUMENT_VERSION:
             raise ContractError(
-                f"instrument_version must be 'v1', got {self.instrument_version!r}"
+                f"instrument_version must be {INSTRUMENT_VERSION!r}, "
+                f"got {self.instrument_version!r}"
             )
         if not isinstance(self.root_seed, int) or self.root_seed < 0:
             raise ContractError("root_seed must be a non-negative int")
@@ -637,10 +650,12 @@ class InstrumentDefinition:
             raise ContractError(
                 f"schema must be {INSTRUMENT_DEFINITION_SCHEMA!r}, got {self.schema!r}"
             )
-        if self.instrument_id != "meta_cortex/v1":
-            raise ContractError("instrument_id must be 'meta_cortex/v1'")
-        if self.instrument_version != "v1":
-            raise ContractError("instrument_version must be 'v1'")
+        if self.instrument_id != INSTRUMENT_ID:
+            raise ContractError(f"instrument_id must be {INSTRUMENT_ID!r}")
+        if self.instrument_version != INSTRUMENT_VERSION:
+            raise ContractError(
+                f"instrument_version must be {INSTRUMENT_VERSION!r}"
+            )
         if self.lifecycle_state != "definition":
             raise ContractError(
                 f"lifecycle_state must be 'definition', got {self.lifecycle_state!r}"
@@ -785,10 +800,12 @@ class CandidateManifest:
             raise ContractError(
                 f"schema must be {CANDIDATE_MANIFEST_SCHEMA!r}, got {self.schema!r}"
             )
-        if self.instrument_id != "meta_cortex/v1":
-            raise ContractError("instrument_id must be 'meta_cortex/v1'")
-        if self.instrument_version != "v1":
-            raise ContractError("instrument_version must be 'v1'")
+        if self.instrument_id != INSTRUMENT_ID:
+            raise ContractError(f"instrument_id must be {INSTRUMENT_ID!r}")
+        if self.instrument_version != INSTRUMENT_VERSION:
+            raise ContractError(
+                f"instrument_version must be {INSTRUMENT_VERSION!r}"
+            )
         if self.lifecycle_state != "candidate":
             raise ContractError(
                 f"lifecycle_state must be 'candidate', got {self.lifecycle_state!r}"
@@ -955,10 +972,12 @@ class SignoffAttestation:
             raise ContractError(
                 f"schema must be {SIGNOFF_SCHEMA!r}, got {self.schema!r}"
             )
-        if self.instrument_id != "meta_cortex/v1":
-            raise ContractError("instrument_id must be 'meta_cortex/v1'")
-        if self.instrument_version != "v1":
-            raise ContractError("instrument_version must be 'v1'")
+        if self.instrument_id != INSTRUMENT_ID:
+            raise ContractError(f"instrument_id must be {INSTRUMENT_ID!r}")
+        if self.instrument_version != INSTRUMENT_VERSION:
+            raise ContractError(
+                f"instrument_version must be {INSTRUMENT_VERSION!r}"
+            )
         if self.lifecycle_state != "signed":
             raise ContractError(
                 f"lifecycle_state must be 'signed', got {self.lifecycle_state!r}"

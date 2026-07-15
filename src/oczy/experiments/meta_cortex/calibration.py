@@ -1,4 +1,4 @@
-"""DEV-only calibration for the meta_cortex/v1 instrument.
+"""DEV-only calibration for the INT8 ``meta_cortex/v2`` instrument.
 
 This module implements:
 
@@ -53,6 +53,8 @@ from .contracts import (
 )
 from .instrument_contracts import (
     ENDPOINT_SCHEMA,
+    INSTRUMENT_ID,
+    INSTRUMENT_VERSION,
     SCORER_SCHEMA,
     CalibrationInstrumentView,
     strict_canonical_json,
@@ -117,8 +119,6 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 CALIBRATION_SCHEMA = "oczy/meta-cortex/calibration/v1"
-INSTRUMENT_ID = "meta_cortex/v1"
-INSTRUMENT_VERSION = "v1"
 SEED_DERIVATION_SCHEMA = "oczy/meta-cortex/calibration-seeds/v1"
 STATISTICAL_ENGINE = "oczy-fixed-t-engine"
 STATISTICAL_ENGINE_VERSION = "v1"
@@ -950,7 +950,7 @@ def derive_seed_table(
     """Derive the versioned seed table.
 
     Each seed is ``uint63(first_8_bytes(SHA256(
-    'oczy/meta-cortex/calibration-seeds/v1|meta_cortex/v1|<domain>|<index>')))``.
+    '<seed-schema>|<instrument-id>|<instrument-version>|<domain>|<index>')))``.
 
     Domains: developmental (indices 0..4), evaluation (indices 0..4),
     no_update_repeat (indices 0..19), task_cluster_bootstrap (index 0).
@@ -981,7 +981,8 @@ def derive_seed_table(
         "instrument_version": instrument_version,
         "derivation": (
             "uint63(first_8_bytes(SHA256("
-            "'oczy/meta-cortex/calibration-seeds/v1|meta_cortex/v1|<domain>|<index>')))"
+            "'<seed-schema>|<instrument-id>|<instrument-version>|"
+            "<domain>|<index>')))"
         ),
         "developmental": list(developmental),
         "evaluation": list(evaluation),

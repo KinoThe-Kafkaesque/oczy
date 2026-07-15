@@ -97,7 +97,7 @@ from oczy.experiments.meta_cortex.instrument_contracts import (
     CalibrationInstrumentView,
 )
 from oczy.experiments.meta_cortex.model import MetaCortex
-from oczy.experiments.meta_cortex.organ import FrozenOrganError
+from oczy.experiments.meta_cortex.organ import FrozenOrganError, QwenFrozenOrgan
 
 # ---------------------------------------------------------------------------
 # Test-only differentiable tiny frozen organ — no network required.
@@ -375,8 +375,8 @@ def _make_view(n_tasks_per_family: int = 30) -> CalibrationInstrumentView:
             tasks.append(_make_meta_task(fam, fp, index=i))
     return CalibrationInstrumentView(
         schema=CALIBRATION_VIEW_SCHEMA,
-        instrument_id="meta_cortex/v1",
-        instrument_version="v1",
+        instrument_id="meta_cortex/v2",
+        instrument_version="v2",
         definition_sha256=_ZERO_HASH,
         calibration_view_sha256=_ZERO_HASH,
         scorer_sha256=_SCORER_SHA256,
@@ -1962,6 +1962,42 @@ class TestNoNetworkNoFakeFallback:
                 eval_seed_indices=(0,),
                 task_indices=(0,),
             )
+
+    def test_owned_organ_identity_mismatch_is_rejected_and_closed(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        view = _make_view(n_tasks_per_family=30)
+        checkpoint_organ = _TinyFrozenOrgan(feature_dim=16)
+        model = MetaCortex(_MODEL_CONFIG)
+        ckpt_dir = _make_checkpoint(tmp_path, checkpoint_organ, model)
+
+        class _MismatchedOwnedOrgan:
+            organ_identity = "test/quantized-organ"
+
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        loaded = _MismatchedOwnedOrgan()
+        with patch.object(
+            QwenFrozenOrgan,
+            "load",
+            lambda **_kwargs: loaded,
+        ):
+            with pytest.raises(ValueError, match="organ identity mismatch"):
+                collect_calibration_shard(
+                    view=view,
+                    checkpoint_dir=str(ckpt_dir),
+                    model_id="test",
+                    dev_seed_indices=(0,),
+                    eval_seed_indices=(0,),
+                    task_indices=(0,),
+                )
+
+        assert loaded.closed
 
     def test_provided_organ_is_not_closed(self, tmp_path: Path) -> None:
         """When the caller provides an organ, the runner does NOT close it."""

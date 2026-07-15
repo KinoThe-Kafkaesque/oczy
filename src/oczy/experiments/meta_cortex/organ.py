@@ -40,10 +40,13 @@ import hashlib
 import json
 import os
 from collections.abc import Sequence
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from typing import Any, Protocol, cast, runtime_checkable
 
 import torch
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 from oczy.lm.hf_driver import HFDriver
 
@@ -60,6 +63,122 @@ class FrozenOrganError(Exception):
     The CLI catches this to exit nonzero without substituting a fake
     organ or organ-only mode.
     """
+
+
+ORGAN_QUANTIZATION = "torchao-int8-weight-only-w8a32-per-row-v2"
+"""Frozen language-organ quantization identity for ``meta_cortex/v2``."""
+
+
+def quantized_organ_identity(model_id: str) -> str:
+    """Return the explicit model-plus-quantization identity."""
+    if not isinstance(model_id, str) or not model_id:
+        raise FrozenOrganError("model_id must be a non-empty string")
+    return f"{model_id}@{ORGAN_QUANTIZATION}"
+
+
+def _installed_torchao_version() -> str:
+    """Return the exact TorchAO distribution version or fail closed."""
+    try:
+        value = package_version("torchao").strip()
+    except PackageNotFoundError as exc:
+        raise FrozenOrganError(
+            "TorchAO is required for the INT8 frozen language organ"
+        ) from exc
+    if not value:
+        raise FrozenOrganError("TorchAO distribution version is empty")
+    return value
+
+
+def _quantize_int8_weight_only(model: Any) -> str:
+    """Apply the sole approved differentiable INT8 recipe in place.
+
+    Dynamic-activation INT8 is intentionally excluded: its TorchAO forward
+    path detaches the output and therefore breaks gradients from the frozen
+    language organ back to the soft bank.  Version-2 per-row weight-only INT8
+    keeps activations in FP32 and preserves that gradient.
+    """
+    try:
+        from torchao.quantization import (  # type: ignore[import-not-found]
+            Int8WeightOnlyConfig,
+            PerRow,
+            quantize_,
+        )
+    except ImportError as exc:
+        raise FrozenOrganError(
+            "TorchAO INT8 support is unavailable; install torchao==0.17.0"
+        ) from exc
+
+    torchao_version = _installed_torchao_version()
+    try:
+        quantize_(
+            model,
+            Int8WeightOnlyConfig(
+                granularity=PerRow(),
+                set_inductor_config=False,
+                version=2,
+            ),
+        )
+    except Exception as exc:
+        raise FrozenOrganError(
+            f"Failed to apply {ORGAN_QUANTIZATION}: {exc}"
+        ) from exc
+    return torchao_version
+
+
+def _canonical_tensor_digest(tensor: torch.Tensor) -> str:
+    """Hash a dense tensor or a TorchAO wrapper tensor deterministically."""
+    digest = hashlib.sha256()
+    tensor_type = type(tensor)
+    digest.update(
+        f"{tensor_type.__module__}.{tensor_type.__qualname__}|"
+        f"{tensor.dtype}|{tuple(tensor.shape)}".encode()
+    )
+    try:
+        raw = tensor.detach().cpu().contiguous().numpy().tobytes()
+    except RuntimeError as exc:
+        flatten = getattr(tensor, "__tensor_flatten__", None)
+        if not callable(flatten):
+            raise FrozenOrganError(
+                f"Cannot hash tensor subclass {tensor_type.__qualname__}: {exc}"
+            ) from exc
+        try:
+            flattened = cast(Any, flatten)()
+            child_names, metadata = flattened
+        except Exception as flatten_exc:
+            raise FrozenOrganError(
+                f"Cannot flatten tensor subclass {tensor_type.__qualname__}: "
+                f"{flatten_exc}"
+            ) from flatten_exc
+        if not isinstance(child_names, (list, tuple)) or not child_names:
+            raise FrozenOrganError(
+                f"Tensor subclass {tensor_type.__qualname__} exposed no "
+                "canonical child tensors"
+            ) from exc
+        digest.update(
+            json.dumps(
+                metadata,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        )
+        for child_name in child_names:
+            if not isinstance(child_name, str) or not child_name:
+                raise FrozenOrganError(
+                    f"Tensor subclass {tensor_type.__qualname__} exposed an "
+                    "invalid child name"
+                ) from exc
+            child = getattr(tensor, child_name, None)
+            if not isinstance(child, torch.Tensor):
+                raise FrozenOrganError(
+                    f"Tensor subclass {tensor_type.__qualname__}.{child_name} "
+                    "is not a tensor"
+                ) from exc
+            digest.update(child_name.encode("utf-8"))
+            digest.update(_canonical_tensor_digest(child).encode("ascii"))
+        return digest.hexdigest()
+    digest.update(raw)
+    return digest.hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -315,19 +434,17 @@ class QwenFrozenOrgan:
         driver: HFDriver,
         *,
         feature_dim: int = DEFAULT_FEATURE_DIM,
+        model_id: str | None = None,
+        torchao_version: str | None = None,
     ) -> None:
-        """Wrap an existing :class:`HFDriver`.
+        """Wrap an already INT8-quantized :class:`HFDriver`.
 
-        Args:
-            driver: A loaded HFDriver with model + tokenizer.
-            feature_dim: Expected hidden size; must match
-                ``driver.n_embd``.
-
-        Raises:
-            FrozenOrganError: If ``feature_dim`` does not match the
-                model's hidden size, or if freezing fails.
+        Production callers use :meth:`load`, which applies the frozen
+        TorchAO W8A32 recipe before construction.  ``model_id`` preserves the
+        reviewed logical identity when the actual load target is a local
+        model directory.
         """
-        if int(driver.n_embd) != int(feature_dim):
+        if driver.n_embd != feature_dim:
             raise FrozenOrganError(
                 f"feature_dim mismatch: expected {feature_dim}, "
                 f"got driver.n_embd={driver.n_embd}"
@@ -335,19 +452,23 @@ class QwenFrozenOrgan:
         self._driver = driver
         self._model: Any = driver._model
         self._tokenizer = driver._tokenizer
-        self._model_id = driver.model_id
-        self.feature_dim: int = int(feature_dim)
-        self._vocab_size: int = int(driver.n_vocab)
+        self._model_id = model_id if model_id is not None else driver.model_id
+        self._torchao_version = (
+            torchao_version
+            if torchao_version is not None
+            else _installed_torchao_version()
+        )
+        self.feature_dim: int = feature_dim
+        self._vocab_size: int = driver.n_vocab
         self._closed: bool = False
 
-        # Freeze every LM parameter and verify.
         self._model.eval()
+        self._assert_int8_weight_only()
         self._freeze_all_parameters()
         self.assert_frozen()
 
-        # Cache the frozen parameter hash at construction time so we can
-        # detect any mutation after training/validation.  This is a hash
-        # of model weights/config/tokenizer — not of experience data.
+        # Hash only after both the logical model ID and quantization recipe
+        # are final, so local-path loads have the same initial/current hash.
         self._initial_hash = self.parameter_hash()
 
     @classmethod
@@ -357,12 +478,12 @@ class QwenFrozenOrgan:
         *,
         feature_dim: int = DEFAULT_FEATURE_DIM,
     ) -> QwenFrozenOrgan:
-        """Load a model through :meth:`HFDriver.load` and wrap it.
+        """Load FP32 source weights, then apply frozen W8A32 quantization.
 
         Raises:
-            FrozenOrganError: If the model cannot be loaded, the hidden
-                size mismatches, or freezing fails.  Never falls back to
-                a fake or organ-only mode.
+            FrozenOrganError: If loading, INT8 quantization, hidden-size
+                validation, or freeze validation fails.  Never falls back to
+                FP32, fake, or organ-only execution.
         """
         load_target = _resolve_load_target(model_id)
         try:
@@ -372,12 +493,13 @@ class QwenFrozenOrgan:
                 f"Failed to load frozen language organ '{model_id}' "
                 f"(load_target={load_target!r}): {exc}"
             ) from exc
-        organ = cls(driver, feature_dim=feature_dim)
-        # Preserve the explicit model_id as organ identity (hashing/
-        # provenance) even when the actual load target was a verified
-        # local directory (OCZY_MODEL_DIR/OCZY_HF_MODEL_DIR).
-        organ._model_id = model_id
-        return organ
+        torchao_version = _quantize_int8_weight_only(driver._model)
+        return cls(
+            driver,
+            feature_dim=feature_dim,
+            model_id=model_id,
+            torchao_version=torchao_version,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -387,6 +509,44 @@ class QwenFrozenOrgan:
         """Set every LM parameter ``requires_grad_(False)``."""
         for param in self._model.parameters():
             param.requires_grad_(False)
+
+    def _assert_int8_weight_only(self) -> None:
+        """Fail if any real ``nn.Linear`` weight escaped W8A32 quantization."""
+        if not isinstance(self._model, torch.nn.Module):
+            return
+        linear_weights = [
+            module.weight
+            for module in self._model.modules()
+            if isinstance(module, torch.nn.Linear)
+        ]
+        if not linear_weights:
+            return
+        invalid: list[str] = []
+        for weight in linear_weights:
+            qdata = getattr(weight, "qdata", None)
+            scale = getattr(weight, "scale", None)
+            zero_point = getattr(weight, "zero_point", None)
+            block_size = getattr(weight, "block_size", None)
+            expected_block_size = [1, weight.shape[1]]
+            if (
+                type(weight).__name__ == "Int8Tensor"
+                and isinstance(qdata, torch.Tensor)
+                and qdata.dtype == torch.int8
+                and tuple(qdata.shape) == tuple(weight.shape)
+                and isinstance(scale, torch.Tensor)
+                and scale.dtype == torch.float32
+                and isinstance(zero_point, torch.Tensor)
+                and zero_point.dtype == torch.int8
+                and block_size == expected_block_size
+                and getattr(weight, "act_quant_kwargs", None) is None
+            ):
+                continue
+            invalid.append(type(weight).__name__)
+        if invalid:
+            raise FrozenOrganError(
+                f"{len(invalid)} linear weight(s) are not approved "
+                f"{ORGAN_QUANTIZATION} tensors: {invalid[:5]}"
+            )
 
     def _check_open(self) -> None:
         if self._closed:
@@ -500,19 +660,33 @@ class QwenFrozenOrgan:
         prompt_len: int,
         n_answer: int,
     ) -> torch.Tensor:
-        """Forward pass and extract ``[T, V]`` logits at target positions.
+        """Forward target logits with deterministic activation checkpointing.
 
-        LM parameters are frozen but autograd is enabled so gradients flow
-        to ``inputs_embeds`` (and thus to ``soft_bank``).
+        Outer development needs gradients through the frozen organ to the
+        soft bank. Recomputing this eval-mode forward during backward avoids
+        retaining a full transformer activation graph for every probe.
         """
-        # Do NOT use torch.no_grad() or inference_mode here — we need
-        # gradients to flow through the frozen LM to the soft bank.
-        out = self._model(inputs_embeds=inputs_embeds, use_cache=False)
-        # Logits at position (prompt_len - 1) predict the first answer token.
+        def _forward(embeds: torch.Tensor) -> torch.Tensor:
+            return self._model(
+                inputs_embeds=embeds,
+                use_cache=False,
+            ).logits
+
+        if torch.is_grad_enabled() and inputs_embeds.requires_grad:
+            all_logits = cast(
+                torch.Tensor,
+                checkpoint(
+                    _forward,
+                    inputs_embeds,
+                    use_reentrant=False,
+                ),
+            )
+        else:
+            all_logits = _forward(inputs_embeds)
+
         start = prompt_len - 1
         end = start + n_answer
-        logits = out.logits[0, start:end, :]  # [n_answer, V]
-        return logits
+        return all_logits[0, start:end, :]
 
     # ------------------------------------------------------------------
     # Protocol: encode_texts
@@ -918,11 +1092,7 @@ class QwenFrozenOrgan:
     # ------------------------------------------------------------------
 
     def parameter_hash(self) -> str:
-        """Return SHA-256 over model ID, config, tokenizer, and weights.
-
-        Adapts ``s19_language_organ_core.py:108-185``.  This is a frozen
-        identity hash — it must not change across training/validation.
-        """
+        """Return the quantization-bound frozen organ SHA-256 identity."""
         self._check_open()
 
         cfg = getattr(self._model, "config", None)
@@ -934,13 +1104,11 @@ class QwenFrozenOrgan:
         else:
             cfg_dict = {}
 
-        # Hash every byte of every named parameter tensor (bit-identical check).
-        param_hashes: list[str] = []
-        for name, param in sorted(self._model.named_parameters()):
-            data = param.detach().cpu().numpy().tobytes()
-            param_hashes.append(f"{name}:{hashlib.sha256(data).hexdigest()}")
+        param_hashes = [
+            f"{name}:{_canonical_tensor_digest(param)}"
+            for name, param in sorted(self._model.named_parameters())
+        ]
 
-        # Hash the tokenizer vocab and special tokens.
         tokenizer = self._tokenizer
         try:
             vocab_items = sorted(tokenizer.get_vocab().items())
@@ -951,7 +1119,6 @@ class QwenFrozenOrgan:
         except Exception:
             tokenizer_hash = hashlib.sha256(repr(tokenizer).encode()).hexdigest()
 
-        # Include the chat template descriptor.
         template_desc = _template_descriptor(tokenizer)
         template_hash = hashlib.sha256(template_desc.encode()).hexdigest()
 
@@ -962,6 +1129,16 @@ class QwenFrozenOrgan:
                 "param_hashes": param_hashes,
                 "tokenizer_hash": tokenizer_hash,
                 "template_hash": template_hash,
+                "quantization": {
+                    "backend": "torchao",
+                    "backend_version": self._torchao_version,
+                    "scheme": ORGAN_QUANTIZATION,
+                    "weight_dtype": "int8",
+                    "activation_dtype": "float32",
+                    "granularity": "per-row",
+                    "config_version": 2,
+                    "set_inductor_config": False,
+                },
             },
             sort_keys=True,
             default=str,
@@ -1034,6 +1211,16 @@ class QwenFrozenOrgan:
     def model_id(self) -> str:
         """Return the model ID string."""
         return self._model_id
+
+    @property
+    def organ_identity(self) -> str:
+        """Return the model identity including the frozen INT8 recipe."""
+        return quantized_organ_identity(self._model_id)
+
+    @property
+    def quantization(self) -> str:
+        """Return the frozen quantization recipe identifier."""
+        return ORGAN_QUANTIZATION
 
     @property
     def vocab_size(self) -> int:

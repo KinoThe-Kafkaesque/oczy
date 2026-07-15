@@ -107,9 +107,11 @@ Before preparing remote artifacts:
 6. run unit/smoke tests locally; and
 7. commit the exact source intended for execution.
 
-For `meta_cortex/v1`, development may use meta-train and meta-validation only.
-Generating or running a meta-test kernel requires the frozen instrument
-manifest hash and a human sign-off identifier.
+For the current INT8 `meta_cortex/v2`, development may use meta-train and
+meta-validation only. Every job must carry `oczy/runtime-manifest/v2` with the
+exact TorchAO W8A32 quantization block. Generating or running a meta-test
+kernel still requires the frozen instrument manifest hash and a human sign-off
+identifier.
 
 ### 2. Build an immutable source dataset
 

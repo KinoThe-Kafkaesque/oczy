@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "oczy/runtime-manifest/v1",
+  "$id": "oczy/runtime-manifest/v2",
   "title": "Runtime Manifest",
   "description": "Provider-neutral runtime identity: Python/packages, model artifact inventory with cryptographic hashes, and the reviewed generation contract. The self-hash manifest_sha256 covers every field except itself via canonical JSON serialisation (sort_keys, compact separators, ensure_ascii=False, allow_nan=False). Component hashes (model_weights_sha256 etc.) are the SHA-256 of the canonical JSON of the path-sorted role-filtered {path, size_bytes, sha256} payloads.",
   "type": "object",
@@ -15,7 +15,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "oczy/runtime-manifest/v1"
+      "const": "oczy/runtime-manifest/v2"
     },
     "python_version": {
       "type": "string",
@@ -25,12 +25,17 @@
     "packages": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["torch", "transformers", "tokenizers", "safetensors"],
+      "required": ["torch", "torchao", "transformers", "tokenizers", "safetensors"],
       "properties": {
         "torch": {
           "type": "string",
           "minLength": 1,
           "description": "Exact importlib.metadata.version('torch')"
+        },
+        "torchao": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact importlib.metadata.version('torchao')"
         },
         "transformers": {
           "type": "string",
@@ -55,6 +60,7 @@
       "required": [
         "logical_model_id",
         "resolved_model_convention",
+        "quantization",
         "artifact_files",
         "model_weights_sha256",
         "model_config_sha256",
@@ -76,6 +82,34 @@
             "none"
           ],
           "description": "Load convention, not download transport."
+        },
+        "quantization": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "backend",
+                "config_version",
+                "scheme",
+                "weight_dtype",
+                "activation_dtype",
+                "granularity",
+                "set_inductor_config"
+              ],
+              "properties": {
+                "backend": {"const": "torchao"},
+                "config_version": {"const": 2},
+                "scheme": {"const": "int8-weight-only"},
+                "weight_dtype": {"const": "int8"},
+                "activation_dtype": {"const": "float32"},
+                "granularity": {"const": "per-row"},
+                "set_inductor_config": {"const": false}
+              }
+            },
+            {"type": "null"}
+          ],
+          "description": "Frozen model-loading quantization recipe. null means no TorchAO transform is applied by this runtime contract."
         },
         "artifact_files": {
           "type": "array",

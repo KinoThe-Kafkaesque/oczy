@@ -18,6 +18,7 @@ dev = [
     "ruff>=0.6",
     "pyright>=1.1",
     "torch",
+    "torchao==0.17.0",
     "transformers",
     "accelerate",
     "plastic-cortex",
@@ -30,6 +31,7 @@ dev = [
 ]
 bench = [
     "torch",
+    "torchao==0.17.0",
     "transformers",
     "psutil",
 ]
