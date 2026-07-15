@@ -25,6 +25,8 @@ PROFILES = {
 PHASES = ("instrument", "oracle", "development", "meta-test", "analysis")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+WHL_BASENAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*\.whl$")
+OFFLINE_WHEEL_KEYS = frozenset({"dataset", "filename", "sha256"})
 
 
 def _title_slug(title: str) -> str:
@@ -75,6 +77,48 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def install_offline_wheels() -> None:
+    wheels = JOB_SPEC.get("offline_wheels") or []
+    if not wheels:
+        return
+    import subprocess as _sp
+    for entry in wheels:
+        filename = entry["filename"]
+        candidates: list[Path] = []
+        for candidate in Path("/kaggle/input").rglob(filename):
+            if candidate.is_symlink():
+                try:
+                    real = candidate.resolve(strict=True)
+                except (FileNotFoundError, RuntimeError):
+                    continue
+            else:
+                real = candidate.resolve()
+            if real.is_file():
+                candidates.append(real)
+        if len(candidates) == 0:
+            raise RuntimeError(
+                f"offline wheel {filename!r}: no regular-file candidate found "
+                f"under /kaggle/input"
+            )
+        if len(candidates) > 1:
+            rendered = ", ".join(str(p) for p in candidates)
+            raise RuntimeError(
+                f"offline wheel {filename!r}: ambiguous candidates ({len(candidates)}): "
+                f"{rendered}"
+            )
+        real_path = candidates[0]
+        actual = sha256_file(real_path)
+        if actual != entry["sha256"]:
+            raise RuntimeError(
+                f"offline wheel {filename} hash mismatch: "
+                f"expected {entry['sha256']}, got {actual}"
+            )
+        _sp.check_call(
+            [sys.executable, "-m", "pip", "install", "--no-index", "--no-deps",
+             "--force-reinstall", str(real_path)],
+        )
 
 
 def write_report(payload: dict) -> None:
@@ -239,6 +283,7 @@ def main() -> int:
         },
     }
     write_report(report)
+    install_offline_wheels()
     try:
         archive, source_manifest = find_source()
         source_root = safe_extract(archive, Path(tempfile.mkdtemp()))
@@ -334,6 +379,44 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _validate_offline_wheels(wheels: list[dict[str, str]] | None) -> None:
+    if not wheels:
+        return
+    seen_filenames: set[str] = set()
+    seen_keys: set[tuple[str, str]] = set()
+    for entry in wheels:
+        if set(entry.keys()) != OFFLINE_WHEEL_KEYS:
+            raise ValueError(
+                f"offline wheel entry must have exactly keys {sorted(OFFLINE_WHEEL_KEYS)}; "
+                f"got {sorted(entry.keys())}"
+            )
+        filename = entry["filename"]
+        if not WHL_BASENAME_PATTERN.fullmatch(filename):
+            raise ValueError(
+                f"offline wheel filename must be a basename-only .whl file; got {filename!r}"
+            )
+        sha256 = entry["sha256"]
+        if not SHA256_PATTERN.fullmatch(sha256):
+            raise ValueError(
+                f"offline wheel sha256 must be a lowercase 64-character hex string; "
+                f"got {sha256!r}"
+            )
+        dataset = entry["dataset"]
+        if not dataset or "/" not in dataset:
+            raise ValueError(
+                f"offline wheel dataset must be an owner/dataset-slug; got {dataset!r}"
+            )
+        if filename in seen_filenames:
+            raise ValueError(f"duplicate offline wheel filename: {filename!r}")
+        seen_filenames.add(filename)
+        key = (dataset, filename)
+        if key in seen_keys:
+            raise ValueError(
+                f"duplicate offline wheel entry: dataset={dataset!r}, filename={filename!r}"
+            )
+        seen_keys.add(key)
+
+
 def prepare_kernel(
     *,
     output: Path,
@@ -351,6 +434,7 @@ def prepare_kernel(
     human_signoff_id: str | None,
     runtime_manifest: dict[str, Any],
     force: bool,
+    offline_wheels: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     if phase not in PHASES:
         raise ValueError(f"unknown phase: {phase}")
@@ -366,6 +450,7 @@ def prepare_kernel(
         raise ValueError("meta-test generation requires manifest hash and human sign-off ID")
     if instrument_manifest_sha256 and not SHA256_PATTERN.fullmatch(instrument_manifest_sha256):
         raise ValueError("instrument manifest hash must be a lowercase SHA-256")
+    _validate_offline_wheels(offline_wheels)
     title_slug = _title_slug(title)
     id_slug = kernel_id.rsplit("/", 1)[-1]
     if title_slug != id_slug:
@@ -394,6 +479,7 @@ def prepare_kernel(
         "instrument_manifest_sha256": instrument_manifest_sha256,
         "human_signoff_id": human_signoff_id,
         "runtime_manifest": runtime_manifest,
+        "offline_wheels": offline_wheels or [],
     }
     rendered_spec = json.dumps(job_spec, sort_keys=True)
     (output / "run.py").write_text(
@@ -401,6 +487,7 @@ def prepare_kernel(
         encoding="utf-8",
     )
     _write_json(output / "job_spec.json", job_spec)
+    wheel_datasets = [w["dataset"] for w in (offline_wheels or [])]
     _write_json(
         output / "kernel-metadata.json",
         {
@@ -414,7 +501,7 @@ def prepare_kernel(
             "enable_tpu": False,
             "enable_internet": False,
             "machine_shape": "",
-            "dataset_sources": [source_dataset],
+            "dataset_sources": [source_dataset] + wheel_datasets,
             "competition_sources": [],
             "kernel_sources": [],
             "model_sources": [model_source] if model_source else [],
@@ -443,6 +530,13 @@ def parse_args() -> argparse.Namespace:
         help="Path to runtime manifest JSON file.",
     )
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--offline-wheel",
+        dest="offline_wheels",
+        action="append",
+        default=[],
+        help="JSON wheel entry: {\"dataset\":\"owner/slug\",\"filename\":\"pkg.whl\",\"sha256\":\"...\"}",
+    )
     return parser.parse_args()
 
 
@@ -457,6 +551,16 @@ def main() -> int:
     except json.JSONDecodeError as exc:
         print(f"error: invalid runtime manifest JSON: {exc}", file=sys.stderr)
         return 2
+    offline_wheels = None
+    if args.offline_wheels:
+        offline_wheels = []
+        for raw in args.offline_wheels:
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                print(f"error: invalid offline wheel JSON: {exc}", file=sys.stderr)
+                return 2
+            offline_wheels.append(entry)
     spec = prepare_kernel(
         output=args.output,
         kernel_id=args.kernel_id,
@@ -473,6 +577,7 @@ def main() -> int:
         human_signoff_id=args.human_signoff_id,
         runtime_manifest=runtime_manifest,
         force=args.force,
+        offline_wheels=offline_wheels,
     )
     print(json.dumps(spec, indent=2, sort_keys=True))
     return 0

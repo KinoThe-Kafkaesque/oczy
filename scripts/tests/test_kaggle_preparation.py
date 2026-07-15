@@ -1920,3 +1920,462 @@ def test_qwen_locator_honors_oczy_model_dir(
     # No explicit path — should find via env.
     result = locate_model(None)
     assert result == model.resolve()
+
+
+# ---------------------------------------------------------------------------
+# 12. Offline wheel generation and bootstrap contract
+# ---------------------------------------------------------------------------
+
+
+def _valid_wheel_entry(
+    dataset: str = "owner/torchao-deps",
+    filename: str = "torchao-0.17.0-cp312-cp312-linux_x86_64.whl",
+    sha256: str = "a" * 64,
+) -> dict[str, str]:
+    return {"dataset": dataset, "filename": filename, "sha256": sha256}
+
+
+def test_offline_wheels_valid_generation_zero_wheels(tmp_path: Path) -> None:
+    """Zero offline wheels produce an empty list in job_spec and no extra datasets."""
+    spec = prepare_kernel(
+        output=tmp_path / "job",
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=None,
+    )
+    assert spec["offline_wheels"] == []
+    meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text(encoding="utf-8"))
+    assert meta["dataset_sources"] == [SOURCE_DATASET]
+
+
+def test_offline_wheels_valid_generation_single_wheel(tmp_path: Path) -> None:
+    """A single valid wheel appears in job_spec and kernel metadata dataset_sources."""
+    wheel = _valid_wheel_entry()
+    spec = prepare_kernel(
+        output=tmp_path / "job",
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=[wheel],
+    )
+    assert spec["offline_wheels"] == [wheel]
+    meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text(encoding="utf-8"))
+    assert meta["dataset_sources"] == [SOURCE_DATASET, wheel["dataset"]]
+
+
+def test_offline_wheels_valid_generation_multiple_distinct(tmp_path: Path) -> None:
+    """Multiple distinct wheels all appear in job_spec and metadata."""
+    w1 = _valid_wheel_entry(dataset="a/ds1", filename="pkg1.whl")
+    w2 = _valid_wheel_entry(dataset="b/ds2", filename="pkg2.whl")
+    spec = prepare_kernel(
+        output=tmp_path / "job",
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=[w1, w2],
+    )
+    assert spec["offline_wheels"] == [w1, w2]
+
+
+def test_offline_wheels_round_trips_to_bootstrap(tmp_path: Path) -> None:
+    """The wheel entry round-trips through job_spec into the generated run.py."""
+    wheel = _valid_wheel_entry()
+    prepare_kernel(
+        output=tmp_path / "job",
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=[wheel],
+    )
+    source = (tmp_path / "job" / "run.py").read_text(encoding="utf-8")
+    assert "install_offline_wheels" in source
+    assert '"offline_wheels"' in source
+    assert wheel["filename"] in source
+    assert wheel["sha256"] in source
+
+
+def test_offline_wheels_rejects_malformed_filename_path_separators(
+    tmp_path: Path,
+) -> None:
+    """Filenames with path separators (e.g. 'sub/pkg.whl') are rejected."""
+    with pytest.raises(ValueError, match="basename-only"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_wheels=[_valid_wheel_entry(filename="sub/pkg.whl")],
+        )
+
+
+def test_offline_wheels_rejects_malformed_filename_no_whl_extension(
+    tmp_path: Path,
+) -> None:
+    """Filenames without a .whl extension are rejected."""
+    with pytest.raises(ValueError, match="basename-only"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_wheels=[_valid_wheel_entry(filename="not_a_wheel")],
+        )
+
+
+def test_offline_wheels_rejects_malformed_filename_empty(tmp_path: Path) -> None:
+    """An empty filename is rejected."""
+    with pytest.raises(ValueError, match="basename-only"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_wheels=[_valid_wheel_entry(filename="")],
+        )
+
+
+def test_offline_wheels_rejects_duplicate_filename(tmp_path: Path) -> None:
+    """Two entries with the same filename (even different datasets) are rejected."""
+    with pytest.raises(ValueError, match="duplicate offline wheel filename"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_wheels=[
+                _valid_wheel_entry(dataset="a/ds1", filename="pkg.whl"),
+                _valid_wheel_entry(dataset="b/ds2", filename="pkg.whl"),
+            ],
+        )
+
+
+def test_offline_wheels_rejects_duplicate_entry(tmp_path: Path) -> None:
+    """Two identical (dataset, filename) entries are rejected."""
+    with pytest.raises(ValueError, match="duplicate offline wheel filename"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_wheels=[
+                _valid_wheel_entry(dataset="a/ds1", filename="pkg.whl"),
+                _valid_wheel_entry(dataset="a/ds1", filename="pkg.whl"),
+            ],
+        )
+
+
+def _write_wheel_file(
+    kaggle_input: Path, filename: str, content: bytes
+) -> Path:
+    """Write a wheel file into an arbitrary subdirectory under kaggle_input."""
+    sub = kaggle_input / "some-mount"
+    sub.mkdir(parents=True, exist_ok=True)
+    path = sub / filename
+    path.write_bytes(content)
+    return path
+
+
+def test_offline_wheels_bootstrap_zero_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bootstrap raises RuntimeError when no regular-file candidate is found
+    under /kaggle/input for the requested basename."""
+    wheel = _valid_wheel_entry()
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=[wheel],
+    )
+    kaggle_input = tmp_path / "kaggle_input"
+    kaggle_input.mkdir()
+    # No file with matching basename anywhere.
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    with pytest.raises(RuntimeError, match="no regular-file candidate found"):
+        ns["install_offline_wheels"]()
+
+
+def test_offline_wheels_bootstrap_hash_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bootstrap raises RuntimeError when the wheel file hash does not match."""
+    wheel = _valid_wheel_entry(sha256="c" * 64)
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=[wheel],
+    )
+    kaggle_input = tmp_path / "kaggle_input"
+    _write_wheel_file(kaggle_input, wheel["filename"], b"wrong content")
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    with pytest.raises(RuntimeError, match="hash mismatch"):
+        ns["install_offline_wheels"]()
+
+
+def test_offline_wheels_bootstrap_symlink_matching_bytes_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Kaggle mounts input files as symlinks — the bootstrap must resolve and
+    install the real file, verifying hash against the resolved bytes."""
+    import hashlib
+    content = b"valid wheel content"
+    real_hash = hashlib.sha256(content).hexdigest()
+    wheel = _valid_wheel_entry(sha256=real_hash)
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=[wheel],
+    )
+    kaggle_input = tmp_path / "kaggle_input"
+    # Create real file with correct content outside kaggle_input.
+    real_path = tmp_path / "real_wheel.whl"
+    real_path.write_bytes(content)
+    # Create symlink under an arbitrary Kaggle mount directory.
+    mount_dir = kaggle_input / "oczy-r20-int8-deps-92c99ca"
+    mount_dir.mkdir(parents=True)
+    (mount_dir / wheel["filename"]).symlink_to(real_path)
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    import subprocess as _sp
+    monkeypatch.setattr(_sp, "check_call", lambda *args, **kw: None)
+    # Must not raise — symlink resolves, hash matches, install attempted.
+    ns["install_offline_wheels"]()
+
+
+def test_offline_wheels_bootstrap_ambiguous_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Multiple regular-file candidates with the same basename are rejected."""
+    wheel = _valid_wheel_entry()
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=[wheel],
+    )
+    kaggle_input = tmp_path / "kaggle_input"
+    for i, content in enumerate([b"content A", b"content B"]):
+        sub = kaggle_input / f"mount-{i}"
+        sub.mkdir(parents=True)
+        (sub / wheel["filename"]).write_bytes(content)
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    with pytest.raises(RuntimeError, match="ambiguous candidates"):
+        ns["install_offline_wheels"]()
+
+
+def test_offline_wheels_bootstrap_broken_symlink_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A broken symlink is skipped during candidate collection; if no other
+    candidate exists, the bootstrap fails with zero-candidates."""
+    wheel = _valid_wheel_entry()
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=[wheel],
+    )
+    kaggle_input = tmp_path / "kaggle_input"
+    mount_dir = kaggle_input / "some-mount"
+    mount_dir.mkdir(parents=True)
+    (mount_dir / wheel["filename"]).symlink_to(tmp_path / "does_not_exist.whl")
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    with pytest.raises(RuntimeError, match="no regular-file candidate found"):
+        ns["install_offline_wheels"]()
+
+
+def test_offline_wheels_rejects_wrong_keys(tmp_path: Path) -> None:
+    """An entry with extra or missing keys is rejected."""
+    # Missing key
+    with pytest.raises(ValueError, match="must have exactly keys"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_wheels=[{"filename": "p.whl", "sha256": "a" * 64}],
+        )
+
+
+def test_offline_wheels_rejects_non_lowercase_sha256(tmp_path: Path) -> None:
+    """Uppercase hex in sha256 is rejected."""
+    with pytest.raises(ValueError, match="lowercase 64-character hex"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_wheels=[_valid_wheel_entry(sha256="A" * 64)],
+        )

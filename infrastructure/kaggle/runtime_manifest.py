@@ -778,6 +778,24 @@ def _observe_directory(
     # Sort by path.
     artifact_files.sort(key=lambda f: f["path"])
 
+    # Ingest chat_template embedded in tokenizer_config.json (strict / fail-closed).
+    # Qwen and other models often embed the chat template directly in
+    # tokenizer_config.json rather than shipping a standalone chat_template.jinja.
+    if convention == "transformers-pretrained-directory":
+        for f in artifact_files:
+            if f["path"] == "tokenizer_config.json" and "tokenizer" in f["roles"]:
+                tcfg_path = root / "tokenizer_config.json"
+                try:
+                    tcfg = strict_json_loads(tcfg_path.read_bytes())
+                except (ValueError, OSError) as exc:
+                    raise RuntimeManifestError(
+                        f"failed to parse tokenizer_config.json: {exc}"
+                    ) from exc
+                template = tcfg.get("chat_template")
+                if isinstance(template, str) and template:
+                    if "chat_template" not in f["roles"]:
+                        f["roles"] = sorted(set(f["roles"] + ["chat_template"]))
+                break
     # Compute component hashes.
     component_hashes: dict[str, str | None] = {
         "model_weights_sha256": None,

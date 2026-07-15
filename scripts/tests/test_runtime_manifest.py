@@ -1201,6 +1201,160 @@ class TestObserveRuntimeManifestHFDirectory:
 
 
 # ======================================================================
+# observe_runtime_manifest — embedded chat_template in tokenizer_config.json
+# ======================================================================
+
+
+class TestObserveRuntimeManifestEmbeddedChatTemplate:
+    """Embedded chat_template in tokenizer_config.json is recognized."""
+
+    @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
+    @patch("runtime_manifest._observe_packages")
+    def test_embedded_chat_template_adds_role(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
+        """Non-empty chat_template in tokenizer_config.json gets both roles."""
+        mock_pkgs.return_value = _package_versions()
+        model_dir = tmp_path / "model"
+        _write_file(model_dir / "config.json", b'{"arch": "test"}')
+        _write_file(model_dir / "model.safetensors", b"\x00" * 100)
+        _write_file(
+            model_dir / "tokenizer_config.json",
+            b'{"chat_template": "{% for message in messages %}{{ message.content }}{% endfor %}"}',
+        )
+        _write_file(model_dir / "tokenizer.json", b"{}")
+
+        m = observe_runtime_manifest(
+            model_root=model_dir,
+            logical_model_id="test/hf-model",
+            resolved_model_convention="transformers-pretrained-directory",
+            generation_config=_default_greedy(),
+        )
+        af = m["model"]["artifact_files"]
+        tcfg = next(f for f in af if f["path"] == "tokenizer_config.json")
+        assert set(tcfg["roles"]) == {"chat_template", "tokenizer"}
+        # chat_template_sha256 must be set (computed from raw file bytes).
+        ct_hash = m["model"]["chat_template_sha256"]
+        assert isinstance(ct_hash, str)
+        assert len(ct_hash) == 64
+        assert all(c in "0123456789abcdef" for c in ct_hash)
+        # validate_runtime_manifest must pass.
+        validate_runtime_manifest(m)
+
+    @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
+    @patch("runtime_manifest._observe_packages")
+    def test_empty_chat_template_no_chat_role(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
+        """Empty-string chat_template does NOT add chat_template role."""
+        mock_pkgs.return_value = _package_versions()
+        model_dir = tmp_path / "model"
+        _write_file(model_dir / "config.json", b'{"arch": "test"}')
+        _write_file(model_dir / "model.safetensors", b"\x00" * 100)
+        _write_file(model_dir / "tokenizer_config.json", b'{"chat_template": ""}')
+        _write_file(model_dir / "tokenizer.json", b"{}")
+        _write_file(model_dir / "chat_template.jinja", b"{{ messages }}")
+
+        m = observe_runtime_manifest(
+            model_root=model_dir,
+            logical_model_id="test/hf-model",
+            resolved_model_convention="transformers-pretrained-directory",
+            generation_config=_default_greedy(),
+        )
+        tcfg = next(f for f in m["model"]["artifact_files"] if f["path"] == "tokenizer_config.json")
+        assert set(tcfg["roles"]) == {"tokenizer"}
+        # chat_template role is on the .jinja file only.
+        ctj = next(f for f in m["model"]["artifact_files"] if f["path"] == "chat_template.jinja")
+        assert "chat_template" in ctj["roles"]
+        validate_runtime_manifest(m)
+
+    @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
+    @patch("runtime_manifest._observe_packages")
+    def test_missing_chat_template_key_no_chat_role(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
+        """tokenizer_config.json without chat_template key stays tokenizer-only."""
+        mock_pkgs.return_value = _package_versions()
+        model_dir = tmp_path / "model"
+        _write_file(model_dir / "config.json", b'{"arch": "test"}')
+        _write_file(model_dir / "model.safetensors", b"\x00" * 100)
+        _write_file(model_dir / "tokenizer_config.json", b'{"some_key": "value"}')
+        _write_file(model_dir / "tokenizer.json", b"{}")
+        _write_file(model_dir / "chat_template.jinja", b"{{ messages }}")
+
+        m = observe_runtime_manifest(
+            model_root=model_dir,
+            logical_model_id="test/hf-model",
+            resolved_model_convention="transformers-pretrained-directory",
+            generation_config=_default_greedy(),
+        )
+        tcfg = next(f for f in m["model"]["artifact_files"] if f["path"] == "tokenizer_config.json")
+        assert set(tcfg["roles"]) == {"tokenizer"}
+        validate_runtime_manifest(m)
+
+    @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
+    @patch("runtime_manifest._observe_packages")
+    def test_non_string_chat_template_no_chat_role(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
+        """Non-string chat_template (null) does NOT add the role."""
+        mock_pkgs.return_value = _package_versions()
+        model_dir = tmp_path / "model"
+        _write_file(model_dir / "config.json", b'{"arch": "test"}')
+        _write_file(model_dir / "model.safetensors", b"\x00" * 100)
+        _write_file(model_dir / "tokenizer_config.json", b'{"chat_template": null}')
+        _write_file(model_dir / "tokenizer.json", b"{}")
+        _write_file(model_dir / "chat_template.jinja", b"{{ messages }}")
+
+        m = observe_runtime_manifest(
+            model_root=model_dir,
+            logical_model_id="test/hf-model",
+            resolved_model_convention="transformers-pretrained-directory",
+            generation_config=_default_greedy(),
+        )
+        tcfg = next(f for f in m["model"]["artifact_files"] if f["path"] == "tokenizer_config.json")
+        assert set(tcfg["roles"]) == {"tokenizer"}
+        validate_runtime_manifest(m)
+
+    @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
+    @patch("runtime_manifest._observe_packages")
+    def test_invalid_json_fails(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
+        """Malformed tokenizer_config.json raises RuntimeManifestError."""
+        mock_pkgs.return_value = _package_versions()
+        model_dir = tmp_path / "model"
+        _write_file(model_dir / "config.json", b'{"arch": "test"}')
+        _write_file(model_dir / "model.safetensors", b"\x00" * 100)
+        _write_file(model_dir / "tokenizer_config.json", b"not valid json {{{")
+        _write_file(model_dir / "tokenizer.json", b"{}")
+        _write_file(model_dir / "chat_template.jinja", b"{{ messages }}")
+
+        with pytest.raises(RuntimeManifestError, match="failed to parse tokenizer_config.json"):
+            observe_runtime_manifest(
+                model_root=model_dir,
+                logical_model_id="test/hf-model",
+                resolved_model_convention="transformers-pretrained-directory",
+                generation_config=_default_greedy(),
+            )
+
+    @patch("runtime_manifest.platform.python_version", return_value="3.12.0")
+    @patch("runtime_manifest._observe_packages")
+    def test_component_hash_uses_file_bytes(self, mock_pkgs: Any, _mock_py: Any, tmp_path: Path) -> None:
+        """chat_template_sha256 is derived from raw tokenizer_config.json bytes."""
+        mock_pkgs.return_value = _package_versions()
+        model_dir = tmp_path / "model"
+        _write_file(model_dir / "config.json", b'{"arch": "test"}')
+        _write_file(model_dir / "model.safetensors", b"\x00" * 100)
+        tcfg_content = b'{"chat_template": "{{ messages }}", "extra": 1}'
+        sha_raw = _write_file(model_dir / "tokenizer_config.json", tcfg_content)
+        _write_file(model_dir / "tokenizer.json", b"{}")
+
+        m = observe_runtime_manifest(
+            model_root=model_dir,
+            logical_model_id="test/hf-model",
+            resolved_model_convention="transformers-pretrained-directory",
+            generation_config=_default_greedy(),
+        )
+        tcfg = next(f for f in m["model"]["artifact_files"] if f["path"] == "tokenizer_config.json")
+        # The file's sha256 in the manifest matches the raw bytes.
+        assert tcfg["sha256"] == sha_raw
+        # chat_template_sha256 is the component hash over the file's {path, size, sha256}.
+        expected_ct = compute_component_sha256([tcfg])
+        assert m["model"]["chat_template_sha256"] == expected_ct
+        validate_runtime_manifest(m)
+
+# ======================================================================
 # observe_runtime_manifest — GGUF file
 # ======================================================================
 
