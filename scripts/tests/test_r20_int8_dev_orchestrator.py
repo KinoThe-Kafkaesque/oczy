@@ -136,7 +136,8 @@ def _minimal_config(**overrides: Any) -> dict[str, Any]:
             "seeds": [100, 200, 300, 400, 500],
         },
         "checkpoint_archive_dataset": "kino/oczy-r20-checkpoints",
-        "model_source": "Qwen/Qwen2.5-0.5B-Instruct",
+        "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+        "model_source": "qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
         "publication": {
             "dataset_slug": "kino/oczy-r20-checkpoints",
             "title": "R20 Checkpoints",
@@ -239,6 +240,13 @@ def test_config_rejects_missing_model_source(tmp_path: Path) -> None:
     cfg = _minimal_config()
     del cfg["model_source"]
     with pytest.raises(OrchestratorError, match="model_source"):
+        validate_config(cfg, tmp_path)
+
+
+def test_config_rejects_missing_model_id(tmp_path: Path) -> None:
+    cfg = _minimal_config()
+    del cfg["model_id"]
+    with pytest.raises(OrchestratorError, match="model_id"):
         validate_config(cfg, tmp_path)
 
 
@@ -506,7 +514,7 @@ def test_calibration_jobs_use_real_module(tmp_path: Path) -> None:
         checkpoint_archive_dataset="kino/ckpts",
         checkpoint_archive_filename="checkpoints.tar.gz",
         checkpoint_archive_sha256="a" * 64,
-        model_source="Qwen/Qwen2.5-0.5B-Instruct",
+        model_id="Qwen/Qwen2.5-0.5B-Instruct", model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
         organ_hash="e" * 64,
         archived_checkpoint_seeds=[100, 200, 300, 400, 500],
         output_dir=tmp_path,
@@ -524,7 +532,7 @@ def test_calibration_jobs_owner_qualified_ids(tmp_path: Path) -> None:
         checkpoint_archive_dataset="kino/ckpts",
         checkpoint_archive_filename="checkpoints.tar.gz",
         checkpoint_archive_sha256="a" * 64,
-        model_source="Qwen/Qwen2.5-0.5B-Instruct",
+        model_id="Qwen/Qwen2.5-0.5B-Instruct", model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
         organ_hash="e" * 64,
         archived_checkpoint_seeds=[100, 200, 300, 400, 500],
         output_dir=tmp_path,
@@ -541,7 +549,7 @@ def test_calibration_jobs_contain_real_args(tmp_path: Path) -> None:
         checkpoint_archive_dataset="kino/ckpts",
         checkpoint_archive_filename="checkpoints.tar.gz",
         checkpoint_archive_sha256="a" * 64,
-        model_source="Qwen/Qwen2.5-0.5B-Instruct",
+        model_id="Qwen/Qwen2.5-0.5B-Instruct", model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
         organ_hash="e" * 64,
         archived_checkpoint_seeds=[100, 200, 300, 400, 500],
         output_dir=tmp_path,
@@ -568,7 +576,7 @@ def test_90_jobs_for_90_tasks(tmp_path: Path) -> None:
         checkpoint_archive_dataset="kino/ckpts",
         checkpoint_archive_filename="checkpoints.tar.gz",
         checkpoint_archive_sha256="a" * 64,
-        model_source="Qwen/Qwen2.5-0.5B-Instruct",
+        model_id="Qwen/Qwen2.5-0.5B-Instruct", model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
         organ_hash="e" * 64,
         archived_checkpoint_seeds=[100, 200, 300, 400, 500],
         output_dir=tmp_path,
@@ -583,7 +591,7 @@ def test_five_wide_task_ranges(tmp_path: Path) -> None:
         checkpoint_archive_dataset="kino/ckpts",
         checkpoint_archive_filename="checkpoints.tar.gz",
         checkpoint_archive_sha256="a" * 64,
-        model_source="Qwen/Qwen2.5-0.5B-Instruct",
+        model_id="Qwen/Qwen2.5-0.5B-Instruct", model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
         organ_hash="e" * 64,
         archived_checkpoint_seeds=[100, 200, 300, 400, 500],
         output_dir=tmp_path,
@@ -601,7 +609,7 @@ def test_calibration_count_formula(tmp_path: Path) -> None:
             checkpoint_archive_dataset="kino/ckpts",
             checkpoint_archive_filename="checkpoints.tar.gz",
             checkpoint_archive_sha256="a" * 64,
-            model_source="Qwen/Qwen2.5-0.5B-Instruct",
+            model_id="Qwen/Qwen2.5-0.5B-Instruct", model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
             organ_hash="e" * 64,
             archived_checkpoint_seeds=[100, 200, 300, 400, 500],
             output_dir=tmp_path,
@@ -663,14 +671,17 @@ def test_calibration_jobs_store_model_source(tmp_path: Path) -> None:
         checkpoint_archive_dataset="kino/ckpts",
         checkpoint_archive_filename="checkpoints.tar.gz",
         checkpoint_archive_sha256="a" * 64,
-        model_source="Qwen/Qwen2.5-0.5B-Instruct",
+        model_id="Qwen/Qwen2.5-0.5B-Instruct", model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
         organ_hash="e" * 64,
         archived_checkpoint_seeds=[100, 200, 300, 400, 500],
         output_dir=tmp_path,
     )
     for job in jobs:
-        assert job.get("model_source") == "Qwen/Qwen2.5-0.5B-Instruct", (
-            f"job {job['name']} missing model_source"
+        assert job.get("model_id") == "Qwen/Qwen2.5-0.5B-Instruct", (
+            f"job {job['name']} missing model_id"
+        )
+        assert job.get("model_source") == "qwen-lm/qwen2.5/transformers/0.5b-instruct/1", (
+            f"job {job['name']} has wrong model_source: {job.get('model_source')}"
         )
 
 
@@ -682,7 +693,7 @@ def test_kernel_slug_prefix_in_ids(tmp_path: Path) -> None:
         checkpoint_archive_dataset="kino/ckpts",
         checkpoint_archive_filename="checkpoints.tar.gz",
         checkpoint_archive_sha256="a" * 64,
-        model_source="Qwen/Qwen2.5-0.5B-Instruct",
+        model_id="Qwen/Qwen2.5-0.5B-Instruct", model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
         organ_hash="e" * 64,
         archived_checkpoint_seeds=[100, 200, 300, 400, 500],
         output_dir=tmp_path,

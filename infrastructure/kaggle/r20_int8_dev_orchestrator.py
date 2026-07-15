@@ -184,10 +184,13 @@ def validate_config(config: dict[str, Any], base: Path) -> dict[str, Any]:
     if not isinstance(archive_dataset, str) or "/" not in archive_dataset:
         raise OrchestratorError("config.checkpoint_archive_dataset must be an owner/dataset-slug")
 
-    # --- Model source ---
+    # --- Model identity and source ---
+    model_id = config.get("model_id")
+    if not isinstance(model_id, str) or not model_id:
+        raise OrchestratorError("config.model_id must be e.g. Qwen/Qwen2.5-0.5B-Instruct")
     model_source = config.get("model_source")
     if not isinstance(model_source, str) or not model_source:
-        raise OrchestratorError("config.model_source must be a model id e.g. Qwen/Qwen2.5-0.5B-Instruct")
+        raise OrchestratorError("config.model_source must be e.g. qwen-lm/qwen2.5/transformers/0.5b-instruct/1")
 
     # --- Directory layout: jobs, results, archive ---
     for dir_field in ("jobs_dir", "results_dir", "archive_dir"):
@@ -617,6 +620,7 @@ def _build_calibration_jobs(
     checkpoint_archive_dataset: str,
     checkpoint_archive_filename: str,
     checkpoint_archive_sha256: str,
+    model_id: str,
     model_source: str,
     organ_hash: str,
     archived_checkpoint_seeds: list[int],
@@ -653,7 +657,7 @@ def _build_calibration_jobs(
                 _CAL_SUBCOMMAND,
                 "--calibration-view", cal_view_path,
                 "--checkpoint", f"{ckpt_base}/d{dev_seed_index}",
-                "--model-id", model_source,
+                "--model-id", model_id,
                 "--organ-hash", organ_hash,
                 "--dev-seed-index", str(dev_seed_index),
                 "--eval-seed-indices", "0,1,2,3,4",
@@ -674,8 +678,8 @@ def _build_calibration_jobs(
                 "task_range_start": start,
                 "task_range_end": end,
                 "checkpoint_seed": seed,
-                "dev_seed_index": dev_seed_index,
                 "group_index": group_idx,
+                "model_id": model_id,
                 "model_source": model_source,
                 "source": dict(source),
                 "runtime_manifest": dict(runtime_manifest),
@@ -1043,6 +1047,7 @@ def run_orchestrator(
         cal_state_path = resolved["cal_state_path"]
         cal_view_root = resolved["calibration_view_root"]
         jobs_dir = resolved["jobs_dir"]
+        model_id = config["model_id"]
         model_source = config["model_source"]
         organ_hash = config["checkpoint_contract"]["organ_hash"]
 
@@ -1063,6 +1068,7 @@ def run_orchestrator(
             checkpoint_archive_dataset=config["checkpoint_archive_dataset"],
             checkpoint_archive_filename=archive_filename,
             checkpoint_archive_sha256=archive_hash,
+            model_id=model_id,
             model_source=model_source,
             organ_hash=organ_hash,
             archived_checkpoint_seeds=config["checkpoint_contract"]["seeds"],
