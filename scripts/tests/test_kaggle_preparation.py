@@ -2379,3 +2379,623 @@ def test_offline_wheels_rejects_non_lowercase_sha256(tmp_path: Path) -> None:
             force=True,
             offline_wheels=[_valid_wheel_entry(sha256="A" * 64)],
         )
+
+
+# ---------------------------------------------------------------------------
+# 13. Offline archive generation and bootstrap contract
+# ---------------------------------------------------------------------------
+
+
+def _valid_archive_entry(
+    dataset: str = "owner/calibration-archive",
+    filename: str = "calibration_data.tar.gz",
+    sha256: str = "d" * 64,
+    fmt: str = "tar.gz",
+    destination: str = "calibration",
+) -> dict[str, str]:
+    return {
+        "dataset": dataset,
+        "filename": filename,
+        "sha256": sha256,
+        "format": fmt,
+        "destination": destination,
+    }
+
+
+def _make_tar(tmp_path: Path, name: str, members: list[tuple[str, bytes]]) -> Path:
+    """Create a tar.gz at *name* with *members* as (arcname, content) tuples."""
+    import io
+    archive_path = tmp_path / name
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for arcname, content in members:
+            info = tarfile.TarInfo(name=arcname)
+            info.size = len(content)
+            tf.addfile(info, io.BytesIO(content))
+    archive_path.write_bytes(buf.getvalue())
+    return archive_path
+
+
+def _write_archive_file(
+    kaggle_input: Path, filename: str, content: bytes
+) -> Path:
+    """Write an archive file into an arbitrary subdirectory under kaggle_input."""
+    sub = kaggle_input / "some-mount"
+    sub.mkdir(parents=True, exist_ok=True)
+    path = sub / filename
+    path.write_bytes(content)
+    return path
+
+
+class TestOfflineArchiveGeneration:
+    """Generator validation — no extraction under /kaggle."""
+
+    def test_zero_archives(self, tmp_path: Path) -> None:
+        """Zero offline archives produce empty list in job_spec, no extra datasets."""
+        spec = prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_archives=None,
+        )
+        assert spec["offline_archives"] == []
+        meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text(encoding="utf-8"))
+        assert meta["dataset_sources"] == [SOURCE_DATASET]
+
+    def test_single_archive(self, tmp_path: Path) -> None:
+        """A single valid archive appears in job_spec and dataset_sources."""
+        archive = _valid_archive_entry()
+        spec = prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_archives=[archive],
+        )
+        assert spec["offline_archives"] == [archive]
+        meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text(encoding="utf-8"))
+        assert archive["dataset"] in meta["dataset_sources"]
+
+    def test_multiple_distinct(self, tmp_path: Path) -> None:
+        """Multiple distinct archives all appear in job_spec."""
+        a1 = _valid_archive_entry(dataset="a/ds1", filename="data1.tar.gz", destination="d1")
+        a2 = _valid_archive_entry(dataset="b/ds2", filename="data2.tar.gz", destination="d2")
+        spec = prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_archives=[a1, a2],
+        )
+        assert spec["offline_archives"] == [a1, a2]
+
+    def test_distinct_archives_same_dataset_dedup(self, tmp_path: Path) -> None:
+        """Two archives from the same dataset appear only once in dataset_sources."""
+        a1 = _valid_archive_entry(dataset="a/ds1", filename="f1.tar.gz", destination="d1")
+        a2 = _valid_archive_entry(dataset="a/ds1", filename="f2.tar.gz", destination="d2")
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_archives=[a1, a2],
+        )
+        meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text(encoding="utf-8"))
+        assert meta["dataset_sources"].count("a/ds1") == 1
+
+    def test_round_trips_to_bootstrap(self, tmp_path: Path) -> None:
+        """The archive entry round-trips through job_spec into generated run.py."""
+        archive = _valid_archive_entry()
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_archives=[archive],
+        )
+        source = (tmp_path / "job" / "run.py").read_text(encoding="utf-8")
+        assert "extract_offline_archives" in source
+        assert '"offline_archives"' in source
+        assert archive["filename"] in source
+        assert archive["sha256"] in source
+        assert archive["destination"] in source
+
+    def test_rejects_not_tar_gz_format(self, tmp_path: Path) -> None:
+        """Any format other than 'tar.gz' is rejected."""
+        with pytest.raises(ValueError, match="format must be 'tar.gz'"):
+            prepare_kernel(
+                output=tmp_path / "job",
+                kernel_id="owner/oczy-test",
+                title="Oczy Test",
+                phase="development",
+                profile="cpu",
+                source_dataset=SOURCE_DATASET,
+                source_commit=COMMIT,
+                source_archive_sha256=ARCHIVE_SHA,
+                module="oczy.experiments.dummy",
+                arguments=[],
+                model_source=None,
+                instrument_manifest_sha256=None,
+                human_signoff_id=None,
+                force=True,
+                offline_archives=[_valid_archive_entry(fmt="zip")],
+            )
+
+    def test_rejects_malformed_filename(self, tmp_path: Path) -> None:
+        """Filenames not matching basename-only .tar.gz pattern are rejected."""
+        bad_names = ["sub/data.tar.gz", "noext", "", "data.zip"]
+        for name in bad_names:
+            with pytest.raises(ValueError, match="basename-only"):
+                prepare_kernel(
+                    output=tmp_path / "job",
+                    kernel_id="owner/oczy-test",
+                    title="Oczy Test",
+                    phase="development",
+                    profile="cpu",
+                    source_dataset=SOURCE_DATASET,
+                    source_commit=COMMIT,
+                    source_archive_sha256=ARCHIVE_SHA,
+                    module="oczy.experiments.dummy",
+                    arguments=[],
+                    model_source=None,
+                    instrument_manifest_sha256=None,
+                    human_signoff_id=None,
+                    force=True,
+                    offline_archives=[_valid_archive_entry(filename=name)],
+                )
+
+    def test_rejects_bad_destination(self, tmp_path: Path) -> None:
+        """Destinations with separators, dots, or unsafe chars are rejected."""
+        bad_dests = ["../escape", "sub/dir", "", "-bad", ".hidden", "has space"]
+        for dest in bad_dests:
+            with pytest.raises(ValueError, match="safe directory name"):
+                prepare_kernel(
+                    output=tmp_path / "job",
+                    kernel_id="owner/oczy-test",
+                    title="Oczy Test",
+                    phase="development",
+                    profile="cpu",
+                    source_dataset=SOURCE_DATASET,
+                    source_commit=COMMIT,
+                    source_archive_sha256=ARCHIVE_SHA,
+                    module="oczy.experiments.dummy",
+                    arguments=[],
+                    model_source=None,
+                    instrument_manifest_sha256=None,
+                    human_signoff_id=None,
+                    force=True,
+                    offline_archives=[_valid_archive_entry(destination=dest)],
+                )
+
+    def test_rejects_duplicate_filename(self, tmp_path: Path) -> None:
+        """Duplicate archive filenames are rejected."""
+        with pytest.raises(ValueError, match="duplicate offline archive filename"):
+            prepare_kernel(
+                output=tmp_path / "job",
+                kernel_id="owner/oczy-test",
+                title="Oczy Test",
+                phase="development",
+                profile="cpu",
+                source_dataset=SOURCE_DATASET,
+                source_commit=COMMIT,
+                source_archive_sha256=ARCHIVE_SHA,
+                module="oczy.experiments.dummy",
+                arguments=[],
+                model_source=None,
+                instrument_manifest_sha256=None,
+                human_signoff_id=None,
+                force=True,
+                offline_archives=[
+                    _valid_archive_entry(dataset="a/ds1", filename="x.tar.gz", destination="d1"),
+                    _valid_archive_entry(dataset="b/ds2", filename="x.tar.gz", destination="d2"),
+                ],
+            )
+
+    def test_rejects_duplicate_destination(self, tmp_path: Path) -> None:
+        """Duplicate archive destinations are rejected."""
+        with pytest.raises(ValueError, match="duplicate offline archive destination"):
+            prepare_kernel(
+                output=tmp_path / "job",
+                kernel_id="owner/oczy-test",
+                title="Oczy Test",
+                phase="development",
+                profile="cpu",
+                source_dataset=SOURCE_DATASET,
+                source_commit=COMMIT,
+                source_archive_sha256=ARCHIVE_SHA,
+                module="oczy.experiments.dummy",
+                arguments=[],
+                model_source=None,
+                instrument_manifest_sha256=None,
+                human_signoff_id=None,
+                force=True,
+                offline_archives=[
+                    _valid_archive_entry(dataset="a/ds1", filename="f1.tar.gz", destination="dest"),
+                    _valid_archive_entry(dataset="b/ds2", filename="f2.tar.gz", destination="dest"),
+                ],
+            )
+
+    def test_duplicate_dataset_ids_deduped(self, tmp_path: Path) -> None:
+        """Multiple archives from the same dataset appear once in dataset_sources."""
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_archives=[
+                _valid_archive_entry(dataset="a/ds1", filename="f1.tar.gz", destination="d1"),
+                _valid_archive_entry(dataset="a/ds1", filename="f2.tar.gz", destination="d2"),
+            ],
+        )
+        meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text(encoding="utf-8"))
+        assert meta["dataset_sources"].count("a/ds1") == 1
+
+    def test_rejects_wrong_keys(self, tmp_path: Path) -> None:
+        """Entries with extra or missing keys are rejected."""
+        with pytest.raises(ValueError, match="must have exactly keys"):
+            prepare_kernel(
+                output=tmp_path / "job",
+                kernel_id="owner/oczy-test",
+                title="Oczy Test",
+                phase="development",
+                profile="cpu",
+                source_dataset=SOURCE_DATASET,
+                source_commit=COMMIT,
+                source_archive_sha256=ARCHIVE_SHA,
+                module="oczy.experiments.dummy",
+                arguments=[],
+                model_source=None,
+                instrument_manifest_sha256=None,
+                human_signoff_id=None,
+                force=True,
+                offline_archives=[{"filename": "x.tar.gz", "sha256": "d" * 64, "format": "tar.gz", "destination": "d"}],
+            )
+
+    def test_rejects_non_lowercase_sha256(self, tmp_path: Path) -> None:
+        """Uppercase hex in sha256 is rejected."""
+        with pytest.raises(ValueError, match="lowercase 64-character hex"):
+            prepare_kernel(
+                output=tmp_path / "job",
+                kernel_id="owner/oczy-test",
+                title="Oczy Test",
+                phase="development",
+                profile="cpu",
+                source_dataset=SOURCE_DATASET,
+                source_commit=COMMIT,
+                source_archive_sha256=ARCHIVE_SHA,
+                module="oczy.experiments.dummy",
+                arguments=[],
+                model_source=None,
+                instrument_manifest_sha256=None,
+                human_signoff_id=None,
+                force=True,
+                offline_archives=[_valid_archive_entry(sha256="D" * 64)],
+            )
+
+    def test_rejects_bad_dataset(self, tmp_path: Path) -> None:
+        """A dataset without owner/slug is rejected."""
+        for bad_ds in ["", "no_slash"]:
+            with pytest.raises(ValueError, match="owner/dataset-slug"):
+                prepare_kernel(
+                    output=tmp_path / "job",
+                    kernel_id="owner/oczy-test",
+                    title="Oczy Test",
+                    phase="development",
+                    profile="cpu",
+                    source_dataset=SOURCE_DATASET,
+                    source_commit=COMMIT,
+                    source_archive_sha256=ARCHIVE_SHA,
+                    module="oczy.experiments.dummy",
+                    arguments=[],
+                    model_source=None,
+                    instrument_manifest_sha256=None,
+                    human_signoff_id=None,
+                    force=True,
+                    offline_archives=[_valid_archive_entry(dataset=bad_ds)],
+                )
+
+    def test_archives_and_wheels_coexist(self, tmp_path: Path) -> None:
+        """Archives and wheels can coexist with distinct filenames."""
+        wheel = _valid_wheel_entry(filename="pkg.whl")
+        archive = _valid_archive_entry(filename="data.tar.gz")
+        spec = prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_wheels=[wheel],
+            offline_archives=[archive],
+        )
+        assert spec["offline_wheels"] == [wheel]
+        assert spec["offline_archives"] == [archive]
+        meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text(encoding="utf-8"))
+        assert wheel["dataset"] in meta["dataset_sources"]
+        assert archive["dataset"] in meta["dataset_sources"]
+
+
+class TestOfflineArchiveBootstrap:
+    """Bootstrap extraction — exercises /kaggle/input resolution."""
+
+    _ARCHIVE_ROOT = Path("/tmp/oczy-offline-inputs")
+
+    def setup_method(self) -> None:
+        import shutil
+        if self._ARCHIVE_ROOT.exists():
+            shutil.rmtree(self._ARCHIVE_ROOT)
+
+    def teardown_method(self) -> None:
+        import shutil
+        if self._ARCHIVE_ROOT.exists():
+            shutil.rmtree(self._ARCHIVE_ROOT)
+
+    def _prepare(self, tmp_path: Path, archives: list[dict]) -> Path:
+        output = tmp_path / "job"
+        prepare_kernel(
+            output=output,
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_archives=archives,
+        )
+        return output
+
+    def test_valid_extraction(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A valid tar.gz is extracted to /tmp/oczy-offline-inputs/<destination>."""
+        import hashlib
+        content = b"hello\n"
+        archive_path = _make_tar(tmp_path, "real.tar.gz", [("readme.txt", content)])
+        archive_bytes = archive_path.read_bytes()
+        archive_sha = hashlib.sha256(archive_bytes).hexdigest()
+        archive = _valid_archive_entry(
+            filename="data.tar.gz", sha256=archive_sha,
+        )
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        _write_archive_file(kaggle_input, archive["filename"], archive_bytes)
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        # Must not raise.
+        ns["extract_offline_archives"]()
+        dest = Path("/tmp/oczy-offline-inputs") / archive["destination"]
+        assert dest.is_dir()
+        assert (dest / "readme.txt").read_text() == "hello\n"
+
+    def test_zero_candidates(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Bootstrap raises when no regular-file candidate is found."""
+        archive = _valid_archive_entry()
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        kaggle_input.mkdir()
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="no regular-file candidate found"):
+            ns["extract_offline_archives"]()
+
+    def test_hash_mismatch(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Bootstrap raises when archive hash does not match."""
+        archive = _valid_archive_entry(sha256="c" * 64)
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        _write_archive_file(kaggle_input, archive["filename"], b"wrong content")
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="hash mismatch"):
+            ns["extract_offline_archives"]()
+
+    def test_ambiguous_candidates(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Multiple regular-file candidates with the same basename are rejected."""
+        archive = _valid_archive_entry()
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        for i in range(2):
+            sub = kaggle_input / f"mount-{i}"
+            sub.mkdir(parents=True)
+            (sub / archive["filename"]).write_bytes(b"content")
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="ambiguous candidates"):
+            ns["extract_offline_archives"]()
+
+    def test_preexisting_destination(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Bootstrap rejects extraction when destination already exists."""
+        import hashlib
+        archive_path = _make_tar(tmp_path, "real.tar.gz", [("f.txt", b"data")])
+        archive_bytes = archive_path.read_bytes()
+        archive = _valid_archive_entry(sha256=hashlib.sha256(archive_bytes).hexdigest())
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        _write_archive_file(kaggle_input, archive["filename"], archive_bytes)
+        # Pre-create the destination.
+        (Path("/tmp/oczy-offline-inputs") / archive["destination"]).mkdir(parents=True)
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="destination already exists"):
+            ns["extract_offline_archives"]()
+
+    def test_symlink_resolve_succeeds(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Kaggle symlink mounts are resolved and the real file verified."""
+        import hashlib
+        archive_path = _make_tar(tmp_path, "real.tar.gz", [("readme.txt", b"data")])
+        archive_bytes = archive_path.read_bytes()
+        archive_sha = hashlib.sha256(archive_bytes).hexdigest()
+        archive = _valid_archive_entry(sha256=archive_sha)
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        # Real file outside kaggle_input.
+        real_path = tmp_path / "real_archive.tar.gz"
+        real_path.write_bytes(archive_bytes)
+        # Symlink under mount directory.
+        mount_dir = kaggle_input / "some-mount"
+        mount_dir.mkdir(parents=True)
+        (mount_dir / archive["filename"]).symlink_to(real_path)
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        # Must not raise.
+        ns["extract_offline_archives"]()
+        dest = Path("/tmp/oczy-offline-inputs") / archive["destination"]
+        assert (dest / "readme.txt").read_text() == "data"
+
+    def test_broken_symlink_skipped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A broken symlink is skipped; fails with zero-candidates if no other."""
+        archive = _valid_archive_entry()
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        mount_dir = kaggle_input / "some-mount"
+        mount_dir.mkdir(parents=True)
+        (mount_dir / archive["filename"]).symlink_to(tmp_path / "does_not_exist.tar.gz")
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="no regular-file candidate found"):
+            ns["extract_offline_archives"]()
+
+    def test_rejects_absolute_member(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Archive members with absolute paths are rejected."""
+        import io
+        import hashlib
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            info = tarfile.TarInfo(name="/etc/passwd")
+            info.size = 3
+            tf.addfile(info, io.BytesIO(b"bad"))
+        archive_bytes = buf.getvalue()
+        archive = _valid_archive_entry(sha256=hashlib.sha256(archive_bytes).hexdigest())
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        _write_archive_file(kaggle_input, archive["filename"], archive_bytes)
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="unsafe archive member path"):
+            ns["extract_offline_archives"]()
+
+    def test_rejects_traversal_member(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Archive members with .. traversal are rejected."""
+        import io
+        import hashlib
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            info = tarfile.TarInfo(name="../escape.txt")
+            info.size = 3
+            tf.addfile(info, io.BytesIO(b"bad"))
+        archive_bytes = buf.getvalue()
+        archive = _valid_archive_entry(sha256=hashlib.sha256(archive_bytes).hexdigest())
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        _write_archive_file(kaggle_input, archive["filename"], archive_bytes)
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="unsafe archive member path"):
+            ns["extract_offline_archives"]()
+
+    def test_rejects_symlink_member(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Archive symlink members are rejected."""
+        import io
+        import hashlib
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            info = tarfile.TarInfo(name="link")
+            info.type = tarfile.SYMTYPE
+            info.linkname = "/etc/passwd"
+            tf.addfile(info)
+        archive_bytes = buf.getvalue()
+        archive = _valid_archive_entry(sha256=hashlib.sha256(archive_bytes).hexdigest())
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        _write_archive_file(kaggle_input, archive["filename"], archive_bytes)
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="unsupported archive member type"):
+            ns["extract_offline_archives"]()
+
+    def test_rejects_hardlink_member(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Archive hardlink members are rejected."""
+        import io
+        import hashlib
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            # Need a regular file first, then link to it
+            reg = tarfile.TarInfo(name="real")
+            reg.size = 3
+            tf.addfile(reg, io.BytesIO(b"abc"))
+            info = tarfile.TarInfo(name="hlink")
+            info.type = tarfile.LNKTYPE
+            info.linkname = "real"
+            tf.addfile(info)
+        archive_bytes = buf.getvalue()
+        archive = _valid_archive_entry(sha256=hashlib.sha256(archive_bytes).hexdigest())
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        _write_archive_file(kaggle_input, archive["filename"], archive_bytes)
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="unsupported archive member type"):
+            ns["extract_offline_archives"]()

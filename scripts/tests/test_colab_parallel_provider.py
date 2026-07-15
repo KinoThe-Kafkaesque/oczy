@@ -906,7 +906,11 @@ def test_additive_capacity_admits_5_kaggle_plus_colab(tmp_path: Path) -> None:
         kaggle_client, colab_client=colab_client, clock=clock, sleeper=sleeper
     )
     summary = sched.run(
-        manifest, state, max_parallel=None, poll_interval=1,
+        manifest,
+        state,
+        max_parallel=None,
+        poll_interval=1,
+        kaggle_submit_interval=0.0,
     )
 
     assert summary["all_succeeded"], f"jobs failed: {summary['failed']}"
@@ -3796,7 +3800,12 @@ def test_non_watch_mode_still_terminates_colab(tmp_path: Path) -> None:
         clock=clock, sleeper=sleeper,
     )
     summary = sched.run(
-        manifest, state, max_parallel=None, poll_interval=1, colab_max=5,
+        manifest,
+        state,
+        max_parallel=None,
+        poll_interval=1,
+        colab_max=5,
+        kaggle_submit_interval=0.0,
         # watch_batch defaults to False
     )
 
@@ -3888,8 +3897,13 @@ def test_watch_additive_capacity_5_kaggle_plus_colab(tmp_path: Path) -> None:
         clock=clock, sleeper=sleeper,
     )
     summary = sched.run(
-        manifest, state, max_parallel=None, poll_interval=1,
-        watch_batch=True, watch_interval=1,
+        manifest,
+        state,
+        max_parallel=None,
+        poll_interval=1,
+        kaggle_submit_interval=0.0,
+        watch_batch=True,
+        watch_interval=1,
     )
 
     # All jobs succeeded (KeyboardInterrupt may fire after completion).

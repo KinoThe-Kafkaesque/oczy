@@ -831,7 +831,13 @@ def test_run_default_kaggle_max_is_5(tmp_path: Path) -> None:
     client = ConcurrencyClient()
     sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
     # max_parallel=None (no global cap), default kaggle_max=5
-    sched.run(manifest, state, max_parallel=None, poll_interval=1)
+    sched.run(
+        manifest,
+        state,
+        max_parallel=None,
+        poll_interval=1,
+        kaggle_submit_interval=0.0,
+    )
     assert client.max_concurrent <= DEFAULT_KAGGLE_MAX, (
         f"exceeded default kaggle_max: {client.max_concurrent}"
     )
@@ -2097,8 +2103,13 @@ def test_watch_merges_new_jobs_appended_during_active_run(
         ParallelScheduler._submit = _wrapped_submit
         sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
         summary = sched.run(
-            manifest, state, max_parallel=4, poll_interval=1,
-            watch_batch=True, watch_interval=1,
+            manifest,
+            state,
+            max_parallel=4,
+            poll_interval=1,
+            kaggle_submit_interval=0.0,
+            watch_batch=True,
+            watch_interval=1,
         )
     finally:
         ParallelScheduler._submit = original_submit
@@ -2149,8 +2160,13 @@ def test_watch_does_not_mutate_existing_job_state_on_reload(
         ParallelScheduler._submit = _wrapped_submit
         sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
         summary = sched.run(
-            manifest, state, max_parallel=4, poll_interval=1,
-            watch_batch=True, watch_interval=1,
+            manifest,
+            state,
+            max_parallel=4,
+            poll_interval=1,
+            kaggle_submit_interval=0.0,
+            watch_batch=True,
+            watch_interval=1,
         )
     finally:
         ParallelScheduler._submit = original_submit
@@ -2244,8 +2260,13 @@ def test_watch_malformed_reload_retried_then_valid_content_succeeds(
     sleeper = _StagedSleeper()
     sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
     summary = sched.run(
-        manifest, state, max_parallel=4, poll_interval=1,
-        watch_batch=True, watch_interval=1,
+        manifest,
+        state,
+        max_parallel=4,
+        poll_interval=1,
+        kaggle_submit_interval=0.0,
+        watch_batch=True,
+        watch_interval=1,
     )
 
     # job0 succeeded.
@@ -2383,3 +2404,173 @@ def test_watch_default_watch_interval_constant() -> None:
         "DEFAULT_WATCH_INTERVAL not defined in scheduler module"
     )
     assert DEFAULT_WATCH_INTERVAL == 30.0
+
+
+# ---------------------------------------------------------------------------
+# 22. Kaggle submit pacing: per-account interval between submissions
+# ---------------------------------------------------------------------------
+
+
+def test_kaggle_submit_interval_initial_immediate(tmp_path: Path) -> None:
+    """First Kaggle submission per account is never paced — submits immediately."""
+    kd = _make_kernel_dir(tmp_path, "cpu", "user/kernel-1")
+    manifest = _make_batch(tmp_path, [
+        {"name": "job0", "kernel_dir": "cpu", "output_dir": "out/job0"}
+    ])
+    state = tmp_path / "state.json"
+
+    client = FakeKaggleClient(push_results={"user/kernel-1": "user/kernel-1"})
+    clock_holder, clock = _make_clock(1000.0)
+    sleeper = CountingSleeper(clock_holder)
+
+    sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
+    sched.run(
+        manifest, state,
+        max_parallel=5, poll_interval=30,
+        kaggle_submit_interval=60.0,
+    )
+
+    assert len(client.push_calls) == 1
+
+
+def test_kaggle_submit_interval_second_waits(tmp_path: Path) -> None:
+    """Second Kaggle job on same account must wait for the interval to elapse."""
+    kd1 = _make_kernel_dir(tmp_path, "cpu", "user/kernel-1")
+    kd2 = _make_kernel_dir(tmp_path, "cpu2", "user/kernel-2")
+    manifest = _make_batch(tmp_path, [
+        {"name": "job0", "kernel_dir": "cpu", "output_dir": "out/job0"},
+        {"name": "job1", "kernel_dir": "cpu2", "output_dir": "out/job1"},
+    ])
+    state = tmp_path / "state.json"
+
+    client = FakeKaggleClient(
+        push_results={"user/kernel-1": "user/kernel-1", "user/kernel-2": "user/kernel-2"},
+    )
+    clock_holder, clock = _make_clock(1000.0)
+    sleeper = CountingSleeper(clock_holder)
+
+    sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
+    sched.run(
+        manifest, state,
+        max_parallel=5, poll_interval=30,
+        kaggle_submit_interval=90.0,
+    )
+
+    # Both should eventually submit: job0 in first loop, job1 after interval elapses
+    assert len(client.push_calls) == 2
+    assert Path(client.push_calls[0][0]).name == "cpu"
+    assert Path(client.push_calls[1][0]).name == "cpu2"
+    # At least one sleep happened between submissions
+    assert len(sleeper.calls) >= 1
+
+
+
+
+def test_kaggle_submit_interval_failed_push_is_paced(tmp_path: Path) -> None:
+    """A failed Kaggle push records the attempt timestamp and paces the next."""
+    kd1 = _make_kernel_dir(tmp_path, "cpu", "user/kernel-fail")
+    kd2 = _make_kernel_dir(tmp_path, "cpu2", "user/kernel-ok")
+    manifest = _make_batch(tmp_path, [
+        {"name": "job0", "kernel_dir": "cpu", "output_dir": "out/job0"},
+        {"name": "job1", "kernel_dir": "cpu2", "output_dir": "out/job1"},
+    ])
+    state = tmp_path / "state.json"
+
+    client = FakeKaggleClient(
+        push_results={"user/kernel-ok": "user/kernel-ok"},
+        push_raises={"user/kernel-fail": RuntimeError("simulated push failure")},
+    )
+    clock_holder, clock = _make_clock(1000.0)
+    sleeper = CountingSleeper(clock_holder)
+
+    sched = ParallelScheduler(client, clock=clock, sleeper=sleeper)
+    sched.run(
+        manifest, state,
+        max_parallel=5, poll_interval=30,
+        kaggle_submit_interval=60.0,
+    )
+
+    # Both jobs attempted: fail first, then ok after interval elapses
+    assert len(client.push_calls) == 2
+    assert Path(client.push_calls[0][0]).name == "cpu"
+    assert Path(client.push_calls[1][0]).name == "cpu2"
+    assert len(sleeper.calls) >= 1
+
+
+def test_kaggle_submit_interval_zero_is_noop(tmp_path: Path) -> None:
+    """Interval zero disables pacing — all jobs submit in the same loop iteration."""
+    kd1 = _make_kernel_dir(tmp_path, "cpu", "user/kernel-1")
+    kd2 = _make_kernel_dir(tmp_path, "cpu2", "user/kernel-2")
+    manifest = _make_batch(tmp_path, [
+        {"name": "job0", "kernel_dir": "cpu", "output_dir": "out/job0"},
+        {"name": "job1", "kernel_dir": "cpu2", "output_dir": "out/job1"},
+    ])
+    state = tmp_path / "state.json"
+
+    client = FakeKaggleClient(
+        push_results={"user/kernel-1": "user/kernel-1", "user/kernel-2": "user/kernel-2"},
+    )
+    clock_holder, clock = _make_clock(1000.0)
+
+    sched = ParallelScheduler(
+        client,
+        clock=clock,
+        sleeper=lambda s: None,
+    )
+    sched.run(
+        manifest, state,
+        max_parallel=5, poll_interval=30,
+        kaggle_submit_interval=0.0,
+    )
+
+    assert len(client.push_calls) == 2
+
+
+
+
+def test_kaggle_submit_interval_rejects_negative(tmp_path: Path) -> None:
+    """Negative kaggle_submit_interval must raise ValueError."""
+    kd = _make_kernel_dir(tmp_path, "cpu", "user/kernel-1")
+    manifest = _make_batch(tmp_path, [
+        {"name": "job0", "kernel_dir": "cpu", "output_dir": "out/job0"}
+    ])
+    state = tmp_path / "state.json"
+
+    client = FakeKaggleClient()
+    sched = ParallelScheduler(client)
+
+    with pytest.raises(ValueError, match="kaggle_submit_interval"):
+        sched.run(manifest, state, kaggle_submit_interval=-1.0)
+
+
+def test_cli_rejects_negative_kaggle_submit_interval(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CLI --kaggle-submit-interval -1 must fail via SystemExit (parser.error)."""
+    kd = _make_kernel_dir(tmp_path, "cpu", "user/kernel-1")
+    manifest = _make_batch(tmp_path, [
+        {"name": "job0", "kernel_dir": "cpu", "output_dir": "out/job0"}
+    ])
+    state = tmp_path / "state.json"
+
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "run",
+                str(manifest),
+                "--state",
+                str(state),
+                "--kaggle-submit-interval",
+                "-1",
+            ],
+            client=FakeKaggleClient(),
+        )
+
+
+def test_kaggle_submit_interval_default_constant() -> None:
+    """The DEFAULT_KAGGLE_SUBMIT_INTERVAL constant must exist and be 60.0."""
+    DEFAULT_KAGGLE_SUBMIT_INTERVAL = _mod.get("DEFAULT_KAGGLE_SUBMIT_INTERVAL")
+    assert DEFAULT_KAGGLE_SUBMIT_INTERVAL is not None, (
+        "DEFAULT_KAGGLE_SUBMIT_INTERVAL not defined in scheduler module"
+    )
+    assert DEFAULT_KAGGLE_SUBMIT_INTERVAL == 60.0

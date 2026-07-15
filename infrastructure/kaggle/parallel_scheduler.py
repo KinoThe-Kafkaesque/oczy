@@ -181,6 +181,7 @@ COLAB_MAX_CAPACITY_REJECTIONS = 10
 
 DEFAULT_POLL_INTERVAL = 30
 DEFAULT_PUSH_TIMEOUT = 21600
+DEFAULT_KAGGLE_SUBMIT_INTERVAL = 60.0
 DEFAULT_JOB_TIMEOUT = 21600
 DEFAULT_STATUS_TIMEOUT = 120
 DEFAULT_OUTPUT_TIMEOUT = 1800
@@ -1091,6 +1092,8 @@ class ParallelScheduler:
         # Set during run(); persists across the run for _save_state.
         self._state_schema: str = STATE_SCHEMA_VERSION
         self._colab_controller: ColabAimdController | None = None
+        # Per-account Kaggle submit pacing: account_key -> monotonic timestamp
+        self._last_kaggle_submit_attempt: dict[str, float] = {}
         self._colab_cooldown_until: float = 0.0
 
     # -- state persistence -------------------------------------------------
@@ -1814,6 +1817,7 @@ class ParallelScheduler:
         kaggle_max: int = DEFAULT_KAGGLE_MAX,
         colab_max: int = DEFAULT_COLAB_MAX,
         colab_cooldown: float = DEFAULT_COLAB_COOLDOWN,
+        kaggle_submit_interval: float = DEFAULT_KAGGLE_SUBMIT_INTERVAL,
         watch_batch: bool = False,
         watch_interval: float = DEFAULT_WATCH_INTERVAL,
         pool_config: Any = None,
@@ -1854,6 +1858,10 @@ class ParallelScheduler:
         if colab_max < MIN_COLAB_MAX:
             raise ValueError(
                 f"colab_max must be >= {MIN_COLAB_MAX}, got {colab_max}"
+            )
+        if kaggle_submit_interval < 0:
+            raise ValueError(
+                f"kaggle_submit_interval must be >= 0, got {kaggle_submit_interval}"
             )
         if watch_batch and watch_interval <= 0:
             raise ValueError(
@@ -2015,6 +2023,16 @@ class ParallelScheduler:
                         continue
                     if not self._acquire_job_lease(job):
                         continue
+                    # Kaggle submit pacing: skip this submission if the account
+                    # interval hasn't elapsed since the last attempt.
+                    if kaggle_submit_interval > 0:
+                        account_key = job.account_id or "__legacy__"
+                        last = self._last_kaggle_submit_attempt.get(account_key)
+                        now = self.clock()
+                        if last is not None and (now - last) < kaggle_submit_interval:
+                            self._release_job_lease(job)
+                            continue
+                        self._last_kaggle_submit_attempt[account_key] = now
                     self._submit(job, push_timeout)
                     self._save_state(state_path_resolved, batch_path_resolved, jobs)
                     if job.state in ACTIVE_STATES:
@@ -2288,6 +2306,16 @@ def _build_parser() -> argparse.ArgumentParser:
         f"(default {DEFAULT_COLAB_COOLDOWN}).",
     )
     run_p.add_argument(
+        "--kaggle-submit-interval",
+        type=float,
+        default=DEFAULT_KAGGLE_SUBMIT_INTERVAL,
+        help=(
+            "Minimum seconds between Kaggle submissions per account "
+            f"(default {DEFAULT_KAGGLE_SUBMIT_INTERVAL}). "
+            "Zero disables pacing for backward compatibility."
+        ),
+    )
+    run_p.add_argument(
         "--watch-batch",
         action="store_true",
         default=False,
@@ -2380,6 +2408,8 @@ def main(
             parser.error(
                 "--watch-interval must be > 0 when --watch-batch is set"
             )
+        if args.kaggle_submit_interval < 0:
+            parser.error("--kaggle-submit-interval must be >= 0")
         if (args.pool_config is None) != (args.dispatch_plan is None):
             parser.error("--pool-config and --dispatch-plan must be used together")
         if args.pool_config is not None and args.watch_batch:
@@ -2467,6 +2497,7 @@ def main(
                 kaggle_max=args.kaggle_max,
                 colab_max=args.colab_max,
                 colab_cooldown=args.colab_cooldown,
+                kaggle_submit_interval=args.kaggle_submit_interval,
                 watch_batch=args.watch_batch,
                 watch_interval=args.watch_interval,
                 pool_config=pool_config_obj,

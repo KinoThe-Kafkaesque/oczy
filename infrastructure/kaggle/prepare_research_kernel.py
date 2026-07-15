@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,10 @@ PHASES = ("instrument", "oracle", "development", "meta-test", "analysis")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 WHL_BASENAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*\.whl$")
+TARGZ_BASENAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*\.tar\.gz$")
+DESTINATION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 OFFLINE_WHEEL_KEYS = frozenset({"dataset", "filename", "sha256"})
+OFFLINE_ARCHIVE_KEYS = frozenset({"dataset", "filename", "sha256", "format", "destination"})
 
 
 def _title_slug(title: str) -> str:
@@ -120,6 +124,73 @@ def install_offline_wheels() -> None:
              "--force-reinstall", str(real_path)],
         )
 
+
+
+def extract_offline_archives() -> None:
+    archives = JOB_SPEC.get("offline_archives") or []
+    if not archives:
+        return
+    base = Path("/tmp/oczy-offline-inputs")
+    for entry in archives:
+        filename = entry["filename"]
+        destination_name = entry["destination"]
+        candidates: list[Path] = []
+        for candidate in Path("/kaggle/input").rglob(filename):
+            if candidate.is_symlink():
+                try:
+                    real = candidate.resolve(strict=True)
+                except (FileNotFoundError, RuntimeError):
+                    continue
+            else:
+                real = candidate.resolve()
+            if real.is_file():
+                candidates.append(real)
+        if len(candidates) == 0:
+            raise RuntimeError(
+                f"offline archive {filename!r}: no regular-file candidate found "
+                f"under /kaggle/input"
+            )
+        if len(candidates) > 1:
+            rendered = ", ".join(str(p) for p in candidates)
+            raise RuntimeError(
+                f"offline archive {filename!r}: ambiguous candidates ({len(candidates)}): "
+                f"{rendered}"
+            )
+        real_path = candidates[0]
+        actual = sha256_file(real_path)
+        if actual != entry["sha256"]:
+            raise RuntimeError(
+                f"offline archive {filename} hash mismatch: "
+                f"expected {entry['sha256']}, got {actual}"
+            )
+        dest = base / destination_name
+        if dest.exists():
+            raise RuntimeError(
+                f"offline archive destination already exists: {dest}"
+            )
+        base.mkdir(parents=True, exist_ok=True)
+        dest.mkdir(parents=True, exist_ok=False)
+        dest_resolved = dest.resolve()
+        _DISALLOWED_TYPES = (
+            tarfile.SYMTYPE, tarfile.LNKTYPE, tarfile.CHRTYPE,
+            tarfile.BLKTYPE, tarfile.FIFOTYPE,
+        )
+        with tarfile.open(real_path, "r:gz") as handle:
+            for member in handle.getmembers():
+                if member.name.startswith("/") or ".." in member.name.split("/"):
+                    raise RuntimeError(
+                        f"unsafe archive member path: {member.name!r}"
+                    )
+                if member.type in _DISALLOWED_TYPES:
+                    raise RuntimeError(
+                        f"unsupported archive member type {member.type!r}: {member.name!r}"
+                    )
+                target = (dest / member.name).resolve()
+                if not target.is_relative_to(dest_resolved):
+                    raise RuntimeError(
+                        f"unsafe archive member path traversal: {member.name!r} -> {target}"
+                    )
+            handle.extractall(dest, filter="data")
 
 def write_report(payload: dict) -> None:
     path = Path("/kaggle/working/remote_run_provenance.json")
@@ -283,6 +354,7 @@ def main() -> int:
         },
     }
     write_report(report)
+    extract_offline_archives()
     install_offline_wheels()
     try:
         archive, source_manifest = find_source()
@@ -417,6 +489,62 @@ def _validate_offline_wheels(wheels: list[dict[str, str]] | None) -> None:
         seen_keys.add(key)
 
 
+def _validate_offline_archives(
+    archives: list[dict[str, str]] | None,
+    wheel_filenames: set[str],
+) -> None:
+    if not archives:
+        return
+    seen_filenames: set[str] = set()
+    seen_json: set[str] = set()
+    seen_destinations: set[str] = set()
+    for entry in archives:
+        if set(entry.keys()) != OFFLINE_ARCHIVE_KEYS:
+            raise ValueError(
+                f"offline archive entry must have exactly keys {sorted(OFFLINE_ARCHIVE_KEYS)}; "
+                f"got {sorted(entry.keys())}"
+            )
+        filename = entry["filename"]
+        if not TARGZ_BASENAME_PATTERN.fullmatch(filename):
+            raise ValueError(
+                f"offline archive filename must be a basename-only .tar.gz file; got {filename!r}"
+            )
+        sha256 = entry["sha256"]
+        if not SHA256_PATTERN.fullmatch(sha256):
+            raise ValueError(
+                f"offline archive sha256 must be a lowercase 64-character hex string; "
+                f"got {sha256!r}"
+            )
+        fmt = entry["format"]
+        if fmt != "tar.gz":
+            raise ValueError(
+                f"offline archive format must be 'tar.gz'; got {fmt!r}"
+            )
+        destination = entry["destination"]
+        if not DESTINATION_PATTERN.fullmatch(destination):
+            raise ValueError(
+                f"offline archive destination must be a single safe directory name; "
+                f"got {destination!r}"
+            )
+        dataset = entry["dataset"]
+        if not dataset or "/" not in dataset:
+            raise ValueError(
+                f"offline archive dataset must be an owner/dataset-slug; got {dataset!r}"
+            )
+        if filename in seen_filenames or filename in wheel_filenames:
+            raise ValueError(f"duplicate offline archive filename: {filename!r}")
+        seen_filenames.add(filename)
+        if destination in seen_destinations:
+            raise ValueError(f"duplicate offline archive destination: {destination!r}")
+        seen_destinations.add(destination)
+        entry_json = json.dumps(entry, sort_keys=True)
+        if entry_json in seen_json:
+            raise ValueError(
+                f"duplicate offline archive entry: {entry_json}"
+            )
+        seen_json.add(entry_json)
+
+
 def prepare_kernel(
     *,
     output: Path,
@@ -435,6 +563,7 @@ def prepare_kernel(
     runtime_manifest: dict[str, Any],
     force: bool,
     offline_wheels: list[dict[str, str]] | None = None,
+    offline_archives: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     if phase not in PHASES:
         raise ValueError(f"unknown phase: {phase}")
@@ -451,6 +580,8 @@ def prepare_kernel(
     if instrument_manifest_sha256 and not SHA256_PATTERN.fullmatch(instrument_manifest_sha256):
         raise ValueError("instrument manifest hash must be a lowercase SHA-256")
     _validate_offline_wheels(offline_wheels)
+    wheel_filenames = {w["filename"] for w in (offline_wheels or [])}
+    _validate_offline_archives(offline_archives, wheel_filenames)
     title_slug = _title_slug(title)
     id_slug = kernel_id.rsplit("/", 1)[-1]
     if title_slug != id_slug:
@@ -480,6 +611,7 @@ def prepare_kernel(
         "human_signoff_id": human_signoff_id,
         "runtime_manifest": runtime_manifest,
         "offline_wheels": offline_wheels or [],
+        "offline_archives": offline_archives or [],
     }
     rendered_spec = json.dumps(job_spec, sort_keys=True)
     (output / "run.py").write_text(
@@ -488,6 +620,11 @@ def prepare_kernel(
     )
     _write_json(output / "job_spec.json", job_spec)
     wheel_datasets = [w["dataset"] for w in (offline_wheels or [])]
+    archive_datasets = [a["dataset"] for a in (offline_archives or [])]
+    all_datasets = [source_dataset]
+    for ds in wheel_datasets + archive_datasets:
+        if ds not in all_datasets:
+            all_datasets.append(ds)
     _write_json(
         output / "kernel-metadata.json",
         {
@@ -501,7 +638,7 @@ def prepare_kernel(
             "enable_tpu": False,
             "enable_internet": False,
             "machine_shape": "",
-            "dataset_sources": [source_dataset] + wheel_datasets,
+            "dataset_sources": all_datasets,
             "competition_sources": [],
             "kernel_sources": [],
             "model_sources": [model_source] if model_source else [],
@@ -537,6 +674,13 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="JSON wheel entry: {\"dataset\":\"owner/slug\",\"filename\":\"pkg.whl\",\"sha256\":\"...\"}",
     )
+    parser.add_argument(
+        "--offline-archive",
+        dest="offline_archives",
+        action="append",
+        default=[],
+        help="JSON archive entry: {\"dataset\":\"owner/slug\",\"filename\":\"data.tar.gz\",\"sha256\":\"...\",\"format\":\"tar.gz\",\"destination\":\"dirname\"}",
+    )
     return parser.parse_args()
 
 
@@ -561,6 +705,16 @@ def main() -> int:
                 print(f"error: invalid offline wheel JSON: {exc}", file=sys.stderr)
                 return 2
             offline_wheels.append(entry)
+    offline_archives = None
+    if args.offline_archives:
+        offline_archives = []
+        for raw in args.offline_archives:
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                print(f"error: invalid offline archive JSON: {exc}", file=sys.stderr)
+                return 2
+            offline_archives.append(entry)
     spec = prepare_kernel(
         output=args.output,
         kernel_id=args.kernel_id,
@@ -578,6 +732,7 @@ def main() -> int:
         runtime_manifest=runtime_manifest,
         force=args.force,
         offline_wheels=offline_wheels,
+        offline_archives=offline_archives,
     )
     print(json.dumps(spec, indent=2, sort_keys=True))
     return 0
