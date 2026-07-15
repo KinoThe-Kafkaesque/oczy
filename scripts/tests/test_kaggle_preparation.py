@@ -1593,6 +1593,35 @@ def test_generated_bootstrap_records_manifest_provenance(tmp_path: Path) -> None
     assert '"observed_runtime_manifest_sha256"' in source
     assert '"model_root"' in source
 
+def test_generated_bootstrap_routes_manifests_through_common_runner(
+    tmp_path: Path,
+) -> None:
+    """Runtime flags belong to the wrapper, never the experiment CLI."""
+    output = tmp_path / "job"
+    spec = prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=["train-dev", "--seed", "7"],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=False,
+    )
+    source = (output / "run.py").read_text(encoding="utf-8")
+
+    assert spec["kernel_id"] == "owner/oczy-test"
+    assert 'runner_module = "infrastructure.kaggle.run_experiment_module"' in source
+    assert '"--module", JOB_SPEC["module"]' in source
+    assert 'runner_argv.extend(f"--arg={arg}" for arg in JOB_SPEC["arguments"])' in source
+    assert 'sys.argv.extend(["--observed-manifest-json"' not in source
+
 
 def _write_manifest_file(path: Path, content: bytes) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)

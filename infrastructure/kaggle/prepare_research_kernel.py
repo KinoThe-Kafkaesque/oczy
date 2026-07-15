@@ -415,11 +415,25 @@ def main() -> int:
         write_report(report)
         os.chdir(source_root)
 
-        # Append observed runtime manifest to runner argv.
+        # Run the experiment through the common module runner.  The wrapper
+        # consumes runtime manifests and forwards only the reviewed experiment
+        # arguments to the actual module.
+        expected_json = strict_canonical_json(expected_manifest).decode("utf-8")
         observed_json = strict_canonical_json(observed_manifest).decode("utf-8")
-        sys.argv = [JOB_SPEC["module"], *JOB_SPEC["arguments"]]
-        sys.argv.extend(["--observed-manifest-json", observed_json])
-        runpy.run_module(JOB_SPEC["module"], run_name="__main__", alter_sys=True)
+        runner_module = "infrastructure.kaggle.run_experiment_module"
+        runner_argv = [
+            runner_module,
+            "--module", JOB_SPEC["module"],
+            "--source-commit", JOB_SPEC["source_commit"],
+            "--provider", "kaggle",
+            "--job-name", JOB_SPEC["kernel_id"],
+            "--report", "/kaggle/working/execution_report.json",
+            "--expected-manifest-json", expected_json,
+            "--observed-manifest-json", observed_json,
+        ]
+        runner_argv.extend(f"--arg={arg}" for arg in JOB_SPEC["arguments"])
+        sys.argv = runner_argv
+        runpy.run_module(runner_module, run_name="__main__", alter_sys=True)
     except SystemExit as error:
         code = error.code if isinstance(error.code, int) else (0 if error.code is None else 1)
         report["status"] = "complete" if code == 0 else "error"
@@ -601,6 +615,7 @@ def prepare_kernel(
         "schema_version": SCHEMA_VERSION,
         "phase": phase,
         "profile": profile,
+        "kernel_id": kernel_id,
         "source_dataset": source_dataset,
         "source_commit": source_commit,
         "source_archive_sha256": source_archive_sha256,
