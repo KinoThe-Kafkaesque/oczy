@@ -21,10 +21,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from oczy.experiments.meta_cortex.calibration import derive_seed_table
 from oczy.experiments.meta_cortex.contracts import ContractError
 from oczy.experiments.meta_cortex.instrument_contracts import (
     CALIBRATION_VIEW_SCHEMA,
@@ -56,6 +58,7 @@ _DUMMY_SHA_2 = "b" * 64
 _VALID_SIGNOFF_ID = "r20-meta-cortex-v2/550e8400-e29b-41d4-a716-446655440000"
 _VALID_SIGNOFF_ID_2 = "r20-meta-cortex-v2/660e8400-e29b-42d4-a716-446655440001"
 _FAMILY_ORDER = ("contextual_remap", "rule_transformation", "finite_state")
+_V2_SEED_TABLE = derive_seed_table()
 _COUNT_MAP_N30 = {
     "contextual_remap": 30,
     "rule_transformation": 30,
@@ -927,8 +930,8 @@ def _make_instrument_config() -> InstrumentDefinitionConfig:
         train_tasks_per_family=2,
         tuning_tasks_per_family=2,
         calibration_tasks_per_family=30,
-        developmental_seeds=(10, 20, 30, 40, 50),
-        evaluation_seeds=(60, 70, 80, 90, 100),
+        developmental_seeds=tuple(_V2_SEED_TABLE["developmental"]),
+        evaluation_seeds=tuple(_V2_SEED_TABLE["evaluation"]),
         organ_model_id="Qwen/Qwen2.5-0.5B-Instruct",
         organ_revision="main",
         organ_parameter_sha256=_DUMMY_SHA,
@@ -973,6 +976,63 @@ class TestMaterializeDefinition:
         assert (out / "public/CALIBRATION_VIEW.json").exists()
         assert (out / "sealed/meta_test_seed.json").exists()
         assert (out / "sealed/tasks/meta_test.jsonl").exists()
+
+    def test_materialize_binds_canonical_seed_table(self, tmp_path: Path) -> None:
+        """Definition, public view, and seed record must use one seed table."""
+        from oczy.experiments.meta_cortex.instrument import materialize_definition
+
+        config = _make_instrument_config()
+        seed_file = _make_test_seed_file(tmp_path)
+        out = tmp_path / "definition"
+        definition = materialize_definition(
+            config,
+            test_seed_file=seed_file,
+            out=out,
+        )
+        calibration_view = json.loads(
+            (out / "public/CALIBRATION_VIEW.json").read_text(encoding="utf-8")
+        )
+        seed_record = json.loads(
+            (out / "public/seeds.json").read_text(encoding="utf-8")
+        )
+
+        assert definition.developmental_seeds == tuple(
+            _V2_SEED_TABLE["developmental"]
+        )
+        assert definition.evaluation_seeds == tuple(
+            _V2_SEED_TABLE["evaluation"]
+        )
+        assert calibration_view["developmental_seeds"] == (
+            _V2_SEED_TABLE["developmental"]
+        )
+        assert calibration_view["evaluation_seeds"] == (
+            _V2_SEED_TABLE["evaluation"]
+        )
+        assert seed_record["instrument_version"] == "v2"
+        assert seed_record["developmental"] == _V2_SEED_TABLE["developmental"]
+        assert seed_record["evaluation"] == _V2_SEED_TABLE["evaluation"]
+
+    def test_materialize_rejects_noncanonical_seed_config(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A definition cannot bind seeds unlike its public calibration view."""
+        from oczy.experiments.meta_cortex.instrument import (
+            InstrumentError,
+            materialize_definition,
+        )
+
+        config = replace(
+            _make_instrument_config(),
+            developmental_seeds=(1, 2, 3, 4, 5),
+        )
+        seed_file = _make_test_seed_file(tmp_path)
+        with pytest.raises(InstrumentError, match="developmental_seeds"):
+            materialize_definition(
+                config,
+                test_seed_file=seed_file,
+                out=tmp_path / "definition",
+            )
 
     def test_materialize_refuses_overwrite(self, tmp_path: Path) -> None:
         """materialize_definition must refuse to overwrite an existing directory."""
@@ -1280,8 +1340,8 @@ class TestSealedTaskDiversity:
             train_tasks_per_family=30,
             tuning_tasks_per_family=5,
             calibration_tasks_per_family=30,
-            developmental_seeds=(10, 20, 30, 40, 50),
-            evaluation_seeds=(60, 70, 80, 90, 100),
+            developmental_seeds=tuple(_V2_SEED_TABLE["developmental"]),
+            evaluation_seeds=tuple(_V2_SEED_TABLE["evaluation"]),
             organ_model_id="Qwen/Qwen2.5-0.5B-Instruct",
             organ_revision="main",
             organ_parameter_sha256=_DUMMY_SHA,

@@ -253,38 +253,36 @@ def _check_path_safe(path: Path, root: Path) -> Path:
 # Seed derivation
 # ---------------------------------------------------------------------------
 
-def _derive_seed(domain: str, instrument_id: str, index: int) -> int:
-    """Derive a uint63 seed from domain-separated SHA-256.
-
-    ``uint63(first_8_bytes(SHA256('oczy/meta-cortex/calibration-seeds/v1|'
-    + instrument_id + '|' + domain + '|' + str(index))))``
-    """
-    material = f"oczy/meta-cortex/calibration-seeds/v1|{instrument_id}|{domain}|{index}"
-    digest = hashlib.sha256(material.encode("utf-8")).digest()
-    val = int.from_bytes(digest[:8], "big")
-    return val & ((1 << 63) - 1)  # uint63
-
-
 def _generate_dev_seed_table(
     config: InstrumentDefinitionConfig,
 ) -> dict[str, Any]:
-    """Generate the DEV seed table with all four domains.
+    """Generate and verify the canonical versioned DEV seed table."""
+    from .calibration import derive_seed_table
 
-    Returns a JSON-safe dict with ordered integer vectors for:
-    developmental, evaluation, no_update_repeat, task_cluster_bootstrap.
-    """
-    developmental = [_derive_seed("developmental", config.instrument_id, i) for i in range(len(config.developmental_seeds))]
-    evaluation = [_derive_seed("evaluation", config.instrument_id, i) for i in range(len(config.evaluation_seeds))]
-    no_update_repeat = [_derive_seed("no_update_repeat", config.instrument_id, i) for i in range(20)]
-    task_cluster_bootstrap = [_derive_seed("task_cluster_bootstrap", config.instrument_id, 0)]
+    derived = derive_seed_table(
+        instrument_id=config.instrument_id,
+        instrument_version=config.instrument_version,
+    )
+    developmental = tuple(derived["developmental"])
+    evaluation = tuple(derived["evaluation"])
+    if config.developmental_seeds != developmental:
+        raise InstrumentError(
+            "developmental_seeds do not match the canonical versioned seed table"
+        )
+    if config.evaluation_seeds != evaluation:
+        raise InstrumentError(
+            "evaluation_seeds do not match the canonical versioned seed table"
+        )
 
     return {
-        "derivation_schema": "oczy/meta-cortex/calibration-seeds/v1",
+        "derivation_schema": derived["schema"],
         "instrument_id": config.instrument_id,
-        "developmental": developmental,
-        "evaluation": evaluation,
-        "no_update_repeat": no_update_repeat,
-        "task_cluster_bootstrap": task_cluster_bootstrap,
+        "instrument_version": config.instrument_version,
+        "derivation": derived["derivation"],
+        "developmental": list(developmental),
+        "evaluation": list(evaluation),
+        "no_update_repeat": list(derived["no_update_repeat"]),
+        "task_cluster_bootstrap": [derived["task_cluster_bootstrap"]],
     }
 
 
