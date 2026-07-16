@@ -799,6 +799,23 @@ def _validate_training_state(training_state: Path) -> None:
             )
 
 
+_TERMINAL_STATES: set[str] = {"succeeded", "failed", "cancelled"}
+
+
+def _raise_if_jobs_not_terminal(training_state: Path, exit_code: int) -> None:
+    """Re-raise only when jobs are still running; let validation handle terminal failures."""
+    sched_state = _read_json(training_state)
+    jobs = sched_state.get("jobs", {})
+    running = [
+        name for name, j in jobs.items()
+        if j.get("state") not in _TERMINAL_STATES
+    ]
+    if running:
+        raise OrchestratorError(
+            f"training scheduler exited with code {exit_code}; "
+            f"{len(running)} job(s) still not terminal: {running}"
+        )
+
 # ---------------------------------------------------------------------------
 # Meta-test guard and runtime-equality check
 # ---------------------------------------------------------------------------
@@ -962,21 +979,18 @@ def run_orchestrator(
         if _run_scheduler is not None:
             result = _run_scheduler(scheduler_argv, training_state)
             exit_code = result.get("exit_code", 0)
-            if exit_code != 0:
-                raise OrchestratorError(
-                    f"training scheduler exited with code {exit_code}"
-                )
         else:
             script_dir = str(Path(__file__).resolve().parent)
             if script_dir not in sys.path:
                 sys.path.insert(0, script_dir)
             from parallel_scheduler import main as scheduler_main  # type: ignore[import-not-found]
             exit_code = scheduler_main(scheduler_argv)
-            if exit_code != 0:
-                raise OrchestratorError(
-                    f"training scheduler exited with code {exit_code}"
-                )
             result = {"exit_code": exit_code}
+
+        if exit_code != 0:
+            # Don't crash-loop when all jobs are terminal.  Let
+            # _validate_training_state produce a single clear error.
+            _raise_if_jobs_not_terminal(training_state, exit_code)
 
         # Validate state: all 5 succeeded + runtime_manifest_verified
         _validate_training_state(training_state)
@@ -1121,14 +1135,14 @@ def run_orchestrator(
 
         if _run_scheduler is not None:
             result = _run_scheduler(cal_scheduler_argv, cal_state_path)
+            exit_code = result.get("exit_code", 0)
         else:
             from parallel_scheduler import main as scheduler_main  # type: ignore[import-not-found]
             exit_code = scheduler_main(cal_scheduler_argv)
-            if exit_code != 0:
-                raise OrchestratorError(
-                    f"calibration scheduler exited with code {exit_code}"
-                )
             result = {"exit_code": exit_code}
+
+        if exit_code != 0:
+            _raise_if_jobs_not_terminal(cal_state_path, exit_code)
 
         # Verify all calibration jobs succeeded
         cal_sched_state = _read_json(cal_state_path)
