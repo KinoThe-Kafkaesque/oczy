@@ -1,8 +1,8 @@
 """Focused contract tests for r20_int8_dev_orchestrator.
 
 Uses fake subprocess/provider hooks and defends:
-- Exact five training jobs required
-- Training state requires runtime_manifest_verified
+- Retry-aware training batches require canonical job-spec seeds
+- Training state requires a verified success for every canonical seed
 - Checkpoint identity/hash/seed rejection
 - Deterministic archive bytes (gzip mtime=0)
 - Restart after each stage resumes without duplication
@@ -74,6 +74,8 @@ _sha256_bytes = _mod["_sha256_bytes"]
 _sha256_file = _mod["_sha256_file"]
 _CAL_MODULE = _mod["_CAL_MODULE"]
 _CAL_SUBCOMMAND = _mod["_CAL_SUBCOMMAND"]
+
+EXPECTED_SEEDS = [100, 200, 300, 400, 500]
 
 
 # ---------------------------------------------------------------------------
@@ -193,29 +195,59 @@ def _make_calibration_view(root: Path, task_count: int = 90) -> Path:
     return cal_view_dir
 
 
-def _make_training_batch(path: Path, job_count: int = 5) -> None:
+def _make_training_batch(
+    path: Path,
+    job_count: int = 5,
+    *,
+    seeds: list[int] | None = None,
+    names: list[str] | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    selected_seeds = seeds or EXPECTED_SEEDS[:job_count]
+    selected_names = names or [f"job{i}" for i in range(len(selected_seeds))]
+    assert len(selected_names) == len(selected_seeds)
+    jobs = []
+    for i, (name, seed) in enumerate(zip(selected_names, selected_seeds)):
+        kernel_dir = path.parent / f"kernel_{i}"
+        kernel_dir.mkdir(parents=True, exist_ok=True)
+        (kernel_dir / "job_spec.json").write_text(
+            json.dumps({"arguments": ["train-dev", "--seed", str(seed)]}),
+            encoding="utf-8",
+        )
+        jobs.append({
+            "name": name,
+            "provider": "kaggle",
+            "kernel_dir": kernel_dir.name,
+            "output_dir": f"output_{i}",
+            "runtime_manifest": _fake_runtime_manifest(),
+        })
     path.write_text(json.dumps({
         "schema_version": "oczy/remote-parallel-batch/v3",
-        "jobs": [{"name": f"job{i}", "provider": "kaggle",
-                  "kernel_dir": f"kernel_{i}", "output_dir": f"output_{i}",
-                  "runtime_manifest": _fake_runtime_manifest()}
-                 for i in range(job_count)],
+        "jobs": jobs,
     }), encoding="utf-8")
 
 
-def _make_training_state(path: Path, job_state: str = "succeeded", verified: bool = True) -> None:
+def _make_training_state(
+    path: Path,
+    job_state: str = "succeeded",
+    verified: bool = True,
+    *,
+    attempts: dict[str, tuple[str, bool]] | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    selected_attempts = attempts or {
+        f"job{i}": (job_state, verified) for i in range(5)
+    }
     path.write_text(json.dumps({
         "schema_version": "oczy/remote-parallel-state/v4",
         "jobs": {
-            f"job{i}": {
-                "state": job_state,
+            name: {
+                "state": state,
                 "expected_runtime_manifest_sha256": "a" * 64,
                 "observed_runtime_manifest_sha256": "a" * 64,
-                "runtime_manifest_verified": verified,
+                "runtime_manifest_verified": manifest_verified,
             }
-            for i in range(5)
+            for name, (state, manifest_verified) in selected_attempts.items()
         },
     }), encoding="utf-8")
 
@@ -355,35 +387,117 @@ def test_config_accepts_timeouts(tmp_path: Path) -> None:
 # Training batch validation
 # ---------------------------------------------------------------------------
 
-def test_training_batch_requires_exactly_5_jobs(tmp_path: Path) -> None:
+def test_training_batch_requires_at_least_5_jobs(tmp_path: Path) -> None:
     bp = tmp_path / "batch.json"
     _make_training_batch(bp, 3)
-    with pytest.raises(OrchestratorError, match="exactly 5 jobs"):
-        _validate_training_batch(bp)
+    with pytest.raises(OrchestratorError, match="at least 5 jobs"):
+        _validate_training_batch(bp, EXPECTED_SEEDS)
 
 
 def test_training_batch_requires_all_kaggle(tmp_path: Path) -> None:
     bp = tmp_path / "batch.json"
-    bp.parent.mkdir(parents=True, exist_ok=True)
-    jobs = [{"name": f"job{i}", "provider": "kaggle" if i < 4 else "colab"}
-            for i in range(5)]
-    bp.write_text(json.dumps({"schema_version": "oczy/remote-parallel-batch/v3", "jobs": jobs}))
+    _make_training_batch(bp)
+    batch = json.loads(bp.read_text(encoding="utf-8"))
+    batch["jobs"][-1]["provider"] = "colab"
+    bp.write_text(json.dumps(batch), encoding="utf-8")
     with pytest.raises(OrchestratorError, match="must be kaggle"):
-        _validate_training_batch(bp)
+        _validate_training_batch(bp, EXPECTED_SEEDS)
 
 
-def test_training_state_requires_runtime_manifest_verified(tmp_path: Path) -> None:
+def test_training_batch_accepts_existing_five_job_case(tmp_path: Path) -> None:
+    bp = tmp_path / "batch.json"
+    _make_training_batch(bp)
+    assert _validate_training_batch(bp, EXPECTED_SEEDS) == {
+        f"job{i}": seed for i, seed in enumerate(EXPECTED_SEEDS)
+    }
+
+
+def test_training_batch_rejects_duplicate_names(tmp_path: Path) -> None:
+    bp = tmp_path / "batch.json"
+    _make_training_batch(
+        bp,
+        names=["job0", "job1", "job2", "job3", "job3"],
+    )
+    with pytest.raises(OrchestratorError, match="duplicate training job name"):
+        _validate_training_batch(bp, EXPECTED_SEEDS)
+
+
+def test_training_batch_rejects_retry_with_unparseable_seed(
+    tmp_path: Path,
+) -> None:
+    bp = tmp_path / "batch.json"
+    _make_training_batch(
+        bp,
+        seeds=EXPECTED_SEEDS + [100],
+        names=[f"job{i}" for i in range(5)] + ["job0-retry"],
+    )
+    retry_spec = tmp_path / "kernel_5" / "job_spec.json"
+    retry_spec.write_text(
+        json.dumps({"arguments": ["train-dev", "--seed", "not-an-int"]}),
+        encoding="utf-8",
+    )
+    with pytest.raises(OrchestratorError, match="no parseable job_spec seed"):
+        _validate_training_batch(bp, EXPECTED_SEEDS)
+
+
+def test_training_batch_rejects_missing_canonical_seed(tmp_path: Path) -> None:
+    bp = tmp_path / "batch.json"
+    _make_training_batch(bp, seeds=[100, 200, 300, 400, 400])
+    with pytest.raises(OrchestratorError, match="missing canonical seeds.*500"):
+        _validate_training_batch(bp, EXPECTED_SEEDS)
+
+
+def test_training_batch_rejects_unexpected_seed(tmp_path: Path) -> None:
+    bp = tmp_path / "batch.json"
+    _make_training_batch(bp, seeds=[100, 200, 300, 400, 999])
+    with pytest.raises(OrchestratorError, match="unexpected seeds.*999"):
+        _validate_training_batch(bp, EXPECTED_SEEDS)
+
+
+def test_training_state_accepts_failed_attempt_and_succeeded_retry(
+    tmp_path: Path,
+) -> None:
+    bp = tmp_path / "batch.json"
     sp = tmp_path / "state.json"
-    _make_training_state(sp, verified=False)
+    names = [f"job{i}" for i in range(5)] + ["job0-retry"]
+    _make_training_batch(
+        bp,
+        seeds=EXPECTED_SEEDS + [100],
+        names=names,
+    )
+    _make_training_state(
+        sp,
+        attempts={
+            **{f"job{i}": ("succeeded", True) for i in range(1, 5)},
+            "job0": ("failed", False),
+            "job0-retry": ("succeeded", True),
+        },
+    )
+    _validate_training_state(sp, bp, EXPECTED_SEEDS)
+
+
+def test_training_state_rejects_unverified_sole_success(tmp_path: Path) -> None:
+    bp = tmp_path / "batch.json"
+    sp = tmp_path / "state.json"
+    _make_training_batch(bp)
+    _make_training_state(
+        sp,
+        attempts={
+            **{f"job{i}": ("succeeded", True) for i in range(1, 5)},
+            "job0": ("succeeded", False),
+        },
+    )
     with pytest.raises(OrchestratorError, match="not runtime_manifest_verified"):
-        _validate_training_state(sp)
+        _validate_training_state(sp, bp, EXPECTED_SEEDS)
 
 
-def test_training_state_requires_all_succeeded(tmp_path: Path) -> None:
+def test_training_state_requires_a_success_for_every_seed(tmp_path: Path) -> None:
+    bp = tmp_path / "batch.json"
     sp = tmp_path / "state.json"
+    _make_training_batch(bp)
     _make_training_state(sp, job_state="failed")
-    with pytest.raises(OrchestratorError, match="not succeeded"):
-        _validate_training_state(sp)
+    with pytest.raises(OrchestratorError, match="no succeeded.*100"):
+        _validate_training_state(sp, bp, EXPECTED_SEEDS)
 
 
 # ---------------------------------------------------------------------------
@@ -933,7 +1047,7 @@ def test_provider_failure_remains_failed(tmp_path: Path) -> None:
         _make_training_state(Path(sf), job_state="failed")
         return {"exit_code": 0}
 
-    with pytest.raises(OrchestratorError, match="not succeeded"):
+    with pytest.raises(OrchestratorError, match="no succeeded"):
         run_orchestrator(config_path, tmp_path / "ostate.json", _run_scheduler=fake_scheduler)
 
 

@@ -3,12 +3,12 @@
 Strict CLI ``run --config <json> --state <json>`` for an
 ``oczy/r20-int8-dev-orchestrator/v1`` config.
 
-Stage 1 runs the already-prepared five-job training scheduler, requires
-all five succeeded with runtime_manifest_verified, then recursively
-discovers checkpoint outputs, binds each to the expected seed index,
-verifies identity/hash/provenance, packages as ``d0/checkpoint.json`` +
-``d0/theta.npz`` etc. in a deterministic gzip (mtime=0), publishes the
-private Kaggle dataset once, and verifies it is ready.
+Stage 1 runs the already-prepared training scheduler, requires at least one
+verified success for every canonical checkpoint seed while retaining failed
+attempts, then recursively discovers checkpoint outputs, binds each to the
+expected seed index, verifies identity/hash/provenance, and packages them as
+``d0/checkpoint.json`` + ``d0/theta.npz`` etc. in a deterministic gzip
+(mtime=0), publishes the private Kaggle dataset once, and verifies it is ready.
 
 Stage 2 loads CALIBRATION_VIEW, builds 5 * ceil(N/5) calibration jobs
 with real ``collect-calibration-shard`` args, generates owner-qualified
@@ -767,36 +767,142 @@ def _generate_calibration_batch(
 # ---------------------------------------------------------------------------
 
 
-def _validate_training_batch(batch_path: Path) -> None:
-    """Validate the training batch has exactly 5 Kaggle jobs."""
+def _validate_training_batch(
+    batch_path: Path,
+    expected_seeds: list[int],
+) -> dict[str, int]:
+    """Validate unique Kaggle jobs and return each job name's canonical seed."""
     batch = _read_json(batch_path)
     if batch.get("schema_version") != _BATCH_V3:
         raise OrchestratorError(f"training batch must be {_BATCH_V3!r}")
     jobs = batch.get("jobs", [])
-    if not isinstance(jobs, list) or len(jobs) != 5:
-        raise OrchestratorError(f"training batch must have exactly 5 jobs, got {len(jobs)}")
+    if not isinstance(jobs, list) or len(jobs) < 5:
+        count = len(jobs) if isinstance(jobs, list) else 0
+        raise OrchestratorError(
+            f"training batch must have at least 5 jobs, got {count}"
+        )
+
+    seen_names: set[str] = set()
     for i, job in enumerate(jobs):
+        if not isinstance(job, dict):
+            raise OrchestratorError(f"training job #{i} must be an object")
+        name = job.get("name")
+        if not isinstance(name, str) or not name:
+            raise OrchestratorError(f"training job #{i} must have a non-empty name")
+        if name in seen_names:
+            raise OrchestratorError(f"duplicate training job name {name!r}")
+        seen_names.add(name)
         if job.get("provider") != "kaggle":
             raise OrchestratorError(f"training job #{i} must be kaggle")
 
+    expected_seed_set = set(expected_seeds)
+    job_seeds: dict[str, int] = {}
+    batch_dir = batch_path.resolve().parent
+    for job in jobs:
+        name = job["name"]
+        kernel_dir_value = job.get("kernel_dir")
+        if not isinstance(kernel_dir_value, str) or not kernel_dir_value:
+            raise OrchestratorError(
+                f"training job {name!r} has no parseable job_spec seed: "
+                "kernel_dir is missing"
+            )
+        kernel_dir = Path(kernel_dir_value)
+        if not kernel_dir.is_absolute():
+            kernel_dir = batch_dir / kernel_dir
+        spec_path = kernel_dir / "job_spec.json"
+        try:
+            spec = _read_json(spec_path)
+        except (OSError, UnicodeError, json.JSONDecodeError, OrchestratorError) as exc:
+            raise OrchestratorError(
+                f"training job {name!r} has no parseable job_spec seed: {exc}"
+            ) from exc
 
-def _validate_training_state(training_state: Path) -> None:
-    """Verify all 5 training jobs succeeded with runtime_manifest_verified."""
+        arguments = spec.get("arguments")
+        seed_positions = (
+            [i for i, argument in enumerate(arguments) if argument == "--seed"]
+            if isinstance(arguments, list)
+            else []
+        )
+        if len(seed_positions) != 1 or seed_positions[0] + 1 >= len(arguments):
+            raise OrchestratorError(
+                f"training job {name!r} has no parseable job_spec seed"
+            )
+        raw_seed = arguments[seed_positions[0] + 1]
+        if not isinstance(raw_seed, str):
+            raise OrchestratorError(
+                f"training job {name!r} has no parseable job_spec seed"
+            )
+        try:
+            seed = int(raw_seed, 10)
+        except ValueError as exc:
+            raise OrchestratorError(
+                f"training job {name!r} has no parseable job_spec seed: {raw_seed!r}"
+            ) from exc
+        job_seeds[name] = seed
+
+    batch_seed_set = set(job_seeds.values())
+    unexpected = batch_seed_set - expected_seed_set
+    if unexpected:
+        raise OrchestratorError(
+            f"unexpected seeds in training batch: {sorted(unexpected)}"
+        )
+    missing = expected_seed_set - batch_seed_set
+    if missing:
+        raise OrchestratorError(
+            f"missing canonical seeds in training batch: {sorted(missing)}"
+        )
+    return job_seeds
+
+
+def _validate_training_state(
+    training_state: Path,
+    training_batch: Path,
+    expected_seeds: list[int],
+) -> None:
+    """Require a verified success for every seed while permitting failed attempts."""
+    job_seeds = _validate_training_batch(training_batch, expected_seeds)
     sched_state = _read_json(training_state)
     if sched_state.get("schema_version") != _STATE_V4:
         raise OrchestratorError(f"training state must be {_STATE_V4!r}")
     jobs = sched_state.get("jobs", {})
-    if len(jobs) != 5:
-        raise OrchestratorError(f"training state must have exactly 5 jobs, found {len(jobs)}")
+    if not isinstance(jobs, dict):
+        raise OrchestratorError("training state jobs must be an object")
+
+    batch_names = set(job_seeds)
+    state_names = set(jobs)
+    missing_names = batch_names - state_names
+    if missing_names:
+        raise OrchestratorError(
+            f"training state missing batch jobs: {sorted(missing_names)}"
+        )
+    unexpected_names = state_names - batch_names
+    if unexpected_names:
+        raise OrchestratorError(
+            f"training state has unexpected jobs: {sorted(unexpected_names)}"
+        )
+
+    succeeded_seeds: set[int] = set()
     for name, job_data in jobs.items():
-        if job_data.get("state") != "succeeded":
+        if not isinstance(job_data, dict):
+            raise OrchestratorError(f"training job {name!r} state must be an object")
+        job_state = job_data.get("state")
+        if job_state not in _TERMINAL_STATES:
             raise OrchestratorError(
-                f"training job {name!r} not succeeded (state={job_data.get('state')})"
+                f"training job {name!r} is not terminal (state={job_state})"
             )
-        if not job_data.get("runtime_manifest_verified"):
-            raise OrchestratorError(
-                f"training job {name!r} not runtime_manifest_verified"
-            )
+        if job_state == "succeeded":
+            if not job_data.get("runtime_manifest_verified"):
+                raise OrchestratorError(
+                    f"successful training job {name!r} not runtime_manifest_verified"
+                )
+            succeeded_seeds.add(job_seeds[name])
+
+    missing_successes = set(expected_seeds) - succeeded_seeds
+    if missing_successes:
+        raise OrchestratorError(
+            "no succeeded runtime_manifest_verified training attempt for seeds: "
+            f"{sorted(missing_successes)}"
+        )
 
 
 
@@ -974,9 +1080,9 @@ def run_orchestrator(
         pool_cfg = resolved.get("pool_config_path")
         dispatch_plan = resolved.get("dispatch_plan_path")
 
-        # Validate batch has exactly 5 Kaggle jobs
-        _validate_training_batch(training_batch)
-        _clean_stale_lock(training_state)
+        # Validate unique Kaggle jobs cover every canonical checkpoint seed.
+        expected_training_seeds = config["checkpoint_contract"]["seeds"]
+        _validate_training_batch(training_batch, expected_training_seeds)
 
         scheduler_argv = [
             "run",
@@ -1012,8 +1118,10 @@ def run_orchestrator(
             # _validate_training_state produce a single clear error.
             _raise_if_jobs_not_terminal(training_state, exit_code)
 
-        # Validate state: all 5 succeeded + runtime_manifest_verified
-        _validate_training_state(training_state)
+        # Failed historical attempts are valid when every seed has a verified retry.
+        _validate_training_state(
+            training_state, training_batch, expected_training_seeds
+        )
 
         state["stages"][STAGE_TRAINING] = {
             "status": "complete",
