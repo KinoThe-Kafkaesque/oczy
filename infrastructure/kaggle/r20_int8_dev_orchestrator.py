@@ -799,7 +799,27 @@ def _validate_training_state(training_state: Path) -> None:
             )
 
 
+
 _TERMINAL_STATES: set[str] = {"succeeded", "failed", "cancelled"}
+
+def _clean_stale_lock(state_path: Path) -> None:
+    """Remove a lock file whose owner PID is no longer alive."""
+    lock_path = Path(str(state_path) + ".owner.lock")
+    if not lock_path.is_file():
+        return
+    raw = lock_path.read_text(encoding="utf-8").strip()
+    if not raw.startswith("pid="):
+        lock_path.unlink(missing_ok=True)
+        return
+    try:
+        pid = int(raw.split("=", 1)[1])
+    except ValueError:
+        lock_path.unlink(missing_ok=True)
+        return
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        lock_path.unlink(missing_ok=True)
 
 
 def _raise_if_jobs_not_terminal(training_state: Path, exit_code: int) -> None:
@@ -815,7 +835,6 @@ def _raise_if_jobs_not_terminal(training_state: Path, exit_code: int) -> None:
             f"training scheduler exited with code {exit_code}; "
             f"{len(running)} job(s) still not terminal: {running}"
         )
-
 # ---------------------------------------------------------------------------
 # Meta-test guard and runtime-equality check
 # ---------------------------------------------------------------------------
@@ -957,6 +976,7 @@ def run_orchestrator(
 
         # Validate batch has exactly 5 Kaggle jobs
         _validate_training_batch(training_batch)
+        _clean_stale_lock(training_state)
 
         scheduler_argv = [
             "run",
@@ -1114,6 +1134,7 @@ def run_orchestrator(
             plan = create_dispatch_plan(pool_config_obj, snapshot, cal_batch_path)
             write_dispatch_plan(cal_dispatch_plan_path, plan)
 
+        _clean_stale_lock(cal_state_path)
         # Run scheduler
         cal_scheduler_argv = [
             "run",
