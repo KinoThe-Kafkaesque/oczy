@@ -1320,14 +1320,18 @@ Remaining blocks:
 
 - **Durable scheduling**: systemd user service `oczy-r20-training.service`
   polls every 30s with a 46,800s local timeout and shared runner-pool lease.
-  Terminal exit 1 no longer restarts indefinitely.
+  Terminal exit 1 no longer restarts indefinitely. Its `OnSuccess` trigger
+  starts `oczy-r20-dev-orchestrator.service`, which validates checkpoints,
+  publishes the archive, and generates the calibration queue.
 
 ### Next steps (blocked on training completion)
 
-- Validate all five checkpoints (identity, hash, seed, source, runtime)
-- Publish checkpoint archive dataset
-- Generate and dispatch 90 DEV calibration shard jobs (task ranges of 5)
-- Local merge, `calibrate-dev`, power analysis, candidate finalization
+- Automatic continuation validates all five checkpoints and publishes the
+  checkpoint archive dataset.
+- Calibration fan-out is fixed at **90 jobs**: 90 DEV tasks / 5-task ranges
+  × 5 checkpoint seeds = 90.
+- After collection: local merge, `calibrate-dev`, power analysis, candidate
+  finalization.
 - Meta-test remains blocked pending human signoff
 
 ### Remaining issues
