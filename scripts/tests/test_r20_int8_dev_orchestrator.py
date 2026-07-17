@@ -23,7 +23,6 @@ import gzip
 import hashlib
 import io
 import json
-import os
 import subprocess
 import tarfile
 from pathlib import Path
@@ -76,14 +75,29 @@ _CAL_MODULE = _mod["_CAL_MODULE"]
 _CAL_SUBCOMMAND = _mod["_CAL_SUBCOMMAND"]
 
 EXPECTED_SEEDS = [100, 200, 300, 400, 500]
+TRAINING_SOURCE_COMMIT = "1" * 40
+TRAINING_MODULE = "oczy.experiments.meta_cortex"
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+def _seal_runtime_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    sealed = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+    canonical = json.dumps(
+        sealed,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    sealed["manifest_sha256"] = hashlib.sha256(canonical).hexdigest()
+    return sealed
+
+
 def _fake_runtime_manifest() -> dict[str, Any]:
-    return {
+    return _seal_runtime_manifest({
         "schema_version": "oczy/runtime-manifest/v2",
         "model": {
             "convention": "transformers-pretrained-directory",
@@ -95,9 +109,12 @@ def _fake_runtime_manifest() -> dict[str, Any]:
         },
         "packages": {"python": "3.10.0", "torch": "2.5.0"},
         "greedy_generation": {"max_tokens": 128},
-        "quantization": {"recipe": "torchao_w8a32", "torchao_version": "0.17.0",
-                         "config_dict": {"version": 2, "granularity": "per_row"}},
-    }
+        "quantization": {
+            "recipe": "torchao_w8a32",
+            "torchao_version": "0.17.0",
+            "config_dict": {"version": 2, "granularity": "per_row"},
+        },
+    })
 
 
 def _fake_cal_source() -> dict[str, Any]:
@@ -122,6 +139,27 @@ def _fake_cal_config() -> dict[str, Any]:
     }
 
 
+def _fake_training_contract() -> dict[str, Any]:
+    return {
+        "source_commit": TRAINING_SOURCE_COMMIT,
+        "module": TRAINING_MODULE,
+        "runtime_manifest_sha256": _fake_runtime_manifest()["manifest_sha256"],
+        "argument_template": [
+            "train-dev",
+            "--train-tasks-per-family",
+            "30",
+            "--outer-steps",
+            "100",
+            "--seed",
+            "{seed}",
+            "--checkpoint-out",
+            "{checkpoint_out}",
+            "--result-out",
+            "{result_out}",
+        ],
+    }
+
+
 def _minimal_config(**overrides: Any) -> dict[str, Any]:
     cfg: dict[str, Any] = {
         "schema": CONFIG_SCHEMA,
@@ -132,6 +170,7 @@ def _minimal_config(**overrides: Any) -> dict[str, Any]:
         "jobs_dir": "jobs",
         "results_dir": "results",
         "archive_dir": "archive",
+        "training_contract": _fake_training_contract(),
         "checkpoint_contract": {
             "organ_identity": "Qwen2.5-0.5B-Instruct-meta-cortex-v2",
             "organ_hash": "e" * 64,
@@ -154,6 +193,7 @@ def _minimal_config(**overrides: Any) -> dict[str, Any]:
 def _make_checkpoint_dir(
     root: Path, name: str, *, identity: str = "Qwen2.5-0.5B-Instruct-meta-cortex-v2",
     organ_hash: str = "e" * 64, seed: int = 100, theta_content: bytes = b"",
+    source_provenance: str = TRAINING_SOURCE_COMMIT,
 ) -> Path:
     cdir = root / name
     cdir.mkdir(parents=True, exist_ok=True)
@@ -173,7 +213,7 @@ def _make_checkpoint_dir(
         "completed_step": 100, "best_step": 95, "validation_score": 0.85,
         "parameter_count": 100000, "parameter_bytes": 400000,
         "theta_hash": "f" * 64, "organ_identity": identity,
-        "organ_hash": organ_hash, "source_provenance": "test-provenance",
+        "organ_hash": organ_hash, "source_provenance": source_provenance,
         "expected_param_shapes": {}, "theta_file": "theta.npz",
     }
     (cdir / "checkpoint.json").write_text(json.dumps(ckpt, sort_keys=True))
@@ -201,17 +241,32 @@ def _make_training_batch(
     *,
     seeds: list[int] | None = None,
     names: list[str] | None = None,
+    training_contract: dict[str, Any] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     selected_seeds = seeds or EXPECTED_SEEDS[:job_count]
     selected_names = names or [f"job{i}" for i in range(len(selected_seeds))]
+    contract = training_contract or _fake_training_contract()
     assert len(selected_names) == len(selected_seeds)
     jobs = []
-    for i, (name, seed) in enumerate(zip(selected_names, selected_seeds)):
+    for i, (name, seed) in enumerate(zip(selected_names, selected_seeds, strict=True)):
         kernel_dir = path.parent / f"kernel_{i}"
         kernel_dir.mkdir(parents=True, exist_ok=True)
+        arguments = [
+            {
+                "{seed}": str(seed),
+                "{checkpoint_out}": f"/kaggle/working/checkpoint-{i}",
+                "{result_out}": f"/kaggle/working/result-{i}.json",
+            }.get(token, token)
+            for token in contract["argument_template"]
+        ]
         (kernel_dir / "job_spec.json").write_text(
-            json.dumps({"arguments": ["train-dev", "--seed", str(seed)]}),
+            json.dumps({
+                "source_commit": contract["source_commit"],
+                "module": contract["module"],
+                "runtime_manifest": _fake_runtime_manifest(),
+                "arguments": arguments,
+            }),
             encoding="utf-8",
         )
         jobs.append({
@@ -227,6 +282,17 @@ def _make_training_batch(
     }), encoding="utf-8")
 
 
+def _read_training_job_spec(
+    batch_path: Path, index: int = 0
+) -> tuple[Path, dict[str, Any]]:
+    spec_path = batch_path.parent / f"kernel_{index}" / "job_spec.json"
+    return spec_path, json.loads(spec_path.read_text(encoding="utf-8"))
+
+
+def _write_training_job_spec(path: Path, spec: dict[str, Any]) -> None:
+    path.write_text(json.dumps(spec), encoding="utf-8")
+
+
 def _make_training_state(
     path: Path,
     job_state: str = "succeeded",
@@ -238,13 +304,14 @@ def _make_training_state(
     selected_attempts = attempts or {
         f"job{i}": (job_state, verified) for i in range(5)
     }
+    runtime_hash = _fake_training_contract()["runtime_manifest_sha256"]
     path.write_text(json.dumps({
         "schema_version": "oczy/remote-parallel-state/v4",
         "jobs": {
             name: {
                 "state": state,
-                "expected_runtime_manifest_sha256": "a" * 64,
-                "observed_runtime_manifest_sha256": "a" * 64,
+                "expected_runtime_manifest_sha256": runtime_hash,
+                "observed_runtime_manifest_sha256": runtime_hash,
                 "runtime_manifest_verified": manifest_verified,
             }
             for name, (state, manifest_verified) in selected_attempts.items()
@@ -259,6 +326,14 @@ def _make_training_state(
 def test_config_rejects_wrong_schema(tmp_path: Path) -> None:
     with pytest.raises(OrchestratorError, match="expected config schema"):
         validate_config({"schema": "wrong/v1"}, tmp_path)
+
+
+def test_config_schema_is_v2_and_rejects_v1(tmp_path: Path) -> None:
+    assert CONFIG_SCHEMA == "oczy/r20-int8-dev-orchestrator/v2"
+    cfg = _minimal_config()
+    cfg["schema"] = "oczy/r20-int8-dev-orchestrator/v1"
+    with pytest.raises(OrchestratorError, match="expected config schema"):
+        validate_config(cfg, tmp_path)
 
 
 def test_config_rejects_missing_owner(tmp_path: Path) -> None:
@@ -335,11 +410,71 @@ def test_config_rejects_wrong_seed_count(tmp_path: Path) -> None:
         validate_config(cfg, tmp_path)
 
 
+def test_config_rejects_duplicate_checkpoint_seeds(tmp_path: Path) -> None:
+    cfg = _minimal_config()
+    cfg["checkpoint_contract"]["seeds"] = [500, 100, 400, 200, 500]
+    with pytest.raises(OrchestratorError, match="exactly 5 unique ints"):
+        validate_config(cfg, tmp_path)
+
+
 def test_config_rejects_bad_source_commit(tmp_path: Path) -> None:
     cfg = _minimal_config()
     cfg["calibration"]["source"]["commit"] = "bad"
     with pytest.raises(OrchestratorError, match="40-char hex"):
         validate_config(cfg, tmp_path)
+
+
+def test_config_requires_training_contract(tmp_path: Path) -> None:
+    cfg = _minimal_config()
+    del cfg["training_contract"]
+    with pytest.raises(OrchestratorError, match="training_contract"):
+        validate_config(cfg, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        [
+            "train-dev", "--seed", "{seed}", "--checkpoint-out",
+            "{checkpoint_out}", "--result-out",
+        ],
+        [
+            "train-dev", "--seed", "{seed}", "{seed}", "--checkpoint-out",
+            "{checkpoint_out}", "--result-out", "{result_out}",
+        ],
+        [
+            "train-dev", "--seed", "{seed}", "--checkpoint-out",
+            "{checkpoint_out}", "--result-out", "{result_out}", "{unknown}",
+        ],
+        [
+            "train-dev", "--seed", "{seed", "--checkpoint-out",
+            "{checkpoint_out}", "--result-out", "{result_out}",
+        ],
+        [
+            "other-command", "--seed", "{seed}", "--checkpoint-out",
+            "{checkpoint_out}", "--result-out", "{result_out}",
+        ],
+    ],
+)
+def test_config_rejects_missing_duplicate_or_malformed_placeholders(
+    tmp_path: Path, template: list[str]
+) -> None:
+    cfg = _minimal_config()
+    cfg["training_contract"]["argument_template"] = template
+    with pytest.raises(OrchestratorError, match="placeholder|exactly once"):
+        validate_config(cfg, tmp_path)
+
+
+def test_config_rejects_malformed_training_identity_fields(tmp_path: Path) -> None:
+    for field, value, match in (
+        ("source_commit", "abc", "source_commit"),
+        ("module", "", "module"),
+        ("runtime_manifest_sha256", "abc", "runtime_manifest_sha256"),
+    ):
+        cfg = _minimal_config()
+        cfg["training_contract"][field] = value
+        with pytest.raises(OrchestratorError, match=match):
+            validate_config(cfg, tmp_path)
 
 
 def test_valid_config_passes(tmp_path: Path) -> None:
@@ -391,7 +526,7 @@ def test_training_batch_requires_at_least_5_jobs(tmp_path: Path) -> None:
     bp = tmp_path / "batch.json"
     _make_training_batch(bp, 3)
     with pytest.raises(OrchestratorError, match="at least 5 jobs"):
-        _validate_training_batch(bp, EXPECTED_SEEDS)
+        _validate_training_batch(bp, EXPECTED_SEEDS, _fake_training_contract())
 
 
 def test_training_batch_requires_all_kaggle(tmp_path: Path) -> None:
@@ -401,13 +536,13 @@ def test_training_batch_requires_all_kaggle(tmp_path: Path) -> None:
     batch["jobs"][-1]["provider"] = "colab"
     bp.write_text(json.dumps(batch), encoding="utf-8")
     with pytest.raises(OrchestratorError, match="must be kaggle"):
-        _validate_training_batch(bp, EXPECTED_SEEDS)
+        _validate_training_batch(bp, EXPECTED_SEEDS, _fake_training_contract())
 
 
 def test_training_batch_accepts_existing_five_job_case(tmp_path: Path) -> None:
     bp = tmp_path / "batch.json"
     _make_training_batch(bp)
-    assert _validate_training_batch(bp, EXPECTED_SEEDS) == {
+    assert _validate_training_batch(bp, EXPECTED_SEEDS, _fake_training_contract()) == {
         f"job{i}": seed for i, seed in enumerate(EXPECTED_SEEDS)
     }
 
@@ -419,7 +554,7 @@ def test_training_batch_rejects_duplicate_names(tmp_path: Path) -> None:
         names=["job0", "job1", "job2", "job3", "job3"],
     )
     with pytest.raises(OrchestratorError, match="duplicate training job name"):
-        _validate_training_batch(bp, EXPECTED_SEEDS)
+        _validate_training_batch(bp, EXPECTED_SEEDS, _fake_training_contract())
 
 
 def test_training_batch_rejects_retry_with_unparseable_seed(
@@ -431,27 +566,144 @@ def test_training_batch_rejects_retry_with_unparseable_seed(
         seeds=EXPECTED_SEEDS + [100],
         names=[f"job{i}" for i in range(5)] + ["job0-retry"],
     )
-    retry_spec = tmp_path / "kernel_5" / "job_spec.json"
-    retry_spec.write_text(
-        json.dumps({"arguments": ["train-dev", "--seed", "not-an-int"]}),
-        encoding="utf-8",
-    )
+    retry_spec, spec = _read_training_job_spec(bp, 5)
+    seed_index = spec["arguments"].index("--seed") + 1
+    spec["arguments"][seed_index] = "not-an-int"
+    _write_training_job_spec(retry_spec, spec)
     with pytest.raises(OrchestratorError, match="no parseable job_spec seed"):
-        _validate_training_batch(bp, EXPECTED_SEEDS)
+        _validate_training_batch(bp, EXPECTED_SEEDS, _fake_training_contract())
 
 
 def test_training_batch_rejects_missing_canonical_seed(tmp_path: Path) -> None:
     bp = tmp_path / "batch.json"
     _make_training_batch(bp, seeds=[100, 200, 300, 400, 400])
     with pytest.raises(OrchestratorError, match="missing canonical seeds.*500"):
-        _validate_training_batch(bp, EXPECTED_SEEDS)
+        _validate_training_batch(bp, EXPECTED_SEEDS, _fake_training_contract())
 
 
 def test_training_batch_rejects_unexpected_seed(tmp_path: Path) -> None:
     bp = tmp_path / "batch.json"
     _make_training_batch(bp, seeds=[100, 200, 300, 400, 999])
     with pytest.raises(OrchestratorError, match="unexpected seeds.*999"):
-        _validate_training_batch(bp, EXPECTED_SEEDS)
+        _validate_training_batch(bp, EXPECTED_SEEDS, _fake_training_contract())
+
+
+@pytest.mark.parametrize("replacement", ["15", "8"])
+def test_training_batch_rejects_train_tasks_per_family_mismatch(
+    tmp_path: Path, replacement: str
+) -> None:
+    bp = tmp_path / "batch.json"
+    _make_training_batch(bp)
+    spec_path, spec = _read_training_job_spec(bp)
+    position = spec["arguments"].index("--train-tasks-per-family") + 1
+    spec["arguments"][position] = replacement
+    _write_training_job_spec(spec_path, spec)
+    with pytest.raises(OrchestratorError, match="argument_template exactly"):
+        _validate_training_batch(bp, EXPECTED_SEEDS, _fake_training_contract())
+
+
+def test_training_batch_rejects_any_other_fixed_argument_mismatch(
+    tmp_path: Path,
+) -> None:
+    bp = tmp_path / "batch.json"
+    _make_training_batch(bp)
+    spec_path, spec = _read_training_job_spec(bp)
+    position = spec["arguments"].index("--outer-steps") + 1
+    spec["arguments"][position] = "99"
+    _write_training_job_spec(spec_path, spec)
+    with pytest.raises(OrchestratorError, match="argument_template exactly"):
+        _validate_training_batch(bp, EXPECTED_SEEDS, _fake_training_contract())
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("source_commit", "2" * 40, "source_commit"),
+        ("module", "oczy.experiments.other", "module"),
+    ],
+)
+def test_training_batch_rejects_source_or_module_mismatch(
+    tmp_path: Path, field: str, value: str, match: str
+) -> None:
+    bp = tmp_path / "batch.json"
+    _make_training_batch(bp)
+    spec_path, spec = _read_training_job_spec(bp)
+    spec[field] = value
+    _write_training_job_spec(spec_path, spec)
+    with pytest.raises(OrchestratorError, match=match):
+        _validate_training_batch(bp, EXPECTED_SEEDS, _fake_training_contract())
+
+
+def test_training_batch_rejects_runtime_manifest_contract_mismatch(
+    tmp_path: Path,
+) -> None:
+    bp = tmp_path / "batch.json"
+    _make_training_batch(bp)
+    spec_path, spec = _read_training_job_spec(bp)
+    manifest = spec["runtime_manifest"]
+    manifest["packages"]["python"] = "3.11.0"
+    spec["runtime_manifest"] = _seal_runtime_manifest(manifest)
+    _write_training_job_spec(spec_path, spec)
+    with pytest.raises(OrchestratorError, match="runtime manifest does not match"):
+        _validate_training_batch(bp, EXPECTED_SEEDS, _fake_training_contract())
+
+
+def test_training_batch_rejects_runtime_manifest_bad_self_hash(
+    tmp_path: Path,
+) -> None:
+    bp = tmp_path / "batch.json"
+    _make_training_batch(bp)
+    spec_path, spec = _read_training_job_spec(bp)
+    spec["runtime_manifest"]["packages"]["python"] = "3.11.0"
+    _write_training_job_spec(spec_path, spec)
+    with pytest.raises(OrchestratorError, match="self-hash mismatch"):
+        _validate_training_batch(bp, EXPECTED_SEEDS, _fake_training_contract())
+
+
+@pytest.mark.parametrize(
+    "unsafe_path",
+    [
+        "checkpoint",
+        "/kaggle/input/checkpoint",
+        "/kaggle/working/",
+        "/kaggle/working/../input/checkpoint",
+        "/kaggle/working//checkpoint",
+    ],
+)
+def test_training_batch_rejects_unsafe_output_paths(
+    tmp_path: Path, unsafe_path: str
+) -> None:
+    bp = tmp_path / "batch.json"
+    _make_training_batch(bp)
+    spec_path, spec = _read_training_job_spec(bp)
+    checkpoint_index = spec["arguments"].index("--checkpoint-out") + 1
+    spec["arguments"][checkpoint_index] = unsafe_path
+    _write_training_job_spec(spec_path, spec)
+    with pytest.raises(OrchestratorError, match="safe non-empty absolute"):
+        _validate_training_batch(bp, EXPECTED_SEEDS, _fake_training_contract())
+
+
+def test_training_batch_rejects_identical_output_paths(tmp_path: Path) -> None:
+    bp = tmp_path / "batch.json"
+    _make_training_batch(bp)
+    spec_path, spec = _read_training_job_spec(bp)
+    checkpoint_index = spec["arguments"].index("--checkpoint-out") + 1
+    result_index = spec["arguments"].index("--result-out") + 1
+    spec["arguments"][result_index] = spec["arguments"][checkpoint_index]
+    _write_training_job_spec(spec_path, spec)
+    with pytest.raises(OrchestratorError, match="must be distinct"):
+        _validate_training_batch(bp, EXPECTED_SEEDS, _fake_training_contract())
+
+
+def test_training_batch_rejects_noncanonical_seed(tmp_path: Path) -> None:
+    bp = tmp_path / "batch.json"
+    _make_training_batch(bp)
+    spec_path, spec = _read_training_job_spec(bp)
+    seed_index = spec["arguments"].index("--seed") + 1
+    spec["arguments"][seed_index] = "0100"
+    _write_training_job_spec(spec_path, spec)
+    with pytest.raises(OrchestratorError, match="not a canonical int"):
+        _validate_training_batch(bp, EXPECTED_SEEDS, _fake_training_contract())
 
 
 def test_training_state_accepts_failed_attempt_and_succeeded_retry(
@@ -473,7 +725,7 @@ def test_training_state_accepts_failed_attempt_and_succeeded_retry(
             "job0-retry": ("succeeded", True),
         },
     )
-    _validate_training_state(sp, bp, EXPECTED_SEEDS)
+    _validate_training_state(sp, bp, EXPECTED_SEEDS, _fake_training_contract())
 
 
 def test_training_state_rejects_unverified_sole_success(tmp_path: Path) -> None:
@@ -488,7 +740,22 @@ def test_training_state_rejects_unverified_sole_success(tmp_path: Path) -> None:
         },
     )
     with pytest.raises(OrchestratorError, match="not runtime_manifest_verified"):
-        _validate_training_state(sp, bp, EXPECTED_SEEDS)
+        _validate_training_state(sp, bp, EXPECTED_SEEDS, _fake_training_contract())
+
+
+def test_training_state_rejects_verified_runtime_hash_outside_contract(
+    tmp_path: Path,
+) -> None:
+    bp = tmp_path / "batch.json"
+    sp = tmp_path / "state.json"
+    _make_training_batch(bp)
+    _make_training_state(sp)
+    state = json.loads(sp.read_text(encoding="utf-8"))
+    state["jobs"]["job0"]["expected_runtime_manifest_sha256"] = "f" * 64
+    state["jobs"]["job0"]["observed_runtime_manifest_sha256"] = "f" * 64
+    sp.write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(OrchestratorError, match="hashes do not match"):
+        _validate_training_state(sp, bp, EXPECTED_SEEDS, _fake_training_contract())
 
 
 def test_training_state_requires_a_success_for_every_seed(tmp_path: Path) -> None:
@@ -497,7 +764,7 @@ def test_training_state_requires_a_success_for_every_seed(tmp_path: Path) -> Non
     _make_training_batch(bp)
     _make_training_state(sp, job_state="failed")
     with pytest.raises(OrchestratorError, match="no succeeded.*100"):
-        _validate_training_state(sp, bp, EXPECTED_SEEDS)
+        _validate_training_state(sp, bp, EXPECTED_SEEDS, _fake_training_contract())
 
 
 # ---------------------------------------------------------------------------
@@ -540,7 +807,7 @@ def test_stage_complete_detection(tmp_path: Path) -> None:
 def test_discover_checkpoints_exactly_five(tmp_path: Path) -> None:
     rd = tmp_path / "results"
     for i in range(3):
-        _make_checkpoint_dir(rd / f"sub_{i}", f"ckpt", seed=100 + i * 100)
+        _make_checkpoint_dir(rd / f"sub_{i}", "ckpt", seed=100 + i * 100)
     with pytest.raises(OrchestratorError, match="expected exactly 5"):
         _discover_checkpoints(rd)
 
@@ -554,6 +821,37 @@ def test_discover_checkpoints_recursive(tmp_path: Path) -> None:
     assert len(found) == 5
 
 
+def test_discover_checkpoints_ignores_provisional_snapshots(
+    tmp_path: Path,
+) -> None:
+    rd = tmp_path / "results"
+    final_dirs = [
+        _make_checkpoint_dir(rd / f"run_{i}", "final", seed=100 + i * 100)
+        for i in range(5)
+    ]
+
+    marked = _make_checkpoint_dir(rd / "run_marked", "step_20", seed=100)
+    (marked / "provisional.json").write_text("{}", encoding="utf-8")
+    _make_checkpoint_dir(
+        rd / "run_ancestor" / "provisional" / "step_40",
+        "snapshot",
+        seed=200,
+    )
+
+    assert _discover_checkpoints(rd) == sorted(final_dirs)
+
+
+def test_discover_checkpoints_still_rejects_extra_non_provisional_checkpoint(
+    tmp_path: Path,
+) -> None:
+    rd = tmp_path / "results"
+    for i in range(6):
+        _make_checkpoint_dir(rd / f"run_{i}", "final", seed=100 + i * 100)
+
+    with pytest.raises(OrchestratorError, match="expected exactly 5.*found 6"):
+        _discover_checkpoints(rd)
+
+
 def test_validate_checkpoints_rejects_wrong_identity(tmp_path: Path) -> None:
     rd = tmp_path / "results"
     ckpt_dirs = []
@@ -561,16 +859,39 @@ def test_validate_checkpoints_rejects_wrong_identity(tmp_path: Path) -> None:
         ident = "Qwen2.5-0.5B-Instruct-meta-cortex-v2" if i != 2 else "wrong"
         ckpt_dirs.append(_make_checkpoint_dir(rd, f"ckpt_{i}", identity=ident, seed=100 + i * 100))
     with pytest.raises(OrchestratorError, match="organ_identity mismatch"):
-        _validate_checkpoints(ckpt_dirs, "Qwen2.5-0.5B-Instruct-meta-cortex-v2", "e" * 64, [100, 200, 300, 400, 500])
+        _validate_checkpoints(ckpt_dirs, "Qwen2.5-0.5B-Instruct-meta-cortex-v2", "e" * 64, [100, 200, 300, 400, 500], TRAINING_SOURCE_COMMIT)
 
 
 def test_validate_checkpoints_succeeds(tmp_path: Path) -> None:
     rd = tmp_path / "results"
     ckpt_dirs = [_make_checkpoint_dir(rd, f"ckpt_{i}", seed=100 + i * 100, theta_content=b"t" + bytes([i]))
                  for i in range(5)]
-    result = _validate_checkpoints(ckpt_dirs, "Qwen2.5-0.5B-Instruct-meta-cortex-v2", "e" * 64, [100, 200, 300, 400, 500])
+    result = _validate_checkpoints(ckpt_dirs, "Qwen2.5-0.5B-Instruct-meta-cortex-v2", "e" * 64, [100, 200, 300, 400, 500], TRAINING_SOURCE_COMMIT)
     assert result["checkpoint_count"] == 5
     assert len(result["verified_checkpoints"]) == 5
+
+
+def test_validate_checkpoints_rejects_source_provenance_mismatch(
+    tmp_path: Path,
+) -> None:
+    rd = tmp_path / "results"
+    ckpt_dirs = [
+        _make_checkpoint_dir(
+            rd,
+            f"ckpt_{i}",
+            seed=100 + i * 100,
+            source_provenance="2" * 40 if i == 2 else TRAINING_SOURCE_COMMIT,
+        )
+        for i in range(5)
+    ]
+    with pytest.raises(OrchestratorError, match="source_provenance mismatch"):
+        _validate_checkpoints(
+            ckpt_dirs,
+            "Qwen2.5-0.5B-Instruct-meta-cortex-v2",
+            "e" * 64,
+            EXPECTED_SEEDS,
+            TRAINING_SOURCE_COMMIT,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -581,7 +902,7 @@ def test_archive_is_deterministic(tmp_path: Path) -> None:
     rd = tmp_path / "results"
     ckpt_dirs = [_make_checkpoint_dir(rd, f"ckpt_{i}", seed=100 + i * 100, theta_content=b"t" + bytes([i]))
                  for i in range(5)]
-    v = _validate_checkpoints(ckpt_dirs, "Qwen2.5-0.5B-Instruct-meta-cortex-v2", "e" * 64, [100, 200, 300, 400, 500])["verified_checkpoints"]
+    v = _validate_checkpoints(ckpt_dirs, "Qwen2.5-0.5B-Instruct-meta-cortex-v2", "e" * 64, [100, 200, 300, 400, 500], TRAINING_SOURCE_COMMIT)["verified_checkpoints"]
 
     a1, h1, s1 = _build_checkpoint_archive(v, [100, 200, 300, 400, 500], tmp_path / "out1")
     a2, h2, s2 = _build_checkpoint_archive(v, [100, 200, 300, 400, 500], tmp_path / "out2")
@@ -594,7 +915,7 @@ def test_archive_entries_are_d0_format(tmp_path: Path) -> None:
     rd = tmp_path / "results"
     ckpt_dirs = [_make_checkpoint_dir(rd, f"ckpt_{i}", seed=100 + i * 100, theta_content=b"t" + bytes([i]))
                  for i in range(5)]
-    v = _validate_checkpoints(ckpt_dirs, "Qwen2.5-0.5B-Instruct-meta-cortex-v2", "e" * 64, [100, 200, 300, 400, 500])["verified_checkpoints"]
+    v = _validate_checkpoints(ckpt_dirs, "Qwen2.5-0.5B-Instruct-meta-cortex-v2", "e" * 64, [100, 200, 300, 400, 500], TRAINING_SOURCE_COMMIT)["verified_checkpoints"]
 
     a, _h, _s = _build_checkpoint_archive(v, [100, 200, 300, 400, 500], tmp_path / "out")
 
@@ -608,13 +929,65 @@ def test_archive_entries_are_d0_format(tmp_path: Path) -> None:
 def test_archive_manifest_structure(tmp_path: Path) -> None:
     rd = tmp_path / "results"
     ckpt_dirs = [_make_checkpoint_dir(rd, f"ckpt_{i}", seed=100 + i * 100) for i in range(5)]
-    v = _validate_checkpoints(ckpt_dirs, "Qwen2.5-0.5B-Instruct-meta-cortex-v2", "e" * 64, [100, 200, 300, 400, 500])["verified_checkpoints"]
+    v = _validate_checkpoints(ckpt_dirs, "Qwen2.5-0.5B-Instruct-meta-cortex-v2", "e" * 64, [100, 200, 300, 400, 500], TRAINING_SOURCE_COMMIT)["verified_checkpoints"]
     a, h, s = _build_checkpoint_archive(v, [100, 200, 300, 400, 500], tmp_path / "out")
     m = _build_archive_manifest(v, a, h, s)
     assert m["schema"] == "oczy/r20-int8-dev-checkpoint-archive/v1"
     assert m["checkpoint_count"] == 5
     assert m["archive_sha256"] == h
     assert m["archive_size_bytes"] == s
+
+
+def test_unsorted_registered_seed_order_matches_archive_and_calibration(
+    tmp_path: Path,
+) -> None:
+    registered_seeds = [500, 100, 400, 200, 300]
+    rd = tmp_path / "results"
+    checkpoint_dirs = [
+        _make_checkpoint_dir(rd, f"ckpt_{seed}", seed=seed)
+        for seed in registered_seeds
+    ]
+    verified = _validate_checkpoints(
+        checkpoint_dirs,
+        "Qwen2.5-0.5B-Instruct-meta-cortex-v2",
+        "e" * 64,
+        registered_seeds,
+        TRAINING_SOURCE_COMMIT,
+    )["verified_checkpoints"]
+    archive, _archive_hash, _archive_size = _build_checkpoint_archive(
+        verified, registered_seeds, tmp_path / "out"
+    )
+
+    archived_seeds = []
+    with gzip.GzipFile(fileobj=io.BytesIO(archive.read_bytes()), mode="rb") as gz:
+        with tarfile.open(fileobj=gz, mode="r") as tf:
+            for index in range(5):
+                checkpoint_file = tf.extractfile(f"d{index}/checkpoint.json")
+                assert checkpoint_file is not None
+                checkpoint = json.loads(checkpoint_file.read().decode("utf-8"))
+                archived_seeds.append(checkpoint["outer_config"]["seed"])
+
+    cal_config = _fake_cal_config()
+    jobs = _build_calibration_jobs(
+        task_count=1,
+        owner="kino",
+        kernel_slug_prefix=cal_config["kernel_slug_prefix"],
+        cal_config=cal_config,
+        checkpoint_archive_dataset="kino/ckpts",
+        checkpoint_archive_filename="checkpoints.tar.gz",
+        checkpoint_archive_sha256="a" * 64,
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
+        organ_hash="e" * 64,
+        archived_checkpoint_seeds=registered_seeds,
+        output_dir=tmp_path,
+    )
+
+    assert archived_seeds == registered_seeds
+    for index, seed in enumerate(registered_seeds):
+        checkpoint_arg = jobs[index]["arguments"].index("--checkpoint") + 1
+        assert jobs[index]["checkpoint_seed"] == seed
+        assert jobs[index]["arguments"][checkpoint_arg].endswith(f"/d{index}")
 
 
 # ---------------------------------------------------------------------------
@@ -908,7 +1281,7 @@ def test_training_scheduler_argv_has_submit_interval(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_e2e_exercises_real_module_args(tmp_path: Path) -> None:
-    """End-to-end: training succeeds, archive built, calibration batch generated 
+    """End-to-end: training succeeds, archive built, calibration batch generated
     with real collect-calibration-shard args, scheduler runs, all verified."""
     bp = tmp_path / "training_batch.json"
     sp = tmp_path / "training_state.json"
@@ -942,13 +1315,15 @@ def test_e2e_exercises_real_module_args(tmp_path: Path) -> None:
         # Determine if training or calibration
         if any("training" in a for a in argv if isinstance(a, str)):
             job_names = [f"job{i}" for i in range(5)]
+            runtime_hash = cfg["training_contract"]["runtime_manifest_sha256"]
         else:
             job_names = [f"cal-s{i:02d}" for i in range(90)]
+            runtime_hash = "a" * 64
         Path(state_file).write_text(json.dumps({
             "schema_version": "oczy/remote-parallel-state/v4",
             "jobs": {n: {"state": "succeeded",
-                          "expected_runtime_manifest_sha256": "a" * 64,
-                          "observed_runtime_manifest_sha256": "a" * 64,
+                          "expected_runtime_manifest_sha256": runtime_hash,
+                          "observed_runtime_manifest_sha256": runtime_hash,
                           "runtime_manifest_verified": True}
                      for n in job_names},
         }), encoding="utf-8")
@@ -968,12 +1343,8 @@ def test_e2e_exercises_real_module_args(tmp_path: Path) -> None:
     cal_batch_path = tmp_path / "cal_batch.json"
     assert cal_batch_path.is_file()
 
-    # Read the batch and verify the first job's module/args
-    batch = json.loads(cal_batch_path.read_text())
-    first_job_name = batch["jobs"][0]["name"]
-
     # Verify a generated kernel directory contains the real module in job_spec
-    kernel_dir = tmp_path / "jobs" / f"kino_oczy-r20-cal-s00"
+    kernel_dir = tmp_path / "jobs" / "kino_oczy-r20-cal-s00"
     if not kernel_dir.is_dir():
         # Try alternate naming
         for d in (tmp_path / "jobs").iterdir():
@@ -993,6 +1364,8 @@ def test_e2e_exercises_real_module_args(tmp_path: Path) -> None:
     # Archive exists
     archive = tmp_path / "archive" / "checkpoints.tar.gz"
     assert archive.is_file()
+    persisted_state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted_state["training_contract"] == cfg["training_contract"]
 
     # Restart is idempotent
     scheduler_calls.clear()
@@ -1012,6 +1385,7 @@ def test_restart_all_stages_complete_no_work(tmp_path: Path) -> None:
     sp = tmp_path / "state.json"
     s = load_or_init_state(sp)
     s["campaign_id"] = config["campaign_id"]
+    s["training_contract"] = config["training_contract"]
     for stage in (STAGE_TRAINING, STAGE_ARCHIVE, STAGE_CALIBRATION):
         s["stages"][stage] = {"status": "complete"}
     s["artifacts"] = {"checkpoint_archive": {"path": "x.tar.gz", "sha256": "a" * 64, "size_bytes": 1, "manifest": {}}}
@@ -1028,6 +1402,34 @@ def test_restart_all_stages_complete_no_work(tmp_path: Path) -> None:
     result = run_orchestrator(config_path, sp, _run_scheduler=fake_scheduler)
     assert len(scheduler_calls) == 0
     assert result["all_complete"]
+
+
+@pytest.mark.parametrize("state_contract", [None, {"module": "mixed"}])
+def test_restart_fails_closed_without_exact_state_training_contract(
+    tmp_path: Path, state_contract: dict[str, Any] | None
+) -> None:
+    config = _minimal_config()
+    state_path = tmp_path / "state.json"
+    state = load_or_init_state(state_path)
+    state["campaign_id"] = config["campaign_id"]
+    if state_contract is not None:
+        state["training_contract"] = state_contract
+    for stage in (STAGE_TRAINING, STAGE_ARCHIVE, STAGE_CALIBRATION):
+        state["stages"][stage] = {"status": "complete"}
+    state["artifacts"] = {
+        "checkpoint_archive": {
+            "path": "x.tar.gz",
+            "sha256": "a" * 64,
+            "size_bytes": 1,
+            "manifest": {},
+        }
+    }
+    save_state(state_path, state)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    with pytest.raises(OrchestratorError, match="training_contract"):
+        run_orchestrator(config_path, state_path)
 
 
 def test_provider_failure_remains_failed(tmp_path: Path) -> None:

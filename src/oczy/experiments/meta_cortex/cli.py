@@ -44,8 +44,11 @@ organ load errors return nonzero with no synthetic fallback.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+import time
 from collections.abc import Sequence
+from dataclasses import replace as dc_replace
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +61,7 @@ from .artifacts import (
     read_dev_result,
     save_dev_persistent_state,
     save_developmental_checkpoint,
+    save_provisional_snapshot,
     write_dev_result,
 )
 from .contracts import (
@@ -71,7 +75,12 @@ from .contracts import (
 from .model import MetaCortex
 from .organ import FrozenOrganError, QwenFrozenOrgan
 from .taskgen import build_dev_catalog
-from .training import OuterTrainer, run_dev_validation
+from .training import (
+    OuterTrainer,
+    ValidationCompleted,
+    ValidationTaskProgress,
+    run_dev_validation,
+)
 
 __all__ = ["main"]
 
@@ -740,6 +749,36 @@ def _hash_config(config: Any) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def _build_checkpoint_metadata(
+    model: MetaCortex,
+    organ: Any,
+    taskgen_config: TaskGeneratorConfig,
+    outer_config: OuterLoopConfig,
+    *,
+    completed_step: int,
+    best_step: int,
+    validation_score: float,
+    source_provenance: str,
+) -> CheckpointMetadata:
+    """Build checkpoint metadata identically for provisional and final theta."""
+    return CheckpointMetadata(
+        schema=DEV_SCHEMA,
+        model_config=model.config,
+        taskgen_schema=TASKGEN_SCHEMA,
+        taskgen_digest=_hash_config(taskgen_config),
+        outer_config=outer_config,
+        completed_step=completed_step,
+        best_step=best_step,
+        validation_score=validation_score,
+        parameter_count=model.parameter_count(),
+        parameter_bytes=model.parameter_count() * 4,
+        theta_hash=canonical_theta_hash(model),
+        organ_identity=organ.organ_identity,
+        organ_hash=organ.parameter_hash(),
+        source_provenance=source_provenance,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Command: train-dev
 # ---------------------------------------------------------------------------
@@ -807,7 +846,88 @@ def _train_dev(args: argparse.Namespace) -> int:
 
         # 5. Outer-train.
         print("# Outer training...", file=sys.stderr)
-        trainer = OuterTrainer(model, organ, outer_config)
+        progress_started = time.monotonic()
+        last_elapsed = 0.0
+        provisional_best_step = 0
+
+        def _emit_progress(event: str, **fields: Any) -> None:
+            nonlocal last_elapsed
+            last_elapsed = max(last_elapsed, time.monotonic() - progress_started)
+            payload = {
+                "schema": "oczy/progress/v1",
+                "event": event,
+                "elapsed_seconds": last_elapsed,
+                **fields,
+            }
+            print(
+                "OCZY_PROGRESS "
+                + json.dumps(
+                    payload,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+
+        def _on_validation_task_complete(event: ValidationTaskProgress) -> None:
+            _emit_progress(
+                "validation_task_complete",
+                **{
+                    "pass": event.validation_pass,
+                    "step": event.optimizer_step,
+                    "family": event.family.value,
+                    "completed": event.completed,
+                    "total": event.total,
+                },
+            )
+
+        def _on_validation_complete(event: ValidationCompleted) -> None:
+            nonlocal provisional_best_step
+            if event.is_best:
+                provisional_best_step = event.optimizer_step
+            provisional_metadata = _build_checkpoint_metadata(
+                model,
+                organ,
+                taskgen_config,
+                outer_config,
+                completed_step=event.optimizer_step,
+                best_step=provisional_best_step,
+                validation_score=event.score,
+                source_provenance=args.source_provenance,
+            )
+            snapshot_path = (
+                Path(args.checkpoint_out)
+                / "provisional"
+                / f"step-{event.optimizer_step}"
+            )
+            save_provisional_snapshot(
+                snapshot_path,
+                model,
+                provisional_metadata,
+                event.result,
+                validation_pass=event.validation_pass,
+                optimizer_step=event.optimizer_step,
+                score=event.score,
+                is_best=event.is_best,
+            )
+            _emit_progress(
+                "validation_complete",
+                **{
+                    "pass": event.validation_pass,
+                    "step": event.optimizer_step,
+                    "score": event.score,
+                    "is_best": event.is_best,
+                },
+            )
+
+        trainer = OuterTrainer(
+            model,
+            organ,
+            outer_config,
+            on_validation_task_complete=_on_validation_task_complete,
+            on_validation_complete=_on_validation_complete,
+        )
         train_result = trainer.train(catalog)
 
         theta_hash_after = canonical_theta_hash(model)
@@ -825,20 +945,14 @@ def _train_dev(args: argparse.Namespace) -> int:
         print("AUDIT organ_frozen=pass", file=sys.stderr)
 
         # 6. Build checkpoint metadata.
-        metadata = CheckpointMetadata(
-            schema=DEV_SCHEMA,
-            model_config=model_config,
-            taskgen_schema=TASKGEN_SCHEMA,
-            taskgen_digest=_hash_config(taskgen_config),
-            outer_config=outer_config,
+        metadata = _build_checkpoint_metadata(
+            model,
+            organ,
+            taskgen_config,
+            outer_config,
             completed_step=train_result.optimizer_step_count,
             best_step=train_result.best_validation_step,
             validation_score=train_result.best_validation_score,
-            parameter_count=param_count,
-            parameter_bytes=param_bytes,
-            theta_hash=theta_hash_after,
-            organ_identity=organ.organ_identity,
-            organ_hash=organ_hash_after,
             source_provenance=args.source_provenance,
         )
 
@@ -850,7 +964,6 @@ def _train_dev(args: argparse.Namespace) -> int:
         # 8. Write DEV result.  Fill the taskgen_config_digest that
         # OuterTrainer.train cannot compute (it has no TaskGeneratorConfig).
         print(f"# Writing DEV result to {args.result_out}", file=sys.stderr)
-        from dataclasses import replace as dc_replace
         train_result = dc_replace(
             train_result,
             taskgen_config_digest=_hash_config(taskgen_config),

@@ -25,7 +25,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +57,7 @@ from .model import CORTEX_DIM, CortexState, MetaCortex
 __all__ = [
     "save_developmental_checkpoint",
     "load_developmental_checkpoint",
+    "save_provisional_snapshot",
     "save_dev_persistent_state",
     "load_dev_persistent_state",
     "write_dev_result",
@@ -130,6 +134,9 @@ def _state_norm(state: CortexState) -> float:
 _CHECKPOINT_SCHEMA = DEV_SCHEMA
 _THETA_FILE = "theta.npz"
 _CHECKPOINT_FILE = "checkpoint.json"
+_PROVISIONAL_SCHEMA = "oczy/provisional/v1"
+_PROVISIONAL_FILE = "provisional.json"
+_PROVISIONAL_RESULT_FILE = "validation-result.json"
 
 
 def _model_config_to_dict(config: ModelConfig) -> dict[str, Any]:
@@ -313,6 +320,67 @@ def save_developmental_checkpoint(
         encoding="utf-8",
     )
     os.replace(tmp_json, path / _CHECKPOINT_FILE)
+
+
+def save_provisional_snapshot(
+    path: str | Path,
+    model: MetaCortex,
+    metadata: CheckpointMetadata,
+    validation_result: DevValidationResult,
+    *,
+    validation_pass: int,
+    optimizer_step: int,
+    score: float,
+    is_best: bool,
+) -> None:
+    """Atomically publish a complete, explicitly provisional validation snapshot."""
+    path = Path(path)
+    if path.exists():
+        raise ArtifactError(f"Provisional snapshot already exists: {path}")
+    if validation_pass < 1 or optimizer_step < 1:
+        raise ArtifactError("Provisional validation pass and optimizer step must be positive")
+    if not math.isfinite(score):
+        raise ArtifactError("Provisional validation score must be finite")
+    if metadata.completed_step != optimizer_step:
+        raise ArtifactError(
+            "Provisional checkpoint completed_step does not match optimizer step"
+        )
+    if metadata.validation_score != score:
+        raise ArtifactError(
+            "Provisional checkpoint validation_score does not match result score"
+        )
+
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = Path(tempfile.mkdtemp(prefix=f".{path.name}.tmp-", dir=parent))
+    try:
+        save_developmental_checkpoint(tmp_path, model, metadata)
+        write_dev_result(tmp_path / _PROVISIONAL_RESULT_FILE, validation_result)
+        marker = {
+            "schema": _PROVISIONAL_SCHEMA,
+            "status": "provisional",
+            "pass": validation_pass,
+            "step": optimizer_step,
+            "score": score,
+            "is_best": is_best,
+            "theta_hash": metadata.theta_hash,
+            "source_provenance": metadata.source_provenance,
+        }
+        marker_tmp = tmp_path / (_PROVISIONAL_FILE + ".tmp")
+        marker_tmp.write_text(
+            json.dumps(
+                marker,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        os.replace(marker_tmp, tmp_path / _PROVISIONAL_FILE)
+        os.replace(tmp_path, path)
+    except BaseException:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+        raise
 
 
 def load_developmental_checkpoint(

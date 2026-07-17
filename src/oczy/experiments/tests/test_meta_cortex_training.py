@@ -36,6 +36,7 @@ from oczy.experiments.meta_cortex.contracts import (
     ContractError,
     DevCondition,
     DevSplit,
+    DevValidationResult,
     DialogueMessage,
     LearningEvent,
     LossBreakdown,
@@ -588,6 +589,60 @@ class TestOuterTrainer:
         # validation_result should be present.
         assert result.validation_result is not None
 
+    def test_two_steps_retain_exact_best_validation_without_third_call(
+        self, model: MetaCortex, organ: _TinyFrozenOrgan, catalog
+    ) -> None:
+        best_result = DevValidationResult((), (), 0.8, 0.1, 0.2, 0.3, 0.4)
+        later_result = DevValidationResult((), (), 0.2, 0.5, 0.6, 0.7, 0.8)
+        validation_results = [(0.8, best_result), (0.2, later_result)]
+        validation_calls: list[tuple[int, int]] = []
+        completion_events = []
+        validation_thetas: list[dict[str, torch.Tensor]] = []
+
+        trainer = OuterTrainer(
+            model,
+            organ,
+            _OUTER_CONFIG,
+            on_validation_complete=completion_events.append,
+        )
+
+        def fake_train_step(_tasks):
+            trainer.boundary._record_step()
+            step = trainer.boundary.optimizer_step_count
+            with torch.no_grad():
+                for parameter in model.parameters():
+                    parameter.fill_(float(step))
+            return {
+                "loss": float(step),
+                "theta_hash": _theta_hash(model),
+                "organ_hash": organ.parameter_hash(),
+                "optimizer_steps": step,
+            }
+
+        def fake_validation(_catalog, *, validation_pass, optimizer_step):
+            validation_calls.append((validation_pass, optimizer_step))
+            validation_thetas.append(
+                {name: tensor.clone() for name, tensor in model.state_dict().items()}
+            )
+            return validation_results[len(validation_calls) - 1]
+
+        with (
+            patch.object(trainer, "train_step", side_effect=fake_train_step),
+            patch.object(trainer, "_run_validation", side_effect=fake_validation),
+        ):
+            result = trainer.train(catalog)
+
+        assert validation_calls == [(1, 1), (2, 2)]
+        assert result.best_validation_step == 1
+        assert result.validation_result is best_result
+        assert [event.result for event in completion_events] == [
+            best_result,
+            later_result,
+        ]
+        assert [event.is_best for event in completion_events] == [True, False]
+        for name, tensor in model.state_dict().items():
+            assert torch.equal(tensor, validation_thetas[0][name])
+
     def test_optimizer_disjoint_from_organ(
         self, model: MetaCortex, organ: _TinyFrozenOrgan
     ) -> None:
@@ -628,6 +683,31 @@ class TestDevValidation:
             )
         assert isinstance(result.trained_vs_update_disabled_delta, float)
         assert math.isfinite(result.trained_vs_update_disabled_delta)
+
+    def test_validation_task_callback_reports_safe_global_progress(
+        self, model: MetaCortex, organ: _TinyFrozenOrgan, catalog
+    ) -> None:
+        events = []
+        run_dev_validation(
+            model,
+            organ,
+            catalog,
+            device="cpu",
+            dtype=torch.float32,
+            validation_pass=3,
+            optimizer_step=7,
+            on_task_complete=events.append,
+        )
+
+        total = len(catalog.meta_validation)
+        assert [event.completed for event in events] == list(range(1, total + 1))
+        assert all(event.total == total for event in events)
+        assert all(event.validation_pass == 3 for event in events)
+        assert all(event.optimizer_step == 7 for event in events)
+        assert {event.family for event in events} == {
+            task.family for task in catalog.meta_validation
+        }
+        assert all(not hasattr(event, "task") for event in events)
 
     def test_validation_theta_unchanged(
         self, model: MetaCortex, organ: _TinyFrozenOrgan, catalog

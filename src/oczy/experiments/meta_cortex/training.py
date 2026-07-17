@@ -30,7 +30,7 @@ import contextlib
 import hashlib
 import json
 import math
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from typing import Any
 
@@ -67,6 +67,10 @@ __all__ = [
     "run_dev_interventions",
     "run_dev_validation",
     "OuterTrainer",
+    "ValidationTaskProgress",
+    "ValidationCompleted",
+    "ValidationTaskCallback",
+    "ValidationCompleteCallback",
 ]
 
 
@@ -1246,6 +1250,32 @@ def _pooled_accuracy(result: Any, kinds: tuple[ProbeKind, ...] = (
     return total_correct / total_count if total_count > 0 else 0.0
 
 
+@dataclass(frozen=True)
+class ValidationTaskProgress:
+    """Safe progress emitted after one validation task completes."""
+
+    validation_pass: int
+    optimizer_step: int
+    family: TaskFamily
+    completed: int
+    total: int
+
+
+@dataclass(frozen=True)
+class ValidationCompleted:
+    """Result emitted after one complete in-loop validation pass."""
+
+    validation_pass: int
+    optimizer_step: int
+    score: float
+    result: DevValidationResult
+    is_best: bool
+
+
+ValidationTaskCallback = Callable[[ValidationTaskProgress], None]
+ValidationCompleteCallback = Callable[[ValidationCompleted], None]
+
+
 def run_dev_validation(
     model: MetaCortex,
     organ: FrozenLanguageOrgan,
@@ -1253,6 +1283,9 @@ def run_dev_validation(
     *,
     device: torch.device,
     dtype: torch.dtype,
+    validation_pass: int = 1,
+    optimizer_step: int = 1,
+    on_task_complete: ValidationTaskCallback | None = None,
 ) -> DevValidationResult:
     """Run inference-only DEV validation with causal interventions.
 
@@ -1269,6 +1302,8 @@ def run_dev_validation(
     boundary = OptimizationBoundary()
 
     validation_tasks = catalog.tasks_for(DevSplit.META_VALIDATION)
+    completed_tasks = 0
+    total_tasks = len(validation_tasks)
 
     # Group tasks by family.
     tasks_by_family: dict[TaskFamily, list[MetaTask]] = {}
@@ -1334,6 +1369,17 @@ def run_dev_validation(
                     all_zeroed.append(cr)
                 elif cr.condition == DevCondition.STATE_SWAPPED.value:
                     all_swapped.append(cr)
+            completed_tasks += 1
+            if on_task_complete is not None:
+                on_task_complete(
+                    ValidationTaskProgress(
+                        validation_pass=validation_pass,
+                        optimizer_step=optimizer_step,
+                        family=family,
+                        completed=completed_tasks,
+                        total=total_tasks,
+                    )
+                )
 
         per_family_results.append((family.value, tuple(family_results)))
 
@@ -1444,11 +1490,17 @@ class OuterTrainer:
         model: MetaCortex,
         organ: FrozenLanguageOrgan,
         config: OuterLoopConfig,
+        *,
+        on_validation_task_complete: ValidationTaskCallback | None = None,
+        on_validation_complete: ValidationCompleteCallback | None = None,
     ) -> None:
         self.model = model
         self.organ = organ
         self.config = config
         self.boundary = OptimizationBoundary()
+        self.on_validation_task_complete = on_validation_task_complete
+        self.on_validation_complete = on_validation_complete
+        self._validation_pass_count = 0
 
         # Create cortex-only optimizer.
         cortex_params = list(model.parameters())
@@ -1496,10 +1548,6 @@ class OuterTrainer:
                 f"Optimizer contains {len(organ_in_opt)} organ parameters"
             )
 
-        # Track best validation.
-        self._best_val_score: float = -math.inf
-        self._best_theta: dict[str, torch.Tensor] | None = None
-        self._best_step: int = 0
 
     def _outer_step(self, loss: torch.Tensor) -> None:
         """Perform the sole optimizer step.
@@ -1599,33 +1647,32 @@ class OuterTrainer:
             "optimizer_steps": self.boundary.optimizer_step_count,
         }
 
-    def _run_validation(self, catalog: DevTaskCatalog) -> tuple[float, DevValidationResult]:
+    def _run_validation(
+        self,
+        catalog: DevTaskCatalog,
+        *,
+        validation_pass: int,
+        optimizer_step: int,
+    ) -> tuple[float, DevValidationResult]:
         """Run validation and return (score, result)."""
         device = next(self.model.parameters()).device
         dtype = next(self.model.parameters()).dtype
 
         val_result = run_dev_validation(
-            self.model, self.organ, catalog,
-            device=device, dtype=dtype,
+            self.model,
+            self.organ,
+            catalog,
+            device=device,
+            dtype=dtype,
+            validation_pass=validation_pass,
+            optimizer_step=optimizer_step,
+            on_task_complete=self.on_validation_task_complete,
         )
 
         # Use the trained-vs-update-disabled delta as the validation score.
         score = val_result.trained_vs_update_disabled_delta
         return score, val_result
 
-    def _save_best_theta(self, step: int, score: float) -> None:
-        """Save current theta as best if score is better."""
-        if score > self._best_val_score:
-            self._best_val_score = score
-            self._best_step = step
-            self._best_theta = {
-                k: v.clone() for k, v in self.model.state_dict().items()
-            }
-
-    def _restore_best_theta(self) -> None:
-        """Restore the best theta."""
-        if self._best_theta is not None:
-            self.model.load_state_dict(self._best_theta)
 
     def train(self, catalog: DevTaskCatalog) -> DevTrainingResult:
         """Run the full outer training loop.
@@ -1650,7 +1697,7 @@ class OuterTrainer:
         best_val_score: float = -math.inf
         best_val_step: int = 0
         best_theta: dict[str, torch.Tensor] | None = None
-        last_val_result: DevValidationResult | None = None
+        best_val_result: DevValidationResult | None = None
 
         step = 0
         # Seed-derived task ordering: use config.seed to produce a
@@ -1681,30 +1728,46 @@ class OuterTrainer:
             # Validation.
             val_score: float = 0.0
             if outer_step % self.config.validation_interval == 0 or outer_step == self.config.outer_steps - 1:
-                val_score, val_result = self._run_validation(catalog)
-                last_val_result = val_result
+                self._validation_pass_count += 1
+                validation_pass = self._validation_pass_count
+                val_score, val_result = self._run_validation(
+                    catalog,
+                    validation_pass=validation_pass,
+                    optimizer_step=step,
+                )
 
-                if val_score > best_val_score:
+                is_best = val_score > best_val_score
+                if is_best:
                     best_val_score = val_score
                     best_val_step = step
                     best_theta = {
                         k: v.clone() for k, v in self.model.state_dict().items()
                     }
+                    best_val_result = val_result
 
+                if self.on_validation_complete is not None:
+                    self.on_validation_complete(
+                        ValidationCompleted(
+                            validation_pass=validation_pass,
+                            optimizer_step=step,
+                            score=val_score,
+                            result=val_result,
+                            is_best=is_best,
+                        )
+                    )
             step_curve.append((step, train_loss, val_score))
 
-        # Restore best theta.
-        if best_theta is not None:
-            self.model.load_state_dict(best_theta)
-        organ_hash_after = self.organ.parameter_hash()
+        # The final-step guard above guarantees at least one validation.
+        if best_theta is None or best_val_result is None:
+            raise OnlineOptimizationError(
+                "Training completed without a validation result; "
+                "the final-step validation invariant was broken"
+            )
 
-        # Final validation with restored best theta.
-        if last_val_result is not None:
-            _, final_val_result = self._run_validation(catalog)
-            last_val_result = final_val_result
-        else:
-            _, last_val_result = self._run_validation(catalog)
-            assert last_val_result is not None  # guaranteed by control flow above
+        # Restore the exact theta paired with the retained best result.  Do not
+        # rerun validation: the stored result is the result selected in-loop.
+        self.model.load_state_dict(best_theta)
+        organ_hash_after = self.organ.parameter_hash()
 
         # Build config digests.
         model_config_digest = _hash_config(self.model.config)
@@ -1725,7 +1788,7 @@ class OuterTrainer:
             step_curve=tuple(step_curve),
             best_validation_step=best_val_step,
             best_validation_score=best_val_score,
-            validation_result=last_val_result,
+            validation_result=best_val_result,
             organ_hash_before=organ_hash_before,
             organ_hash_after=organ_hash_after,
             optimizer_step_count=self.boundary.optimizer_step_count,

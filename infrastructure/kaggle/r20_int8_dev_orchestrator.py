@@ -1,7 +1,7 @@
 """R20 INT8 DEV campaign orchestrator — two-stage: training then calibration.
 
 Strict CLI ``run --config <json> --state <json>`` for an
-``oczy/r20-int8-dev-orchestrator/v1`` config.
+``oczy/r20-int8-dev-orchestrator/v2`` config.
 
 Stage 1 runs the already-prepared training scheduler, requires at least one
 verified success for every canonical checkpoint seed while retaining failed
@@ -40,13 +40,14 @@ from typing import Any
 # Schema constants
 # ---------------------------------------------------------------------------
 
-CONFIG_SCHEMA = "oczy/r20-int8-dev-orchestrator/v1"
+CONFIG_SCHEMA = "oczy/r20-int8-dev-orchestrator/v2"
 STATE_SCHEMA = "oczy/r20-int8-dev-orchestrator-state/v1"
 CHECKPOINT_SCHEMA = "oczy/meta-cortex/dev/v1"
 DEFAULT_CONCURRENCY = 5
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
+_TRAINING_PLACEHOLDERS = {"{seed}", "{checkpoint_out}", "{result_out}"}
 
 # Stage state values
 STAGE_TRAINING = "training"
@@ -119,6 +120,92 @@ def _resolve(base: Path, value: str) -> Path:
     return p if p.is_absolute() else (base / p).resolve()
 
 
+def _runtime_manifest_self_hash(manifest: dict[str, Any]) -> str:
+    payload = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+    try:
+        canonical = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise OrchestratorError("runtime manifest is not canonical JSON") from exc
+    return _sha256_bytes(canonical)
+
+
+def _validate_training_contract(contract: Any) -> dict[str, Any]:
+    required_fields = {
+        "source_commit",
+        "module",
+        "runtime_manifest_sha256",
+        "argument_template",
+    }
+    if not isinstance(contract, dict):
+        raise OrchestratorError("config.training_contract must be an object")
+    if set(contract) != required_fields:
+        raise OrchestratorError(
+            "config.training_contract must contain exactly "
+            "source_commit, module, runtime_manifest_sha256, argument_template"
+        )
+
+    source_commit = contract.get("source_commit")
+    if not isinstance(source_commit, str) or not HEX40_RE.fullmatch(source_commit):
+        raise OrchestratorError(
+            "config.training_contract.source_commit must be a 40-char hex Git SHA"
+        )
+    module = contract.get("module")
+    if not isinstance(module, str) or not module:
+        raise OrchestratorError("config.training_contract.module must be a non-empty string")
+    runtime_hash = contract.get("runtime_manifest_sha256")
+    if not isinstance(runtime_hash, str) or not SHA256_RE.fullmatch(runtime_hash):
+        raise OrchestratorError(
+            "config.training_contract.runtime_manifest_sha256 "
+            "must be a 64-char hex SHA-256"
+        )
+
+    template = contract.get("argument_template")
+    if (
+        not isinstance(template, list)
+        or not template
+        or not all(isinstance(token, str) for token in template)
+    ):
+        raise OrchestratorError(
+            "config.training_contract.argument_template must be a non-empty list of strings"
+        )
+    if template.count("train-dev") != 1:
+        raise OrchestratorError(
+            "config.training_contract.argument_template must contain train-dev exactly once"
+        )
+    for placeholder in sorted(_TRAINING_PLACEHOLDERS):
+        if template.count(placeholder) != 1:
+            raise OrchestratorError(
+                "config.training_contract.argument_template must contain "
+                f"{placeholder} exactly once"
+            )
+    for token in template:
+        if ("{" in token or "}" in token) and token not in _TRAINING_PLACEHOLDERS:
+            raise OrchestratorError(
+                "config.training_contract.argument_template contains an unknown "
+                f"or malformed placeholder: {token!r}"
+            )
+    return contract
+
+
+def _validate_training_output_path(value: str, field: str, job_name: str) -> None:
+    prefix = "/kaggle/working/"
+    if (
+        not value.startswith(prefix)
+        or not value[len(prefix):]
+        or any(part in ("", ".", "..") for part in value[len(prefix):].split("/"))
+    ):
+        raise OrchestratorError(
+            f"training job {job_name!r} {field} must be a safe non-empty "
+            "absolute /kaggle/working/... path"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Config validation
 # ---------------------------------------------------------------------------
@@ -141,8 +228,6 @@ def validate_config(config: dict[str, Any], base: Path) -> dict[str, Any]:
         if not isinstance(value, str) or not value:
             raise OrchestratorError(f"config.{field} must be a non-empty string")
 
-    # --- Owner (used for kernel IDs) ---
-    owner = config["owner"]
 
     # --- Pool config ---
     pool_config_path = config.get("pool_config_path")
@@ -167,17 +252,32 @@ def validate_config(config: dict[str, Any], base: Path) -> dict[str, Any]:
             "config.pool_inventory_limit requires pool_config_path to be set"
         )
 
+    # --- Exact training contract ---
+    _validate_training_contract(config.get("training_contract"))
+
     # --- Checkpoint contract ---
     ckpt_contract = config.get("checkpoint_contract")
     if not isinstance(ckpt_contract, dict):
         raise OrchestratorError("config.checkpoint_contract must be an object")
     if not isinstance(ckpt_contract.get("organ_identity"), str) or not ckpt_contract["organ_identity"]:
         raise OrchestratorError("config.checkpoint_contract.organ_identity required")
-    if not isinstance(ckpt_contract.get("organ_hash"), str) or not SHA256_RE.fullmatch(ckpt_contract["organ_hash"]):
-        raise OrchestratorError("config.checkpoint_contract.organ_hash must be a 64-char hex SHA-256")
+    if (
+        not isinstance(ckpt_contract.get("organ_hash"), str)
+        or not SHA256_RE.fullmatch(ckpt_contract["organ_hash"])
+    ):
+        raise OrchestratorError(
+            "config.checkpoint_contract.organ_hash must be a 64-char hex SHA-256"
+        )
     seeds = ckpt_contract.get("seeds")
-    if not isinstance(seeds, list) or len(seeds) != 5 or not all(isinstance(s, int) for s in seeds):
-        raise OrchestratorError("config.checkpoint_contract.seeds must be a list of exactly 5 ints")
+    if (
+        not isinstance(seeds, list)
+        or len(seeds) != 5
+        or not all(type(seed) is int for seed in seeds)
+        or len(set(seeds)) != 5
+    ):
+        raise OrchestratorError(
+            "config.checkpoint_contract.seeds must be a list of exactly 5 unique ints"
+        )
 
     # --- Checkpoint archive dataset ---
     archive_dataset = config.get("checkpoint_archive_dataset")
@@ -345,11 +445,17 @@ def _discover_checkpoints(results_dir: Path) -> list[Path]:
     A checkpoint directory contains both ``checkpoint.json`` and ``theta.npz``.
     """
     found: list[Path] = []
-    for root, _dirs, files in os.walk(str(results_dir)):
+    for root, dirs, files in os.walk(str(results_dir)):
+        root_path = Path(root)
+        relative_parts = root_path.relative_to(results_dir).parts
+        if "provisional" in relative_parts or "provisional.json" in files:
+            dirs[:] = []
+            continue
+        dirs[:] = [name for name in dirs if name != "provisional"]
         has_ckpt = "checkpoint.json" in files
         has_theta = "theta.npz" in files
         if has_ckpt and has_theta:
-            found.append(Path(root))
+            found.append(root_path)
     if len(found) != 5:
         raise OrchestratorError(
             f"expected exactly 5 checkpoint directories in {results_dir}, found {len(found)}"
@@ -375,6 +481,7 @@ def _validate_checkpoints(
     expected_identity: str,
     expected_organ_hash: str,
     expected_seeds: list[int],
+    expected_source_provenance: str,
 ) -> dict[str, Any]:
     """Verify checkpoint identity/hash/seeds and bind each to its seed index."""
     seed_to_ckpt: dict[int, Path] = {}
@@ -400,6 +507,11 @@ def _validate_checkpoints(
         if not isinstance(source_prov, str) or not source_prov:
             raise OrchestratorError(f"missing source_provenance in {ckpt_dir}")
 
+        if source_prov != expected_source_provenance:
+            raise OrchestratorError(
+                f"source_provenance mismatch in {ckpt_dir.name}: "
+                f"{source_prov!r} != {expected_source_provenance!r}"
+            )
         oc = data.get("outer_config")
         if not isinstance(oc, dict):
             raise OrchestratorError(f"missing outer_config in {ckpt_dir}")
@@ -452,20 +564,18 @@ def _build_checkpoint_archive(
 
     Uses gzip mtime=0 and PAX_FORMAT for byte-reproducible output.
     Entry paths are ``d{seed_idx}/checkpoint.json`` and ``d{seed_idx}/theta.npz``
-    where seed_idx is the sorted position (0-4) in expected_seeds.
+    where seed_idx is the exact registered position (0-4) in expected_seeds.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    sorted_seeds = sorted(expected_seeds)
-    seed_index = {s: i for i, s in enumerate(sorted_seeds)}
+    entries_by_seed = {entry["seed"]: entry for entry in verified}
 
     # Build deterministic gzip: create GzipFile with mtime=0, then tar inside it
     buf = io.BytesIO()
     with gzip.GzipFile(fileobj=buf, mode="wb", mtime=0) as gz:
         with tarfile.open(fileobj=gz, mode="w", format=tarfile.PAX_FORMAT) as tf:
-            for entry in verified:
+            for idx, seed in enumerate(expected_seeds):
+                entry = entries_by_seed[seed]
                 ckpt_dir = Path(entry["dir"])
-                seed = entry["seed"]
-                idx = seed_index[seed]
                 prefix = f"d{idx}"
 
                 for filename in ("checkpoint.json", "theta.npz"):
@@ -770,6 +880,7 @@ def _generate_calibration_batch(
 def _validate_training_batch(
     batch_path: Path,
     expected_seeds: list[int],
+    training_contract: dict[str, Any],
 ) -> dict[str, int]:
     """Validate unique Kaggle jobs and return each job name's canonical seed."""
     batch = _read_json(batch_path)
@@ -817,27 +928,69 @@ def _validate_training_batch(
                 f"training job {name!r} has no parseable job_spec seed: {exc}"
             ) from exc
 
+        if spec.get("source_commit") != training_contract["source_commit"]:
+            raise OrchestratorError(
+                f"training job {name!r} source_commit does not match training contract"
+            )
+        if spec.get("module") != training_contract["module"]:
+            raise OrchestratorError(
+                f"training job {name!r} module does not match training contract"
+            )
+        manifest = spec.get("runtime_manifest")
+        if not isinstance(manifest, dict):
+            raise OrchestratorError(
+                f"training job {name!r} runtime_manifest must be an object"
+            )
+        declared_manifest_hash = manifest.get("manifest_sha256")
+        computed_manifest_hash = _runtime_manifest_self_hash(manifest)
+        if declared_manifest_hash != computed_manifest_hash:
+            raise OrchestratorError(
+                f"training job {name!r} runtime manifest self-hash mismatch"
+            )
+        if declared_manifest_hash != training_contract["runtime_manifest_sha256"]:
+            raise OrchestratorError(
+                f"training job {name!r} runtime manifest does not match training contract"
+            )
+
         arguments = spec.get("arguments")
-        seed_positions = (
-            [i for i, argument in enumerate(arguments) if argument == "--seed"]
-            if isinstance(arguments, list)
-            else []
-        )
-        if len(seed_positions) != 1 or seed_positions[0] + 1 >= len(arguments):
+        template = training_contract["argument_template"]
+        if (
+            not isinstance(arguments, list)
+            or len(arguments) != len(template)
+            or not all(isinstance(argument, str) for argument in arguments)
+        ):
             raise OrchestratorError(
-                f"training job {name!r} has no parseable job_spec seed"
+                f"training job {name!r} arguments do not match argument_template exactly"
             )
-        raw_seed = arguments[seed_positions[0] + 1]
-        if not isinstance(raw_seed, str):
-            raise OrchestratorError(
-                f"training job {name!r} has no parseable job_spec seed"
-            )
+        values: dict[str, str] = {}
+        for expected, actual in zip(template, arguments, strict=True):
+            if expected in _TRAINING_PLACEHOLDERS:
+                values[expected] = actual
+            elif actual != expected:
+                raise OrchestratorError(
+                    f"training job {name!r} arguments do not match "
+                    "argument_template exactly"
+                )
+
+        raw_seed = values["{seed}"]
         try:
             seed = int(raw_seed, 10)
         except ValueError as exc:
             raise OrchestratorError(
                 f"training job {name!r} has no parseable job_spec seed: {raw_seed!r}"
             ) from exc
+        if str(seed) != raw_seed:
+            raise OrchestratorError(
+                f"training job {name!r} seed is not a canonical int: {raw_seed!r}"
+            )
+        checkpoint_out = values["{checkpoint_out}"]
+        result_out = values["{result_out}"]
+        _validate_training_output_path(checkpoint_out, "checkpoint_out", name)
+        _validate_training_output_path(result_out, "result_out", name)
+        if checkpoint_out == result_out:
+            raise OrchestratorError(
+                f"training job {name!r} checkpoint_out and result_out must be distinct"
+            )
         job_seeds[name] = seed
 
     batch_seed_set = set(job_seeds.values())
@@ -858,9 +1011,12 @@ def _validate_training_state(
     training_state: Path,
     training_batch: Path,
     expected_seeds: list[int],
+    training_contract: dict[str, Any],
 ) -> None:
     """Require a verified success for every seed while permitting failed attempts."""
-    job_seeds = _validate_training_batch(training_batch, expected_seeds)
+    job_seeds = _validate_training_batch(
+        training_batch, expected_seeds, training_contract
+    )
     sched_state = _read_json(training_state)
     if sched_state.get("schema_version") != _STATE_V4:
         raise OrchestratorError(f"training state must be {_STATE_V4!r}")
@@ -894,6 +1050,17 @@ def _validate_training_state(
             if not job_data.get("runtime_manifest_verified"):
                 raise OrchestratorError(
                     f"successful training job {name!r} not runtime_manifest_verified"
+                )
+            expected_runtime_hash = training_contract["runtime_manifest_sha256"]
+            if (
+                job_data.get("expected_runtime_manifest_sha256")
+                != expected_runtime_hash
+                or job_data.get("observed_runtime_manifest_sha256")
+                != expected_runtime_hash
+            ):
+                raise OrchestratorError(
+                    f"successful training job {name!r} runtime manifest hashes "
+                    "do not match training contract"
                 )
             succeeded_seeds.add(job_seeds[name])
 
@@ -1033,7 +1200,7 @@ def _dry_run_render(config: dict[str, Any]) -> str:
         f"  Pinned wheel: {cal_config['pinned_wheel']['filename']}",
         f"  Instrument archive: {cal_config['instrument_archive']['filename']}",
         f"  Module: {_CAL_MODULE} {_CAL_SUBCOMMAND}",
-        f"  Task range size: 5",
+        "  Task range size: 5",
     ]
     return "\n".join(lines)
 
@@ -1059,6 +1226,9 @@ def run_orchestrator(
         return {"dry_run": True, "rendered": _dry_run_render(config)}
 
     state = load_or_init_state(state_path)
+    existing_state = bool(
+        state.get("campaign_id") or state.get("stages") or state.get("artifacts")
+    )
 
     # Bind campaign
     if state.get("campaign_id") and state["campaign_id"] != config["campaign_id"]:
@@ -1068,6 +1238,22 @@ def run_orchestrator(
         )
     state["campaign_id"] = config["campaign_id"]
 
+
+    training_contract = config["training_contract"]
+    state_training_contract = state.get("training_contract")
+    if state_training_contract is None:
+        if existing_state:
+            raise OrchestratorError(
+                "existing orchestrator state is missing required training_contract"
+            )
+        state["training_contract"] = {
+            **training_contract,
+            "argument_template": list(training_contract["argument_template"]),
+        }
+    elif state_training_contract != training_contract:
+        raise OrchestratorError(
+            "state training_contract does not match config.training_contract"
+        )
     concurrency = config.get("concurrency", DEFAULT_CONCURRENCY)
     owner = config["owner"]
 
@@ -1082,7 +1268,9 @@ def run_orchestrator(
 
         # Validate unique Kaggle jobs cover every canonical checkpoint seed.
         expected_training_seeds = config["checkpoint_contract"]["seeds"]
-        _validate_training_batch(training_batch, expected_training_seeds)
+        _validate_training_batch(
+            training_batch, expected_training_seeds, training_contract
+        )
 
         scheduler_argv = [
             "run",
@@ -1120,7 +1308,10 @@ def run_orchestrator(
 
         # Failed historical attempts are valid when every seed has a verified retry.
         _validate_training_state(
-            training_state, training_batch, expected_training_seeds
+            training_state,
+            training_batch,
+            expected_training_seeds,
+            training_contract,
         )
 
         state["stages"][STAGE_TRAINING] = {
@@ -1148,6 +1339,7 @@ def run_orchestrator(
             expected_identity=ckpt_contract["organ_identity"],
             expected_organ_hash=ckpt_contract["organ_hash"],
             expected_seeds=ckpt_contract["seeds"],
+            expected_source_provenance=training_contract["source_commit"],
         )
         verified = ckpt_result["verified_checkpoints"]
 
@@ -1309,8 +1501,8 @@ def run_orchestrator(
 
 
 def _utc_now() -> str:
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    from datetime import UTC, datetime
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def pool_config_loader(path: Path) -> Any:

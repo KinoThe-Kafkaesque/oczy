@@ -32,9 +32,9 @@ import hashlib
 import io
 import json
 import os
-import shutil
 import re
 import runpy
+import shutil
 import subprocess
 import sys
 import threading
@@ -494,6 +494,67 @@ class FakeProc:
         return self.returncode
 
 
+class _ConcurrentFirstReadStream(io.StringIO):
+    """Synchronize the first line from two fake child streams."""
+
+    def __init__(self, text: str, barrier: threading.Barrier) -> None:
+        super().__init__(text)
+        self._barrier = barrier
+        self._first_read = True
+
+    def readline(self, *args: Any, **kwargs: Any) -> str:
+        if self._first_read:
+            self._first_read = False
+            self._barrier.wait(timeout=2)
+        return super().readline(*args, **kwargs)
+
+
+class _SlowParentStdout:
+    """Thread-aware stdout probe that exposes writes only after flush."""
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._characters: list[str] = []
+        self._flushed_length = 0
+        self._active_writers = 0
+        self._yield = threading.Event()
+        self.overlap_detected = False
+
+    def write(self, text: str) -> int:
+        with self._condition:
+            self._active_writers += 1
+            if self._active_writers > 1:
+                self.overlap_detected = True
+        try:
+            for character in text:
+                with self._condition:
+                    self._characters.append(character)
+                self._yield.wait(0.00001)
+        finally:
+            with self._condition:
+                self._active_writers -= 1
+        return len(text)
+
+    def flush(self) -> None:
+        with self._condition:
+            self._flushed_length = len(self._characters)
+            self._condition.notify_all()
+
+    def wait_for_flushed(self, fragments: list[str], timeout: float = 2.0) -> bool:
+        with self._condition:
+            return self._condition.wait_for(
+                lambda: all(
+                    fragment in "".join(self._characters[:self._flushed_length])
+                    for fragment in fragments
+                ),
+                timeout=timeout,
+            )
+
+    def getvalue(self) -> str:
+        with self._condition:
+            return "".join(self._characters)
+
+
 def _patch_popen(proc: FakeProc) -> Any:
     """Return a patcher that replaces subprocess.Popen with *proc*."""
 
@@ -722,6 +783,103 @@ class TestRunnerReport:
         # the command would be a string, not a list.  Assert list form.
         assert factory.calls
         assert isinstance(factory.calls[0], list)
+
+    def test_progress_is_live_redacted_and_atomic_across_streams(
+        self, tmp_path: Path
+    ) -> None:
+        """Only redacted progress is flushed live; child logs remain complete."""
+        stdout_progress = (
+            'OCZY_PROGRESS {"schema":"oczy/progress/v1","event":"stdout",'
+            '"credential":"api_key=hunter2 end"}'
+        )
+        stderr_progress = (
+            'OCZY_PROGRESS {"schema":"oczy/progress/v1","event":"stderr"}'
+        )
+        redacted_stdout_progress = stdout_progress.replace("hunter2", "[REDACTED]")
+        stdout_lines = [
+            stdout_progress + "\n",
+            "ordinary stdout stays private\n",
+            "METRIC loss=0.5\n",
+        ]
+        stderr_lines = [
+            stderr_progress + "\n",
+            "ordinary stderr stays private\n",
+            "ASI score=0.9\n",
+        ]
+
+        release_child = threading.Event()
+        first_read_barrier = threading.Barrier(2)
+        proc = FakeProc(returncode=0, wait_event=release_child)
+        proc.stdout = _ConcurrentFirstReadStream(
+            "".join(stdout_lines), first_read_barrier
+        )
+        proc.stderr = _ConcurrentFirstReadStream(
+            "".join(stderr_lines), first_read_barrier
+        )
+        parent_stdout = _SlowParentStdout()
+        patcher, _ = _patch_popen(proc)
+        results: list[dict[str, Any]] = []
+        errors: list[BaseException] = []
+
+        def invoke_runner() -> None:
+            try:
+                results.append(
+                    run_module(
+                        module="json",
+                        arguments=[],
+                        source_commit=COMMIT,
+                        provider=PROVIDER_KAGGLE,
+                        job_name="job-progress",
+                        report_path=str(tmp_path / "execution_report.json"),
+                    )
+                )
+            except BaseException as exc:
+                errors.append(exc)
+
+        runner_thread = threading.Thread(target=invoke_runner, daemon=True)
+        with patcher, patch.object(sys, "stdout", parent_stdout):
+            runner_thread.start()
+            try:
+                assert parent_stdout.wait_for_flushed(
+                    [redacted_stdout_progress, stderr_progress]
+                )
+                assert runner_thread.is_alive(), (
+                    "progress must be visible and flushed before the child exits"
+                )
+            finally:
+                release_child.set()
+            runner_thread.join(timeout=3)
+
+        assert not runner_thread.is_alive()
+        assert errors == []
+        report = results[0]
+        parent_text = parent_stdout.getvalue()
+        parent_lines = parent_text.splitlines()
+        progress_lines = [
+            line for line in parent_lines if line.startswith("OCZY_PROGRESS ")
+        ]
+        assert progress_lines.count(redacted_stdout_progress) == 1
+        assert progress_lines.count(stderr_progress) == 1
+        assert len(progress_lines) == 2
+        assert "hunter2" not in parent_text
+        assert "ordinary stdout stays private" not in parent_text
+        assert "ordinary stderr stays private" not in parent_text
+        assert "METRIC loss=0.5" not in parent_text
+        assert "ASI score=0.9" not in parent_text
+        assert parent_stdout.overlap_detected is False
+
+        sentinel_prefix = "OCZY_EXECUTION_REPORT_JSON="
+        assert sum(
+            line.startswith(sentinel_prefix) for line in parent_lines
+        ) == 1
+        stdout_log = (tmp_path / report["stdout_file"]).read_text()
+        stderr_log = (tmp_path / report["stderr_file"]).read_text()
+        assert stdout_log == "".join(stdout_lines)
+        assert stderr_log == "".join(stderr_lines)
+        assert sentinel_prefix not in stdout_log
+        assert sentinel_prefix not in stderr_log
+        assert report["metrics"] == {"loss": 0.5}
+        assert report["asi_scores"] == {"score": 0.9}
 
     def test_sentinel_line_emitted(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

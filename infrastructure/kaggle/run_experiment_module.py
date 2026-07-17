@@ -29,7 +29,7 @@ import subprocess
 import sys
 import threading
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -48,10 +48,11 @@ _METRIC_RE = re.compile(r"^METRIC\s+([A-Za-z_][A-Za-z0-9_]*)=(-?\d+(?:\.\d+)?(?:
 _ASI_RE = re.compile(r"^ASI\s+([A-Za-z_][A-Za-z0-9_]*)=(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)$")
 
 _DEFAULT_REPORT = "execution_report.json"
+_PROGRESS_PREFIX = "OCZY_PROGRESS "
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _parse_metric_line(line: str) -> tuple[str, float] | None:
@@ -124,11 +125,15 @@ def _stream_reader(
     log_file: Any,
     metrics: dict[str, float],
     asi_scores: dict[str, float],
+    progress_output: Any,
+    progress_lock: threading.Lock,
 ) -> None:
-    """Read a text stream line-by-line, mirror to log file, parse METRIC/ASI.
+    """Drain a child stream, preserving its log and mirroring progress lines.
 
     Runs in a background thread so stdout and stderr are drained concurrently,
-    preventing pipe-buffer deadlock on large output.
+    preventing pipe-buffer deadlock on large output.  Only ``OCZY_PROGRESS ``
+    lines reach the runner's stdout; the shared lock keeps each redacted,
+    flushed line atomic across both child streams.
     """
     while True:
         line = stream.readline()
@@ -136,6 +141,13 @@ def _stream_reader(
             break
         log_file.write(line)
         log_file.flush()
+        if line.startswith(_PROGRESS_PREFIX):
+            progress_line = _redact_secrets(line)
+            if not progress_line.endswith("\n"):
+                progress_line += "\n"
+            with progress_lock:
+                progress_output.write(progress_line)
+                progress_output.flush()
         metric = _parse_metric_line(line)
         if metric is not None:
             metrics[metric[0]] = metric[1]
@@ -210,8 +222,8 @@ def run_module(
         sys.path.insert(0, _SCRIPT_DIR)
     from runtime_manifest import (  # type: ignore[import-not-found]
         RuntimeManifestError,
-        compute_manifest_sha256,
         compare_runtime_manifests,
+        compute_manifest_sha256,
         validate_runtime_manifest,
     )
 
@@ -298,6 +310,8 @@ def run_module(
 
     metrics: dict[str, float] = {}
     asi_scores: dict[str, float] = {}
+    progress_lock = threading.Lock()
+    progress_output = sys.stdout
 
     try:
         stdout_fh = stdout_log.open("w", encoding="utf-8")
@@ -342,12 +356,12 @@ def run_module(
 
     stdout_thread = threading.Thread(
         target=_stream_reader,
-        args=(proc.stdout, stdout_fh, metrics, asi_scores),
+        args=(proc.stdout, stdout_fh, metrics, asi_scores, progress_output, progress_lock),
         daemon=True,
     )
     stderr_thread = threading.Thread(
         target=_stream_reader,
-        args=(proc.stderr, stderr_fh, metrics, asi_scores),
+        args=(proc.stderr, stderr_fh, metrics, asi_scores, progress_output, progress_lock),
         daemon=True,
     )
     stdout_thread.start()

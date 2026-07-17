@@ -38,6 +38,7 @@ from oczy.experiments.meta_cortex.artifacts import (
     read_dev_result,
     save_dev_persistent_state,
     save_developmental_checkpoint,
+    save_provisional_snapshot,
     write_dev_result,
 )
 from oczy.experiments.meta_cortex.cli import (
@@ -50,6 +51,7 @@ from oczy.experiments.meta_cortex.contracts import (
     DEV_SCHEMA,
     TASKGEN_SCHEMA,
     CheckpointMetadata,
+    DevTrainingResult,
     DevValidationResult,
     ModelConfig,
     OuterLoopConfig,
@@ -60,6 +62,10 @@ from oczy.experiments.meta_cortex.organ import (
     FrozenOrganError,
     QwenFrozenOrgan,
     quantized_organ_identity,
+)
+from oczy.experiments.meta_cortex.training import (
+    ValidationCompleted,
+    ValidationTaskProgress,
 )
 
 # ---------------------------------------------------------------------------
@@ -704,6 +710,68 @@ class TestDevResultSerialization:
         with pytest.raises(ArtifactError, match="expects"):
             write_dev_result(tmpdir_path / "bad.json", "not a result")  # type: ignore[arg-type]
 
+    def test_provisional_snapshot_is_complete_explicit_and_separate(
+        self, tmpdir_path: Path
+    ) -> None:
+        model = _make_model()
+        result = self._make_validation_result()
+        metadata = _make_metadata(
+            model,
+            completed_step=1,
+            best_step=1,
+            validation_score=0.1,
+            source_provenance="commit-deadbeef",
+        )
+        checkpoint_root = tmpdir_path / "checkpoint"
+        snapshot = checkpoint_root / "provisional" / "step-1"
+
+        save_provisional_snapshot(
+            snapshot,
+            model,
+            metadata,
+            result,
+            validation_pass=1,
+            optimizer_step=1,
+            score=0.1,
+            is_best=True,
+        )
+
+        assert {path.name for path in snapshot.iterdir()} == {
+            "checkpoint.json",
+            "theta.npz",
+            "validation-result.json",
+            "provisional.json",
+        }
+        marker = json.loads((snapshot / "provisional.json").read_text())
+        assert marker == {
+            "schema": "oczy/provisional/v1",
+            "status": "provisional",
+            "pass": 1,
+            "step": 1,
+            "score": 0.1,
+            "is_best": True,
+            "theta_hash": canonical_theta_hash(model),
+            "source_provenance": "commit-deadbeef",
+        }
+        serialized = "\n".join(
+            (snapshot / name).read_text()
+            for name in (
+                "checkpoint.json",
+                "validation-result.json",
+                "provisional.json",
+            )
+        ).lower()
+        assert "raw task sentinel" not in serialized
+        assert "event_text" not in serialized
+        assert not (checkpoint_root / "checkpoint.json").exists()
+        assert not (checkpoint_root / "theta.npz").exists()
+        assert not list((checkpoint_root / "provisional").glob(".*.tmp-*"))
+
+        save_developmental_checkpoint(checkpoint_root, model, metadata)
+        assert (checkpoint_root / "checkpoint.json").is_file()
+        assert (checkpoint_root / "theta.npz").is_file()
+        assert (snapshot / "provisional.json").is_file()
+
 
 # ---------------------------------------------------------------------------
 # CLI parser
@@ -862,6 +930,132 @@ class TestCLIMain:
         with pytest.raises(SystemExit) as exc_info:
             main(["evaluate"])
         assert exc_info.value.code != 0
+
+    def test_train_dev_emits_progress_and_keeps_provisional_separate(
+        self,
+        tmpdir_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        validation_result = DevValidationResult((), (), 0.1, 0.2, 0.3, 0.4, 0.5)
+
+        class _FakeOrgan:
+            organ_identity = "Qwen/Qwen2.5-0.5B-Instruct"
+
+            def parameter_hash(self) -> str:
+                return "b" * 64
+
+            def close(self) -> None:
+                pass
+
+        class _FakeTrainer:
+            def __init__(
+                self,
+                model,
+                organ,
+                config,
+                *,
+                on_validation_task_complete,
+                on_validation_complete,
+            ) -> None:
+                self.model = model
+                self.organ = organ
+                self.config = config
+                self.on_task = on_validation_task_complete
+                self.on_complete = on_validation_complete
+
+            def train(self, catalog):
+                total = len(catalog.meta_validation)
+                for completed, task in enumerate(catalog.meta_validation, start=1):
+                    self.on_task(
+                        ValidationTaskProgress(
+                            validation_pass=1,
+                            optimizer_step=1,
+                            family=task.family,
+                            completed=completed,
+                            total=total,
+                        )
+                    )
+                self.on_complete(
+                    ValidationCompleted(
+                        validation_pass=1,
+                        optimizer_step=1,
+                        score=0.1,
+                        result=validation_result,
+                        is_best=True,
+                    )
+                )
+                organ_hash = self.organ.parameter_hash()
+                return DevTrainingResult(
+                    schema=DEV_SCHEMA,
+                    model_config_digest="c" * 64,
+                    taskgen_config_digest="",
+                    outer_config_digest="d" * 64,
+                    catalog_digest=catalog.catalog_sha256,
+                    step_curve=((1, 1.0, 0.1),),
+                    best_validation_step=1,
+                    best_validation_score=0.1,
+                    validation_result=validation_result,
+                    organ_hash_before=organ_hash,
+                    organ_hash_after=organ_hash,
+                    optimizer_step_count=1,
+                    audit_status="ok",
+                )
+
+        checkpoint_out = tmpdir_path / "checkpoint"
+        result_out = tmpdir_path / "result.json"
+        with (
+            patch.object(QwenFrozenOrgan, "load", lambda **_kwargs: _FakeOrgan()),
+            patch(
+                "oczy.experiments.meta_cortex.cli.OuterTrainer",
+                _FakeTrainer,
+            ),
+        ):
+            exit_code = main(
+                [
+                    "train-dev",
+                    "--checkpoint-out",
+                    str(checkpoint_out),
+                    "--result-out",
+                    str(result_out),
+                    "--feature-dim",
+                    "16",
+                    "--bank-width",
+                    "2",
+                    "--outer-steps",
+                    "1",
+                    "--source-provenance",
+                    "commit-test",
+                ]
+            )
+
+        assert exit_code == 0
+        progress = [
+            json.loads(line.removeprefix("OCZY_PROGRESS "))
+            for line in capsys.readouterr().out.splitlines()
+            if line.startswith("OCZY_PROGRESS ")
+        ]
+        assert progress
+        assert all(item["schema"] == "oczy/progress/v1" for item in progress)
+        assert [item["elapsed_seconds"] for item in progress] == sorted(
+            item["elapsed_seconds"] for item in progress
+        )
+        task_events = [
+            item for item in progress if item["event"] == "validation_task_complete"
+        ]
+        assert [item["completed"] for item in task_events] == list(
+            range(1, len(task_events) + 1)
+        )
+        assert all(item["pass"] == 1 and item["step"] == 1 for item in task_events)
+        assert all("task" not in item and "prompt" not in item for item in progress)
+        completion = progress[-1]
+        assert completion["event"] == "validation_complete"
+        assert completion["is_best"] is True
+
+        snapshot = checkpoint_out / "provisional" / "step-1"
+        assert (snapshot / "provisional.json").is_file()
+        assert (checkpoint_out / "checkpoint.json").is_file()
+        assert (snapshot / "checkpoint.json").read_bytes() != b""
+        assert result_out.is_file()
 
     def test_train_dev_organ_load_failure_returns_nonzero(
         self, tmpdir_path: Path
