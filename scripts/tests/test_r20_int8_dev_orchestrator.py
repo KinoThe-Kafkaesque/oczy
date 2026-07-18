@@ -132,7 +132,7 @@ def _fake_cal_config() -> dict[str, Any]:
         "source": _fake_cal_source(),
         "runtime_manifest": _fake_runtime_manifest(),
         "pinned_wheel": {"dataset": "kino/wheels", "filename": "oczy-0.1.0-py3-none-any.whl", "sha256": "c" * 64},
-        "instrument_archive": {"dataset": "kino/instruments", "filename": "instrument.tar.gz",
+        "instrument_archive": {"dataset": "kino/instruments", "filename": "instrument.tar.gz.bin",
                                "sha256": "d" * 64, "format": "tar.gz", "destination": "instrument"},
         "calibration_view_root": "cal_view",
         "kernel_slug_prefix": "oczy-r20-int8-cal",
@@ -974,7 +974,7 @@ def test_unsorted_registered_seed_order_matches_archive_and_calibration(
         kernel_slug_prefix=cal_config["kernel_slug_prefix"],
         cal_config=cal_config,
         checkpoint_archive_dataset="kino/ckpts",
-        checkpoint_archive_filename="checkpoints.tar.gz",
+        checkpoint_archive_filename="checkpoints.tar.gz.bin",
         checkpoint_archive_sha256="a" * 64,
         model_id="Qwen/Qwen2.5-0.5B-Instruct",
         model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
@@ -999,7 +999,7 @@ def test_calibration_jobs_use_real_module(tmp_path: Path) -> None:
     jobs = _build_calibration_jobs(
         task_count=10, owner="kino", kernel_slug_prefix=cal_config["kernel_slug_prefix"], cal_config=cal_config,
         checkpoint_archive_dataset="kino/ckpts",
-        checkpoint_archive_filename="checkpoints.tar.gz",
+        checkpoint_archive_filename="checkpoints.tar.gz.bin",
         checkpoint_archive_sha256="a" * 64,
         model_id="Qwen/Qwen2.5-0.5B-Instruct", model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
         organ_hash="e" * 64,
@@ -1017,7 +1017,7 @@ def test_calibration_jobs_owner_qualified_ids(tmp_path: Path) -> None:
     jobs = _build_calibration_jobs(
         task_count=10, owner="kino", kernel_slug_prefix=cal_config["kernel_slug_prefix"], cal_config=cal_config,
         checkpoint_archive_dataset="kino/ckpts",
-        checkpoint_archive_filename="checkpoints.tar.gz",
+        checkpoint_archive_filename="checkpoints.tar.gz.bin",
         checkpoint_archive_sha256="a" * 64,
         model_id="Qwen/Qwen2.5-0.5B-Instruct", model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
         organ_hash="e" * 64,
@@ -1034,7 +1034,7 @@ def test_calibration_jobs_contain_real_args(tmp_path: Path) -> None:
     jobs = _build_calibration_jobs(
         task_count=10, owner="kino", kernel_slug_prefix=cal_config["kernel_slug_prefix"], cal_config=cal_config,
         checkpoint_archive_dataset="kino/ckpts",
-        checkpoint_archive_filename="checkpoints.tar.gz",
+        checkpoint_archive_filename="checkpoints.tar.gz.bin",
         checkpoint_archive_sha256="a" * 64,
         model_id="Qwen/Qwen2.5-0.5B-Instruct", model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
         organ_hash="e" * 64,
@@ -1061,7 +1061,7 @@ def test_90_jobs_for_90_tasks(tmp_path: Path) -> None:
     jobs = _build_calibration_jobs(
         task_count=90, owner="kino", kernel_slug_prefix=cal_config["kernel_slug_prefix"], cal_config=cal_config,
         checkpoint_archive_dataset="kino/ckpts",
-        checkpoint_archive_filename="checkpoints.tar.gz",
+        checkpoint_archive_filename="checkpoints.tar.gz.bin",
         checkpoint_archive_sha256="a" * 64,
         model_id="Qwen/Qwen2.5-0.5B-Instruct", model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
         organ_hash="e" * 64,
@@ -1076,7 +1076,7 @@ def test_five_wide_task_ranges(tmp_path: Path) -> None:
     jobs = _build_calibration_jobs(
         task_count=90, owner="kino", kernel_slug_prefix=cal_config["kernel_slug_prefix"], cal_config=cal_config,
         checkpoint_archive_dataset="kino/ckpts",
-        checkpoint_archive_filename="checkpoints.tar.gz",
+        checkpoint_archive_filename="checkpoints.tar.gz.bin",
         checkpoint_archive_sha256="a" * 64,
         model_id="Qwen/Qwen2.5-0.5B-Instruct", model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
         organ_hash="e" * 64,
@@ -1094,7 +1094,7 @@ def test_calibration_count_formula(tmp_path: Path) -> None:
         jobs = _build_calibration_jobs(
             task_count=n, owner="kino", kernel_slug_prefix=cal_config["kernel_slug_prefix"], cal_config=cal_config,
             checkpoint_archive_dataset="kino/ckpts",
-            checkpoint_archive_filename="checkpoints.tar.gz",
+            checkpoint_archive_filename="checkpoints.tar.gz.bin",
             checkpoint_archive_sha256="a" * 64,
             model_id="Qwen/Qwen2.5-0.5B-Instruct", model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
             organ_hash="e" * 64,
@@ -1136,6 +1136,16 @@ def test_no_meta_test_in_job_arg(tmp_path: Path) -> None:
 
 
 
+def test_instrument_archive_rejects_kaggle_recognized_tar_gz_suffix(
+    tmp_path: Path,
+) -> None:
+    cfg = _minimal_config()
+    cfg["calibration"]["instrument_archive"]["filename"] = "instrument.tar.gz"
+
+    with pytest.raises(OrchestratorError, match=r"\.tar\.gz\.bin"):
+        validate_config(cfg, tmp_path)
+
+
 def test_instrument_archive_requires_format_tar_gz(tmp_path: Path) -> None:
     cfg = _minimal_config()
     cfg["calibration"]["instrument_archive"]["format"] = "zip"
@@ -1156,7 +1166,7 @@ def test_calibration_jobs_store_model_source(tmp_path: Path) -> None:
         task_count=10, owner="kino", kernel_slug_prefix=cal_config["kernel_slug_prefix"],
         cal_config=cal_config,
         checkpoint_archive_dataset="kino/ckpts",
-        checkpoint_archive_filename="checkpoints.tar.gz",
+        checkpoint_archive_filename="checkpoints.tar.gz.bin",
         checkpoint_archive_sha256="a" * 64,
         model_id="Qwen/Qwen2.5-0.5B-Instruct", model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
         organ_hash="e" * 64,
@@ -1178,7 +1188,7 @@ def test_kernel_slug_prefix_in_ids(tmp_path: Path) -> None:
         task_count=10, owner="kino", kernel_slug_prefix=cal_config["kernel_slug_prefix"],
         cal_config=cal_config,
         checkpoint_archive_dataset="kino/ckpts",
-        checkpoint_archive_filename="checkpoints.tar.gz",
+        checkpoint_archive_filename="checkpoints.tar.gz.bin",
         checkpoint_archive_sha256="a" * 64,
         model_id="Qwen/Qwen2.5-0.5B-Instruct", model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
         organ_hash="e" * 64,
@@ -1190,6 +1200,39 @@ def test_kernel_slug_prefix_in_ids(tmp_path: Path) -> None:
             f"kernel_id {job['kernel_id']} missing slug prefix"
         )
         assert job["kernel_id"].startswith("kino/")
+
+
+def test_calibration_jobs_preserve_opaque_checkpoint_archive_contract(
+    tmp_path: Path,
+) -> None:
+    cal_config = _fake_cal_config()
+    checkpoint_sha256 = "7" * 64
+    jobs = _build_calibration_jobs(
+        task_count=1,
+        owner="kino",
+        kernel_slug_prefix=cal_config["kernel_slug_prefix"],
+        cal_config=cal_config,
+        checkpoint_archive_dataset="kino/ckpts",
+        checkpoint_archive_filename="checkpoints.tar.gz.bin",
+        checkpoint_archive_sha256=checkpoint_sha256,
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        model_source="qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
+        organ_hash="e" * 64,
+        archived_checkpoint_seeds=[100, 200, 300, 400, 500],
+        output_dir=tmp_path,
+    )
+
+    assert jobs
+    for job in jobs:
+        assert job["checkpoint_archive"] == {
+            "dataset": "kino/ckpts",
+            "filename": "checkpoints.tar.gz.bin",
+            "sha256": checkpoint_sha256,
+            "format": "tar.gz",
+            "destination": "checkpoints",
+        }
+
+
 # ---------------------------------------------------------------------------
 # Publication guard
 # ---------------------------------------------------------------------------
@@ -1215,6 +1258,43 @@ def test_publish_only_once(tmp_path: Path) -> None:
     calls.clear()
     _publish_checkpoint_dataset(pub, archive, manifest, state, state_path, _run_subprocess=fake_run)
     assert len(calls) == 0
+
+
+def test_checkpoint_publication_writes_only_byte_identical_opaque_transport(
+    tmp_path: Path,
+) -> None:
+    pub = {
+        "dataset_slug": "x/y",
+        "title": "t",
+        "message": "m",
+        "timeout_seconds": 10,
+    }
+    payload = b"\x1f\x8bopaque-checkpoint-archive"
+    archive = tmp_path / "checkpoints.tar.gz"
+    archive.write_bytes(payload)
+    dataset_dir = tmp_path / "dataset_dir"
+    dataset_dir.mkdir()
+    (dataset_dir / "checkpoints.tar.gz").write_bytes(b"stale-bare-archive")
+
+    def fake_run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, stdout="ready", stderr="")
+
+    _publish_checkpoint_dataset(
+        pub,
+        archive,
+        {"archive_sha256": hashlib.sha256(payload).hexdigest()},
+        {},
+        tmp_path / "pub_state.json",
+        _run_subprocess=fake_run,
+    )
+
+    opaque_archive = dataset_dir / "checkpoints.tar.gz.bin"
+    assert opaque_archive.read_bytes() == payload
+    assert not (dataset_dir / "checkpoints.tar.gz").exists()
+    assert sorted(
+        path.name for path in dataset_dir.iterdir()
+        if path.name.startswith("checkpoints.tar")
+    ) == ["checkpoints.tar.gz.bin"]
 
 
 # ---------------------------------------------------------------------------

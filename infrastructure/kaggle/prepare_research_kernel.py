@@ -27,7 +27,9 @@ PHASES = ("instrument", "oracle", "development", "meta-test", "analysis")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 WHL_BASENAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*\.whl$")
-TARGZ_BASENAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*\.tar\.gz$")
+OPAQUE_TARGZ_BASENAME_PATTERN = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._+-]*\.tar\.gz\.bin$"
+)
 DESTINATION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 OFFLINE_WHEEL_KEYS = frozenset({"dataset", "filename", "sha256"})
 OFFLINE_ARCHIVE_KEYS = frozenset({"dataset", "filename", "sha256", "format", "destination"})
@@ -519,9 +521,10 @@ def _validate_offline_archives(
                 f"got {sorted(entry.keys())}"
             )
         filename = entry["filename"]
-        if not TARGZ_BASENAME_PATTERN.fullmatch(filename):
+        if not OPAQUE_TARGZ_BASENAME_PATTERN.fullmatch(filename):
             raise ValueError(
-                f"offline archive filename must be a basename-only .tar.gz file; got {filename!r}"
+                "offline archive transport filename must be a basename-only "
+                f".tar.gz.bin file; got {filename!r}"
             )
         sha256 = entry["sha256"]
         if not SHA256_PATTERN.fullmatch(sha256):
@@ -694,7 +697,7 @@ def parse_args() -> argparse.Namespace:
         dest="offline_archives",
         action="append",
         default=[],
-        help="JSON archive entry: {\"dataset\":\"owner/slug\",\"filename\":\"data.tar.gz\",\"sha256\":\"...\",\"format\":\"tar.gz\",\"destination\":\"dirname\"}",
+        help="JSON opaque gzip-tar transport entry: {\"dataset\":\"owner/slug\",\"filename\":\"data.tar.gz.bin\",\"sha256\":\"...\",\"format\":\"tar.gz\",\"destination\":\"dirname\"}",
     )
     return parser.parse_args()
 

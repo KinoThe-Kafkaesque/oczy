@@ -48,6 +48,11 @@ DEFAULT_CONCURRENCY = 5
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
 _TRAINING_PLACEHOLDERS = {"{seed}", "{checkpoint_out}", "{result_out}"}
+OPAQUE_TARGZ_BASENAME_PATTERN = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._+-]*\.tar\.gz\.bin$"
+)
+_LOCAL_CHECKPOINT_ARCHIVE_FILENAME = "checkpoints.tar.gz"
+_PUBLISHED_CHECKPOINT_ARCHIVE_FILENAME = f"{_LOCAL_CHECKPOINT_ARCHIVE_FILENAME}.bin"
 
 # Stage state values
 STAGE_TRAINING = "training"
@@ -355,6 +360,12 @@ def validate_config(config: dict[str, Any], base: Path) -> dict[str, Any]:
         v = instr_archive.get(fld)
         if not isinstance(v, str) or not v:
             raise OrchestratorError(f"config.calibration.instrument_archive.{fld} required")
+    instr_filename = instr_archive["filename"]
+    if not OPAQUE_TARGZ_BASENAME_PATTERN.fullmatch(instr_filename):
+        raise OrchestratorError(
+            "config.calibration.instrument_archive.filename must be a "
+            f"basename-only .tar.gz.bin file; got {instr_filename!r}"
+        )
     if instr_archive.get("format") != "tar.gz":
         raise OrchestratorError("config.calibration.instrument_archive.format must be 'tar.gz'")
     if instr_archive.get("destination") != "instrument":
@@ -591,7 +602,7 @@ def _build_checkpoint_archive(
 
     raw = buf.getvalue()
     archive_hash = _sha256_bytes(raw)
-    archive_path = output_dir / "checkpoints.tar.gz"
+    archive_path = output_dir / _LOCAL_CHECKPOINT_ARCHIVE_FILENAME
     _atomic_write_bytes(archive_path, raw)
 
     return archive_path, archive_hash, len(raw)
@@ -646,9 +657,11 @@ def _publish_checkpoint_dataset(
 
     ds_dir = archive_path.parent / "dataset_dir"
     ds_dir.mkdir(parents=True, exist_ok=True)
-    target = ds_dir / archive_path.name
-    if target != archive_path:
-        target.write_bytes(archive_path.read_bytes())
+    target = ds_dir / _PUBLISHED_CHECKPOINT_ARCHIVE_FILENAME
+    legacy_target = ds_dir / _LOCAL_CHECKPOINT_ARCHIVE_FILENAME
+    if legacy_target != target:
+        legacy_target.unlink(missing_ok=True)
+    _atomic_write_bytes(target, archive_path.read_bytes())
 
     # Write checkpoint_manifest.json alongside the archive
     _atomic_write_json(ds_dir / "checkpoint_manifest.json", archive_manifest)
@@ -746,6 +759,11 @@ def _build_calibration_jobs(
     runtime_manifest = cal_config["runtime_manifest"]
     pinned_wheel = cal_config["pinned_wheel"]
     instr_archive = cal_config["instrument_archive"]
+    if not OPAQUE_TARGZ_BASENAME_PATTERN.fullmatch(checkpoint_archive_filename):
+        raise OrchestratorError(
+            "checkpoint archive transport filename must be a basename-only "
+            f".tar.gz.bin file; got {checkpoint_archive_filename!r}"
+        )
 
     cal_view_path = "/tmp/oczy-offline-inputs/instrument/instrument/public/CALIBRATION_VIEW.json"
     ckpt_base = "/tmp/oczy-offline-inputs/checkpoints"
@@ -1388,10 +1406,10 @@ def run_orchestrator(
         # Load task count
         task_count = _load_calibration_view_task_count(cal_view_root)
 
-        # Get archive metadata
+        # The state records the deterministic local artifact path.  Calibration
+        # always consumes its opaque published transport name, including resume.
         archive_manifest = state["artifacts"]["checkpoint_archive"]
         archive_hash = archive_manifest["sha256"]
-        archive_filename = Path(archive_manifest["path"]).name
 
         # Build calibration jobs
         cal_jobs = _build_calibration_jobs(
@@ -1400,7 +1418,7 @@ def run_orchestrator(
             kernel_slug_prefix=cal_config["kernel_slug_prefix"],
             cal_config=cal_config,
             checkpoint_archive_dataset=config["checkpoint_archive_dataset"],
-            checkpoint_archive_filename=archive_filename,
+            checkpoint_archive_filename=_PUBLISHED_CHECKPOINT_ARCHIVE_FILENAME,
             checkpoint_archive_sha256=archive_hash,
             model_id=model_id,
             model_source=model_source,

@@ -2417,7 +2417,7 @@ def test_offline_wheels_rejects_non_lowercase_sha256(tmp_path: Path) -> None:
 
 def _valid_archive_entry(
     dataset: str = "owner/calibration-archive",
-    filename: str = "calibration_data.tar.gz",
+    filename: str = "calibration_data.tar.gz.bin",
     sha256: str = "d" * 64,
     fmt: str = "tar.gz",
     destination: str = "calibration",
@@ -2508,8 +2508,8 @@ class TestOfflineArchiveGeneration:
 
     def test_multiple_distinct(self, tmp_path: Path) -> None:
         """Multiple distinct archives all appear in job_spec."""
-        a1 = _valid_archive_entry(dataset="a/ds1", filename="data1.tar.gz", destination="d1")
-        a2 = _valid_archive_entry(dataset="b/ds2", filename="data2.tar.gz", destination="d2")
+        a1 = _valid_archive_entry(dataset="a/ds1", filename="data1.tar.gz.bin", destination="d1")
+        a2 = _valid_archive_entry(dataset="b/ds2", filename="data2.tar.gz.bin", destination="d2")
         spec = prepare_kernel(
             output=tmp_path / "job",
             kernel_id="owner/oczy-test",
@@ -2531,8 +2531,8 @@ class TestOfflineArchiveGeneration:
 
     def test_distinct_archives_same_dataset_dedup(self, tmp_path: Path) -> None:
         """Two archives from the same dataset appear only once in dataset_sources."""
-        a1 = _valid_archive_entry(dataset="a/ds1", filename="f1.tar.gz", destination="d1")
-        a2 = _valid_archive_entry(dataset="a/ds1", filename="f2.tar.gz", destination="d2")
+        a1 = _valid_archive_entry(dataset="a/ds1", filename="f1.tar.gz.bin", destination="d1")
+        a2 = _valid_archive_entry(dataset="a/ds1", filename="f2.tar.gz.bin", destination="d2")
         prepare_kernel(
             output=tmp_path / "job",
             kernel_id="owner/oczy-test",
@@ -2602,8 +2602,15 @@ class TestOfflineArchiveGeneration:
             )
 
     def test_rejects_malformed_filename(self, tmp_path: Path) -> None:
-        """Filenames not matching basename-only .tar.gz pattern are rejected."""
-        bad_names = ["sub/data.tar.gz", "noext", "", "data.zip"]
+        """Paths, bare archives, and names without the opaque suffix are rejected."""
+        bad_names = [
+            "sub/data.tar.gz.bin",
+            "data.tar.gz",
+            "noext",
+            "",
+            "data.zip",
+            "data.tar.gz.dat",
+        ]
         for name in bad_names:
             with pytest.raises(ValueError, match="basename-only"):
                 prepare_kernel(
@@ -2666,8 +2673,8 @@ class TestOfflineArchiveGeneration:
                 human_signoff_id=None,
                 force=True,
                 offline_archives=[
-                    _valid_archive_entry(dataset="a/ds1", filename="x.tar.gz", destination="d1"),
-                    _valid_archive_entry(dataset="b/ds2", filename="x.tar.gz", destination="d2"),
+                    _valid_archive_entry(dataset="a/ds1", filename="x.tar.gz.bin", destination="d1"),
+                    _valid_archive_entry(dataset="b/ds2", filename="x.tar.gz.bin", destination="d2"),
                 ],
             )
 
@@ -2690,8 +2697,8 @@ class TestOfflineArchiveGeneration:
                 human_signoff_id=None,
                 force=True,
                 offline_archives=[
-                    _valid_archive_entry(dataset="a/ds1", filename="f1.tar.gz", destination="dest"),
-                    _valid_archive_entry(dataset="b/ds2", filename="f2.tar.gz", destination="dest"),
+                    _valid_archive_entry(dataset="a/ds1", filename="f1.tar.gz.bin", destination="dest"),
+                    _valid_archive_entry(dataset="b/ds2", filename="f2.tar.gz.bin", destination="dest"),
                 ],
             )
 
@@ -2713,8 +2720,8 @@ class TestOfflineArchiveGeneration:
             human_signoff_id=None,
             force=True,
             offline_archives=[
-                _valid_archive_entry(dataset="a/ds1", filename="f1.tar.gz", destination="d1"),
-                _valid_archive_entry(dataset="a/ds1", filename="f2.tar.gz", destination="d2"),
+                _valid_archive_entry(dataset="a/ds1", filename="f1.tar.gz.bin", destination="d1"),
+                _valid_archive_entry(dataset="a/ds1", filename="f2.tar.gz.bin", destination="d2"),
             ],
         )
         meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text(encoding="utf-8"))
@@ -2738,7 +2745,7 @@ class TestOfflineArchiveGeneration:
                 instrument_manifest_sha256=None,
                 human_signoff_id=None,
                 force=True,
-                offline_archives=[{"filename": "x.tar.gz", "sha256": "d" * 64, "format": "tar.gz", "destination": "d"}],
+                offline_archives=[{"filename": "x.tar.gz.bin", "sha256": "d" * 64, "format": "tar.gz", "destination": "d"}],
             )
 
     def test_rejects_non_lowercase_sha256(self, tmp_path: Path) -> None:
@@ -2787,7 +2794,7 @@ class TestOfflineArchiveGeneration:
     def test_archives_and_wheels_coexist(self, tmp_path: Path) -> None:
         """Archives and wheels can coexist with distinct filenames."""
         wheel = _valid_wheel_entry(filename="pkg.whl")
-        archive = _valid_archive_entry(filename="data.tar.gz")
+        archive = _valid_archive_entry(filename="data.tar.gz.bin")
         spec = prepare_kernel(
             output=tmp_path / "job",
             kernel_id="owner/oczy-test",
@@ -2850,15 +2857,16 @@ class TestOfflineArchiveBootstrap:
         return output
 
     def test_valid_extraction(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A valid tar.gz is extracted to /tmp/oczy-offline-inputs/<destination>."""
+        """Opaque gzip-tar bytes pass SHA verification and extract successfully."""
         import hashlib
         content = b"hello\n"
         archive_path = _make_tar(tmp_path, "real.tar.gz", [("readme.txt", content)])
         archive_bytes = archive_path.read_bytes()
         archive_sha = hashlib.sha256(archive_bytes).hexdigest()
         archive = _valid_archive_entry(
-            filename="data.tar.gz", sha256=archive_sha,
+            filename="data.tar.gz.bin", sha256=archive_sha,
         )
+        assert archive["filename"].endswith(".tar.gz.bin")
         output = self._prepare(tmp_path, [archive])
         kaggle_input = tmp_path / "kaggle_input"
         _write_archive_file(kaggle_input, archive["filename"], archive_bytes)
