@@ -643,14 +643,18 @@ def _publish_checkpoint_dataset(
 ) -> None:
     """Publish checkpoint archive as Kaggle dataset, create-if-absent.
 
-    Persists publication state immediately so resume never re-publishes.
-    Polls until ready within configured timeout.
+    Skips only an exact content-bound publication record.  Persists that record
+    after the dataset reaches ready state.
     """
     pub_key = "_checkpoint_dataset_published"
-    if state.get(pub_key):
-        return
-
     slug = pub_config["dataset_slug"]
+    publication_record = {
+        "dataset_slug": slug,
+        "published_filename": _PUBLISHED_CHECKPOINT_ARCHIVE_FILENAME,
+        "archive_sha256": archive_manifest["archive_sha256"],
+    }
+    if state.get(pub_key) == publication_record:
+        return
     title = pub_config["title"]
     message = pub_config["message"]
     timeout = pub_config.get("timeout_seconds") or 600
@@ -705,7 +709,7 @@ def _publish_checkpoint_dataset(
     else:
         raise OrchestratorError(f"dataset {slug} not ready within {timeout}s")
 
-    state[pub_key] = True
+    state[pub_key] = publication_record
     save_state(state_path, state)
 
 

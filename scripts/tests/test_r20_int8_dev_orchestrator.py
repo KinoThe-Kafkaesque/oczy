@@ -1236,11 +1236,17 @@ def test_calibration_jobs_preserve_opaque_checkpoint_archive_contract(
 # ---------------------------------------------------------------------------
 # Publication guard
 # ---------------------------------------------------------------------------
-def test_publish_only_once(tmp_path: Path) -> None:
+def test_publish_legacy_boolean_republishes_then_exact_record_skips(
+    tmp_path: Path,
+) -> None:
     pub = {"dataset_slug": "x/y", "title": "t", "message": "m", "timeout_seconds": 10}
-    state: dict[str, Any] = {}
+    state: dict[str, Any] = {"_checkpoint_dataset_published": True}
     state_path = tmp_path / "pub_state.json"
-    manifest: dict[str, Any] = {"checkpoints": []}
+    archive_sha256 = hashlib.sha256(b"fake-archive").hexdigest()
+    manifest: dict[str, Any] = {
+        "archive_sha256": archive_sha256,
+        "checkpoints": [],
+    }
     archive = tmp_path / "a.tar.gz"
     archive.write_bytes(b"fake-archive")
     calls = []
@@ -1249,15 +1255,79 @@ def test_publish_only_once(tmp_path: Path) -> None:
         calls.append(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="ready", stderr="")
 
-    _publish_checkpoint_dataset(pub, archive, manifest, state, state_path, _run_subprocess=fake_run)
-    # create-if-absent: status check + create + poll
-    assert len(calls) >= 2  # at least status + create + poll status
-    assert state.get("_checkpoint_dataset_published")
+    _publish_checkpoint_dataset(
+        pub, archive, manifest, state, state_path, _run_subprocess=fake_run,
+    )
 
-    # Second call: skipped entirely
+    expected_record = {
+        "dataset_slug": "x/y",
+        "published_filename": "checkpoints.tar.gz.bin",
+        "archive_sha256": archive_sha256,
+    }
+    assert len(calls) == 3
+    assert calls[1][:3] == ["kaggle", "datasets", "version"]
+    assert state["_checkpoint_dataset_published"] == expected_record
+    assert json.loads(state_path.read_text(encoding="utf-8"))[
+        "_checkpoint_dataset_published"
+    ] == expected_record
+
     calls.clear()
-    _publish_checkpoint_dataset(pub, archive, manifest, state, state_path, _run_subprocess=fake_run)
-    assert len(calls) == 0
+    _publish_checkpoint_dataset(
+        pub, archive, manifest, state, state_path, _run_subprocess=fake_run,
+    )
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "published_record",
+    [
+        {
+            "dataset_slug": "other/slug",
+            "published_filename": "checkpoints.tar.gz.bin",
+            "archive_sha256": "a" * 64,
+        },
+        {
+            "dataset_slug": "x/y",
+            "published_filename": "checkpoints.tar.gz",
+            "archive_sha256": "a" * 64,
+        },
+        {
+            "dataset_slug": "x/y",
+            "published_filename": "checkpoints.tar.gz.bin",
+            "archive_sha256": "b" * 64,
+        },
+    ],
+)
+def test_publish_mismatched_content_record_does_not_skip(
+    tmp_path: Path,
+    published_record: dict[str, str],
+) -> None:
+    pub = {"dataset_slug": "x/y", "title": "t", "message": "m", "timeout_seconds": 10}
+    manifest = {"archive_sha256": "a" * 64, "checkpoints": []}
+    archive = tmp_path / "a.tar.gz"
+    archive.write_bytes(b"fake-archive")
+    state = {"_checkpoint_dataset_published": published_record}
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="ready", stderr="")
+
+    _publish_checkpoint_dataset(
+        pub,
+        archive,
+        manifest,
+        state,
+        tmp_path / "pub_state.json",
+        _run_subprocess=fake_run,
+    )
+
+    assert len(calls) == 3
+    assert state["_checkpoint_dataset_published"] == {
+        "dataset_slug": "x/y",
+        "published_filename": "checkpoints.tar.gz.bin",
+        "archive_sha256": "a" * 64,
+    }
 
 
 def test_checkpoint_publication_writes_only_byte_identical_opaque_transport(
