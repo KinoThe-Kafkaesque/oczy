@@ -5,6 +5,10 @@ git history). Objective unchanged: the `experiments.txt` thesis — *memory
 becomes changed dynamics, not retrieved content*; the key headline metric is
 `behavior_delta_per_byte` on **held-out** probes.
 
+**2026-07-16 human-authorized extension:** S5.6 / Research/22 adds a
+specification-only PMD addressability comparator. Stage A is independent of
+Research/20; Stage B remains blocked on Research/20 acceptance.
+
 The audit found the objective unmet for three structural reasons, which this
 plan attacks in order:
 
@@ -483,6 +487,12 @@ extension.
   only if S5.4 accepts. Add a separately frozen action/tool organ, opaque tool
   families, learned routing, and recurrent goal state. Existing Pi tasks become
   an external battery, not the primary measuring instrument.
+- [ ] **S5.6 — [`research/22`](research/22-parametric-memory-decoding-zero-shot-lora-routing.md): zero-shot PMD addressability for LoRA external parametric memory.** — **Specification only / PENDING.**
+  Stage A is a standalone test over a shared frozen backbone and LoRA EPM bank,
+  independent of Research/20; it remains a roadmap comparator, not an
+  immediate-start priority. Retrieval is mandatory. Stage B cortex integration
+  remains blocked until S5.4 / Research/20 accepts. No implementation exists
+  and no scientific claim is made.
 
 Background/conceptual grounding:
 `notes/2026-07-03_steering_vs_posture_postmortem.md`; successor rationale and

@@ -1,9 +1,9 @@
 # Oczy — Current Project State
 
-**Last updated:** 2026-07-12
+**Last updated:** 2026-07-16
 
 **Evidence cutoff:** repository and local experiment artifacts inspected through
-2026-07-12
+2026-07-16
 
 **Purpose:** canonical living handoff for what Oczy is, what has actually been
 demonstrated, what changed in the research direction, and where the remaining
@@ -441,7 +441,9 @@ ACCEPT/REFUTE claim is made.
 
 The July 9 conversation and repository audit produced a dependency-ordered
 sequence. Research/18 and /19 remain useful diagnostics; Research/20 is now
-the core premise test; Research/21 is conditional on it.
+the core premise test; Research/21 is conditional on it. Research/22 adds a
+pending standalone LoRA-EPM addressability comparator in Stage A and keeps
+Stage B cortex integration conditional on Research/20 acceptance.
 
 | Order | Work | Role | Current state |
 |---|---|---|---|
@@ -449,6 +451,7 @@ the core premise test; Research/21 is conditional on it.
 | 2 | [`research/19-lm-as-language-organ.md`](research/19-lm-as-language-organ.md) | Direct diagnostic with matched label-prefix and latent-control articulation arms | Implemented; DEV calibration **BLOCKED** at pre-registered DEV articulation gate (2026-07-12, source `bd1ead9a`): v4 infrastructure succeeded (exit 0, artifacts collected), but `signoff_dev_articulation_gate=false`; `holdout_accessed=false`, no signoff requested. `parameter_total=60388/64000`, `dev_confidence_mean=0.0525482`, `dev_specificity_acc=0.134328`, `oracle_ceiling=0.357143`, `raw_trace_count=0`. No scientific verdict beyond BLOCKED. R20 remains separately blocked. |
 | 3 | [`research/20-meta-trained-cortex-frozen-language-organ.md`](research/20-meta-trained-cortex-frozen-language-organ.md) | Core test: meta-learn write/read/consolidate/articulate, then learn an unseen rule online through state only | **INT8 v2 DEV implementation complete and one-step smoke-verified** (2026-07-15); meta-test remains **BLOCKED** — v2 checkpoints, calibration distributions, power analysis, candidate manifest, and human signoff must be regenerated |
 | 4 | [`research/21-cortex-routed-frozen-specialist-organs.md`](research/21-cortex-routed-frozen-specialist-organs.md) | Conditional extension: cortex routes between frozen language and action/tool organs using recurrent goal state | New specification; do not start before Research/20 accepts |
+| 5 | [`research/22-parametric-memory-decoding-zero-shot-lora-routing.md`](research/22-parametric-memory-decoding-zero-shot-lora-routing.md) | Stage A: test zero-shot PMD addressability over a shared frozen backbone and LoRA EPM bank; Stage B: later cortex integration | **Specification only / PENDING**; Stage A is independent of Research/20, Stage B remains **BLOCKED** on Research/20 acceptance, retrieval is mandatory, no implementation exists, and no scientific claim is made |
 
 [`experiments/09-meta-trained-cortex-frozen-language-organ/README.md`](experiments/09-meta-trained-cortex-frozen-language-organ/README.md)
 operationalizes Research/20. Its v1 design fixes a 64-dimensional cortex,
@@ -492,6 +495,7 @@ side channel.
 | Research/19 direct cortex | Implemented; DEV calibration complete and BLOCKED at DEV articulation gate | [`src/oczy/experiments/s19_language_organ.py`](src/oczy/experiments/s19_language_organ.py); evidence [`experiments_logs/2026-07-12_r19_dev_calibration.json`](experiments_logs/2026-07-12_r19_dev_calibration.json) |
 | Research/20 / Experiment 09 | DEV-only implementation complete; smoke-verified on Kaggle CPU (2026-07-12); meta-test blocked (no frozen instrument/signoff) | [`src/oczy/experiments/meta_cortex/`](src/oczy/experiments/meta_cortex/) — `model.py`, `organ.py`, `training.py`, `contracts.py`, `taskgen.py`, `artifacts.py`, `cli.py`, `__main__.py`; tests in `src/oczy/experiments/tests/test_meta_cortex_*.py` |
 | Research/21 multi-organ router | Specification only | No implementation module yet |
+| Research/22 zero-shot LoRA EPM routing | Specification only / PENDING; no implementation and no scientific claim | [`research/22-parametric-memory-decoding-zero-shot-lora-routing.md`](research/22-parametric-memory-decoding-zero-shot-lora-routing.md) — Stage A independently tests PMD addressability with mandatory retrieval; Stage B cortex integration remains blocked on Research/20 acceptance |
 | Remote compute pool | Mixed Kaggle/Colab CPU; Kaggle verified v4 smoke/probe/bootstrap; Colab CLI 0.6.0 verified v2 queue-starvation fix; GPU (T4/P100/L4) archived; TPU not wired | [`infrastructure/kaggle/`](infrastructure/kaggle/) |
 | Pi tool-use work / Experiment 08 | Code-backed 6-stage dataset/scorer/validator implemented; live augmented run still pending; external result remains 0/3 | [`src/oczy/experiments/tool_calling_curriculum/`](src/oczy/experiments/tool_calling_curriculum/) plus [`benchmarks/pi/`](benchmarks/pi/) |
 | Dashboard | Generator exists; canonical output absent | [`scripts/dashboard.py`](scripts/dashboard.py); planned `experiments_logs/DASHBOARD.md` |

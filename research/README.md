@@ -76,6 +76,7 @@ answer-time content store?
 | [19](19-lm-as-language-organ.md) | Direct-learning diagnostic | A label-prefix parametric-retrieval arm is separated from latent control of a frozen language organ. | PENDING |
 | [20](20-meta-trained-cortex-frozen-language-organ.md) | Core cortex hypothesis; [Experiment 09](../experiments/09-meta-trained-cortex-frozen-language-organ/) | The write, read, consolidation, and articulation rules are meta-trained; only cortex state changes on an unseen task. | PENDING |
 | [21](21-cortex-routed-frozen-specialist-organs.md) | Multi-organ extension | A learned cortex routes shared state into independently frozen language and action organs. | BLOCKED (depends on 20) |
+| [22](22-parametric-memory-decoding-zero-shot-lora-routing.md) | LoRA-bank addressability comparator and conditional cortex integration | Stage A tests strict versus calibrated PMD on a shared frozen backbone/LoRA bank; Stage B requires both a valid Stage A route and Research/20 acceptance. | PENDING (Stage A); BLOCKED (Stage B depends on 20 + valid Stage A) |
 
 Dependency and verdict order:
 
@@ -87,8 +88,13 @@ Dependency and verdict order:
                     ▼
 20  meta-trained cortex over frozen language organ  PENDING
                     │ ACCEPT + causal-state audit
-                    ▼
-21  cortex-routed frozen language + action organs   BLOCKED (needs 20)
+                    ├──────────────────────► 21  cortex-routed frozen language +
+                    │                           action organs  BLOCKED (needs 20)
+                    │
+                    └───────────────────────────────┐
+                                                    ▼
+22A standalone frozen-backbone LoRA-bank ────────► 22B cortex + PMD integration
+    PMD comparator  PENDING (independent of 20)     BLOCKED (needs 20 + valid 22A)
 ```
 
 Retrieval is mandatory in every comparison table but disabled in the primary
@@ -168,3 +174,9 @@ updated with a current-verdicts table, R18 result in the frontier table, and
 dependency-graph status labels. Projects 19 and 20 remain PENDING; 21 remains
 BLOCKED (depends on 20). No hypotheses, success criteria, or kill criteria
 were modified. Evidence: `../experiments_logs/2026-07-11_campaign_0d48130.md`.
+
+**2026-07-16 human-authorized extension:** Research/22 was added as a
+standalone strict-versus-calibrated PMD addressability comparator over a shared
+frozen backbone and LoRA memory bank. Its Stage A is independent of
+Research/20, while Stage B cortex integration requires both a valid Stage A
+route and Research/20 acceptance. Research/21 was not changed.
