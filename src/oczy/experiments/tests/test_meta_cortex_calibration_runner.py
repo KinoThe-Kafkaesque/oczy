@@ -73,6 +73,7 @@ from oczy.experiments.meta_cortex.calibration_runner import (
     ShardConfig,
     _score_battery_exact,
     _score_probe_exact,
+    _build_donor_task_map,
     collect_calibration_shard,
 )
 from oczy.experiments.meta_cortex.contracts import (
@@ -891,6 +892,148 @@ class TestOptimizerProhibition:
 
 
 # ---------------------------------------------------------------------------
+# Partition-independent C6 donor selection tests
+# ---------------------------------------------------------------------------
+
+
+class TestPartitionIndependentDonorSelection:
+    """C6 donors come from canonical full-view family order, never shard order."""
+
+    @staticmethod
+    def _cell_for_task(
+        collection: ShardCollection,
+        task: MetaTask,
+    ) -> SeedCellRecord:
+        return next(
+            record
+            for record in collection.seed_cell_records
+            if record.rule_fingerprint == task.rule_fingerprint
+        )
+
+    def test_target_cell_is_identical_across_shard_partitions(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        view = _make_view(n_tasks_per_family=3)
+        organ = _TinyFrozenOrgan(feature_dim=16)
+        model = MetaCortex(_MODEL_CONFIG)
+        ckpt_dir = _make_checkpoint(tmp_path, organ, model)
+        target = view.tasks[1]
+
+        collections = [
+            collect_calibration_shard(
+                view=view,
+                checkpoint_dir=str(ckpt_dir),
+                model_id="test",
+                dev_seed_indices=(0,),
+                eval_seed_indices=(0,),
+                task_indices=task_indices,
+                organ=organ,
+            )
+            for task_indices in ((1,), (0, 1), (1, 2))
+        ]
+        cells = [self._cell_for_task(collection, target) for collection in collections]
+
+        assert cells[0] == cells[1] == cells[2]
+        cell_bytes = [
+            json.dumps(
+                cell.to_json_obj(),
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            for cell in cells
+        ]
+        assert cell_bytes[0] == cell_bytes[1] == cell_bytes[2]
+        assert tuple(record.condition for record in cells[0].conditions) == (
+            C1,
+            C2,
+            C3,
+            C4,
+            C5,
+            C6,
+        )
+
+    def test_width_one_shard_includes_c6(self, tmp_path: Path) -> None:
+        view = _make_view(n_tasks_per_family=2)
+        organ = _TinyFrozenOrgan(feature_dim=16)
+        model = MetaCortex(_MODEL_CONFIG)
+        ckpt_dir = _make_checkpoint(tmp_path, organ, model)
+
+        collection = collect_calibration_shard(
+            view=view,
+            checkpoint_dir=str(ckpt_dir),
+            model_id="test",
+            dev_seed_indices=(0,),
+            eval_seed_indices=(0,),
+            task_indices=(0,),
+            organ=organ,
+        )
+
+        assert len(collection.seed_cell_records) == 1
+        assert tuple(
+            record.condition
+            for record in collection.seed_cell_records[0].conditions
+        ) == (C1, C2, C3, C4, C5, C6)
+
+    def test_donor_map_stays_within_family_in_canonical_view_order(self) -> None:
+        contextual = [
+            _make_meta_task(
+                TaskFamily.CONTEXTUAL_REMAP,
+                f"contextual_{index}".ljust(64, "0"),
+                index=index,
+            )
+            for index in range(3)
+        ]
+        transformations = [
+            _make_meta_task(
+                TaskFamily.RULE_TRANSFORMATION,
+                f"transform_{index}".ljust(64, "0"),
+                index=index,
+            )
+            for index in range(2)
+        ]
+        finite_state = [
+            _make_meta_task(
+                TaskFamily.FINITE_STATE,
+                f"finite_{index}".ljust(64, "0"),
+                index=index,
+            )
+            for index in range(2)
+        ]
+        tasks = (
+            contextual[0],
+            transformations[0],
+            contextual[1],
+            finite_state[0],
+            transformations[1],
+            contextual[2],
+            finite_state[1],
+        )
+
+        donors = _build_donor_task_map(tasks)
+
+        assert donors == {
+            0: contextual[1],
+            1: transformations[1],
+            2: contextual[2],
+            3: finite_state[1],
+            4: transformations[0],
+            5: contextual[0],
+            6: finite_state[0],
+        }
+        assert all(donors[index].family == task.family for index, task in enumerate(tasks))
+
+    def test_donor_map_rejects_family_without_distinct_donor(self) -> None:
+        singleton = _make_meta_task(
+            TaskFamily.CONTEXTUAL_REMAP,
+            "singleton".ljust(64, "0"),
+        )
+
+        with pytest.raises(ValueError, match="lacks a distinct C6 donor"):
+            _build_donor_task_map((singleton,))
+
+
+# ---------------------------------------------------------------------------
 # No-update repeat unroll count tests
 # ---------------------------------------------------------------------------
 
@@ -905,10 +1048,11 @@ class TestNoUpdateRepeatUnrollCount:
         self, tmp_path: Path,
     ) -> None:
         """For a single-task shard, unroll_online_episode is called exactly
-        20 times during no-update repeat collection (plus the 4 condition calls
-        in the seed cell — C3, C1, C2, C4 — for a total of 24).
+        20 times during no-update repeat collection (plus the donor and 4
+        condition calls in the seed cell — C3, C1, C2, C4 — for a total of
+        25).
 
-        A compute-once/fan-out path would show << 24 calls and would be
+        A compute-once/fan-out path would show << 25 calls and would be
         scientifically invalid because repeatability must detect runtime
         nondeterminism.
         """
@@ -942,15 +1086,15 @@ class TestNoUpdateRepeatUnrollCount:
 
         # For 1 dev x 1 eval x 1 task:
         #   - 20 no-update repeats  (C1, update_enabled=False)
+        #   -  1 canonical donor run
         #   -  4 condition runs     (C3 trained, C1 update-disabled,
         #                             C2 untrained, C4 feedback-shuffled)
-        #   C5 (state-zeroed) and C6 (state-swapped) reuse the trained
-        #   state without calling unroll_online_episode.
-        #   No donor runs because len(shard_tasks) == 1.
-        #   Total: 24 unroll calls.
-        assert counting_unroll.call_count == 24, (
-            f"Expected 24 unroll_online_episode calls "
-            f"(20 no-update + 4 conditions), "
+        #   C5 (state-zeroed) and C6 (state-swapped) reuse trained snapshots
+        #   without calling unroll_online_episode.
+        #   Total: 25 unroll calls.
+        assert counting_unroll.call_count == 25, (
+            f"Expected 25 unroll_online_episode calls "
+            f"(20 no-update + 1 donor + 4 conditions), "
             f"got {counting_unroll.call_count}"
         )
 

@@ -79,6 +79,7 @@ from .contracts import (
     ModelConfig,
     ProbeCase,
     ProbeKind,
+    TaskFamily,
 )
 from .instrument_contracts import CalibrationInstrumentView
 from .model import CortexState, MetaCortex
@@ -629,7 +630,7 @@ def _collect_seed_cell_for_task(
     eval_seed: int,
     theta_hash: str,
     organ_hash: str,
-    donor_state: CortexState | None,
+    donor_state: CortexState,
     device: torch.device,
     dtype: torch.dtype,
 ) -> SeedCellRecord:
@@ -786,33 +787,32 @@ def _collect_seed_cell_for_task(
     conditions.append(c5_rec)
 
     # --- C6: STATE_SWAPPED ---
-    if donor_state is not None:
-        with torch.inference_mode():
-            c6_counts, c6_state, c6_trace, c6_opt = (
-                _run_state_swapped_condition(
-                    model, organ, task, trained_state, donor_state, scorer
-                )
+    with torch.inference_mode():
+        c6_counts, c6_state, c6_trace, c6_opt = (
+            _run_state_swapped_condition(
+                model, organ, task, trained_state, donor_state, scorer
             )
-        c6_pre = _measure_pre_deletion_primary(
-            model, organ, task, c6_state, scorer
         )
-        c6_post = _measure_post_deletion_primary(
-            model, organ, task, c6_state, scorer
-        )
-        c6_rec = _build_task_condition_record(
-            task, C6, c6_counts,
-            pre_learning_primary, c6_pre, c6_post,
-            dev_seed_index=dev_seed_index,
-            eval_seed_index=eval_seed_index,
-            dev_seed=dev_seed,
-            eval_seed=eval_seed,
-            theta_hash=theta_hash,
-            organ_hash=organ_hash,
-            state=c6_state,
-            optimizer_step_count=c6_opt,
-            trace_count_after=c6_trace,
-        )
-        conditions.append(c6_rec)
+    c6_pre = _measure_pre_deletion_primary(
+        model, organ, task, c6_state, scorer
+    )
+    c6_post = _measure_post_deletion_primary(
+        model, organ, task, c6_state, scorer
+    )
+    c6_rec = _build_task_condition_record(
+        task, C6, c6_counts,
+        pre_learning_primary, c6_pre, c6_post,
+        dev_seed_index=dev_seed_index,
+        eval_seed_index=eval_seed_index,
+        dev_seed=dev_seed,
+        eval_seed=eval_seed,
+        theta_hash=theta_hash,
+        organ_hash=organ_hash,
+        state=c6_state,
+        optimizer_step_count=c6_opt,
+        trace_count_after=c6_trace,
+    )
+    conditions.append(c6_rec)
 
     # Canonical order: C1, C2, C3, C4, C5, C6.
     order = {C1: 0, C2: 1, C3: 2, C4: 3, C5: 4, C6: 5}
@@ -920,6 +920,31 @@ def _collect_no_update_repeats_for_task(
 # ---------------------------------------------------------------------------
 
 
+def _build_donor_task_map(
+    tasks: Sequence[MetaTask],
+) -> dict[int, MetaTask]:
+    """Map each validation-task index to its canonical within-family donor."""
+    tasks_by_family: dict[TaskFamily, list[tuple[int, MetaTask]]] = {}
+    for task_index, task in enumerate(tasks):
+        if task.split == DevSplit.META_VALIDATION:
+            tasks_by_family.setdefault(task.family, []).append((task_index, task))
+
+    donor_tasks: dict[int, MetaTask] = {}
+    for family in TaskFamily:
+        family_tasks = tasks_by_family.get(family, [])
+        if not family_tasks:
+            continue
+        if len(family_tasks) < 2:
+            raise ValueError(
+                f"Calibration family {family.value} lacks a distinct C6 donor"
+            )
+        for family_index, (task_index, _task) in enumerate(family_tasks):
+            donor_index = (family_index + 1) % len(family_tasks)
+            donor_tasks[task_index] = family_tasks[donor_index][1]
+
+    return donor_tasks
+
+
 def collect_calibration_shard(
     *,
     view: CalibrationInstrumentView,
@@ -1001,6 +1026,8 @@ def collect_calibration_shard(
             )
     if len(set(task_idxs)) != len(task_idxs):
         raise ValueError("task_indices must be distinct")
+
+    donor_tasks = _build_donor_task_map(view.tasks)
 
     # --- 2. Validate checkpoint exists (fail before output) ---
     ckpt_path = Path(checkpoint_dir)
@@ -1134,17 +1161,15 @@ def collect_calibration_shard(
                 eval_seed = view.evaluation_seeds[eval_idx]
 
                 for i, task in enumerate(shard_tasks):
-                    # Find a donor state from a different task in the shard.
-                    donor_state: CortexState | None = None
-                    if len(shard_tasks) > 1:
-                        donor_task = shard_tasks[(i + 1) % len(shard_tasks)]
-                        with torch.inference_mode():
-                            donor_output = unroll_online_episode(
-                                model, organ, donor_task, boundary,
-                                update_enabled=True,
-                                gradient_enabled=False,
-                            )
-                            donor_state = donor_output.state
+                    task_idx = task_idxs[i]
+                    donor_task = donor_tasks[task_idx]
+                    with torch.inference_mode():
+                        donor_output = unroll_online_episode(
+                            model, organ, donor_task, boundary,
+                            update_enabled=True,
+                            gradient_enabled=False,
+                        )
+                        donor_state = donor_output.state
 
                     record = _collect_seed_cell_for_task(
                         model, organ, task, boundary, scorer,
