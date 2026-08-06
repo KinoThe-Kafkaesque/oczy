@@ -1,6 +1,6 @@
 # Experiments Logs Ledger — Authoritative Index
 
-**Date:** 2026-07-19 (updated through campaign `0d48130` adjudication, Exp03 `ad77e93` real-driver closure, R18 5-seed diagnostic clarification, R18 5-seed diagnostic adjudication, R18 mechanism diagnostics adjudication, R19 DEV calibration adjudication, R20 DEV implementation/smoke adjudication, and R20 INT8 transport recovery/bounded calibration fanout)
+**Date:** 2026-08-06 (updated through campaign `d756ff4 R24 Phase A v3` adjudication, Exp03 `ad77e93` real-driver closure, R18 5-seed diagnostic clarification, R18 5-seed diagnostic adjudication, R18 mechanism diagnostics adjudication, R19 DEV calibration adjudication, R20 DEV implementation/smoke adjudication, R20 INT8 transport recovery, and the corrected R20 meta_cortex/v2 DEV calibration closure with local diagnostics)
 **Purpose:** This ledger classifies every experiment log against three
 invalidation events:
 
@@ -112,13 +112,15 @@ v2.2 difficulty curve. The 13.5x drift claim (`044cb51`) remains retracted
 | 2026-07-12 | `2026-07-12_r19_dev_calibration.json` | VALID | **R19 DEV calibration adjudication.** Durable execution/adjudication JSON: commit `bd1ead9a8358b675af5e929c53a01eb505839639`, Kaggle CPU. calibrate-dev v4 exit 0, all metrics collected. Manifest SHA-256 `77ef4607…`, parameter_total 60,388/64,000. DEV articulation gate **FAILED** (Arm B latent-control DEV accuracy ≤ C1 random-cortex DEV accuracy); oracle ceiling 0.357143 > 0 (PASSED independently). No signoff requested; no holdout accessed. Three prior infrastructure-failed attempts (v1 offline model resolution, v2 source-path/provenance + feature explosion, v3 artifacts not rooted in `/kaggle/working`); v4 infrastructure-successful but scientifically BLOCKED. C7 adapter discrepancy: manifest `c7_available=true` but `_try_s3m2a_retrieval_adapter()` returns None. R20 remains separately blocked on human signoff. No H-LATENT or H-LABEL verdict permitted. | — |
 | 2026-07-12 | `2026-07-12_r20_dev_smoke.json` | VALID | **R20 DEV implementation/smoke adjudication.** Durable execution/adjudication JSON: commit `e26d8291879d078b701f19802f72041e08cfd6a6`, Kaggle CPU, kernel `abdellahkadem/oczy-r20-dev-v3-e26d8291879d`, exit 0, audit_status ok. Infrastructure/mechanism smoke only — no scientific verdict. Three attempts: v1 failed (offline loader failure), v2 failed (inference-tensor/autograd failure), v3 succeeded after fixes. Audit invariants: frozen organ hash identical before/after `d8a3a3b…`, checkpoint theta hash `8d6c41c5…`, trace count 0 after deletion, online optimizer counts unchanged. 207,364 theta params / 829,456 bytes, F/S 64×64, bank 3×896, optimizer steps 1, best DEV validation score 0.0. Causal DEV deltas: trained-vs-update 0, untrained 0, shuffled 0, zeroed 0, swapped 0.0666667 — recorded as observed mechanism smoke. Test suites: focused 262 passed/2 skipped, organ 54 passed/2 skipped. **Meta-test remains BLOCKED**: no frozen `meta_cortex/v1` instrument, distribution checks, power analysis, manifest, or human signoff exists. No ACCEPT/REFUTE verdict permitted. No threshold, metric, baseline, episode, scoring, eval manifest, or research spec changed. No holdout accessed; no signoff requested. | — |
 | 2026-07-09 | `2026-07-09_r18_implementation.md` | VALID | **R18 consolidation-as-distillation implementation and first runs.** Initial implementation of `consolidation_distillation.py`, autoresearch segment 10 wiring (runs #200–#202). Run #202: Qwen2.5-0.5B + LoRA rank 2, ~220s, `teacher_dev_delta ~0.176` below 0.2 validity gate — teacher gate FAILED, no H-DISTILL verdict. Concurrent: Numba CPU kernel acceleration (`62ab18e`), Kaggle research compute workflow (`6dee16b`), INT8 rescheduling planning. Gate failure confirmed by later mechanism/five-seed diagnostics (2026-07-11). | — |
-| 2026-07-22 | `2026-07-16_campaign_959e114.md` | PARTIAL | **R20 INT8 meta_cortex/v2 DEV training and calibration campaign.** Training/checkpoint, transport, runtime, and failure-timing evidence remains valid. Scientific aggregation of the v5 calibration shards is invalidated: source `949871b…` chose C6 donors from shard-local task membership, making `state_addressing_delta` partition-dependent, and width-1 shards omitted required C6 entirely. The prior claim that width changes were control-plane-only is withdrawn. Human decision: version fix, let five active legacy jobs finish, then full width-3 DEV rerun. Commit `a8c98d638209a8425b14a0f853e9fc46ae7da581` selects canonical next-within-family donors independent of shard membership; 89 focused tests passed. Corrected source dataset `abdellahkadem/oczy-source-a8c98d638209`, archive `40708cb9…`. The v6 campaign has 150 private internet-off CPU jobs covering 5 × 90 DEV cells exactly once at width 3; its canary is queued behind the legacy drain and an automated gate verifies provenance, runtime, hashes, record counts, and C1–C6 before promotion. No scientific verdict; meta-test remains blocked/unaccessed. | — |
+| 2026-07-22 | `2026-07-16_campaign_959e114.md` | PARTIAL | **R20 INT8 meta_cortex/v2 DEV training and calibration campaign.** Training/checkpoint, transport, runtime, and failure-timing evidence remains valid. Scientific aggregation of the v5 shards remains invalid: source `949871b…` chose C6 donors from shard-local membership, making `state_addressing_delta` partition-dependent, and width-1 shards omitted C6. The prior control-plane-only width claim remains withdrawn; v5 is infrastructure-valid but scientifically invalid. Corrected source `a8c98d638209a8425b14a0f853e9fc46ae7da581` uses canonical next-within-family donors. The completed v6 closure is recorded in `2026-08-05_r20_corrected_dev_calibration.json`: complete corrected coverage and trace audits are valid, but all endpoint effects and condition scores are zero and power feasibility is blocked. Thus the DEV decision is **BLOCKED/no-go**, not REFUTED; no meta-test or holdout was accessed and no H-META-CORTEX verdict is permitted. | `2026-08-05_r20_corrected_dev_calibration.json` |
+| 2026-07-26 | `2026-07-26_local_t550_gpu_throughput_probe.md` | VALID | **Local T550 GPU throughput probe — infrastructure, not a cortex experiment.** Benchmarked the local NVIDIA T550 Laptop GPU (4 GB, Turing compute 7.5, torch 2.6.0+cu124, fp16) against the local i7-1260P CPU (fp32) on the five small causal LMs in the local HF cache, including the pinned `Qwen/Qwen2.5-0.5B-Instruct` organ and the `Qwen/Qwen2.5-1.5B-Instruct` fallback. Workload: ~512-token prompt, 128 new tokens, greedy, KV cache on, batch 1 and 4. Result: at batch=1 the T550 is 1.1–2.0× faster than CPU on decode (Qwen-0.5B 27.4 vs 18.9 t/s; Qwen-1.5B 9.6 vs 4.9 t/s); at batch=4 the CPU beats the GPU on aggregate throughput for every model that fits (Qwen-0.5B 30.2 vs 47.8 t/s; LFM-1.2B 15.8 vs 28.1 t/s), and Qwen-1.5B OOMs on GPU at batch=4. **Decision: the T550 is not added as a verified compute path.** The CPU-only contract stands. The T550 is weaker than the archived T4, the frozen LM is not the research bottleneck, and wiring in a GPU code path would break the CPU-only contract in `infrastructure/kaggle/RESEARCH_GUIDE.md` and `AGENTS.md` rule 7. The T550 is acceptable for local dev iteration and benchmark scripts only. No `eval/v2`, `research/`, `lanes/`, or `experiments/organism_curriculum/` paths were modified; no remote compute was used; no scientific claim was made. | — |
+| 2026-08-05 | `2026-08-05_r20_corrected_dev_calibration.json` | VALID | **R20 corrected meta_cortex/v2 DEV calibration closure.** VALID classifies execution, provenance, coverage, aggregation, and calibration-evidence integrity—not hypothesis acceptance. Corrected source `a8c98d6…`; 150 shards, 9,000 no-update records, 2,250 seed cells, five theta hashes; trace audits passed. All nine endpoints have mean/CI/SD exactly 0 in all three families, and all six conditions score 0 over every denominator. Equivalence margin 0; power feasibility `blocked`; no endpoint/family has a finite required N. Exact local reproduction stopped before generation on organ-hash mismatch; different-organ output and forcing runs are diagnostic only. **DEV decision: BLOCKED/no-go, not REFUTED.** Oracle gates, a signed candidate, and meta-test are absent; no holdout/meta-test was accessed and no ACCEPT/REFUTE verdict is claimed for H-META-CORTEX. | — |
 
 ## Summary
 
 | Classification | Count |
 |----------------|-------|
-| VALID | 62 |
+| VALID | 64 |
 | PARTIAL | 10 |
 | INVALIDATED (pure) | 0 |
 | SUPERSEDED (pure) | 0 |
@@ -415,6 +417,139 @@ changed.
 Source: `2026-07-11_campaign_0d48130.md` § R20 DEV implementation/smoke and
 `2026-07-12_r20_dev_smoke.json`. No threshold changes or causal
 claims beyond measured metrics.
+
+## R20 Corrected DEV Calibration Adjudication (2026-08-05)
+
+**Full curated campaign log:** `2026-07-16_campaign_959e114.md`.
+**Durable execution/adjudication JSON:**
+`2026-08-05_r20_corrected_dev_calibration.json`.
+
+The corrected v6 DEV execution and calibration evidence is **VALID**: source
+provenance, coverage, aggregation, and trace audits close cleanly. That validity
+classification applies to evidence integrity only. The scientific DEV decision
+is **BLOCKED/no-go**, not REFUTED: every measured effect is zero and the
+registered power analysis reports `feasibility_status=blocked`. No formal
+ACCEPT or REFUTE verdict is available for H-META-CORTEX.
+
+### Corrected instrument and runtime identity
+
+| Field | SHA-256 / value |
+|-------|-----------------|
+| Source commit | `a8c98d638209a8425b14a0f853e9fc46ae7da581` |
+| Source archive | `40708cb9e195cba45302d64d11a9110cc4f91b74ce0325b5a4856908b1e941ca` |
+| Runtime manifest | `a6214355c1c6b9192d435e62f3add6bef5db8c3a6c1cf3a55cb2a9dbfc91182e` |
+| Frozen remote organ | `a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea` |
+| Definition | `f62f18ef3dd4eb7cf62d82e24b7c0fea5011516dbaf16d3ea50cc7890c9db14f` |
+| Calibration view | `639725f44aa7e46f84691987f9dd9454ac70902bf5f20742505a733219166dc2` |
+| Scorer | `e5d746d0477c489157d1699e2ae73dfcc8ac92998719de1a06d92fcff4b1c742` |
+| DEV distributions artifact | `af644e7573bb073b7b3b75cbe4f40f468a8a39eeb934bb08915dee0e27361771` |
+| Power analysis artifact | `f1c02a764d93c831057a35853c5f1a98fccb3f734630f4e3b75f8929e63b5118` |
+
+This corrected source chooses the C6 donor from the full frozen validation
+family in canonical order, so shard membership controls only packaging. The
+v5 shard-local donor implementation remains scientifically invalid even though
+its infrastructure and runtime observations remain valid.
+
+### Coverage and audit closure
+
+| Field | Observed |
+|-------|----------|
+| Corrected shards | 150 |
+| Calibration tasks | 90 total: 30 each for `contextual_remap`, `finite_state`, and `rule_transformation` |
+| No-update repeat records | 9,000 |
+| Developmental × evaluation seed cells | 2,250 |
+| Distinct theta hashes | 5 |
+| Missing/duplicate coverage | none |
+| Trace audits | passed |
+| Holdout/meta-test accessed | false |
+
+The merged artifacts cover every intended corrected DEV cell exactly once.
+There were no aggregation failures, and the frozen-organ, theta, trace
+deletion, optimizer-step, seed, definition, view, and scorer checks passed.
+
+### All-zero endpoint and condition evidence
+
+For each of the three families, all nine registered endpoints—
+`adaptation_delta`, `causal_state_delta`, `composition_delta`,
+`feedback_semantics_delta`, `meta_training_delta`, `specificity_delta`,
+`state_addressing_delta`, `trace_free_survival`, and `transfer_delta`—have
+mean `0`, confidence interval `[0, 0]`, and standard deviation `0`.
+
+All six collected conditions—C1 `update_disabled`, C2 `untrained_rule`, C3
+`trained`, C4 `feedback_shuffled`, C5 `state_zeroed`, and C6
+`state_swapped`—aggregate zero correct answers over every recorded scoring
+denominator. These are valid corrected DEV observations, but zero effects under
+a blocked feasibility analysis do not by themselves constitute a registered
+hypothesis refutation.
+
+### Power feasibility
+
+The registered equivalence margin is exactly `0`. Every endpoint/family pair
+has `status=no_finite_n`; no finite sample size can be estimated from the
+all-zero mean and variance. Consequently power feasibility is **blocked**.
+The value 30 tasks per family is only the minimum fallback, not a powered
+sample-size result and not authorization to proceed to meta-test.
+
+### Exact local reproduction blocker
+
+An exact-runtime local confirmation used the manifested Python/package
+versions and matched all ten pinned model artifact hashes, but failed closed
+before generation. The expected remote organ hash was
+`a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea`;
+the locally constructed exact-runtime organ hash was
+`2621e258b2fe8d37b2b5743f5e1d3d04037d3d0d409bbad71dd2ba18240498ce`.
+Therefore the remote all-zero outputs were **not** exactly reproduced locally.
+
+A separate, explicitly non-comparable diagnostic using organ
+`2621e258b2fe8d37b2b5743f5e1d3d04037d3d0d409bbad71dd2ba18240498ce`
+scored C1 `0/10` and C3 `0/10`; 9 of 10 paired raw generations were identical,
+and no generated output contained a target substring. This supports
+investigation of the output path only. It is not a replacement shard, cannot
+be merged, and cannot validate or invalidate the remote organ's scientific
+result.
+
+### Word-forcing controls
+
+The local controls establish that target tokens can be made visible under
+deliberate interventions, not that the learned remote meta-cortex produced
+them:
+
+- A hard inference-time token schedule made both `left` and `rise` start all
+  four generations (`4/4` each). This standard local FP32 path is not the
+  remote INT8 organ and is a positive control only.
+- On local QwenFrozenOrgan
+  `60de9f75e8ae1d2507429877b4b2da48ec64c3e28eaad03db23cd3de43a1b4da`,
+  an optimized soft bank raised first-position `P(left)` from
+  `3.507e-10` to `0.936`; `left` began `4/4` generations, with repetition,
+  at bank norm `11.265`.
+- The analogous soft-bank control raised first-position `P(rise)` from
+  `2.084e-9` to `0.926`; `rise` began `1/4` generations at bank norm `6.937`.
+- The frozen model hash was unchanged before and after both soft-bank
+  optimizations.
+
+These controls are diagnostic only because both local organ identity and/or
+inference intervention differ from the frozen remote organ. They show that the
+vocabulary/output path can express the requested words under forcing; they do
+not demonstrate learned causal control, recover a nonzero endpoint, or change
+the power decision.
+
+### Action and explicit non-claim
+
+The action is **no-go**: do not freeze a signed candidate or spend meta-test
+budget from this calibration. Continue DEV-only diagnosis of why trained,
+untrained, shuffled, zeroed, swapped, and no-update conditions all produce
+zero scoring signal, including the organ-construction mismatch and the path
+between soft-bank activations and decoded outputs.
+
+No H-META-CORTEX ACCEPT or REFUTE verdict is claimed. Required oracle gates,
+a signed candidate, and the meta-test are absent; no meta-test or holdout was
+accessed. The corrected v6 closure is VALID calibration evidence supporting a
+BLOCKED/no-go decision, not hypothesis acceptance and not a formal
+refutation.
+
+Source: `2026-07-16_campaign_959e114.md` corrected-v6 closure and
+`2026-08-05_r20_corrected_dev_calibration.json`.
+| 2026-08-06 | `2026-08-06_campaign_r24_tiny_decoder.md` | **VALID** | **R24 Phase A canary (v3)** — 4/4 succeeded burst on Kaggle CPU (film/additive/deep/d128, 20/10 tasks, 800 steps, `acb09a` manifest). Deep FiLM `Δ 2.65%` clears `≥0.02` (others 0–1.1%); `v1`/`v2` 8× `runtime_mismatch`/`arg` failures are **infrastructure-invalid**, not refutations. Valid canary, not H-TOY-EXISTENCE accept; no meta-test. | — |
 
 ## Notes (conceptual, non-log)
 
