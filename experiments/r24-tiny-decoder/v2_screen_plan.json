@@ -1,0 +1,122 @@
+{
+  "base_config": {
+    "batch_seed": 101,
+    "batch_size": 32,
+    "catalog_seed": 24001,
+    "conditioning": "film",
+    "control_seed": 303,
+    "counterfactual_weight": 0.0,
+    "d_model": 64,
+    "deep_film": true,
+    "device": "cpu",
+    "dropout": 0.1,
+    "dropout_seed": 202,
+    "encoder_lr_multiplier": 1.0,
+    "encoder_pooling": "mean",
+    "init_seed": 0,
+    "lr": 0.001,
+    "max_train_eval_examples": 256,
+    "n_layers": 2,
+    "n_prefix_tokens": 4,
+    "oracle_mode": "text",
+    "protocol_version": "r24-tiny-decoder/v2",
+    "root_seed": 24001,
+    "scheduler": "constant",
+    "steps": 800,
+    "train_per_family": 20,
+    "val_per_family": 10,
+    "warmup_steps": 0,
+    "weight_decay": 0.01
+  },
+  "case_overrides": {
+    "base": {},
+    "capacity_d128_l4": {
+      "d_model": 128,
+      "n_layers": 4
+    },
+    "conditioning_additive_deep": {
+      "conditioning": "additive",
+      "deep_film": true
+    },
+    "conditioning_additive_shallow": {
+      "conditioning": "additive",
+      "deep_film": false
+    },
+    "conditioning_film_shallow": {
+      "conditioning": "film",
+      "deep_film": false
+    },
+    "conditioning_none": {
+      "conditioning": "none",
+      "deep_film": false
+    },
+    "conditioning_prefix4": {
+      "conditioning": "prefix",
+      "deep_film": false
+    },
+    "data_n1": {
+      "train_per_family": 1
+    },
+    "data_n40": {
+      "train_per_family": 40
+    },
+    "data_n5": {
+      "train_per_family": 5
+    },
+    "encoder_attention": {
+      "encoder_pooling": "attention"
+    },
+    "encoder_cls": {
+      "encoder_pooling": "cls"
+    },
+    "encoder_line_attention": {
+      "encoder_pooling": "line_attention"
+    },
+    "optimizer_cosine": {
+      "scheduler": "cosine"
+    },
+    "optimizer_counterfactual01": {
+      "counterfactual_weight": 0.1
+    },
+    "optimizer_encoder_lr03": {
+      "encoder_lr_multiplier": 0.3
+    },
+    "optimizer_encoder_lr3": {
+      "encoder_lr_multiplier": 3.0
+    },
+    "optimizer_lr3e3": {
+      "lr": 0.003
+    },
+    "optimizer_lr3e4": {
+      "lr": 0.0003
+    },
+    "optimizer_steps1500": {
+      "steps": 1500
+    },
+    "optimizer_warmup40": {
+      "warmup_steps": 40
+    },
+    "optimizer_wd0": {
+      "weight_decay": 0.0
+    }
+  },
+  "data_scale_note": "The frozen generator exposes only 45 unique rule-transformation fingerprints at max scale, so the balanced nested curve stops at 40 rules/family.",
+  "governance": {
+    "confirmation": "new catalog seed and five paired init seeds after screen; selection frozen before confirmation",
+    "remote_contract": "clean commit, private, internet-off, CPU, runtime hash verified, five workers, submit interval 0",
+    "v1_status": "invalidated for measurement (late seeding, padded-query decode, unmasked oracle attention, conflicting corpus rows)",
+    "v2_status": "exploratory screen; viewed seed-123 ladder is diagnostic only"
+  },
+  "human_authorization": {
+    "recorded_utc": "2026-08-08T22:24:04Z",
+    "scope": "test all enumerated R24 Phase-A v2 improvement pathways; Kaggle CPU permitted",
+    "signoff_id": "conversation-019fd6c5-14ae-712f-b8ce-d622526d84fb-go-ahead-test-all",
+    "status": "authorized"
+  },
+  "max_train_tasks_per_family": 100,
+  "schema_version": "oczy/r24-phase-a-screen/v2",
+  "selection_note": "Exploratory tuning only. Compare exact correct/total and correct-vs-swapped paired controls; do not select on zero-state delta. Confirmation requires a new frozen catalog and five paired init seeds.",
+  "suite_sha256": "0da6533da23103eaf180719abaa77aba89a7a8f000baef99c89b09d3febee567",
+  "tune_catalog_seed": 24001,
+  "validation_tasks_per_family": 10
+}

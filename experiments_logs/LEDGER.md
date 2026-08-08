@@ -1,6 +1,6 @@
 # Experiments Logs Ledger — Authoritative Index
 
-**Date:** 2026-08-06 (updated through campaign `d756ff4 R24 Phase A v3` adjudication, Exp03 `ad77e93` real-driver closure, R18 5-seed diagnostic clarification, R18 5-seed diagnostic adjudication, R18 mechanism diagnostics adjudication, R19 DEV calibration adjudication, R20 DEV implementation/smoke adjudication, R20 INT8 transport recovery, and the corrected R20 meta_cortex/v2 DEV calibration closure with local diagnostics)
+**Date:** 2026-08-08 (updated through campaign `d756ff4 R24 Phase A v1 invalidation` and v2 protocol authorization, Exp03 `ad77e93` real-driver closure, R18 5-seed diagnostic clarification, R18 5-seed diagnostic adjudication, R18 mechanism diagnostics adjudication, R19 DEV calibration adjudication, R20 DEV implementation/smoke adjudication, R20 INT8 transport recovery, and the corrected R20 meta_cortex/v2 DEV calibration closure with local diagnostics)
 **Purpose:** This ledger classifies every experiment log against three
 invalidation events:
 
@@ -116,13 +116,15 @@ v2.2 difficulty curve. The 13.5x drift claim (`044cb51`) remains retracted
 | 2026-07-26 | `2026-07-26_local_t550_gpu_throughput_probe.md` | VALID | **Local T550 GPU throughput probe — infrastructure, not a cortex experiment.** Benchmarked the local NVIDIA T550 Laptop GPU (4 GB, Turing compute 7.5, torch 2.6.0+cu124, fp16) against the local i7-1260P CPU (fp32) on the five small causal LMs in the local HF cache, including the pinned `Qwen/Qwen2.5-0.5B-Instruct` organ and the `Qwen/Qwen2.5-1.5B-Instruct` fallback. Workload: ~512-token prompt, 128 new tokens, greedy, KV cache on, batch 1 and 4. Result: at batch=1 the T550 is 1.1–2.0× faster than CPU on decode (Qwen-0.5B 27.4 vs 18.9 t/s; Qwen-1.5B 9.6 vs 4.9 t/s); at batch=4 the CPU beats the GPU on aggregate throughput for every model that fits (Qwen-0.5B 30.2 vs 47.8 t/s; LFM-1.2B 15.8 vs 28.1 t/s), and Qwen-1.5B OOMs on GPU at batch=4. **Decision: the T550 is not added as a verified compute path.** The CPU-only contract stands. The T550 is weaker than the archived T4, the frozen LM is not the research bottleneck, and wiring in a GPU code path would break the CPU-only contract in `infrastructure/kaggle/RESEARCH_GUIDE.md` and `AGENTS.md` rule 7. The T550 is acceptable for local dev iteration and benchmark scripts only. No `eval/v2`, `research/`, `lanes/`, or `experiments/organism_curriculum/` paths were modified; no remote compute was used; no scientific claim was made. | — |
 | 2026-08-05 | `2026-08-05_r20_corrected_dev_calibration.json` | VALID | **R20 corrected meta_cortex/v2 DEV calibration closure.** VALID classifies execution, provenance, coverage, aggregation, and calibration-evidence integrity—not hypothesis acceptance. Corrected source `a8c98d6…`; 150 shards, 9,000 no-update records, 2,250 seed cells, five theta hashes; trace audits passed. All nine endpoints have mean/CI/SD exactly 0 in all three families, and all six conditions score 0 over every denominator. Equivalence margin 0; power feasibility `blocked`; no endpoint/family has a finite required N. Exact local reproduction stopped before generation on organ-hash mismatch; different-organ output and forcing runs are diagnostic only. **DEV decision: BLOCKED/no-go, not REFUTED.** Oracle gates, a signed candidate, and meta-test are absent; no holdout/meta-test was accessed and no ACCEPT/REFUTE verdict is claimed for H-META-CORTEX. | — |
 
+| 2026-08-06 | `2026-08-06_campaign_r24_tiny_decoder.md` | **INVALIDATED** | Four v3 kernels completed with valid remote execution/provenance, but the scientific measurements are invalid: model initialization was unseeded, variable-length queries were right-padded without length-aware decoding, oracle attention ignored padding, and corpus rows included conflicting/undefined labels. The Deep-FiLM `7/264 vs 0/264` delta is not evidence. | `experiments/r24-tiny-decoder/v2_screen_plan.json` |
+
 ## Summary
 
 | Classification | Count |
 |----------------|-------|
 | VALID | 64 |
 | PARTIAL | 10 |
-| INVALIDATED (pure) | 0 |
+| INVALIDATED (pure) | 1 |
 | SUPERSEDED (pure) | 0 |
 
 All files with INVALIDATED or SUPERSEDED content are classified PARTIAL because
@@ -549,7 +551,6 @@ refutation.
 
 Source: `2026-07-16_campaign_959e114.md` corrected-v6 closure and
 `2026-08-05_r20_corrected_dev_calibration.json`.
-| 2026-08-06 | `2026-08-06_campaign_r24_tiny_decoder.md` | **VALID** | **R24 Phase A canary (v3)** — 4/4 succeeded burst on Kaggle CPU (film/additive/deep/d128, 20/10 tasks, 800 steps, `acb09a` manifest). Deep FiLM `Δ 2.65%` clears `≥0.02` (others 0–1.1%); `v1`/`v2` 8× `runtime_mismatch`/`arg` failures are **infrastructure-invalid**, not refutations. Valid canary, not H-TOY-EXISTENCE accept; no meta-test. | — |
 
 ## Notes (conceptual, non-log)
 

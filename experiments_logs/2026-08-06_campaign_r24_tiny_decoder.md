@@ -1,5 +1,16 @@
 # Campaign d756ff4 — Research/24 Tiny Shared Frozen Decoder (Phase A)
 
+> **INVALIDATED AS A MEASUREMENT (2026-08-08).** The four v3 kernels are valid
+> execution/provenance smoke tests only. V1 initialized models before applying
+> `root_seed`; validation right-padded queries and decoded after the padded
+> length; oracle self-attention received no padding mask; and the corpus
+> contained identical model inputs with conflicting labels plus undefined
+> contextual-composition mappings. Consequently, `7/264`, `10/264`, and the
+> reported Deep-FiLM `7/264 vs 0/264` delta are not scientific evidence and must
+> not be used to select an architecture. Superseded by the human-authorized,
+> fresh-catalog `r24-tiny-decoder/v2` protocol in
+> `experiments/r24-tiny-decoder/v2_screen_plan.json`.
+
 **Date:** 2026-08-06
 **Campaign ID:** `d756ff4815d136fc908012750575ffe3a8cdff75` (short `d756ff4`)
 **Source commit:** `d756ff4815d136fc908012750575ffe3a8cdff75` — `feat(r24): tiny shared frozen decoder POC`

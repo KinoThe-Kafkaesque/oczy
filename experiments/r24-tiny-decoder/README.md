@@ -1,5 +1,34 @@
 # R24 Tiny Shared Frozen Decoder — Proof of Concept
 
+## Measurement status (2026-08-08)
+
+The original `r24-tiny-decoder/v1` Kaggle numbers are **invalidated as
+measurements**. V1 seeded after model construction, right-padded variable-length
+queries without length-aware generation, omitted the oracle attention padding
+mask, and admitted conflicting/undefined supervision rows. They remain useful
+only as execution smoke tests.
+
+The human-authorized `r24-tiny-decoder/v2` screen is frozen in
+`v2_screen_plan.json`. V2 seeds independent RNG streams before construction,
+keeps shared backbone initialization paired, evaluates equal query-length
+buckets, masks oracle padding, removes invalid specificity/contextual-composition
+rows with a fail-closed input-conflict audit, hashes rendered examples, saves and
+reload-verifies weights, reports correct/total by family/kind, compares correct
+state against swapped/random/zero controls, and retains retrieval baselines.
+The viewed seed-123 learnability ladder is diagnostic only; the screen uses a
+fresh tuning catalog, and confirmation will use a separately frozen catalog and
+five seeds.
+
+```bash
+# Learnability ladder
+uv run python -m oczy.experiments.r24_tiny_decoder \
+  --protocol-version v2 --diagnostic-ladder --output /tmp/r24-v2-ladder
+
+# One frozen screen case
+uv run python -m oczy.experiments.r24_tiny_decoder.suite_v2 \
+  --case base --output /tmp/r24-v2-base
+```
+
 Implements proposal: one shared frozen byte-level decoder conditioned by cortex state r[64],
 not per-unit decoders.
 
