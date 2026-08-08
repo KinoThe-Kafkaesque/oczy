@@ -366,15 +366,19 @@ def evaluate_phase_a_v2(
     if include_controls:
         oracle_predictions = accumulators["oracle"]["predictions"]
         assert isinstance(oracle_predictions, list)
+        ordered_examples = [
+            example for length in sorted(grouped) for example in grouped[length]
+        ]
+        predictions_by_control: dict[str, list[list[int]]] = {}
+        for control in controls:
+            predictions = accumulators[control]["predictions"]
+            assert isinstance(predictions, list)
+            predictions_by_control[control] = predictions
+
         paired: dict[str, dict[str, int]] = {}
         for control in ("zero", "random", "swapped"):
-            control_predictions = accumulators[control]["predictions"]
-            assert isinstance(control_predictions, list)
+            control_predictions = predictions_by_control[control]
             counts = {"oracle_only": 0, "control_only": 0, "both": 0, "neither": 0}
-            # Accumulator order is deterministic but grouped; recover gold in the same order.
-            ordered_examples = [
-                example for length in sorted(grouped) for example in grouped[length]
-            ]
             for oracle_pred, control_pred, example in zip(
                 oracle_predictions, control_predictions, ordered_examples, strict=True
             ):
@@ -391,6 +395,51 @@ def evaluate_phase_a_v2(
                     counts["neither"] += 1
             paired[control] = counts
         result["paired_controls"] = paired
+
+        # Rows within a rule are repeated measures.  Persist aggregate paired
+        # correctness by held-out rule so confirmation can report equal-rule
+        # macro summaries instead of treating every rendered probe as iid.
+        per_rule: dict[str, dict[str, Any]] = {}
+        for index, example in enumerate(ordered_examples):
+            record = per_rule.setdefault(
+                example.rule_fp,
+                {
+                    "family": example.family,
+                    "total": 0,
+                    "controls": {
+                        name: {"correct": 0} for name in controls
+                    },
+                    "paired_swapped": {
+                        "oracle_only": 0,
+                        "control_only": 0,
+                        "both": 0,
+                        "neither": 0,
+                    },
+                },
+            )
+            record["total"] += 1
+            gold = encode_with_eos(example.answer_text)
+            outcomes = {
+                name: predictions_by_control[name][index] == gold for name in controls
+            }
+            for name, is_correct in outcomes.items():
+                record["controls"][name]["correct"] += int(is_correct)
+            oracle_ok = outcomes["oracle"]
+            swapped_ok = outcomes["swapped"]
+            if oracle_ok and swapped_ok:
+                paired_key = "both"
+            elif oracle_ok:
+                paired_key = "oracle_only"
+            elif swapped_ok:
+                paired_key = "control_only"
+            else:
+                paired_key = "neither"
+            record["paired_swapped"][paired_key] += 1
+        for record in per_rule.values():
+            total = int(record["total"])
+            for metrics in record["controls"].values():
+                metrics["accuracy"] = int(metrics["correct"]) / total
+        result["per_rule_controls"] = dict(sorted(per_rule.items()))
     return result
 
 

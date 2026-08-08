@@ -13,6 +13,19 @@ from oczy.experiments.r24_tiny_decoder.decoder import (
     TinySharedDecoder,
 )
 from oczy.experiments.r24_tiny_decoder.diagnostics_v2 import build_overfit_cases
+from oczy.experiments.r24_tiny_decoder.factorial_v2 import (
+    CASE_OVERRIDES as FACTORIAL_CASE_OVERRIDES,
+)
+from oczy.experiments.r24_tiny_decoder.factorial_v2 import (
+    materialize_case as materialize_factorial_case,
+)
+from oczy.experiments.r24_tiny_decoder.factorial_v2 import (
+    select_winner,
+    selection_record,
+)
+from oczy.experiments.r24_tiny_decoder.factorial_v2 import (
+    suite_sha256 as factorial_suite_sha256,
+)
 from oczy.experiments.r24_tiny_decoder.oracle_v2 import OraclePooling, PoolingOracleEncoder
 from oczy.experiments.r24_tiny_decoder.phase_a_v2 import (
     PhaseAV2Config,
@@ -304,3 +317,92 @@ def test_screen_suite_has_fixed_validation_and_nested_data_prefixes() -> None:
             for example in large_validation
         ]
     )
+
+
+
+def test_v2_artifact_records_clustered_per_rule_controls() -> None:
+    examples = [
+        _example("query-a", "up", "r1"),
+        _example("query-b", "down", "r1"),
+        _example("query-c", "left", "r2"),
+    ]
+    config = PhaseAV2Config(
+        root_seed=53,
+        oracle_mode="hash",
+        steps=1,
+        batch_size=1,
+        dropout=0.0,
+        max_train_eval_examples=3,
+    )
+    artifact = train_phase_a_v2(config, train_examples=examples, val_examples=examples)
+    per_rule = artifact["validation"]["per_rule_controls"]
+    assert set(per_rule) == {"r1", "r2"}
+    assert per_rule["r1"]["total"] == 2
+    assert per_rule["r2"]["total"] == 1
+    for row in per_rule.values():
+        assert set(row["controls"]) == {"oracle", "zero", "random", "swapped"}
+        assert sum(row["paired_swapped"].values()) == row["total"]
+
+
+def test_factorial_suite_completes_only_the_four_missing_cells() -> None:
+    assert set(FACTORIAL_CASE_OVERRIDES) == {
+        "factor_ac",
+        "factor_al",
+        "factor_cl",
+        "factor_acl",
+    }
+    assert len(factorial_suite_sha256()) == 64
+    _, ac_train, ac_validation, ac_metadata = materialize_factorial_case("factor_ac")
+    _, acl_train, acl_validation, acl_metadata = materialize_factorial_case("factor_acl")
+    assert ac_metadata["fixed_validation_sha256"] == acl_metadata["fixed_validation_sha256"]
+    assert ac_metadata["materialized_train_sha256"] == acl_metadata["materialized_train_sha256"]
+    assert ac_train == acl_train
+    assert ac_validation == acl_validation
+
+
+def _selection_artifact(
+    oracle_correct: int,
+    swapped_correct: int,
+    oracle_only: int,
+    control_only: int,
+    macro_rows: list[tuple[int, int, int]],
+) -> dict[str, object]:
+    return {
+        "validation": {
+            "controls": {
+                "oracle": {"correct": oracle_correct, "total": 219},
+                "swapped": {"correct": swapped_correct, "total": 219},
+            },
+            "paired_controls": {
+                "swapped": {
+                    "oracle_only": oracle_only,
+                    "control_only": control_only,
+                    "both": oracle_correct - oracle_only,
+                    "neither": 219 - oracle_correct - control_only,
+                }
+            },
+            "per_rule_controls": {
+                f"r{index}": {
+                    "controls": {
+                        "oracle": {"accuracy": oracle / total},
+                        "swapped": {"accuracy": swapped / total},
+                    }
+                }
+                for index, (oracle, swapped, total) in enumerate(macro_rows)
+            },
+        }
+    }
+
+
+def test_factorial_selection_is_causal_first_then_exact() -> None:
+    positive_rows = [(1, 0, 1)] + [(0, 0, 1)] * 29
+    records = [
+        selection_record("base", _selection_artifact(24, 17, 9, 2, positive_rows)),
+        selection_record(
+            "conditioning_additive_deep",
+            _selection_artifact(28, 15, 18, 5, positive_rows),
+        ),
+        selection_record("factor_acl", _selection_artifact(30, 29, 3, 2, positive_rows)),
+    ]
+    assert records[-1]["eligible"] is False
+    assert select_winner(records) == "conditioning_additive_deep"
