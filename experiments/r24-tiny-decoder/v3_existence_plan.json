@@ -1,0 +1,574 @@
+{
+  "catalog_manifest": {
+    "alphabet_ascii": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+    "bit_width": 6,
+    "families": [
+      "base64_xor",
+      "base64_rotate1_xor",
+      "base64_rotate2_xor"
+    ],
+    "heldout_inputs": [
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63
+    ],
+    "heldout_symbols_ascii": "DEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+    "identifiability_sha256": "b0f1b55f75b28dea9352170c305f1dc5e4d6bd1e003de2eb36c3b3a72c434598",
+    "registry_sha256": "8b425449f21a1eb83842a2ad3435ed8645264bd35965a4b9d7b2bba5122f8628",
+    "root_seed": 24003,
+    "rotations": [
+      0,
+      1,
+      2
+    ],
+    "schema_version": "oczy/r24-base64-rotational-xor-catalog/v3",
+    "splits": {
+      "cortex_meta_dev": {
+        "count": 25,
+        "sha256": "d355f10093e4fbc9f335b53e475ca78b0efc58fc26545644e43fa956aa1ce34f"
+      },
+      "cortex_meta_train": {
+        "count": 50,
+        "sha256": "897c396d249aab30890aa2f6a914b9a201ed21778babede2ca6163a0b4b9d95b"
+      },
+      "organ_dev": {
+        "count": 25,
+        "sha256": "854c9065e53cd500a7cc302db4767a827774881fc48307e338a3a35f2833d045"
+      },
+      "organ_train": {
+        "count": 42,
+        "sha256": "fdc15de4cf78f454351d92d1da11343b21b27b2ea6376596463a99778c595566"
+      },
+      "sealed_test": {
+        "count": 50,
+        "sha256": "39bc277c682c760317ebde82edccea2fb170e39c343fef81de36e77be40d196c"
+      }
+    },
+    "teaching_alias_ascii": "B->A",
+    "teaching_inputs": [
+      0,
+      1,
+      2
+    ],
+    "teaching_symbols_ascii": "ABC"
+  },
+  "catalog_manifest_sha256": "02f7fddc39f9d69744f29b64a788c6cba76887d7e27b35f3133a9f89729efd82",
+  "feature_definition": {
+    "event_layout": {
+      "corrected_outcome": 18,
+      "correction_output_bits": [
+        12,
+        18
+      ],
+      "event_marker": 27,
+      "identity_attempt_bits": [
+        6,
+        12
+      ],
+      "input_output_products": [
+        19,
+        25
+      ],
+      "normalized_correction": 26,
+      "normalized_input": 25,
+      "observation_input_bits": [
+        0,
+        6
+      ]
+    },
+    "event_writes": 3,
+    "feature_dim": 64,
+    "golden_vectors": {
+      "interaction_feature": [
+        -1.0,
+        1.0,
+        -1.0,
+        -1.0,
+        1.0,
+        1.0,
+        -1.0,
+        1.0,
+        -1.0,
+        -1.0,
+        1.0,
+        1.0,
+        1.0,
+        -1.0,
+        1.0,
+        -1.0,
+        1.0,
+        -1.0,
+        1.0,
+        -1.0,
+        -1.0,
+        -1.0,
+        1.0,
+        1.0,
+        -1.0,
+        0.30158731341362,
+        0.6666666865348816,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "query_feature": [
+        -1.0,
+        1.0,
+        -1.0,
+        -1.0,
+        1.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.30158731341362,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "structured_rule_state": [
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+        -1.0,
+        -1.0,
+        1.0,
+        -1.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "oracle_layout": {
+      "mask_signed_bits": [
+        3,
+        9
+      ],
+      "rotation_one_hot": [
+        0,
+        3
+      ]
+    },
+    "query_layout": {
+      "input_bits": [
+        0,
+        6
+      ],
+      "normalized_input": 29,
+      "query_marker": 28
+    },
+    "readout_dim": 64,
+    "schema_version": "oczy/r24-toy-fixed-features/v3"
+  },
+  "feature_definition_sha256": "d1e3b88f16f140ead08aceeb5bfdd34296128c0b244cbf00e43dd69e95aca5be",
+  "freeze_boundaries": {
+    "decoder": "one shared frozen decoder per geometry; exact Phase-A case/config, implementation suite, catalog/features, file/parameter hashes checked; requires_grad false; hash before/after every stage",
+    "online": "exactly three writes, one consolidation, zero optimizer steps inside episode, F bit-zero, 1,024 persistent bytes/task, traces deleted",
+    "test": "checkpoint-only after revalidating five DEV artifacts/payloads and authorization; optimizer_steps=0, backward_calls=0",
+    "theta": "only 6,995-parameter TinyCortexV3 optimized; paired theta0 saved"
+  },
+  "human_authorization": {
+    "blocking_document": "research/24-toy-existence-check.md remains DRAFT and says agents MUST NOT run until human-authorized",
+    "prior_objective_context": "go ahead and test all of them",
+    "required_confirmation": "explicitly authorize the registered R24-v3 Phase-A organ arms, five-seed C1-C9 DEV gate, and conditional sealed TEST",
+    "scope_interpretation": "the earlier Phase-A pathway request is not treated as separate authorization for this redesigned R24-v3 scientific Phase-C protocol",
+    "signoff_id": null,
+    "status": "pending_separate_r24_v3_authorization"
+  },
+  "identifiability_audit": {
+    "all_identified": true,
+    "ambiguous_after_three": 0,
+    "audit_sha256": "b0f1b55f75b28dea9352170c305f1dc5e4d6bd1e003de2eb36c3b3a72c434598",
+    "candidate_count": 192,
+    "maximum_matches_after_one": 3,
+    "maximum_matches_after_three": 1,
+    "maximum_matches_after_two": 3,
+    "minimum_matches_after_one": 3,
+    "minimum_matches_after_three": 1,
+    "minimum_matches_after_two": 3,
+    "teaching_inputs": [
+      0,
+      1,
+      2
+    ],
+    "unique_after_one": 0,
+    "unique_after_three": 192,
+    "unique_after_two": 0
+  },
+  "motivation": {
+    "redesign": "replace ambiguous/information-poor R20 tasks with three base64 rotation/XOR families and a frozen teaching alias B->A: all prefixes through A/B remain three-way ambiguous, C uniquely identifies all 192 rules, and all held-out functions are distinct, while retaining one shared frozen decoder",
+    "v2_decision": "do_not_promote",
+    "v2_failure": "fresh finalist mean swapped delta 0.019731 <0.02 and oracle exact worse than base"
+  },
+  "outcome_boundary": "Only a registered five-seed sealed TEST aggregate can accept H-TOY-EXISTENCE. DEV can only produce authorize_sealed_test; failures remain reported and are never adaptively rerun under replacement seeds.",
+  "phase_a": {
+    "blocked_policy": "an arm failing C9/organ gate is BLOCKED for articulation, not a cortex refutation",
+    "execution": "film and additive Phase-A arms; each artifact/payload binds exact registered config, implementation hashes, catalog, features, and weights; clean private internet-off Kaggle CPU",
+    "gate": "oracle DEV >=0.95 and oracle-minus-swapped >=0.50",
+    "suite": {
+      "base_config": {
+        "batch_seed": 101,
+        "batch_size": 64,
+        "catalog_seed": 24003,
+        "conditioning": "film",
+        "control_seed": 303,
+        "d_model": 64,
+        "deep_conditioning": true,
+        "device": "cpu",
+        "dropout": 0.1,
+        "dropout_seed": 202,
+        "init_seed": 7,
+        "lr": 0.002,
+        "n_layers": 2,
+        "protocol_version": "r24-tiny-decoder/v3",
+        "steps": 5000,
+        "weight_decay": 0.01
+      },
+      "case_overrides": {
+        "additive": {
+          "conditioning": "additive"
+        },
+        "film": {}
+      },
+      "implementation_file_sha256": {
+        "decoder.py": "c0fa862ca9771d734107e7370b8b9786d74028d320da398ebdb3b9e53c0ef486",
+        "phase_a_toy_v3.py": "009ee1d02d5a69064e292dc0b95e67dbc06bf50600627f2393e49cc1c502e296",
+        "toy_catalog_v3.py": "7d743206bc3d6307c906f0f1979be050f1ba35ecd8c6ff8cf46deec8c142255b",
+        "toy_features_v3.py": "a22be44295f29436385077e4f6fc52c6df61dfb137fdcdfa0a8a89d3f0d9c4cc",
+        "vocab.py": "c68f0866990b287bc8d13be9614858c7c24da89e82245c05b7a570da4a664487"
+      },
+      "organ_gate": {
+        "additive_failure_policy": "run and report BLOCKED; do not call it a cortex null",
+        "oracle_dev_accuracy_min": 0.95,
+        "oracle_minus_swapped_min": 0.5
+      },
+      "schema_version": "oczy/r24-toy-phase-a/v3",
+      "sealed_test_access": false,
+      "train_splits": [
+        "organ_train",
+        "cortex_meta_train"
+      ],
+      "validation_splits": [
+        "organ_dev",
+        "cortex_meta_dev"
+      ]
+    },
+    "suite_sha256": "9f7b953774579a4b90f02d0d3725cc489a20180e9594fb1871a6a7b38251792d"
+  },
+  "phase_c": {
+    "causal_success": "mean C3 minus each C4/C5/C6/C8 >=0.02 and mean C7 state flip >=0.02",
+    "decision_unit": "each rule has equal 61 queries; report exact numerators, per-rule values, five seeds, and equal-rule macro means",
+    "dev_execution": "only Phase-A geometries passing their registered organ gate; five paired developmental seeds each; all C1-C9 controls; meta-train 50 rules/meta-DEV 25 rules",
+    "organ_gate": "C9 >=0.95",
+    "primary_success": "mean C3-C2 >=0.02 and mean C3-C1 >=0.02, each positive in 5/5 seeds",
+    "suite": {
+      "conditions": {
+        "C1": "decoder with r=zeros",
+        "C2": "paired theta0 after the same three correct interactions",
+        "C3": "meta-trained theta after exactly three correct interactions",
+        "C4": "recipient observations/attempts with in-split donor corrections",
+        "C5": "trained cortex with post-consolidation F/S zeroed",
+        "C6": "trained cortex with donor consolidated state",
+        "C7": "identical query bytes under own versus donor state",
+        "C8": "nearest-query-byte teaching-row copy retrieval, no solver",
+        "C9": "structured full-rule oracle state"
+      },
+      "config": {
+        "catalog_seed": 24003,
+        "device": "cpu",
+        "grad_clip": 1.0,
+        "lr": 0.002,
+        "steps": 8000,
+        "task_batch_size": 16,
+        "weight_decay": 0.0001
+      },
+      "dev_gate": {
+        "C3_gt_C1_and_C2_seeds": 5,
+        "C9_min": 0.95,
+        "mean_C3_minus_C1_min": 0.02,
+        "mean_C3_minus_C2_min": 0.02,
+        "mean_C3_minus_each_C4_C5_C6_C8_min": 0.02,
+        "mean_C7_flip_rate_min": 0.02
+      },
+      "implementation_file_sha256": {
+        "decoder.py": "c0fa862ca9771d734107e7370b8b9786d74028d320da398ebdb3b9e53c0ef486",
+        "phase_a_toy_v3.py": "009ee1d02d5a69064e292dc0b95e67dbc06bf50600627f2393e49cc1c502e296",
+        "phase_c_v3.py": "e338a1bfad3e326dff9bb1b4b7012a238fab17c38e6f5c263417bf79e3f59a77",
+        "tiny_cortex_v3.py": "46af5d5e7018d69057b1621cfd0e6b794284157efdbfe99cbc663e47a65ca2bf",
+        "toy_catalog_v3.py": "7d743206bc3d6307c906f0f1979be050f1ba35ecd8c6ff8cf46deec8c142255b",
+        "toy_features_v3.py": "a22be44295f29436385077e4f6fc52c6df61dfb137fdcdfa0a8a89d3f0d9c4cc",
+        "vocab.py": "c68f0866990b287bc8d13be9614858c7c24da89e82245c05b7a570da4a664487"
+      },
+      "online_contract": {
+        "consolidations": 1,
+        "optimizer_steps_inside_episode": 0,
+        "persistent_bytes_per_task": 1024,
+        "theta_parameter_budget": 10240,
+        "writes": 3
+      },
+      "schema_version": "oczy/r24-toy-phase-c/v3",
+      "seed_tuples": [
+        {
+          "batch_seed": 501,
+          "init_seed": 11
+        },
+        {
+          "batch_seed": 529,
+          "init_seed": 29
+        },
+        {
+          "batch_seed": 547,
+          "init_seed": 47
+        },
+        {
+          "batch_seed": 571,
+          "init_seed": 71
+        },
+        {
+          "batch_seed": 597,
+          "init_seed": 97
+        }
+      ],
+      "test_authorization": {
+        "binds_suite_organ_and_five_checkpoint_hashes": true,
+        "requires_passing_dev_gate": true,
+        "schema_version": "oczy/r24-toy-phase-c-test-authorization/v3"
+      },
+      "test_policy": "checkpoint-only sealed TEST after a separately collected five-seed DEV gate"
+    },
+    "suite_sha256": "fe292a2747d982ed791a3906cc66e6debca5496b49d58b7613c901727ab11055",
+    "test_authorization": "authorization JSON is generated only from a passing registered DEV aggregate, binds suite/organ/conditioning, exact five artifact and checkpoint hashes plus relative directories and signoff, and is reloaded/reaggregated before the first sealed-task access",
+    "test_execution": "only a geometry passing the reaggregated five-seed DEV gate; hash-bound authorization loads all five exact DEV artifacts/checkpoints; five checkpoint-only jobs; no optimizer/backward; sealed TEST 50 rules x61 heldout queries"
+  },
+  "recorded_utc": "2026-08-09T01:42:00Z",
+  "remote_contract": "clean immutable commit/archive, private internet-off CPU-only kernels, verified runtime/source/suite manifests, five workers, submit interval 0, unique retry names only for infrastructure failure",
+  "schema_version": "oczy/r24-toy-existence-plan/v3",
+  "scientific_execution_status": "BLOCKED_PENDING_HUMAN_AUTHORIZATION",
+  "viewed_exploratory_diagnostics": [
+    {
+      "path": "/tmp/r24-v3-organ-proto.py",
+      "result": "mod13 structured oracle remained low; excluded"
+    },
+    {
+      "path": "/tmp/r24-v3-xor-proto.py",
+      "result": "8-bit sequence exact remained low; excluded"
+    },
+    {
+      "path": "/tmp/r24-v3-b64-proto.py",
+      "result": "base64 FiLM reached perfect exploratory DEV; motivated frozen redesign but is not evidence"
+    },
+    {
+      "path": "/tmp/r24-v3-b64-add-proto.py",
+      "result": "additive stayed near chance; not evidence"
+    },
+    {
+      "path": "/tmp/r24-v3-phasec-proto.py",
+      "result": "single unregistered seed showed large cortex signal; excluded from all gates"
+    },
+    {
+      "path": "/tmp/r24-v3-twist-film-check.py",
+      "result": "conditional-twist exact-three redesign failed the frozen Phase-A organ gate at 5,000 steps; excluded and replaced before registration"
+    },
+    {
+      "path": "/tmp/r24-v3-alias-film and /tmp/r24-v3-alias-dev",
+      "result": "B->A alias feasibility only: Film oracle 3200/3200 and a 2,000-step cortex DEV probe C3 701/1525 versus C2 18/1525; no sealed TEST; excluded from registered evidence"
+    }
+  ]
+}
