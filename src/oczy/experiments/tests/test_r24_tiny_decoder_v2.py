@@ -3,6 +3,16 @@ from __future__ import annotations
 import pytest
 import torch
 
+from oczy.experiments.r24_tiny_decoder.confirmation_v2 import (
+    SEED_TUPLES,
+    evaluate_gate,
+)
+from oczy.experiments.r24_tiny_decoder.confirmation_v2 import (
+    materialize_case as materialize_confirmation_case,
+)
+from oczy.experiments.r24_tiny_decoder.confirmation_v2 import (
+    suite_sha256 as confirmation_suite_sha256,
+)
 from oczy.experiments.r24_tiny_decoder.corpus_v2 import (
     build_phase_a_v2_corpus,
     input_conflicts,
@@ -406,3 +416,83 @@ def test_factorial_selection_is_causal_first_then_exact() -> None:
     ]
     assert records[-1]["eligible"] is False
     assert select_winner(records) == "conditioning_additive_deep"
+
+
+
+def test_confirmation_is_fresh_and_seed_paired_across_two_frozen_arms() -> None:
+    validation_hashes = set()
+    for seed_index, expected_seeds in enumerate(SEED_TUPLES):
+        base_config, base_train, base_validation, base_metadata = materialize_confirmation_case(
+            "base", seed_index
+        )
+        finalist_config, finalist_train, finalist_validation, finalist_metadata = (
+            materialize_confirmation_case("finalist", seed_index)
+        )
+        assert base_train == finalist_train
+        assert base_validation == finalist_validation
+        assert base_config.resolved_seeds() == finalist_config.resolved_seeds()
+        assert base_config.resolved_seeds() == {
+            "catalog": 25001,
+            "init": expected_seeds["init_seed"],
+            "batch": expected_seeds["batch_seed"],
+            "dropout": expected_seeds["dropout_seed"],
+            "control": expected_seeds["control_seed"],
+        }
+        assert base_config.conditioning == "film"
+        assert finalist_config.conditioning == "additive"
+        assert base_metadata["fixed_validation_sha256"] == finalist_metadata[
+            "fixed_validation_sha256"
+        ]
+        validation_hashes.add(base_metadata["fixed_validation_sha256"])
+    assert len(validation_hashes) == 1
+    assert validation_hashes != {
+        "6626ad31c8577c4b827c47a440df1e5d8538d24433a4f7dba26d58b806fdaabd"
+    }
+    assert len(confirmation_suite_sha256()) == 64
+
+
+def _confirmation_artifact(
+    arm: str, seed_index: int, oracle_correct: int, swapped_correct: int
+) -> dict[str, object]:
+    oracle_accuracy = oracle_correct / 100
+    swapped_accuracy = swapped_correct / 100
+    return {
+        "confirmation": {"arm": arm, "seed_index": seed_index},
+        "validation": {
+            "controls": {
+                "oracle": {
+                    "correct": oracle_correct,
+                    "total": 100,
+                    "exact_accuracy": oracle_accuracy,
+                },
+                "swapped": {
+                    "correct": swapped_correct,
+                    "total": 100,
+                    "exact_accuracy": swapped_accuracy,
+                },
+            },
+            "per_rule_controls": {
+                "rule": {
+                    "controls": {
+                        "oracle": {"accuracy": oracle_accuracy},
+                        "swapped": {"accuracy": swapped_accuracy},
+                    }
+                }
+            },
+        },
+    }
+
+
+def test_confirmation_gate_requires_all_five_positive_paired_seeds() -> None:
+    artifacts = []
+    for seed_index in range(5):
+        artifacts.append(_confirmation_artifact("base", seed_index, 20, 17))
+        artifacts.append(_confirmation_artifact("finalist", seed_index, 21, 16))
+    decision = evaluate_gate(artifacts)
+    assert decision["passed"] is True
+    assert decision["positive_finalist_delta_seeds"] == 5
+
+    artifacts[-1] = _confirmation_artifact("finalist", 4, 21, 21)
+    rejected = evaluate_gate(artifacts)
+    assert rejected["passed"] is False
+    assert rejected["positive_finalist_delta_seeds"] == 4
