@@ -9,7 +9,11 @@
 > reported Deep-FiLM `7/264 vs 0/264` delta are not scientific evidence and must
 > not be used to select an architecture. Superseded by the human-authorized,
 > fresh-catalog `r24-tiny-decoder/v2` protocol in
-> `experiments/r24-tiny-decoder/v2_screen_plan.json`.
+> `experiments/r24-tiny-decoder/v2_screen_plan.json`. The complete v2 screen,
+> factorial, and five-seed confirmation are recorded in
+> `2026-08-09_campaign_r24_phase_a_v2.md`; the registered result was
+> **`do_not_promote`**, so Phase C was not run. Every selection/verdict sentence
+> below this warning is retained only as invalidated historical text.
 
 **Date:** 2026-08-06
 **Campaign ID:** `d756ff4815d136fc908012750575ffe3a8cdff75` (short `d756ff4`)

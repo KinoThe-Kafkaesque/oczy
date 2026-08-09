@@ -562,3 +562,29 @@ logged evidence but are not themselves experiment logs:
   accumulation has magnitude not direction; constant vectors cannot condition;
   mention-space ≠ use-space), synthesizing S1.3, S1.4, S2.1, S2.4. Successor
   mechanism pre-registered in `research/18-consolidation-as-distillation.md`.
+
+## R24 Phase-A v2 screen and confirmation closure (2026-08-09)
+
+**Full log:** `2026-08-09_campaign_r24_phase_a_v2.md`.  
+**Durable JSON:** `2026-08-09_r24_phase_a_v2_confirmation.json`.
+
+The old R24 v1 measurements are invalidated (late construction seeding,
+padded-query alignment, missing oracle padding mask, and conflicting/undefined
+corpus rows). The clean v2 campaign ran all 22 one-factor cases, four closed
+factorial cells, and ten fresh base-vs-finalist confirmation jobs: **36/36
+COMPLETE, 0 invalid** across the three scientific batches (plus one bit-exact
+canary repeat).
+
+The tuning rule selected deep additive conditioning. Fresh confirmation across
+five paired seeds produced base oracle/swapped `120/1115` / `108/1115`
+(delta `0.010762`) and finalist oracle/swapped `108/1115` / `86/1115`
+(delta `0.019731`). Although the finalist delta was positive in 5/5 seeds and
+exceeded the base delta by `0.008969`, it failed the registered mean-delta
+threshold `>=0.02` and reduced raw oracle exact accuracy by `0.010762` versus
+base. The frozen decision is **DO NOT PROMOTE**.
+
+Phase C was not run: the confirmed-organ gate failed and Phase C is outside the
+Phase-A authorization. This is valid Phase-A engineering/tuning/confirmation
+evidence, not an H-TOY-EXISTENCE accept/refute result and not a meta-cortex
+result. No holdout beyond the registered Phase-A validation catalogs was
+accessed.
