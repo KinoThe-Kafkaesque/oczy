@@ -1,6 +1,6 @@
 # Experiments Logs Ledger — Authoritative Index
 
-**Date:** 2026-08-08 (updated through campaign `d756ff4 R24 Phase A v1 invalidation` and v2 protocol authorization, Exp03 `ad77e93` real-driver closure, R18 5-seed diagnostic clarification, R18 5-seed diagnostic adjudication, R18 mechanism diagnostics adjudication, R19 DEV calibration adjudication, R20 DEV implementation/smoke adjudication, R20 INT8 transport recovery, and the corrected R20 meta_cortex/v2 DEV calibration closure with local diagnostics)
+**Date:** 2026-08-08 (updated through campaign `d756ff4 R24 Phase A v1 invalidation` and v2 protocol authorization, Exp03 `ad77e93` real-driver closure, the original R18 diagnostics and mechanism adjudication, R18 Amendment A1 OpenRouter-teacher gate clearance and 5-seed execution, R19 DEV calibration adjudication, R20 DEV implementation/smoke adjudication, R20 INT8 transport recovery, and the corrected R20 meta_cortex/v2 DEV calibration closure with local diagnostics)
 **Purpose:** This ledger classifies every experiment log against three
 invalidation events:
 
@@ -115,6 +115,8 @@ v2.2 difficulty curve. The 13.5x drift claim (`044cb51`) remains retracted
 | 2026-07-22 | `2026-07-16_campaign_959e114.md` | PARTIAL | **R20 INT8 meta_cortex/v2 DEV training and calibration campaign.** Training/checkpoint, transport, runtime, and failure-timing evidence remains valid. Scientific aggregation of the v5 shards remains invalid: source `949871b…` chose C6 donors from shard-local membership, making `state_addressing_delta` partition-dependent, and width-1 shards omitted C6. The prior control-plane-only width claim remains withdrawn; v5 is infrastructure-valid but scientifically invalid. Corrected source `a8c98d638209a8425b14a0f853e9fc46ae7da581` uses canonical next-within-family donors. The completed v6 closure is recorded in `2026-08-05_r20_corrected_dev_calibration.json`: complete corrected coverage and trace audits are valid, but all endpoint effects and condition scores are zero and power feasibility is blocked. Thus the DEV decision is **BLOCKED/no-go**, not REFUTED; no meta-test or holdout was accessed and no H-META-CORTEX verdict is permitted. | `2026-08-05_r20_corrected_dev_calibration.json` |
 | 2026-07-26 | `2026-07-26_local_t550_gpu_throughput_probe.md` | VALID | **Local T550 GPU throughput probe — infrastructure, not a cortex experiment.** Benchmarked the local NVIDIA T550 Laptop GPU (4 GB, Turing compute 7.5, torch 2.6.0+cu124, fp16) against the local i7-1260P CPU (fp32) on the five small causal LMs in the local HF cache, including the pinned `Qwen/Qwen2.5-0.5B-Instruct` organ and the `Qwen/Qwen2.5-1.5B-Instruct` fallback. Workload: ~512-token prompt, 128 new tokens, greedy, KV cache on, batch 1 and 4. Result: at batch=1 the T550 is 1.1–2.0× faster than CPU on decode (Qwen-0.5B 27.4 vs 18.9 t/s; Qwen-1.5B 9.6 vs 4.9 t/s); at batch=4 the CPU beats the GPU on aggregate throughput for every model that fits (Qwen-0.5B 30.2 vs 47.8 t/s; LFM-1.2B 15.8 vs 28.1 t/s), and Qwen-1.5B OOMs on GPU at batch=4. **Decision: the T550 is not added as a verified compute path.** The CPU-only contract stands. The T550 is weaker than the archived T4, the frozen LM is not the research bottleneck, and wiring in a GPU code path would break the CPU-only contract in `infrastructure/kaggle/RESEARCH_GUIDE.md` and `AGENTS.md` rule 7. The T550 is acceptable for local dev iteration and benchmark scripts only. No `eval/v2`, `research/`, `lanes/`, or `experiments/organism_curriculum/` paths were modified; no remote compute was used; no scientific claim was made. | — |
 | 2026-08-05 | `2026-08-05_r20_corrected_dev_calibration.json` | VALID | **R20 corrected meta_cortex/v2 DEV calibration closure.** VALID classifies execution, provenance, coverage, aggregation, and calibration-evidence integrity—not hypothesis acceptance. Corrected source `a8c98d6…`; 150 shards, 9,000 no-update records, 2,250 seed cells, five theta hashes; trace audits passed. All nine endpoints have mean/CI/SD exactly 0 in all three families, and all six conditions score 0 over every denominator. Equivalence margin 0; power feasibility `blocked`; no endpoint/family has a finite required N. Exact local reproduction stopped before generation on organ-hash mismatch; different-organ output and forcing runs are diagnostic only. **DEV decision: BLOCKED/no-go, not REFUTED.** Oracle gates, a signed candidate, and meta-test are absent; no holdout/meta-test was accessed and no ACCEPT/REFUTE verdict is claimed for H-META-CORTEX. | — |
+| 2026-08-06 | `2026-08-06_stage0_openrouter_teacher_gate.md` | VALID | **R18 Amendment A1 OpenRouter-teacher admission check.** On the unchanged `salt="v2"` stage-0 DEV split (17 probes), the provider-pinned `deepseek/deepseek-v4-flash-0731` teacher scored 9/17 with the correction and 0/17 without it: `teacher_dev_delta=0.5294`, clearing the unchanged `>= 0.2` gate. This is diagnostic gate evidence, not an H-DISTILL verdict; no holdout was accessed. The original local 0.5B-teacher result (`0.1765`, gate failed) remains BLOCKED and intact. | — |
+| 2026-08-06 | `2026-08-06_r18_openrouter_5seed_stage0.md` | VALID | **R18 Amendment A1 5-seed execution evidence.** Under the human-authorized one-variable dev-gate teacher substitution, `teacher_dev_delta` was {0.4706, 0.5294, 0.4706, 0.4706, 0.5294} (mean 0.4941), clearing the unchanged `>= 0.2` gate on all five seeds. The unchanged local LoRA distillation path reproduced `distill_delta_holdout` {0.3333, 0.3333, 0.0, 0.3333, 0.3333}: mean 0.2667, CI95 [0.136, 0.397], 4/5 positive with seed 2 null; specificity mean 0.0261, CI95 [-0.008, 0.060]. The amended condition is human-adjudicated **TESTED-PARTIAL with gate resolved**: its evidence is admissible and positive on 4/5 seeds, but the seed-2 null prevents full acceptance. Original BLOCKED records are not superseded for their original condition. Raw execution log: `2026-08-06_r18_openrouter_5seed_stage0.log`. | — |
 
 | 2026-08-06 | `2026-08-06_campaign_r24_tiny_decoder.md` | **INVALIDATED** | Four v3 kernels completed with valid remote execution/provenance, but the scientific measurements are invalid: model initialization was unseeded, variable-length queries were right-padded without length-aware decoding, oracle attention ignored padding, and corpus rows included conflicting/undefined labels. The Deep-FiLM `7/264 vs 0/264` delta is not evidence. | `experiments/r24-tiny-decoder/v2_screen_plan.json` |
 
@@ -122,7 +124,7 @@ v2.2 difficulty curve. The 13.5x drift claim (`044cb51`) remains retracted
 
 | Classification | Count |
 |----------------|-------|
-| VALID | 64 |
+| VALID | 67 |
 | PARTIAL | 10 |
 | INVALIDATED (pure) | 1 |
 | SUPERSEDED (pure) | 0 |
@@ -224,6 +226,38 @@ from `/tmp/oczy-exp03-real-run-v2/`), and
 `2026-07-11_r18_five_seed_diagnostic.json` (5-seed diagnostic adjudication,
 from `/tmp/oczy-live-queue/` live state). No threshold changes or
 causal claims beyond measured metrics.
+
+## R18 Amendment A1 Execution Evidence (2026-08-06)
+
+The original R18 condition is unchanged: its local 0.5B prefix teacher scored
+`teacher_dev_delta=0.17647058823529413 < 0.2`, so those runs remain
+**BLOCKED at the teacher validity gate / diagnostic only**. Amendment A1 is a
+separate, human-authorized condition that substitutes only the DEV-gate
+teacher with OpenRouter `deepseek/deepseek-v4-flash-0731`, provider-pinned to
+DeepSeek with no fallback. Requests used temperature 0, seed 0, reasoning
+disabled, and no `max_tokens` field. The student, local prefix-logit LoRA
+distillation target, eval/v2 metric, `salt="v2"` split, and `>= 0.2` threshold
+are unchanged.
+
+The standalone full-DEV check scored 9/17 with the correction and 0/17
+without it (`teacher_dev_delta=0.5294`), clearing the registered gate. The
+subsequent 5-seed stage-0 execution also cleared it on every seed:
+{0.4706, 0.5294, 0.4706, 0.4706, 0.5294}, mean 0.4941. Per-seed
+`distill_delta_holdout` was {0.3333, 0.3333, 0.0, 0.3333, 0.3333}; mean
+0.2667, CI95 [0.136, 0.397], with 4/5 positive and seed 2 null. Mean
+specificity delta was 0.0261, CI95 [-0.008, 0.060]. Wall time was about
+27.7 minutes and estimated API spend was about $0.0005, well below the approved
+$5 ceiling.
+
+Thus the original teacher blocker is resolved **for Amendment A1**, and the
+holdout evidence is admissible under that amended condition. It does not erase
+or relabel the original BLOCKED condition. **Human adjudication (2026-08-06):
+TESTED-PARTIAL with gate resolved.** The amended evidence is admissible and
+positive on 4/5 seeds, but the seed-2 null makes the mechanism partial rather
+than a full H-DISTILL acceptance. Evidence:
+`2026-08-06_stage0_openrouter_teacher_gate.md`,
+`2026-08-06_r18_openrouter_5seed_stage0.md`, and raw log
+`2026-08-06_r18_openrouter_5seed_stage0.log`.
 
 ## R19 DEV Calibration Adjudication (2026-07-12)
 

@@ -1,0 +1,940 @@
+{
+  "schema_version": "oczy/execution-report/v1",
+  "record_type": "r20_corrected_dev_calibration_adjudication",
+  "adjudication_date": "2026-08-05",
+  "status": "complete",
+  "research_spec": "research/20-meta-trained-cortex-frozen-language-organ.md",
+  "experiment_spec": "experiments/09-meta-trained-cortex-frozen-language-organ/README.md",
+  "campaign_id": "r20-int8-dev-calibration-v6",
+  "instrument_id": "meta_cortex/v2",
+  "instrument_version": "v2",
+  "provider": "kaggle",
+  "profile": "cpu",
+  "module": "oczy.experiments.meta_cortex",
+  "classifications": {
+    "corrected_v6_execution_and_calibration_evidence": {
+      "status": "VALID",
+      "scope": "Corrected meta_cortex/v2 DEV execution, full shard coverage, deterministic merge, calibration, and trace-audit evidence only."
+    },
+    "dev_decision": {
+      "status": "BLOCKED_NO_GO",
+      "reason": "POWER_ANALYSIS feasibility_status=blocked: every endpoint/family effect is zero, every required_n is no_finite_n, and 30 tasks/family is only the minimum fallback, not a powered design."
+    },
+    "hypothesis_authority": {
+      "status": "BLOCKED",
+      "formal_h_meta_cortex_disposition": null,
+      "reason": "No formal H-META-CORTEX ACCEPT or REFUTE is authorized: oracle gates were not passed, no signed candidate exists, and meta-test/holdout was not accessed."
+    },
+    "exact_local_reproduction": {
+      "status": "BLOCKED",
+      "reason": "The exact manifested local runtime produced organ hash 2621e258... instead of required remote organ a342...; collection failed closed before generation/scoring."
+    },
+    "different_organ_raw_response_diagnosis": {
+      "status": "DIAGNOSTIC_ONLY",
+      "reason": "Runs under local organ 2621e258..., so results are not a reproduction of or evidence about remote organ a342... ."
+    },
+    "hard_logit_and_soft_activation_controls": {
+      "status": "DIAGNOSTIC_ONLY",
+      "reason": "Disposable local interventions under non-equivalent local model/organ identities; neither supplies hypothesis authority or repairs v6 feasibility."
+    },
+    "legacy_v5": {
+      "scientific_status": "INVALID",
+      "infrastructure_status": "VALID",
+      "reason": "v5 retained infrastructure/runtime evidence, but shard-local C6 donor selection made shard width part of the measuring instrument; its outputs must not be scientifically aggregated."
+    }
+  },
+  "immutable_identities": {
+    "source_repo": "https://github.com/KinoThe-Kafkaesque/oczy.git",
+    "source_commit": "a8c98d638209a8425b14a0f853e9fc46ae7da581",
+    "source_archive_sha256": "40708cb9e195cba45302d64d11a9110cc4f91b74ce0325b5a4856908b1e941ca",
+    "source_dataset": "abdellahkadem/oczy-source-a8c98d638209",
+    "source_dirty_entry_count": 0,
+    "source_worktree_dirty_at_packaging": false,
+    "runtime_manifest_sha256": "a6214355c1c6b9192d435e62f3add6bef5db8c3a6c1cf3a55cb2a9dbfc91182e",
+    "runtime_manifest_verified_for_collected_successes": true,
+    "remote_organ_hash": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+    "definition_sha256": "f62f18ef3dd4eb7cf62d82e24b7c0fea5011516dbaf16d3ea50cc7890c9db14f",
+    "calibration_view_canonical_sha256": "639725f44aa7e46f84691987f9dd9454ac70902bf5f20742505a733219166dc2",
+    "scorer_sha256": "e5d746d0477c489157d1699e2ae73dfcc8ac92998719de1a06d92fcff4b1c742",
+    "endpoint_schema_sha256": "669d6130075e429264a6c9eec470bbf82663559433781adcffa6ed942c9ca796",
+    "model": {
+      "logical_model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+      "model_source": "qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
+      "model_weights_semantic_sha256": "5e5f9f594add0fa3c0336ad387596df04ac0b1c8938aece7c5b2def319127425",
+      "model_safetensors_file_sha256": "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe",
+      "model_config_semantic_sha256": "086c19d63c5e6e58152723d7c9147b3ba6e418df9bc9a0f562ea4bccf070247d",
+      "config_file_sha256": "18e18afcaccafade98daf13a54092927904649e1dd4eba8299ab717d5d94ff45",
+      "tokenizer_semantic_sha256": "a63d8a3be712e9e697abb961473e379b785832d0b9fa0ea39d6fe62d61831982",
+      "tokenizer_json_file_sha256": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+      "chat_template_sha256": "0013c52915912d02d611df1eb0f0ac88eb76f7489a3bd6acdbbd0ad64e4bc916",
+      "quantization": "torchao int8-weight-only, per-row, config v2, FP32 activations"
+    },
+    "remote_runtime": {
+      "python": "3.12.13",
+      "torch": "2.10.0+cpu",
+      "torchao": "0.17.0",
+      "transformers": "5.0.0",
+      "safetensors": "0.7.0",
+      "tokenizers": "0.22.2",
+      "cuda_available": false,
+      "cuda_device_count": 0
+    }
+  },
+  "campaign_and_retry_history": {
+    "logical_shards_expected": 150,
+    "ledger_job_records": 286,
+    "provider": "kaggle",
+    "account_id": "kaggle-primary",
+    "initial_dispatch": {
+      "jobs": 150,
+      "succeeded": 20,
+      "failed": 130,
+      "submitted_first_utc": "2026-07-22T19:20:56.099000Z",
+      "completed_last_utc": "2026-07-25T00:27:22Z",
+      "failure_summary": {
+        "count": 130,
+        "reason": "push failed: [Errno 2] No such file or directory: 'kaggle'"
+      },
+      "dispatch_plan": "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/calibration-a8c98d6/dispatch-plan.json"
+    },
+    "retry_r1": {
+      "jobs": 135,
+      "succeeded": 134,
+      "failed": 1,
+      "submitted_first_utc": "2026-07-25T17:13:21.447438Z",
+      "completed_last_utc": "2026-08-04T07:42:48.279133Z",
+      "included_initial_success_duplicates": [
+        "cal3-d0-t18-21",
+        "cal3-d0-t21-24",
+        "cal3-d0-t24-27",
+        "cal3-d0-t27-30",
+        "cal3-d0-t30-33"
+      ],
+      "single_failure": {
+        "job": "cal3-d1-t30-33-r1",
+        "reason": "Kaggle API authentication required"
+      },
+      "dispatch_plans": [
+        "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/calibration-a8c98d6/dispatch-plan-retry.json",
+        "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/calibration-a8c98d6/dispatch-plan-retry-v2.json"
+      ]
+    },
+    "retry_r2": {
+      "jobs": 1,
+      "succeeded": 1,
+      "failed": 0,
+      "job": "cal3-d1-t30-33-r2",
+      "submitted_utc": "2026-08-04T10:00:15.882715Z",
+      "completed_utc": "2026-08-04T17:44:12.356596Z",
+      "collected_utc": "2026-08-04T17:44:15.986677Z",
+      "dispatch_plan": "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/calibration-a8c98d6/dispatch-plan-r2.json"
+    },
+    "terminal_ledger_counts": {
+      "succeeded_records": 155,
+      "failed_records": 131
+    },
+    "selection_for_merge": {
+      "logical_shards_selected": 150,
+      "rule": "For each exact expected shard basename, select the highest successful retry; duplicate successful attempts do not increase coverage.",
+      "all_selected_runtime_manifests_verified": true,
+      "coverage_complete": true
+    },
+    "campaign_state": "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/calibration-a8c98d6/state.json"
+  },
+  "coverage": {
+    "shards_merged": 150,
+    "shard_width_tasks": 3,
+    "developmental_checkpoints": 5,
+    "evaluation_seeds_per_cell": 5,
+    "calibration_tasks_per_family": {
+      "contextual_remap": 30,
+      "finite_state": 30,
+      "rule_transformation": 30
+    },
+    "total_unique_tasks": 90,
+    "no_update_repeat_records": 9000,
+    "no_update_repeat_formula": "5 developmental checkpoints * 90 tasks * 20 repeats",
+    "no_update_repeats_per_task": 20,
+    "non_overlapping_no_update_pairs": 10,
+    "seed_cell_records": 2250,
+    "seed_cell_formula": "5 developmental checkpoints * 5 evaluation seeds * 90 tasks",
+    "condition_records": 13500,
+    "conditions_per_seed_cell": 6,
+    "theta_hash_count": 5,
+    "theta_hashes": [
+      "97f9a2fc1afd23cfa1a84eee605dd5978faffa7c6df648a37e15d41cee4d923e",
+      "985a25a028338a48774d47060e4935e99cf12cccbd4db5a5a0e0e2c48629fef2",
+      "d2041359f4bad72340784fa000975b8a4aada5f7087834de06957b411fc7dfde",
+      "2455f8771801d759c404fd1c35887875c11461fb38a65f9a7bddbdc0cdde5f01",
+      "7620bdfcfd8dff5907da91734efbc9201ec9da03ebd514a4a662704a9e8f9267"
+    ],
+    "meta_validation_only": true,
+    "holdout_accessed": false,
+    "meta_test_accessed": false
+  },
+  "merge_execution": {
+    "command_kind": "python_api",
+    "invocation": "merge_calibration_shards(view=view, shard_paths=selected_full, output_dir=Path('~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/merged').expanduser(), expected_organ_hash='a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea')",
+    "selection_rule": "selected_full chose the highest successful retry for each of the exact 150 expected shard basenames.",
+    "return": {
+      "n_no_update_records": 9000,
+      "n_seed_cell_records": 2250,
+      "n_theta_hashes": 5,
+      "n_shards_merged": 150
+    },
+    "output_dir": "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/merged"
+  },
+  "calibration_execution": {
+    "command_kind": "cli",
+    "command": [
+      "/home/nyanpasu/Desktop/code/kinoSoft/oczy/.venv/bin/python",
+      "-m",
+      "oczy.experiments.meta_cortex",
+      "calibrate-dev",
+      "--calibration-view",
+      "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/instrument/instrument/public/CALIBRATION_VIEW.json",
+      "--no-update-records",
+      "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/merged/NO_UPDATE_REPEAT_RECORDS.json",
+      "--seed-cell-records",
+      "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/merged/SEED_CELL_RECORDS.json",
+      "--theta-hashes",
+      "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/merged/THETA_HASHES.json",
+      "--organ-hash",
+      "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+      "--output-dir",
+      "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/calibration"
+    ],
+    "execution_context": {
+      "temporary_detached_worktree": "/tmp/oczy-a8c98d6-calibrate",
+      "source_commit": "a8c98d638209a8425b14a0f853e9fc46ae7da581",
+      "PYTHONPATH": "/tmp/oczy-a8c98d6-calibrate/src",
+      "temporary_worktree_removed_afterward": true
+    },
+    "exit_code": 0,
+    "reported_output_markers": [
+      "METRIC calibrate_status=OK",
+      "AUDIT calibrate_complete=1"
+    ],
+    "outputs": [
+      "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/calibration/DEV_DISTRIBUTIONS.json",
+      "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/calibration/POWER_ANALYSIS.json"
+    ]
+  },
+  "artifacts": {
+    "hash_semantics_note": "internal_artifact_sha256 is the hash stored inside the JSON artifact; whole_file_sha256 is SHA-256 over the current complete file bytes, including formatting and the embedded hash field. They are intentionally reported separately and are not interchangeable.",
+    "calibration_view": {
+      "path": "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/instrument/instrument/public/CALIBRATION_VIEW.json",
+      "canonical_sha256": "639725f44aa7e46f84691987f9dd9454ac70902bf5f20742505a733219166dc2",
+      "whole_file_sha256": "13b52158f23ced0edfa5113275537b57efe0782ee6230ec5b81345ca235298dc",
+      "byte_size": 1498
+    },
+    "no_update_repeat_records": {
+      "path": "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/merged/NO_UPDATE_REPEAT_RECORDS.json",
+      "internal_artifact_sha256": "35068373ec53ade404483ab6541a7f276691678abdd0c051713a51c4d4298875",
+      "whole_file_sha256": "1e82a8e76015f29fbd97bb1f5326798f66d2f49febeaf2a381e70a5c71fd7fca",
+      "byte_size": 5886562
+    },
+    "seed_cell_records": {
+      "path": "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/merged/SEED_CELL_RECORDS.json",
+      "internal_artifact_sha256": "33b5abdf3c8b6218bcc5d31737c3b8bee6f2cdbd90639f6cd49d3ffb8616b903",
+      "whole_file_sha256": "99660228e4970d89aa85024b7852382fc045f9db756210cf29097176295a6344",
+      "byte_size": 17732812
+    },
+    "theta_hashes": {
+      "path": "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/merged/THETA_HASHES.json",
+      "internal_artifact_sha256": "edcf8905d798357b9a2d301241685e6111551bf44a92b34c0c282e605084b258",
+      "whole_file_sha256": "3d6fb32344631e8ed989ec0631bfbf4b0959dd6ec3481b5f7b4ad4fc0337e20f",
+      "byte_size": 757
+    },
+    "dev_distributions": {
+      "path": "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/calibration/DEV_DISTRIBUTIONS.json",
+      "internal_artifact_sha256": "af644e7573bb073b7b3b75cbe4f40f468a8a39eeb934bb08915dee0e27361771",
+      "whole_file_sha256": "228b4e6d1dc7e42dc1117319d72164f49baea4cc095364c0e6695741bd255e8b",
+      "byte_size": 5890497
+    },
+    "power_analysis": {
+      "path": "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/calibration/POWER_ANALYSIS.json",
+      "internal_artifact_sha256": "f1c02a764d93c831057a35853c5f1a98fccb3f734630f4e3b75f8929e63b5118",
+      "whole_file_sha256": "9d12dac47050923afe214586c136f1cab38fbc8c88bf547147cf789ba0b967fd",
+      "byte_size": 17535,
+      "referenced_dev_distributions_sha256": "af644e7573bb073b7b3b75cbe4f40f468a8a39eeb934bb08915dee0e27361771",
+      "referenced_dev_distributions_byte_size": 5890497
+    }
+  },
+  "calibration_results": {
+    "equivalence_margin": 0.0,
+    "confidence_level": 0.95,
+    "alpha": 0.05,
+    "target_power": 0.8,
+    "independent_unit": "independent_task_rule_per_family",
+    "estimand": "task_mean_endpoint_delta",
+    "endpoint_formulas": {
+      "adaptation_delta": "A_primary(C3_postdelete) - A_primary(C3_prelearning)",
+      "causal_state_delta": "A_primary(C3) - A_primary(C5)",
+      "composition_delta": "A_composition(C3) - A_composition(C1)",
+      "feedback_semantics_delta": "A_primary(C3) - A_primary(C4)",
+      "meta_training_delta": "A_primary(C3) - A_primary(C2)",
+      "specificity_delta": "A_specificity(C3) - A_specificity(C1)",
+      "state_addressing_delta": "A_primary(C3) - A_primary(C6)",
+      "trace_free_survival": "A_primary(C3_postdelete) - A_primary(C3_immediately_predelete)",
+      "transfer_delta": "A_transfer(C3) - A_transfer(C1)"
+    },
+    "endpoint_family_statistics": {
+      "contextual_remap": {
+        "adaptation_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "causal_state_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "composition_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "feedback_semantics_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "meta_training_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "specificity_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "state_addressing_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "trace_free_survival": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "transfer_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        }
+      },
+      "finite_state": {
+        "adaptation_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "causal_state_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "composition_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "feedback_semantics_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "meta_training_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "specificity_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "state_addressing_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "trace_free_survival": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "transfer_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        }
+      },
+      "rule_transformation": {
+        "adaptation_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "causal_state_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "composition_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "feedback_semantics_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "meta_training_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "specificity_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "state_addressing_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "trace_free_survival": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        },
+        "transfer_delta": {
+          "mean": 0.0,
+          "ci_lower": 0.0,
+          "ci_upper": 0.0,
+          "sd": 0.0,
+          "n_tasks": 30,
+          "t_critical": 2.045229642132
+        }
+      }
+    },
+    "summary": "Every one of 9 endpoints has mean=0, 95% CI=[0,0], and sd=0 in every one of 3 families; n=30 independent tasks/family and t_critical=2.045229642132.",
+    "condition_aggregate_scores": {
+      "conditions": [
+        "update_disabled",
+        "untrained_rule",
+        "trained",
+        "feedback_shuffled",
+        "state_zeroed",
+        "state_swapped"
+      ],
+      "records_per_condition": 2250,
+      "identical_global_aggregate_for_each_condition": {
+        "pre_learning_primary": {
+          "correct": 0,
+          "denominator": 11500
+        },
+        "immediately_pre_deletion_primary": {
+          "correct": 0,
+          "denominator": 11500
+        },
+        "post_deletion_primary": {
+          "correct": 0,
+          "denominator": 11500
+        },
+        "same_rule": {
+          "correct": 0,
+          "denominator": 4900
+        },
+        "transfer": {
+          "correct": 0,
+          "denominator": 4350
+        },
+        "composition": {
+          "correct": 0,
+          "denominator": 2250
+        },
+        "specificity": {
+          "correct": 0,
+          "denominator": 2250
+        }
+      },
+      "total_correct_per_condition": 0,
+      "total_denominator_per_condition": 48250,
+      "family_aggregates_identical_for_each_condition": {
+        "contextual_remap": {
+          "pre_learning_primary": {
+            "correct": 0,
+            "denominator": 4150
+          },
+          "immediately_pre_deletion_primary": {
+            "correct": 0,
+            "denominator": 4150
+          },
+          "post_deletion_primary": {
+            "correct": 0,
+            "denominator": 4150
+          },
+          "same_rule": {
+            "correct": 0,
+            "denominator": 1900
+          },
+          "transfer": {
+            "correct": 0,
+            "denominator": 1500
+          },
+          "composition": {
+            "correct": 0,
+            "denominator": 750
+          },
+          "specificity": {
+            "correct": 0,
+            "denominator": 750
+          }
+        },
+        "finite_state": {
+          "pre_learning_primary": {
+            "correct": 0,
+            "denominator": 3600
+          },
+          "immediately_pre_deletion_primary": {
+            "correct": 0,
+            "denominator": 3600
+          },
+          "post_deletion_primary": {
+            "correct": 0,
+            "denominator": 3600
+          },
+          "same_rule": {
+            "correct": 0,
+            "denominator": 1500
+          },
+          "transfer": {
+            "correct": 0,
+            "denominator": 1350
+          },
+          "composition": {
+            "correct": 0,
+            "denominator": 750
+          },
+          "specificity": {
+            "correct": 0,
+            "denominator": 750
+          }
+        },
+        "rule_transformation": {
+          "pre_learning_primary": {
+            "correct": 0,
+            "denominator": 3750
+          },
+          "immediately_pre_deletion_primary": {
+            "correct": 0,
+            "denominator": 3750
+          },
+          "post_deletion_primary": {
+            "correct": 0,
+            "denominator": 3750
+          },
+          "same_rule": {
+            "correct": 0,
+            "denominator": 1500
+          },
+          "transfer": {
+            "correct": 0,
+            "denominator": 1500
+          },
+          "composition": {
+            "correct": 0,
+            "denominator": 750
+          },
+          "specificity": {
+            "correct": 0,
+            "denominator": 750
+          }
+        }
+      },
+      "note": "All six conditions have 0 correct at every named score denominator; denominators vary by family/task probe count, so exact global and per-family denominators are retained."
+    },
+    "no_update_variation": {
+      "component_p95": {
+        "pre_post_diff_even": 0.0,
+        "pre_post_diff_odd": 0.0,
+        "specificity_pair_diff": 0.0
+      },
+      "family_p95": {
+        "contextual_remap": 0.0,
+        "finite_state": 0.0,
+        "rule_transformation": 0.0
+      },
+      "pooled_p95": 0.0,
+      "task_cluster_bootstrap_point_estimate": 0.0,
+      "task_cluster_bootstrap_95_ci": [
+        0.0,
+        0.0
+      ],
+      "task_cluster_bootstrap_replicates": 10000
+    }
+  },
+  "trace_audits": {
+    "no_update_repeat_records": {
+      "records_checked": 9000,
+      "all_trace_zero": true,
+      "all_optimizer_zero": true,
+      "all_fast_zero": true,
+      "all_slow_zero": true
+    },
+    "seed_condition_records": {
+      "records_checked": 13500,
+      "trace_count_after_zero": 13500,
+      "optimizer_step_count_zero": 13500,
+      "fast_zero": 13500,
+      "slow_zero_by_condition": {
+        "update_disabled": 2250,
+        "state_zeroed": 2250,
+        "untrained_rule": 0,
+        "trained": 0,
+        "feedback_shuffled": 0,
+        "state_swapped": 0
+      }
+    },
+    "interpretation": "Trace deletion and no-online-optimizer invariants passed. Slow state is correctly zero only for update_disabled and state_zeroed controls; nonzero slow state in the other four conditions is expected and is not an audit failure."
+  },
+  "power_feasibility": {
+    "feasibility_status": "blocked",
+    "required_endpoint_family_pairs": 27,
+    "no_finite_n_pairs": 27,
+    "minimum_tasks_per_family": 30,
+    "sample_size_tasks_per_family": 30,
+    "minimum_fallback_note": "30 is only the predeclared minimum fallback; it is not a finite powered sample size for any endpoint/family.",
+    "block_reason_summary_by_family": {
+      "contextual_remap": {
+        "superiority_endpoints": {
+          "endpoints": [
+            "adaptation_delta",
+            "causal_state_delta",
+            "composition_delta",
+            "feedback_semantics_delta",
+            "meta_training_delta",
+            "state_addressing_delta",
+            "transfer_delta"
+          ],
+          "reason": "mu_hat <= 0",
+          "required_n": null,
+          "status": "no_finite_n"
+        },
+        "equivalence_endpoints": {
+          "endpoints": [
+            "specificity_delta",
+            "trace_free_survival"
+          ],
+          "reason": "delta <= 0 because equivalence margin Delta=0",
+          "required_n": null,
+          "status": "no_finite_n"
+        }
+      },
+      "finite_state": {
+        "superiority_endpoints": {
+          "endpoints": [
+            "adaptation_delta",
+            "causal_state_delta",
+            "composition_delta",
+            "feedback_semantics_delta",
+            "meta_training_delta",
+            "state_addressing_delta",
+            "transfer_delta"
+          ],
+          "reason": "mu_hat <= 0",
+          "required_n": null,
+          "status": "no_finite_n"
+        },
+        "equivalence_endpoints": {
+          "endpoints": [
+            "specificity_delta",
+            "trace_free_survival"
+          ],
+          "reason": "delta <= 0 because equivalence margin Delta=0",
+          "required_n": null,
+          "status": "no_finite_n"
+        }
+      },
+      "rule_transformation": {
+        "superiority_endpoints": {
+          "endpoints": [
+            "adaptation_delta",
+            "causal_state_delta",
+            "composition_delta",
+            "feedback_semantics_delta",
+            "meta_training_delta",
+            "state_addressing_delta",
+            "transfer_delta"
+          ],
+          "reason": "mu_hat <= 0",
+          "required_n": null,
+          "status": "no_finite_n"
+        },
+        "equivalence_endpoints": {
+          "endpoints": [
+            "specificity_delta",
+            "trace_free_survival"
+          ],
+          "reason": "delta <= 0 because equivalence margin Delta=0",
+          "required_n": null,
+          "status": "no_finite_n"
+        }
+      }
+    },
+    "endpoint_scope_preserved": "The summary names all 9 endpoints under each of all 3 families; no blocked endpoint/family pair is omitted."
+  },
+  "local_exact_reproduction": {
+    "classification": "BLOCKED",
+    "stage": "before_collection",
+    "fail_closed": true,
+    "generation_ran": false,
+    "scoring_ran": false,
+    "local_shard_written": false,
+    "expected_organ_hash": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+    "observed_exact_runtime_organ_hash": "2621e258b2fe8d37b2b5743f5e1d3d04037d3d0d409bbad71dd2ba18240498ce",
+    "model_artifact_match": {
+      "all_10_reference_file_sha256s_match": true,
+      "checkpoint_theta_hash": "97f9a2fc1afd23cfa1a84eee605dd5978faffa7c6df648a37e15d41cee4d923e"
+    },
+    "runtime": {
+      "python": "3.12.13",
+      "torch": "2.10.0+cpu",
+      "torchao": "0.17.0",
+      "transformers": "5.0.0",
+      "safetensors": "0.7.0",
+      "tokenizers": "0.22.2"
+    },
+    "terminal_result": [
+      "ASI calibration_view_sha256=639725f44aa7e46f84691987f9dd9454ac70902bf5f20742505a733219166dc2",
+      "ERROR: shard collection failed: organ hash mismatch: checkpoint has a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea, current organ has 2621e258b2fe8d37b2b5743f5e1d3d04037d3d0d409bbad71dd2ba18240498ce",
+      "METRIC collect_shard_status=FAILED",
+      "Command exited with code 1"
+    ],
+    "artifact": {
+      "path": "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/local-confirmation/comparison.json",
+      "whole_file_sha256": "62645f3b1b4e62819693254e769e2475f99b49102a8346464c7764f4437099f0"
+    },
+    "non_claim": "No local record exists; therefore local all-zero scoring and per-field equality were not reproduced."
+  },
+  "different_organ_raw_response_diagnosis": {
+    "classification": "DIAGNOSTIC_ONLY",
+    "comparability": "NON_COMPARABLE_DIFFERENT_ORGAN_HASH",
+    "local_organ_hash": "2621e258b2fe8d37b2b5743f5e1d3d04037d3d0d409bbad71dd2ba18240498ce",
+    "remote_reference_organ_hash": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+    "cell": {
+      "developmental_seed_index": 0,
+      "evaluation_seed_index": 0,
+      "task_index": 0,
+      "family": "contextual_remap"
+    },
+    "scores": {
+      "C1_UPDATE_DISABLED": {
+        "correct": 0,
+        "total": 10,
+        "empty_generations": 0
+      },
+      "C3_TRAINED": {
+        "correct": 0,
+        "total": 10,
+        "empty_generations": 0
+      }
+    },
+    "response_comparison": {
+      "identical_outputs": 9,
+      "total_outputs": 10,
+      "C1_outputs_containing_normalized_target_substring": 0,
+      "C3_outputs_containing_normalized_target_substring": 0,
+      "only_difference": "One same_rule response changed “a language model” to “a large language model”; neither matched the target."
+    },
+    "artifact": {
+      "path": "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/local-confirmation/local-organ-diagnostic-d0-e0-t00.json",
+      "whole_file_sha256": "7d4f20da469f09db12e19aec89109ed79dea7cabfc1e6e7726da09b038ab662f"
+    },
+    "limitation": "Not a calibration shard, not mergeable, and not a reproduction or scientific test of remote organ a342... ."
+  },
+  "word_forcing_controls": {
+    "classification": "DIAGNOSTIC_ONLY",
+    "hard_logit_control": {
+      "identity": {
+        "organ_identity": "standard_transformers_fp32_cpu_token_inference",
+        "qwen_frozen_organ_hash": null,
+        "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+        "snapshot_revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+        "weights_file_sha256": "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe",
+        "runtime": {
+          "python": "3.10.12",
+          "torch": "2.6.0+cu124",
+          "transformers": "5.12.1",
+          "device": "cpu"
+        }
+      },
+      "method": "At generated step 0, a hard vocabulary-token logit mask forced the scheduled target token ID; subsequent tokens used deterministic greedy argmax.",
+      "learned": false,
+      "activation_forcing": false,
+      "baseline_starts_with": {
+        "left": "0/4",
+        "rise": "0/4"
+      },
+      "forced_starts_with": {
+        "left": "4/4",
+        "rise": "4/4"
+      },
+      "forced_exact_matches": {
+        "left": "0/4",
+        "rise": "0/4"
+      },
+      "artifact": {
+        "path": "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/word-forcing/inference-controls.json",
+        "whole_file_sha256": "c61eb2b832083727f36d74ee5cacc2adf91c19d257b554da63294d5aa45673d3"
+      },
+      "limitation": "A hard token-ID schedule trivially establishes decoder reachability only; it is not a learned latent interface, not the INT8 Kaggle QwenFrozenOrgan, and provides no evidence of generalization or exact-answer control."
+    },
+    "soft_activation_control": {
+      "identity": {
+        "organ_identity": "Qwen/Qwen2.5-0.5B-Instruct@torchao-int8-weight-only-w8a32-per-row-v2",
+        "local_organ_hash": "60de9f75e8ae1d2507429877b4b2da48ec64c3e28eaad03db23cd3de43a1b4da",
+        "remote_reference_organ_hash": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+        "runtime": {
+          "python": "3.12.11",
+          "torch": "2.12.1+cu130",
+          "torchao": "0.17.0",
+          "transformers": "5.12.1",
+          "device": "cpu"
+        }
+      },
+      "method": "Optimize one disposable FP32 soft bank of shape [1,3,896] per target on prompt P0 only, minimizing first target-token negative log probability; frozen model parameters remain unchanged.",
+      "left": {
+        "P0_first_token_probability_before": 3.5072622583953716e-10,
+        "P0_first_token_probability_after": 0.9361705780029297,
+        "optimizer_updates": 42,
+        "bank_l2_norm": 11.265378952026367,
+        "starts_with_target": "4/4",
+        "exact_matches": "0/4",
+        "observed_failure_mode": "Strong repetitive continuation dominated by “left”."
+      },
+      "rise": {
+        "P0_first_token_probability_before": 2.0835613234737593e-09,
+        "P0_first_token_probability_after": 0.9256521463394165,
+        "optimizer_updates": 14,
+        "bank_l2_norm": 6.936966419219971,
+        "starts_with_target": "1/4",
+        "exact_matches": "0/4",
+        "observed_failure_mode": "P0 was forced, but paraphrase transfer was weak (1/4 starts)."
+      },
+      "model_hash_invariance": {
+        "before": "60de9f75e8ae1d2507429877b4b2da48ec64c3e28eaad03db23cd3de43a1b4da",
+        "after": "60de9f75e8ae1d2507429877b4b2da48ec64c3e28eaad03db23cd3de43a1b4da",
+        "unchanged": true,
+        "all_parameters_require_grad_false_after": true
+      },
+      "artifacts": {
+        "result": {
+          "path": "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/word-forcing/activation-forcing.json",
+          "whole_file_sha256": "501f333bceb97cdb84c2af7fd190ca7af07421a217c93fc39eeeb5b7de82bd93"
+        },
+        "left_bank": "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/word-forcing/left-soft-bank.npy",
+        "rise_bank": "~/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/word-forcing/rise-soft-bank.npy"
+      },
+      "limitation": "Local disposable intervention under organ 60de... only; trained on one prompt, with repetition and weak asymmetric paraphrase transfer. It is not equivalent to remote a342..., is not a signed cortex candidate, and does not alter the blocked DEV adjudication."
+    }
+  },
+  "explicit_non_claims": [
+    "No meta-test or holdout data was accessed.",
+    "No oracle gate was passed or used to authorize hypothesis disposition.",
+    "No signed candidate was produced or evaluated.",
+    "No formal H-META-CORTEX ACCEPT or REFUTE is made.",
+    "The all-zero corrected DEV result is a valid observation but not itself a powered hypothesis refutation because feasibility is blocked.",
+    "The minimum fallback of 30 tasks per family is not presented as a finite powered sample size.",
+    "Legacy v5 metrics are not scientifically aggregated with corrected v6.",
+    "Local organ 2621... raw outputs are not treated as a reproduction of remote organ a342... .",
+    "Hard-logit reachability and soft-bank forcing are not treated as learned generalization, oracle success, or evidence about the remote organ.",
+    "No local exact shard was produced after the organ-hash mismatch."
+  ]
+}
