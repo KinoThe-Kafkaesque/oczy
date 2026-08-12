@@ -434,3 +434,41 @@ configured TTL rather than reconciling themselves against provider history.
 If those are required, add them as execution-control features without changing
 the frozen evaluation instrument. Any new retry policy must preserve attempts
 and failure records rather than erasing nulls or infrastructure failures.
+
+## Governing systemd user service — `oczy-r20-v6-cal-width3`
+
+The `r20-int8-dev-calibration-v6/calibration-a8c98d6` queue is driven by the
+systemd user unit:
+
+```text
+~/.config/systemd/user/oczy-r20-v6-cal-width3.service
+```
+
+This is the **governing execution unit** for that campaign. The unit file
+records the exact reviewed batch, state, pool config, dispatch plan, and
+timeouts that the scheduler is expected to run with. It is enabled and started
+with:
+
+```bash
+systemctl --user enable --now oczy-r20-v6-cal-width3.service
+```
+
+Monitor it with:
+
+```bash
+systemctl --user status oczy-r20-v6-cal-width3.service
+journalctl --user -u oczy-r20-v6-cal-width3.service -f
+```
+
+The service runs the scheduler directly from the repository venv, sets
+`PYTHONUNBUFFERED=1`, and explicitly includes `/home/nyanpasu/.local/bin` in
+`PATH` so the `kaggle` CLI is available. Do not start additional scheduler
+instances for the same state file; the scheduler lock will refuse a second
+owner.
+
+When the batch or dispatch plan is regenerated, update the `ExecStart` line in
+the unit file to point to the new plan, run
+`systemctl --user daemon-reload`, and restart the service. The service uses
+`Restart=on-failure` with `RestartPreventExitStatus=1`, so a clean scheduler
+exit (including a non-zero exit caused by failed jobs) will not auto-restart,
+but a process crash will.

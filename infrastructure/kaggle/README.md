@@ -688,3 +688,31 @@ and the T4 model probe results — is historical evidence only. GPU kernels and
 metadata under the archive must not be resubmitted. See
 [`archive/gpu/RESULTS.md`](archive/gpu/RESULTS.md) for the full historical
 record.
+
+## Local GPU probe (T550) — not wired in
+
+The local NVIDIA T550 Laptop GPU (4 GB, Turing compute 7.5) was benchmarked
+on 2026-07-26 against the local i7-1260P CPU on the small causal LMs in the
+local HF cache, including the pinned `Qwen/Qwen2.5-0.5B-Instruct` organ and
+the documented `Qwen/Qwen2.5-1.5B-Instruct` fallback. Full method, numbers,
+and analysis: [`experiments_logs/2026-07-26_local_t550_gpu_throughput_probe.md`](../experiments_logs/2026-07-26_local_t550_gpu_throughput_probe.md).
+
+**Decision: the T550 is not added as a verified compute path.** The CPU-only
+contract stands. Summary of why:
+
+- At batch=1 the T550 is only 1.1–2.0× faster than the i7-1260P on decode
+  (Qwen-0.5B: 27.4 vs 18.9 t/s; Qwen-1.5B: 9.6 vs 4.9 t/s).
+- At batch=4 the CPU beats the GPU on aggregate throughput for every model
+  that fits the 4 GB VRAM (Qwen-0.5B: 30.2 vs 47.8 t/s; LFM-1.2B: 15.8 vs
+  28.1 t/s). Qwen-1.5B OOMs on GPU at batch=4.
+- The T550 is weaker than the archived T4. If GPU compute is ever
+  re-authorized, the verified 2×T4 Kaggle path is the right starting point.
+- The frozen LM is not the research bottleneck; the cortex loops dominate
+  wallclock. A 1.45× speedup of a non-bottleneck does not justify breaking
+  the CPU-only contract or maintaining a second code path in
+  `src/oczy/lm/hf_driver.py` / `cvec_driver.py`.
+
+The T550 is acceptable for **local dev iteration only** (faster human-loop
+feedback on adapter code) and for **benchmark scripts** (`bench_hf_cpu.py`,
+`bench_cross_backend.py`). It must not appear in recorded experiment runs,
+Kaggle/Colab kernels, or any path covered by the CPU-only contract above.
