@@ -1,0 +1,283 @@
+{
+  "schema_version": "oczy/execution-report/v1",
+  "record_type": "r19_dev_calibration_adjudication",
+  "adjudication_date": "2026-07-12",
+  "research_spec": "research/19-lm-as-language-organ.md",
+  "source_repo": "https://github.com/KinoThe-Kafkaesque/oczy.git",
+  "provider": "kaggle",
+  "profile": "cpu",
+  "module": "oczy.experiments.s19_language_organ",
+  "command": ["/usr/bin/python3", "-m", "oczy.experiments.s19_language_organ", "calibrate-dev", "--model-id", "Qwen/Qwen2.5-0.5B-Instruct", "--manifest-out", "/kaggle/working/calibration_manifest.json", "--coupler-out", "/kaggle/working/s19_cortex.pkl", "--source-commit", "bd1ead9a8358b675af5e929c53a01eb505839639", "--source-archive-sha256", "1afe7573438e18a66ac6b23806978fe7662d3cf9d1662e29200da73729bce3eb", "--lr", "0.01", "--coupler-lr", "0.001", "--label-lr", "0.05"],
+  "status": "complete",
+  "exit_code": 0,
+  "error": null,
+  "started_utc": "2026-07-12T11:19:35Z",
+  "finished_utc": "2026-07-12T11:31:46Z",
+  "timeout_seconds": null,
+
+  "immutable_hashes": {
+    "source_commit": "bd1ead9a8358b675af5e929c53a01eb505839639",
+    "source_archive_sha256": "1afe7573438e18a66ac6b23806978fe7662d3cf9d1662e29200da73729bce3eb",
+    "source_archive_size_bytes": 1800978,
+    "source_archive_tracked_file_count": 473,
+    "source_dataset": "abdellahkadem/oczy-source-bd1ead9a8358",
+    "source_dirty_entry_count": 0,
+    "source_worktree_dirty_at_packaging": false,
+    "eval_version": "v2.2",
+    "eval_manifest_sha256": "982116463ff94315315e4c4a3c21abc85411d03f78286db710e2a00a25a3c843",
+    "model_repo_id": "Qwen/Qwen2.5-0.5B-Instruct",
+    "model_revision": "main",
+    "model_config_sha256": "f49f217d6c21431063185bac5c274e224afcb38a15b3607cc9532be3a1d34d61",
+    "model_safetensors_sha256": "c6ac65d183d505da320789d9132a14d6bed47a5c8b25622dab07ad3aad1a8fc6",
+    "model_params_requires_grad": false,
+    "manifest_sha256": "77ef4607ff95c116b5b7b088a7f5cfa811b855d76feed9c329eb551ac586a1e2"
+  },
+
+  "hardware": {
+    "platform": "Linux-6.12.90+-x86_64-with-glibc2.35",
+    "python": "3.12.13",
+    "torch": "2.10.0+cpu",
+    "cuda_available": false,
+    "cuda_device_count": 0,
+    "torch_cuda_version": null
+  },
+
+  "cpu_only_contract": {
+    "cuda_available": false,
+    "cuda_visible_devices": "",
+    "hf_hub_offline": "1",
+    "mkl_num_threads": "4",
+    "oczy_remote_cpu_only": "1",
+    "omp_num_threads": "4",
+    "profile": "cpu",
+    "transformers_offline": "1"
+  },
+
+  "model_artifact": {
+    "hf_model_dir": "/kaggle/input/models/qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
+    "gguf_model_path": null,
+    "model_source": "qwen-lm/qwen2.5/transformers/0.5b-instruct/1"
+  },
+
+  "calibration_attempts": [
+    {
+      "attempt": 1,
+      "job_name": "r19-calibrate-dev",
+      "source_commit": "0d628118083e7df5c073e6255c297884018ed8fe",
+      "source_archive_sha256": "198c6916eb39d23d2963a11f0b7dabc6473b267c397ea5b45612df0132dfafb9",
+      "source_dataset": "abdellahkadem/oczy-source-0d628118083e",
+      "kernel_id": "abdellahkadem/oczy-r19-calibrate-0d628118083e",
+      "remote_id": "abdellahkadem/oczy-r19-calibrate-0d628118083e",
+      "state": "failed",
+      "error": "kernel reported error status",
+      "exit_code": null,
+      "submitted_utc": "2026-07-12T00:48:06Z",
+      "completed_utc": "2026-07-12T00:49:07Z",
+      "collected_at": null,
+      "reports_collected": false,
+      "failure_classification": "infrastructure",
+      "failure_detail": "offline model resolution failure",
+      "manifest_out_arg": "experiments_logs/r19_calibrate_dev/calibration_manifest.json",
+      "coupler_out_arg": "experiments_logs/r19_calibrate_dev/s19_cortex.pkl"
+    },
+    {
+      "attempt": 2,
+      "job_name": "r19-calibrate-dev-v2",
+      "source_commit": "4b73780935ef45dc44fd5d75709ca18d4638a6b0",
+      "source_archive_sha256": "c7d6f08e214aac3fba7e889d79c525536e4a0fe3fefa1458cffe94a38a1cc87b",
+      "source_dataset": "abdellahkadem/oczy-source-4b73780935ef",
+      "kernel_id": "abdellahkadem/oczy-r19-cal-v2-4b73780935ef",
+      "remote_id": "abdellahkadem/oczy-r19-cal-v2-4b73780935ef",
+      "state": "failed",
+      "error": "kernel reported error status",
+      "exit_code": null,
+      "submitted_utc": "2026-07-12T10:39:41Z",
+      "completed_utc": "2026-07-12T10:50:28Z",
+      "collected_at": null,
+      "reports_collected": false,
+      "failure_classification": "infrastructure",
+      "failure_detail": "source-path/provenance failure plus feature explosion",
+      "manifest_out_arg": "experiments_logs/r19_calibrate_dev/calibration_manifest.json",
+      "coupler_out_arg": "experiments_logs/r19_calibrate_dev/s19_cortex.pkl"
+    },
+    {
+      "attempt": 3,
+      "job_name": "r19-calibrate-dev-v3",
+      "source_commit": "bd1ead9a8358b675af5e929c53a01eb505839639",
+      "source_archive_sha256": "1afe7573438e18a66ac6b23806978fe7662d3cf9d1662e29200da73729bce3eb",
+      "source_dataset": "abdellahkadem/oczy-source-bd1ead9a8358",
+      "kernel_id": "abdellahkadem/oczy-r19-cal-v3-bd1ead9a8358",
+      "remote_id": "abdellahkadem/oczy-r19-cal-v3-bd1ead9a8358",
+      "state": "succeeded",
+      "error": null,
+      "exit_code": 0,
+      "submitted_utc": "2026-07-12T11:05:03Z",
+      "completed_utc": "2026-07-12T11:15:47Z",
+      "collected_at": "2026-07-12T11:15:48Z",
+      "started_utc": "2026-07-12T11:05:17Z",
+      "finished_utc": "2026-07-12T11:15:24Z",
+      "reports_collected": true,
+      "failure_classification": "infrastructure",
+      "failure_detail": "execution succeeded but artifacts written to relative path experiments_logs/r19_calibrate_dev/ instead of /kaggle/working/ — not rooted in /kaggle/working, superseded by v4",
+      "manifest_out_arg": "experiments_logs/r19_calibrate_dev/calibration_manifest.json",
+      "coupler_out_arg": "experiments_logs/r19_calibrate_dev/s19_cortex.pkl"
+    },
+    {
+      "attempt": 4,
+      "job_name": "r19-calibrate-dev-v4",
+      "source_commit": "bd1ead9a8358b675af5e929c53a01eb505839639",
+      "source_archive_sha256": "1afe7573438e18a66ac6b23806978fe7662d3cf9d1662e29200da73729bce3eb",
+      "source_dataset": "abdellahkadem/oczy-source-bd1ead9a8358",
+      "kernel_id": "abdellahkadem/oczy-r19-cal-v4-bd1ead9a8358",
+      "remote_id": "abdellahkadem/oczy-r19-cal-v4-bd1ead9a8358",
+      "state": "succeeded",
+      "error": null,
+      "exit_code": 0,
+      "submitted_utc": "2026-07-12T11:19:21Z",
+      "completed_utc": "2026-07-12T11:32:08Z",
+      "collected_at": "2026-07-12T11:32:12Z",
+      "started_utc": "2026-07-12T11:19:35Z",
+      "finished_utc": "2026-07-12T11:31:46Z",
+      "reports_collected": true,
+      "failure_classification": null,
+      "failure_detail": null,
+      "manifest_out_arg": "/kaggle/working/calibration_manifest.json",
+      "coupler_out_arg": "/kaggle/working/s19_cortex.pkl"
+    }
+  ],
+
+  "v4_manifest_metrics": {
+    "schema_version": "oczy/r19-calibration-manifest/v1",
+    "created_at": "2026-07-12T11:31:42.568622+00:00",
+    "d_embd": 896,
+    "d_cortex": 16,
+    "latent_tokens": 3,
+    "max_labels": 20,
+    "arm_b_input_mode": "inputs_embeds",
+    "fixed_latent_shape": [3, 896],
+    "parameter_total": 60388,
+    "parameter_budget": 64000,
+    "parameter_breakdown": {
+      "W_perceive": 14336,
+      "W_label": 320,
+      "b_label": 20,
+      "W_coupler": 43008,
+      "b_coupler": 2688,
+      "warm_state": 16
+    },
+    "label_phrasing_frozen": true,
+    "labels": [
+      "captain's journal", "submit officially", "map legend", "biology cell",
+      "music record", "tree branch", "fashion model", "river run",
+      "military draft", "football pitch", "chocolate bar", "musical note",
+      "fish scale", "dental bridge", "port wine", "crane bird",
+      "fruit jam", "harbor seal", "spy mole", "body organ"
+    ],
+    "dev_split": "dev",
+    "dev_repeatability_std": 0.0,
+    "dev_confidence_mean": 0.05254819590066161,
+    "dev_confidence_std": 0.00028932323902295125,
+    "dev_confidence_min": 0.05206942558288574,
+    "dev_confidence_max": 0.05289289355278015,
+    "dev_specificity_acc": 0.13432835820895522,
+    "dev_holdout_ids_discarded": true,
+    "split_salt": "v2.2",
+    "split_fraction": 0.3,
+    "proposed_confidence_threshold": 0.05224296171218157,
+    "proposed_specificity_margin": 0.15,
+    "n_dev_probes": 14,
+    "n_labels": 20,
+    "calibrate_coupler_loss_mean": 4.333677,
+    "calibrate_label_loss_mean": 3.012896,
+    "c7_reference": "S3.M2a nearest-neighbor retrieval baseline",
+    "c7_available": true,
+    "c7_blocked_reason": null,
+    "trace_raw_traces_deleted": true,
+    "trace_raw_trace_count": 0,
+    "trace_raw_traces_deleted_count": 14,
+    "trace_embedding_cache_cleared": true,
+    "trace_optimizer_state_deleted": true
+  },
+
+  "v4_artifacts": {
+    "cortex_artifact_path": "s19_cortex.pkl",
+    "cortex_artifact_sha256": "45d518f4f91ba7e28502cdbc42c2b322035642f74bd46e70fb28f51b6772afed",
+    "cortex_artifact_bytes": 243422,
+    "coupler_sha256": "4632f4c03714a6b85d79ad2db0056e1e2e3e154b0b7dc27b2696d43793471d66",
+    "coupler_bytes": 183493,
+    "head_sha256": "d42f5f26896d4c168f5b0174ff41827febcf83d5eaa7d0c80c3ff72c63996c44",
+    "head_bytes": 60044,
+    "collected_report_dir": "/tmp/oczy-live-queue/reports/r19-calibrate-dev-v4"
+  },
+
+  "articulation_checks": {
+    "articulation_prompt_text": "Show the log.",
+    "articulation_latent_bank_shape": [3, 896],
+    "articulation_raw_trace_count": 0,
+    "articulation_language_organ_hash": "c6ac65d183d505da320789d9132a14d6bed47a5c8b25622dab07ad3aad1a8fc6",
+    "articulation_persistent_cortex_bytes": 243422,
+    "articulation_banned_label_text_absent": true,
+    "articulation_banned_corrected_response_absent": true,
+    "articulation_banned_correction_utterance_absent": true,
+    "articulation_banned_expected_answer_absent": true
+  },
+
+  "gate_outcome": {
+    "signoff_thresholds_signed_off": false,
+    "signoff_human_signoff_id": "",
+    "signoff_oracle_ceiling": 0.35714285714285715,
+    "signoff_dev_articulation_gate": false,
+    "signoff_meta_test_conflation_ok": true,
+    "holdout_accessed": false,
+    "classification": "BLOCKED",
+    "classification_detail": "BLOCKED at pre-registered DEV articulation gate (signoff_dev_articulation_gate=false). The v4 calibration infrastructure succeeded (exit 0, artifacts collected), but the scientific DEV gate is not passed."
+  },
+
+  "adjudication": {
+    "classification": "BLOCKED",
+    "classification_detail": "BLOCKED at pre-registered DEV articulation gate. signoff_dev_articulation_gate=false. No scientific verdict beyond BLOCKED is permitted.",
+    "infrastructure_vs_scientific_separation": "Attempts v1 and v2 failed at the infrastructure level (kernel error status, no reports collected). Attempt v3 succeeded at execution (exit 0) but failed at the artifact-collection level (outputs written to a relative path instead of /kaggle/working, superseded by v4). Attempt v4 succeeded at both execution and collection (exit 0, artifacts rooted in /kaggle/working, reports collected). The scientific DEV articulation gate is independent of infrastructure success: v4 infrastructure is fully successful, but signoff_dev_articulation_gate=false means the pre-registered DEV gate is not passed. No signoff request was made and no holdout access was attempted.",
+    "signoff_decision": "No signoff request was made because signoff_dev_articulation_gate=false. The pre-registered DEV articulation gate must pass before any signoff request or holdout access.",
+    "holdout_decision": "holdout_accessed=false. No holdout access was attempted because the DEV articulation gate has not passed. R20 remains separately blocked for lack of explicit human signoff.",
+    "r20_status": "R20 remains separately blocked for lack of explicit human signoff."
+  },
+
+  "c7_adapter_status": {
+    "c7_reference": "S3.M2a nearest-neighbor retrieval baseline",
+    "c7_available_in_manifest": true,
+    "c7_adapter_exists": false,
+    "c7_adapter_function": "_try_s3m2a_retrieval_adapter",
+    "c7_adapter_returns": null,
+    "c7_discrepancy": "The calibrate-dev phase hardcodes c7_available=true in the manifest, but _try_s3m2a_retrieval_adapter() returns None (no real adapter exists — src/oczy/experiments/s19_language_organ_core.py:1357-1359). The evaluate phase would block on C7 independently of the articulation gate. This discrepancy requires diagnosis before any new claim run.",
+    "c7_code_location": "src/oczy/experiments/s19_language_organ_core.py:1357-1359"
+  },
+
+  "direction_reassessment": {
+    "budget_constraint": "Do not spend signed-eval or R20 budget.",
+    "diagnose_before_new_claim_run": [
+      "Articulation/interface: why does the learned coupler not improve over the no-update baseline on DEV? Is the bottleneck the coupler learning signal, the latent interface width/shape, or the articulation path (soft embeddings vs KV entries)?",
+      "C7 adapter availability: resolve the discrepancy between the manifest c7_available=true and _try_s3m2a_retrieval_adapter() returning None. A real S3.M2a adapter must exist before the evaluate phase can run C7 as an external bar."
+    ],
+    "r19_r20_signoff_separation": "R19 signed evaluation is BLOCKED at the DEV articulation gate. No signoff was requested and no holdout was accessed. R20 (meta-trained cortex) remains separately blocked for lack of explicit human signoff. R19 signoff and R20 signoff are distinct: neither has been requested or granted. The R19 articulation gate failure does not change R20's blocked status."
+  },
+
+  "explicit_non_claims": [
+    "No positive scientific verdict is claimed. The classification is BLOCKED at the pre-registered DEV articulation gate.",
+    "No signoff request was made because signoff_dev_articulation_gate=false.",
+    "No holdout access was attempted (holdout_accessed=false).",
+    "R20 remains separately blocked for lack of explicit human signoff.",
+    "No threshold, metric, baseline, episode, scoring, eval manifest, or research spec was changed.",
+    "The v4 infrastructure success (exit 0, artifacts collected) is distinct from the scientific DEV gate outcome (BLOCKED).",
+    "Attempts v1 and v2 are infrastructure failures, not scientific failures — no manifest was produced.",
+    "Attempt v3 is an infrastructure collection failure, not a scientific failure — execution succeeded but artifacts were not rooted in /kaggle/working.",
+    "The dev_confidence_mean (0.0525482) and dev_specificity_acc (0.134328) are recorded as observed DEV metrics, not as passed thresholds.",
+    "The oracle_ceiling (0.357143) is an upper bound on DEV performance with the frozen language organ, not a claimed result.",
+    "The proposed_confidence_threshold and proposed_specificity_margin are calibration proposals, not accepted thresholds.",
+    "The C7 adapter discrepancy (manifest c7_available=true vs _try_s3m2a_retrieval_adapter() returns None) is a secondary blocker that must be resolved before any evaluate-phase run, but the primary blocker is the DEV articulation gate.",
+    "R19 signoff and R20 signoff are distinct. R19 is blocked at the DEV articulation gate; R20 is blocked on human signoff. Neither has been requested or granted.",
+    "The oracle ceiling (0.357143 > 0) passing does not imply the articulation gate passes — they are independent gates.",
+    "No signed-eval or R20 budget should be spent until the articulation/interface and C7 adapter availability are diagnosed at DEV level."
+  ],
+
+  "scope_limit": "R19 DEV calibration from source commit bd1ead9a8358b675af5e929c53a01eb505839639 on Kaggle CPU (Qwen/Qwen2.5-0.5B-Instruct, frozen). Four calibration attempts: v1 failed (offline model resolution), v2 failed (source-path/provenance failure plus feature explosion), v3 succeeded but artifacts not rooted in /kaggle/working, v4 succeeded and collected. DEV-only: holdout_accessed=false. No threshold, metric, baseline, episode, scoring, eval manifest, or research spec was changed. The pre-registered DEV articulation gate (signoff_dev_articulation_gate) is unchanged and remains false. No signoff request was made. No scientific verdict beyond BLOCKED is permitted. R20 remains separately blocked for lack of explicit human signoff."
+}

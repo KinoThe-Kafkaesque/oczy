@@ -14,11 +14,10 @@ Mode:
 from __future__ import annotations
 
 import argparse
-import copy
-from pathlib import Path
 import sys
 import time
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 
@@ -144,7 +143,7 @@ def _logit_shift_with_cvec(
         for word in word_list:
             word_ids = llm.tokenize(word.encode("utf-8"), add_bos=False)
             if word_ids:
-                token_ids.append(int(word_ids[0]))
+                token_ids.append(word_ids[0])
         if not token_ids:
             return 0.0
         return float(np.mean(last[token_ids]))
@@ -187,10 +186,42 @@ def _domain_probe_with_cvec(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_gguf_model_path() -> str:
+    """Resolve the LFM2.5 GGUF path from env or local cache.
+
+    Honors ``OCZY_MODEL_PATH`` (set by the Kaggle bootstrap or a local
+    user) first, then falls back to the conventional HF cache layout.
+    Raises ``FileNotFoundError`` when no local file can be found — never
+    downloads.
+    """
+    import os
+    from pathlib import Path
+
+    env_path = os.environ.get("OCZY_MODEL_PATH")
+    if env_path and Path(env_path).is_file():
+        return env_path
+    cache_parent = (
+        Path.home()
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--LiquidAI--LFM2.5-1.2B-Instruct-GGUF"
+    )
+    target = "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
+    if cache_parent.exists():
+        for path in sorted(cache_parent.rglob(target)):
+            if path.is_file():
+                return str(path)
+    raise FileNotFoundError(
+        f"{target} not found. Set OCZY_MODEL_PATH or cache the file "
+        "under ~/.cache/huggingface/hub/models--LiquidAI--"
+        "LFM2.5-1.2B-Instruct-GGUF."
+    )
+
+
 def _build_parametrized_agent(
     alpha: float,
     threshold: int,
-    batch_size: int,
     corrections: tuple[str, ...],
     seed: int = 0,
 ) -> tuple[Any, bool]:
@@ -199,18 +230,13 @@ def _build_parametrized_agent(
     Returns ``(agent, is_diverse)`` where ``is_diverse`` is True when more than
     one correction phrasing is supplied.
     """
+    from llama_cpp import Llama
+
     from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
     from oczy.lm.cvec_driver import CVecDriverConfig, LlamaCVecDriver
-    from llama_cpp import Llama
-    from pathlib import Path
     from plastic_cortex.kv_cortex import KVCortexConfig
 
-    _MODEL_PATH = str(
-        Path.home()
-        / ".cache/huggingface/hub/models--LiquidAI--LFM2.5-1.2B-Instruct-GGUF"
-        / "snapshots/047e06635fbe71469926b35ea414537245218200"
-        / "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
-    )
+    _MODEL_PATH = _resolve_gguf_model_path()
 
     driver_cfg = CVecDriverConfig(n_ctx=128, n_threads=12, verbose=False)
     llm = Llama(model_path=_MODEL_PATH, n_ctx=driver_cfg.n_ctx,
@@ -238,14 +264,14 @@ def _build_parametrized_agent(
 
 def _build_real_agent() -> Any:
     agent, _ = _build_parametrized_agent(
-        alpha=0.3, threshold=2, batch_size=2, corrections=_DIVERSE_CORRECTIONS
+        alpha=0.3, threshold=2, corrections=_DIVERSE_CORRECTIONS
     )
     return agent
-
 
 def _build_mock_agent(seed: int = 0) -> Any:
     from oczy.experiments.cortex_agent import CortexAgent, CortexAgentConfig
     from oczy.experiments.multi_fact_stressor import _MockDriver
+    from oczy.lm.cvec_driver import LlamaCVecDriver
     from plastic_cortex.kv_cortex import KVCortexConfig
 
     class _MockCVecDriver(_MockDriver):
@@ -260,7 +286,7 @@ def _build_mock_agent(seed: int = 0) -> Any:
         def clear_cvec(self) -> None:
             return None
 
-    driver = _MockCVecDriver(n_embd=16)
+    driver = cast("LlamaCVecDriver", _MockCVecDriver(n_embd=16))
     cfg = CortexAgentConfig(
         cortex=KVCortexConfig(
             d_cortex=4,
@@ -412,7 +438,7 @@ def _logit_domain_shift(agent: Any) -> float:
     for word in _DOMAIN_WORDS:
         word_ids = llm.tokenize(word.encode("utf-8"), add_bos=False)
         if word_ids:
-            token_ids.append(int(word_ids[0]))
+            token_ids.append(word_ids[0])
     if not token_ids:
         return 0.0
     return float(np.mean(last[token_ids]))
@@ -439,7 +465,7 @@ def _logit_control_shift(agent: Any) -> float:
     for word in _CONTROL_WORDS:
         word_ids = llm.tokenize(word.encode("utf-8"), add_bos=False)
         if word_ids:
-            token_ids.append(int(word_ids[0]))
+            token_ids.append(word_ids[0])
     if not token_ids:
         return 0.0
     return float(np.mean(last[token_ids]))
@@ -483,9 +509,9 @@ def _drift_metric_triple(
             _domain_probe_with_cvec(agent, clamp_norm) - _domain_probe(zero_agent)
         )
     return {
-        "delta_target": float(delta_target),
-        "delta_control": float(delta_control),
-        "delta_target_clamped": float(delta_target_clamped),
+        "delta_target": delta_target,
+        "delta_control": delta_control,
+        "delta_target_clamped": delta_target_clamped,
     }
 
 
@@ -567,7 +593,7 @@ def _run_mock_driver(k: int = 4) -> dict[str, float]:
 
 
 def _run_ablation_real(
-    checkpoints: list[int] = [0, 5, 10, 15, 20],
+    checkpoints: list[int] | None = None,
     seeds: int = 1,
     output_path: str | None = None,
 ) -> None:
@@ -583,15 +609,19 @@ def _run_ablation_real(
     ``clamp_norm`` for conditions 2-5 is condition 1's final cvec norm, so the
     clamped metric isolates steering DIRECTION from LOUDNESS across conditions.
     """
+    if checkpoints is None:
+        checkpoints = [0, 5, 10, 15, 20]
     _run_ablation(checkpoints, seeds, use_logits=True, output_path=output_path)
 
 
 def _run_ablation_mock(
-    checkpoints: list[int] = [0, 5, 10, 15, 20],
+    checkpoints: list[int] | None = None,
     seeds: int = 1,
     output_path: str | None = None,
 ) -> None:
     """S2.4 ablation on the mock driver (uptake-based, no GGUF needed)."""
+    if checkpoints is None:
+        checkpoints = [0, 5, 10, 15, 20]
     _run_ablation(checkpoints, seeds, use_logits=False, output_path=output_path)
 
 
@@ -640,7 +670,7 @@ def _run_ablation(
         s_budget = _agent_seed(1, seed, max_k)
         if use_logits:
             budget_agent, _ = _build_parametrized_agent(
-                1.0, 3, 3, (_CORRECTION,), seed=s_budget,
+                1.0, 3, (_CORRECTION,), seed=s_budget,
             )
         else:
             budget_agent = _build_mock_agent(seed=s_budget)
@@ -653,7 +683,7 @@ def _run_ablation(
 
         if use_logits:
             budget_zero, _ = _build_parametrized_agent(
-                1.0, 3, 3, (_CORRECTION,), seed=s_budget,
+                1.0, 3, (_CORRECTION,), seed=s_budget,
             )
         else:
             budget_zero = _build_mock_agent(seed=s_budget)
@@ -689,7 +719,7 @@ def _run_ablation(
                 s = _agent_seed(cond, seed, ki)
                 if use_logits:
                     agent, _ = _build_parametrized_agent(
-                        alpha, threshold, batch_size, corrections, seed=s,
+                        alpha, threshold, corrections, seed=s,
                     )
                 else:
                     agent = _build_mock_agent(seed=s)
@@ -704,7 +734,7 @@ def _run_ablation(
 
                 if use_logits:
                     zero_agent, _ = _build_parametrized_agent(
-                        alpha, threshold, batch_size, corrections, seed=s,
+                        alpha, threshold, corrections, seed=s,
                     )
                 else:
                     zero_agent = _build_mock_agent(seed=s)
@@ -873,7 +903,7 @@ def _write_ablation_report(
     if single_var_deltas:
         any_positive = any(v > 0 for v in single_var_deltas.values())
         if any_positive:
-            best_cond = max(single_var_deltas, key=single_var_deltas.get)
+            best_cond = max(single_var_deltas, key=single_var_deltas.__getitem__)
             best_delta = single_var_deltas[best_cond]
             var_name = {3: "alpha", 4: "threshold", 5: "diversity"}[best_cond]
             lines.append(

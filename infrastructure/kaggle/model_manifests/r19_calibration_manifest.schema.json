@@ -1,0 +1,476 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "infrastructure/kaggle/model_manifests/r19_calibration_manifest.schema.json",
+  "title": "R19 calibration manifest (calibrate-dev output)",
+  "description": "Validates the flat output of the `calibrate-dev` phase of oczy.experiments.s19_language_organ (Research/19). The manifest is a flat dict produced by CalibrationManifest.to_dict() — every field is a top-level key, no nested objects except `parameter_breakdown`. It carries every value that the `evaluate` phase needs to reproduce the calibrated cortex, every value a human reviewer needs to approve before holdout evaluation, and every audit artifact required to verify the integrity of the calibration. The `evaluate` phase MUST fail closed unless: (1) the supplied manifest hash matches `manifest_sha256`, (2) a nonempty human sign-off ID is provided and matches `signoff_human_signoff_id`, (3) `signoff_thresholds_signed_off` is true, (4) `signoff_oracle_ceiling` is positive, (5) `signoff_dev_articulation_gate` is true, and (6) `c7_available` is true (or evaluation is explicitly blocked). The schema and calibration code never auto-sign. Research/19 and the eval assets are immutable; this schema does not choose or approve any value — it only defines and validates the field structure. An incomplete manifest (missing any required field) fails validation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "created_at",
+    "source_commit",
+    "source_archive_sha256",
+    "eval_version",
+    "eval_manifest_sha256",
+    "model_repo_id",
+    "model_revision",
+    "model_config_sha256",
+    "model_safetensors_sha256",
+    "model_params_requires_grad",
+    "d_embd",
+    "d_cortex",
+    "latent_tokens",
+    "max_labels",
+    "arm_b_input_mode",
+    "parameter_total",
+    "parameter_budget",
+    "parameter_breakdown",
+    "fixed_latent_shape",
+    "proposed_confidence_threshold",
+    "proposed_specificity_margin",
+    "cortex_artifact_sha256",
+    "cortex_artifact_bytes",
+    "cortex_artifact_path",
+    "coupler_sha256",
+    "coupler_bytes",
+    "head_sha256",
+    "head_bytes",
+    "label_phrasing_frozen",
+    "labels",
+    "dev_split",
+    "dev_repeatability_std",
+    "dev_confidence_mean",
+    "dev_confidence_std",
+    "dev_confidence_min",
+    "dev_confidence_max",
+    "dev_specificity_acc",
+    "dev_holdout_ids_discarded",
+    "split_salt",
+    "split_fraction",
+    "c7_reference",
+    "c7_available",
+    "trace_raw_traces_deleted",
+    "trace_raw_trace_count",
+    "trace_embedding_cache_cleared",
+    "trace_optimizer_state_deleted",
+    "articulation_prompt_text",
+    "articulation_latent_bank_shape",
+    "articulation_raw_trace_count",
+    "articulation_language_organ_hash",
+    "articulation_persistent_cortex_bytes",
+    "articulation_banned_label_text_absent",
+    "articulation_banned_corrected_response_absent",
+    "articulation_banned_correction_utterance_absent",
+    "articulation_banned_expected_answer_absent",
+    "signoff_thresholds_signed_off",
+    "signoff_human_signoff_id",
+    "signoff_oracle_ceiling",
+    "signoff_dev_articulation_gate",
+    "signoff_meta_test_conflation_ok",
+    "holdout_accessed",
+    "manifest_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "oczy/r19-calibration-manifest/v1",
+      "description": "Fixed schema version for the R19 calibration manifest."
+    },
+    "created_at": {
+      "type": "string",
+      "description": "ISO 8601 UTC timestamp recording when the manifest was written. EXCLUDED from the canonical hashed payload so that re-running calibrate-dev at a different time with identical calibration values produces an identical manifest_sha256."
+    },
+    "source_commit": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40})?$",
+      "description": "Full 40-character git commit SHA of the source used for calibrate-dev. An empty string explicitly indicates the commit is unavailable (e.g. running outside a git checkout)."
+    },
+    "source_archive_sha256": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{64})?$",
+      "description": "SHA-256 of the source tar archive uploaded as the private Kaggle dataset. An empty string explicitly indicates the archive hash is unavailable."
+    },
+    "eval_version": {
+      "type": "string",
+      "description": "Human-approved frozen eval version (e.g. v2.1). May be empty if the eval version is unavailable; the evaluate phase fails closed on empty provenance."
+    },
+    "eval_manifest_sha256": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{64})?$",
+      "description": "SHA-256 of the frozen eval instrument manifest. Verified before and after the run. An empty string explicitly indicates the hash is unavailable."
+    },
+    "model_repo_id": {
+      "type": "string",
+      "description": "Hugging Face repo id of the frozen language organ (e.g. 'Qwen/Qwen2.5-0.5B-Instruct'). May be empty if the model was loaded from a non-HF source."
+    },
+    "model_revision": {
+      "type": "string",
+      "description": "Pinned model revision (snapshot hash or version tag). May be empty if unavailable."
+    },
+    "model_config_sha256": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{64})?$",
+      "description": "SHA-256 of config.json. Verified before and after the run. An empty string explicitly indicates the hash is unavailable."
+    },
+    "model_safetensors_sha256": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{64})?$",
+      "description": "SHA-256 of model.safetensors. Verified before and after the run. An empty string explicitly indicates the hash is unavailable."
+    },
+    "model_params_requires_grad": {
+      "type": "boolean",
+      "const": false,
+      "description": "Must be false. All language-organ parameters have requires_grad=False. Arm B steers via inputs_embeds only; no LM parameter is ever updated."
+    },
+    "d_embd": {
+      "type": "integer",
+      "const": 896,
+      "description": "Frozen LM hidden width. Const because the language organ is fixed (Qwen2.5-0.5B-Instruct)."
+    },
+    "d_cortex": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Cortex state dimension. Contract value: 16."
+    },
+    "latent_tokens": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of fixed-width latent tokens in the Arm B control bank. Contract value: 3."
+    },
+    "max_labels": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20,
+      "description": "Maximum number of sense labels for Arm A. Hard cap: 20. Contract value: 20."
+    },
+    "arm_b_input_mode": {
+      "type": "string",
+      "const": "inputs_embeds",
+      "description": "Arm B injects the latent control bank via Qwen inputs_embeds. No LM parameter update occurs."
+    },
+    "parameter_total": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 64000,
+      "description": "Total persistent cortex parameters. Must be <= budget (64000). Contract value: 60388."
+    },
+    "parameter_budget": {
+      "type": "integer",
+      "const": 64000,
+      "description": "Hard parameter budget for the shared cortex."
+    },
+    "parameter_breakdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "W_perceive",
+        "W_label",
+        "b_label",
+        "W_coupler",
+        "b_coupler",
+        "warm_state"
+      ],
+      "description": "Per-component parameter counts. The calibration code must ensure these sum to parameter_total. Contract values: W_perceive=14336, W_label=320, b_label=20, W_coupler=43008, b_coupler=2688, warm_state=16.",
+      "properties": {
+        "W_perceive": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Perception weight matrix parameters (d_embd x d_cortex). Contract: 14336."
+        },
+        "W_label": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Label head weight parameters (d_cortex x max_labels). Contract: 320."
+        },
+        "b_label": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Label head bias parameters (max_labels). Contract: 20."
+        },
+        "W_coupler": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Latent control coupler weight parameters (d_cortex x latent_tokens x d_embd). Contract: 43008."
+        },
+        "b_coupler": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Latent control coupler bias parameters (latent_tokens x d_embd). Contract: 2688."
+        },
+        "warm_state": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Persistent warm-state vector parameters (d_cortex). Contract: 16."
+        }
+      }
+    },
+    "fixed_latent_shape": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "minItems": 1,
+      "description": "Fixed-width latent control bank shape for Arm B. Must be independent of episode count — it does not grow with experiences. Contract shape: [3, 896]."
+    },
+    "proposed_confidence_threshold": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Proposed abstain threshold from DEV Phase 0 distribution check. Below this confidence, both arms fall through to the unmodified language organ. This is a PROPOSED value for human review — the schema does not choose or approve it. It may not be changed after seeing holdout."
+    },
+    "proposed_specificity_margin": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Proposed specificity equivalence margin from DEV Phase 0. Specificity must remain within this margin for H-LATENT acceptance. This is a PROPOSED value for human review — the schema does not choose or approve it. It may not be changed after seeing holdout."
+    },
+    "cortex_artifact_sha256": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{64})?$",
+      "description": "SHA-256 of the full serialized cortex artifact (covers head + coupler). Trained on DEV, frozen before any holdout run. An empty string explicitly indicates the hash is unavailable."
+    },
+    "cortex_artifact_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Size of the full serialized cortex artifact in bytes (head + coupler)."
+    },
+    "cortex_artifact_path": {
+      "type": "string",
+      "description": "Optional relative path to the cortex artifact within the run output directory. Empty string if not set."
+    },
+    "coupler_sha256": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{64})?$",
+      "description": "SHA-256 of the serialized Arm B articulation coupler state artifact. An empty string explicitly indicates the hash is unavailable."
+    },
+    "coupler_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Size of the coupler state artifact in bytes."
+    },
+    "head_sha256": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{64})?$",
+      "description": "SHA-256 of the serialized shared cortex head state artifact. An empty string explicitly indicates the hash is unavailable."
+    },
+    "head_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Size of the head state artifact in bytes."
+    },
+    "label_phrasing_frozen": {
+      "type": "boolean",
+      "const": true,
+      "description": "Must be true. Label phrasing is frozen at calibrate-dev time and may not change after seeing holdout."
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "maxItems": 20,
+      "description": "Frozen sense label strings for Arm A. At most 20 labels. Frozen at calibrate-dev time."
+    },
+    "dev_split": {
+      "type": "string",
+      "const": "dev",
+      "description": "Must be 'dev'. Confirms the distribution check used the DEV split only."
+    },
+    "dev_repeatability_std": {
+      "type": "number",
+      "minimum": 0,
+      "description": "No-update repeatability standard deviation on DEV. Measures variance across repeated runs with the cortex update disabled."
+    },
+    "dev_confidence_mean": {
+      "type": "number",
+      "description": "Mean of the head confidence score distribution on DEV."
+    },
+    "dev_confidence_std": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Standard deviation of the head confidence score distribution on DEV."
+    },
+    "dev_confidence_min": {
+      "type": "number",
+      "description": "Minimum observed head confidence on DEV."
+    },
+    "dev_confidence_max": {
+      "type": "number",
+      "description": "Maximum observed head confidence on DEV."
+    },
+    "dev_specificity_acc": {
+      "type": "number",
+      "description": "Specificity accuracy on DEV. Measures how well the cortex distinguishes taught from untaught items."
+    },
+    "dev_holdout_ids_discarded": {
+      "type": "boolean",
+      "const": true,
+      "description": "Must be true. Calibrate-dev discards all holdout IDs. No holdout item identifiers, scores, or derived values appear in the manifest."
+    },
+    "split_salt": {
+      "type": "string",
+      "description": "Split salt. Must match the salt passed to split_probes in both calibrate-dev and evaluate. Contract value: 'v2.2'."
+    },
+    "split_fraction": {
+      "type": "number",
+      "description": "Holdout fraction. Must match the fraction passed to split_probes in both calibrate-dev and evaluate. Contract value: 0.3."
+    },
+    "c7_reference": {
+      "type": "string",
+      "description": "Reference to the S3.M2a retrieval baseline implementation used for C7. Identifies the frozen retrieval baseline code/config so the evaluate phase can reproduce C7. May be empty if unavailable; the evaluate phase fails closed on empty."
+    },
+    "c7_available": {
+      "type": "boolean",
+      "description": "Whether the S3.M2a retrieval baseline is available for C7. If false, the evaluate phase must block evaluation (cannot compute the external bar)."
+    },
+    "c7_blocked_reason": {
+      "type": ["string", "null"],
+      "description": "Required when c7_available is false. States why the C7 retrieval baseline is unavailable and evaluation is explicitly blocked. May be null or absent when c7_available is true."
+    },
+    "trace_raw_traces_deleted": {
+      "type": "boolean",
+      "const": true,
+      "description": "Must be true. All raw correction traces are deleted via trace_store.delete_all(). Verified by trace_store.verify_zero()."
+    },
+    "trace_raw_trace_count": {
+      "type": "integer",
+      "const": 0,
+      "description": "Must be 0. The raw trace count after deletion, verified by trace_store.verify_zero()."
+    },
+    "trace_embedding_cache_cleared": {
+      "type": "boolean",
+      "const": true,
+      "description": "Must be true. The embedding cache (peek_embedding results from driver) is cleared so no probe-level embedding state leaks into holdout evaluation."
+    },
+    "trace_optimizer_state_deleted": {
+      "type": "boolean",
+      "const": true,
+      "description": "Must be true. Transient optimizer examples and gradients are deleted after consolidation, before the head state is serialized."
+    },
+    "articulation_prompt_text": {
+      "type": "string",
+      "description": "The prompt text supplied to the LM. For Arm B, this is the request text only — no label, corrected_response, correction_utterance, or episode-ID text."
+    },
+    "articulation_latent_bank_shape": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "Fixed-width latent control bank shape [latent_tokens, d_embd]. Must be independent of episode count. Contract shape: [3, 896]."
+    },
+    "articulation_raw_trace_count": {
+      "type": "integer",
+      "const": 0,
+      "description": "Must be 0. Raw traces are deleted before evaluation; the articulation audit is emitted after deletion."
+    },
+    "articulation_language_organ_hash": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{64})?$",
+      "description": "SHA-256 of the frozen language organ. Must be identical before and after the run, verifying that no LM parameter was updated. An empty string explicitly indicates the hash is unavailable."
+    },
+    "articulation_persistent_cortex_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Persistent cortex bytes after consolidation. Counts toward the 64k parameter budget. Reported in every scored condition's articulation audit."
+    },
+    "articulation_banned_label_text_absent": {
+      "type": "boolean",
+      "const": true,
+      "description": "Must be true. No label text appears in the Arm B prompt."
+    },
+    "articulation_banned_corrected_response_absent": {
+      "type": "boolean",
+      "const": true,
+      "description": "Must be true. No corrected_response text appears in the Arm B prompt."
+    },
+    "articulation_banned_correction_utterance_absent": {
+      "type": "boolean",
+      "const": true,
+      "description": "Must be true. No correction_utterance text appears in the Arm B prompt."
+    },
+    "articulation_banned_expected_answer_absent": {
+      "type": "boolean",
+      "const": true,
+      "description": "Must be true. No expected answer text appears in the Arm B prompt."
+    },
+    "signoff_thresholds_signed_off": {
+      "type": "boolean",
+      "description": "Must be set to true by human review. calibrate-dev writes false. The evaluate phase rejects any manifest where this is false. The schema and calibration code never auto-sign — no agent may approve its own instrument."
+    },
+    "signoff_human_signoff_id": {
+      "type": "string",
+      "description": "Nonempty human approval identifier. Empty when written by calibrate-dev; filled by human review. The evaluate phase requires --signoff-id to match this value exactly."
+    },
+    "signoff_oracle_ceiling": {
+      "type": "number",
+      "description": "Oracle ceiling (accuracy with corrected_response prepended as text prefix) measured on DEV. The evaluate phase requires this to be positive — a zero or negative oracle ceiling means the upper bound for text-injection is unmeasurable and the hypothesis cannot be tested."
+    },
+    "signoff_dev_articulation_gate": {
+      "type": "boolean",
+      "description": "DEV articulation gate result. Verifies that Arm B articulation on DEV probes exceeds the no-update baseline (C1). The evaluate phase rejects any manifest where this is false — the coupler must produce a measurable improvement on DEV before holdout evaluation is warranted."
+    },
+    "signoff_meta_test_conflation_ok": {
+      "type": "boolean",
+      "description": "Meta-test conflation pre-check. Verifies that C3 (Arm B) and C2 (Arm A) results are not identical across seeds, which would indicate the two arms are conflated. Fully verified in the evaluate phase."
+    },
+    "holdout_accessed": {
+      "type": "boolean",
+      "const": false,
+      "description": "Must be false. The schema rejects any manifest that claims holdout access. Calibrate-dev operates on DEV only; holdout evaluation requires a separately signed-off manifest."
+    },
+    "manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 of the canonical JSON payload. The canonical payload is the full manifest with `created_at` and `manifest_sha256` removed, keys sorted lexicographically, compact separators (no insignificant whitespace), UTF-8 encoded. This makes the manifest hash deterministic and independent of creation timestamp. The evaluate phase MUST fail closed unless the supplied --manifest-hash matches this value AND a nonempty --human-signoff-id is provided."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "c7_available": {
+            "const": false
+          }
+        },
+        "required": [
+          "c7_available"
+        ]
+      },
+      "then": {
+        "required": [
+          "c7_blocked_reason"
+        ],
+        "properties": {
+          "c7_blocked_reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "signoff_thresholds_signed_off": {
+            "const": true
+          }
+        },
+        "required": [
+          "signoff_thresholds_signed_off"
+        ]
+      },
+      "then": {
+        "properties": {
+          "signoff_human_signoff_id": {
+            "minLength": 1
+          }
+        }
+      }
+    }
+  ]
+}

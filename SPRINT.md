@@ -5,6 +5,10 @@ git history). Objective unchanged: the `experiments.txt` thesis — *memory
 becomes changed dynamics, not retrieved content*; the key headline metric is
 `behavior_delta_per_byte` on **held-out** probes.
 
+**2026-07-16 human-authorized extension:** S5.6 / Research/22 adds a
+specification-only PMD addressability comparator. Stage A is independent of
+Research/20; Stage B remains blocked on Research/20 acceptance.
+
 The audit found the objective unmet for three structural reasons, which this
 plan attacks in order:
 
@@ -36,7 +40,7 @@ eval.
 > real-driver Stage 2 dropped 1.00 → 0.69, Stage 5 1.00 → 0.92; vanilla
 > baseline = 0.00 on all stages. lane_07 gap 1.0 → 0.0 against a
 > competitive baseline; lane_05 honest result = 0.0 (coverage was 1.0).
-> Full test suite green (500+ passed, 0 failures, 0 collection errors).
+> Full test suite green at the time (500+ passed, 0 failures, 0 collection errors). As of commit `4f1a022` (2026-07-11) the collection surface is 800 tests collected, 48 collection errors from optional-dependency packages — see CURRENT_STATE.md §3.
 
 ### Tasks
 
@@ -114,6 +118,23 @@ not research blockers.
 >   fails the same facts). Pre-blank splice position fixed the hardest
 >   fact (rank 4→0). Sprint 2 implications: KV slots replace the prefix,
 >   spliced pre-blank; consider the 1.5B fallback for recall-critical runs.
+> - **Campaign Exp03 block → closure** (2026-07-11): the original campaign
+>   re-run of the layer-L probe under the remote scheduler was
+>   **infrastructure-blocked** — repeated HF snapshot transfers failed
+>   before execution; no metrics or ASI scores emitted. That history is
+>   preserved and not rewritten. A follow-up real-driver rerun (commit
+>   `ad77e93`, `--driver real`, Colab, 2026-07-11) closed the
+>   reproducibility gap: exit 0, `layer_l_silhouette_gap=0.10925446726657728`
+>   exceeds the registered +0.10 threshold (unchanged), so this single run
+>   is **positive/accept** for the reproducibility closure. This is not a
+>   scientific null or refutation and does not reopen or overturn the S1.4
+>   verdict, which stands on the pre-registered HF probe on two
+>   architectures (`2026-07-01_s1_4_hf_layer_probe.md`). The infrastructure
+>   fix used a seven-file exact-revision manifest with direct atomic HTTP
+>   streaming and per-file size/SHA-256 verification, a fail-closed real
+>   driver, and an HF final mean-pool baseline. Evidence:
+>   `experiments_logs/2026-07-11_exp03_real_driver_closure.json`;
+>   original campaign record: `experiments_logs/2026-07-11_campaign_0d48130.md`.
 
 ### Tasks
 
@@ -173,7 +194,14 @@ vanilla column.
 > norm control the NEW config (0.566) falls below OLD unclamped (0.627);
 > survival ratio 0.354 < 0.5; no single variable improves on OLD. Caveats:
 > single seed; clamp-budget capture has a cross-instance stochasticity
-> artifact (cond 1) — fixed by S2.0 (`f761cc0`).
+> artifact (cond 1) — fixed by S2.0 (`f761cc0`). **Evidence-integrity
+> caveat:** the committed log artifact contains a mock-driver table of
+> zeros and `NaN` (the old harness silently wrote test/mock runs to the
+> fixed experiment-log path); the real-run summary survives only outside
+> the repo in a cache log. The qualitative retraction is the working
+> conclusion, but exact values are provisional until a corrected
+> multi-seed rerun is written to a new dated log. See CURRENT_STATE.md
+> §4 "Critical evidence-integrity caveat: S2.4" for full detail.
 
 **Goal:** the minimal thesis loop, end to end, with nothing else attached:
 correction → cortex fast-weight change → consolidation → **changed LM
@@ -226,7 +254,9 @@ norm-controlled variants reported alongside every drift number.
 > retrieval added exactly 0.0000; DSI unsupported at v2 power and net-harmful
 > in the full stack (appeal: v2.1 stage-1 battery); critic/identity/immune/
 > autoencoder all noise in M1 (M2b harness merged as the appeal instrument;
-> its run was not executed — recorded as the adjudication's weakest link).
+> its run completed as a **metricless NULL** — `--seeds 3` exited 0 after
+> 11,786.6 s but emitted no `METRIC` or `ASI` values; no effect estimate
+> is available beyond the registered metricless null).
 > **research/15 tensor wiring: VACUOUS** (nothing earned KEEP) — Goal 3's
 > question closed honestly. S3.4 attic moves remain a pending code task.
 
@@ -235,7 +265,7 @@ behavioral metric on the frozen eval or be archived.
 
 ### Tasks
 
-- [x] **S3.1 — Ablation matrix.** — DONE (M1 + M2a; M2b harness merged, run not executed)
+- [x] **S3.1 — Ablation matrix.** — DONE (M1 + M2a; M2b harness merged, run completed as metricless NULL)
   Minimal organism ± each organ, one at a time, on frozen eval v2.
   An organ earns its place only if it moves a held-out behavioral metric
   beyond noise (per S0.5 statistics).
@@ -286,12 +316,28 @@ the home curriculum.
 - [ ] **S4.3 — Second model.**
   Run the frozen eval on a second small model. Single-model results
   (LFM2.5 only, 12 days) say nothing about the architecture generalizing.
+  Choose the second model to be **stronger**, not just another 0.5B-class
+  organ: Continual Harness (Karten et al., arXiv:2605.09998) shows harness/
+  refinement gains are capability-dependent with a hard floor below which
+  mechanism differences are invisible — and Oczy's own R18 teacher ceiling
+  (0.5B, `teacher_dev_delta=0.1765`) already sits under that floor. A
+  1.5–4B-class organ is the discriminating choice; if infra cannot host it,
+  log the floor interpretation explicitly rather than claiming a mechanism
+  null. See `notes/2026-07-26_continual_harness_applicability.md`.
 - [ ] **S4.4 — Headline dashboard.**
   One table, auto-generated per run: `behavior_delta_per_byte` (post
   raw-trace deletion), uptake, transfer, scope, forgetting, identity —
   held-out, multi-seed, vanilla column — appended to
   `experiments_logs/` by the harness itself so no human (or agent) curates
   the numbers.
+  - Report as a **cost-vs-completion Pareto plane** with per-seed traces and
+    a third axis for model capability (reporting pattern from
+    arXiv:2605.09998 Fig. 6: seed medians + faint per-seed lines, cost =
+    tokens/memory bytes, completion = stages passed).
+  - Score cortex consolidation skills **against an oracle, independent of
+    end-task efficiency** (pattern from arXiv:2605.09998 Fig. 8: refined
+    navigation skills scored by path-cost deficit vs a Dijkstra oracle), so
+    skill-level improvement is attributable and not rebranded as metabolism.
 
 ### Definition of done
 All surviving claims reproduced on eval v2 with statistics; external + second
@@ -337,34 +383,317 @@ test: a meta-trained cortex controlling a frozen language organ with retrieval
 disabled in the primary condition. Research/21 is the dependent multi-organ
 extension.
 
-- [ ] **S5.1 — research/18: consolidation as context distillation.**
+- [x] **S5.1 — research/18: consolidation as context distillation.** — **TESTED-PARTIAL with gate resolved (Amendment A1, human-adjudicated 2026-08-06); original local-teacher condition remains BLOCKED**
   Per-fact transient prefix → KL-distilled LoRA → delete prefix + traces →
   survival on holdout. Plasticity in LM weights; retained as the mouth-weight
   comparator, not the frozen-organ cortex condition.
-- [ ] **S5.2 — research/19: direct cortex learning, two articulation arms.**
+> **Campaign 0d48130 adjudication:** the R18 teacher gate **failed**
+> (1 seed, `teacher_dev_delta=0.1765` < 0.2 gate;
+> `distill_delta_holdout=0.3333`, `distill_specificity_delta=0.04348`).
+> The R18 full 3-seed run is **BLOCKED** at the teacher gate:
+> distillation signal in 2/3 seeds, absent in 1/3.
+> `distill_delta_holdout` is bimodal {0.3333, 0.3333, 0.0}
+> (mean=0.2222); `teacher_dev_delta=0.1765` and
+> `persistent_bytes=17,699,903` are identical across seeds;
+> `specificity_delta` is {0.0, 0.0, 0.04348}. The 5-seed `stage_0`
+> rerun (commit `5b5e93c`, 2026-07-11) is **COMPLETE** (exit 0) but
+> **BLOCKED** at the teacher gate: `teacher_dev_delta=0.1765` < 0.2
+> all seeds; `distill_delta_holdout` {0.3333, 0.3333, 0.0, 0.3333,
+> 0.3333} (mean=0.2667), 4/5 positive, seed 2 null; mean
+> `specificity_delta=0.0261`. No H-DISTILL verdict is permitted
+> because the teacher gate failed after registered fallback.
+> **Mechanism diagnosis COMPLETE (2026-07-12, commit `33169cc`):**
+> teacher ceiling (n=17) vanilla=0, raw_prefix=0.17647058823529413,
+> chat_template=0 — none reach the 0.2 gate; registered chat fallback
+> is worse than raw_prefix. Prompt-contract audit: all
+> issue/malformed/missing/truncated/answer-leak/mismatch counts 0;
+> no structural prompt defect. Training trajectory: loss falls
+> ~0.70→~0.16, mean slope -0.0615, second-half -0.0190, underfit=1,
+> instability=1, saturation=0, max final-loss divergence 0.01259;
+> optimization fits token loss but DEV behavior is unstable/weak and
+> not saturated. Final DEV student accuracies (seeds 0–4) =
+> {0.117647, 0, 0, 0, 0.117647}; seed 2 is not uniquely divergent.
+> Conclusion for the original local 0.5B-teacher condition: the blocker is
+> teacher expressivity/prompt-task ceiling, not a prompt bug. Further identical
+> runs of that condition are retired — they will not clear the unchanged
+> teacher gate. No threshold, metric, or eval changes. Evidence:
+> `experiments_logs/2026-07-11_campaign_0d48130.md`.
+>
+> **Amendment A1 adjudication (2026-08-06): TESTED-PARTIAL with gate resolved.**
+> The provider-pinned frontier DEV-gate teacher passed 5/5 (`teacher_dev_delta`
+> mean 0.4941). The unchanged student effect was mean 0.2667, CI95
+> [0.136, 0.397], 4/5 positive with seed 2 null. The amended evidence is
+> admissible, but the 1/5 null prevents full H-DISTILL acceptance. The original
+> condition remains BLOCKED. Evidence:
+> `experiments_logs/2026-08-06_r18_openrouter_5seed_stage0.md`.
+- [x] **S5.2 — research/19: direct cortex learning, two articulation arms.** — **Implemented; DEV calibration BLOCKED at pre-registered DEV articulation gate**
   The same ≤64k-param online-trained cortex is evaluated through (A) a
   label-prefix parametric-retrieval readout and (B) a fixed-width latent-control
   readout into a frozen LM. Only B can support the cortex premise; zero/swap/
   shuffled-feedback interventions must prove causal dependence on cortex state.
+> **DEV calibration adjudication (2026-07-12, source `bd1ead9a`):** the
+> two-arm experiment is implemented under
+> `src/oczy/experiments/s19_language_organ.py`. DEV-only calibration ran
+> on Kaggle CPU (Qwen/Qwen2.5-0.5B-Instruct, frozen). Four submission
+> attempts: v1 failed (offline model resolution), v2 failed
+> (source-path/provenance failure plus feature explosion), v3 succeeded
+> but artifacts not rooted in `/kaggle/working`, v4 succeeded and
+> collected. v4 infrastructure is fully successful (exit 0, artifacts
+> collected, manifest hash `77ef4607…`, source archive SHA
+> `1afe7573…`), but `signoff_dev_articulation_gate=false` — the
+> pre-registered DEV gate is not passed. No signoff request was made;
+> no holdout access was attempted (`holdout_accessed=false`).
+> `parameter_total=60388/64000`, `dev_repeatability_std=0.0`,
+> `dev_confidence_mean=0.0525482` (std `0.0002893`, range
+> `0.0520694`–`0.0528929`), `dev_specificity_acc=0.134328`,
+> `oracle_ceiling=0.357143`, `raw_trace_count=0`. No scientific
+> verdict beyond BLOCKED is permitted. The DEV confidence and
+> specificity distributions are measured; coupler and label phrasing
+> are frozen on DEV. Next mechanism-level direction: the gate failure
+> points to the Arm B latent-control interface not yet producing DEV
+> articulation that clears the pre-registered gate; the oracle ceiling
+> (0.357143) bounds what the frozen organ can express on these DEV
+> tasks. R19 signed evaluation remains gated on the DEV articulation
+> gate passing. R20 remains separately blocked for lack of explicit
+> human signoff. No threshold, metric, baseline, episode, scoring, eval
+> manifest, or research spec was changed. Evidence:
+> `experiments_logs/2026-07-12_r19_dev_calibration.json`.
 - [ ] **S5.3 — Diagnostic head-to-head table:** 18 vs both 19 arms vs
   retrieval-baseline vs vanilla, with deletion audits, CIs, per-byte accounting,
   and explicit classification of every answer path. This table adjudicates the
   direct mechanisms; it does not close Research/20 before the learned update
   rule has been tested.
-- [ ] **S5.4 — research/20 / experiment/09: meta-trained cortex over a frozen
-  language organ.** Developmentally learn write, read, consolidation, and
+- [x] **S5.4 — research/20 / experiment/09: meta-trained cortex over a frozen
+  language organ.** — **DEV-only implementation complete and smoke-verified; meta-test BLOCKED.**
+  Developmentally learn write, read, consolidation, and
   latent articulation rules across task families; freeze them; then learn an
   unseen rule online with no backprop, retrieval, trace, label text, or LM
   update in the primary condition. Require transfer, composition, deletion,
-  and state-causal controls.
+  and state-causal controls. **The meta-test MUST NOT run without explicit
+  human sign-off.**
+> **DEV-only implementation (2026-07-12):** the `meta_cortex` package is
+> implemented under `src/oczy/experiments/meta_cortex/` with exactly three
+> CLI commands — `train-dev`, `validate-dev`, `audit-dev` — and no
+> `evaluate`, `meta-test`, `run-meta-test`, `materialize`, `freeze`,
+> `signoff`, `manifest`, `C7`, or `C8` command. The `DevSplit` enum has
+> `meta_train` and `meta_validation` only; there is intentionally no
+> test member. Parser help labels every command "DEV only / not a
+> scientific meta-test." Tests live in
+> `src/oczy/experiments/tests/test_meta_cortex_*.py` (organ, training,
+> taskgen, model, artifacts/CLI).
+>
+> **Remote DEV smoke (2026-07-12, source `e26d8291879d`):** three
+> submission attempts — v1 failed (offline model loader), v2 failed
+> (inference-tensor/autograd mismatch), v3 succeeded after fixes.
+> v3 ran on Kaggle CPU (kernel
+> `abdellahkadem/oczy-r20-dev-v3-e26d8291879d`, archive SHA
+> `686c3b6a…`, exit 0, audit_status ok). v3 audit: frozen organ hash
+> identical before/after
+> (`d8a3a3b2…`), 207,364 theta params / 829,456 bytes, F/S 64×64,
+> bank 3×896, optimizer steps 1, checkpoint theta hash
+> `8d6c41c5…`, best DEV validation score 0.0 after one step, trace
+> count 0 after deletion, online optimizer counts unchanged, causal
+> DEV deltas: trained-vs-update 0, untrained 0, shuffled 0, zeroed 0,
+> swapped 0.0666667. **This is infrastructure/mechanism smoke only —
+> no ACCEPT or REFUTE verdict is issued.**
+>
+> **Meta-test remains BLOCKED.** The following do not exist and must
+> be built and signed off before any meta-test run: (1) a frozen
+> `meta_cortex/v1` measuring instrument (task generator, train/dev/test
+> split), (2) a hash-checked manifest with leakage audit, (3) threshold
+> distributions measured against real data, (4) power analysis, (5)
+> explicit human signoff. No signoff has been requested or granted.
+> The next legitimate step is to propose and freeze the instrument and
+> obtain human signoff — not to run the meta-test. No threshold, metric,
+> baseline, episode, scoring, eval manifest, or research spec was changed.
 - [ ] **S5.5 — research/21: cortex-routed frozen specialist organs.** Begin
   only if S5.4 accepts. Add a separately frozen action/tool organ, opaque tool
   families, learned routing, and recurrent goal state. Existing Pi tasks become
   an external battery, not the primary measuring instrument.
+- [ ] **S5.6 — [`research/22`](research/22-parametric-memory-decoding-zero-shot-lora-routing.md): zero-shot PMD addressability for LoRA external parametric memory.** — **Specification only / PENDING.**
+  Stage A is a standalone test over a shared frozen backbone and LoRA EPM bank,
+  independent of Research/20; it remains a roadmap comparator, not an
+  immediate-start priority. Retrieval is mandatory. Stage B cortex integration
+  remains blocked until S5.4 / Research/20 accepts. No implementation exists
+  and no scientific claim is made.
 
 Background/conceptual grounding:
 `notes/2026-07-03_steering_vs_posture_postmortem.md`; successor rationale and
 frozen-organ boundary are fixed in `research/20` and `research/21`.
+
+## Next actionable todos (Campaign 0d48130 → forward)
+
+Dependency-ordered. Each item has an observable acceptance criterion. No
+threshold, metric, baseline, or episode change is implied; frozen eval
+remains frozen unless an item explicitly calls for the governance path.
+
+1. **Exp03 real-driver infrastructure correction (reproducibility closure) — COMPLETE (2026-07-11).**
+   The original campaign Exp03 run was infrastructure-blocked (HF snapshot
+   transfer failures) and produced no scientific verdict; that history is
+   preserved. A follow-up real-driver rerun (commit `ad77e93`,
+   `--driver real`, Colab, 2026-07-11) closed the gap: exit 0,
+   `layer_l_silhouette_gap=0.10925446726657728` exceeds the registered
+   +0.10 threshold (unchanged) → positive/accept for this single
+   reproducibility closure. The pre-registered S1.4 refutation (two
+   architectures) is not reopened or overturned. **Acceptance met:** durable
+   execution report at `experiments_logs/2026-07-11_exp03_real_driver_closure.json`;
+   S1.4 is not reopened.
+
+2. **R18 original-condition five-seed diagnostic — COMPLETE (2026-07-11);
+   scientifically BLOCKED at teacher gate.** The 5-seed `stage_0` rerun (Kaggle CPU,
+   kernel `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, source commit
+   `5b5e93c63d769fea7854073a4e6c359e5d36606f`) completed with exit 0.
+   **Scientific verdict: BLOCKED — diagnostic only.** The unchanged
+   teacher gate (`teacher_dev_delta ≥ 0.2`) failed: every seed
+   observed `teacher_dev_delta=0.17647058823529413` < 0.2. No
+   H-DISTILL verdict is permitted because the teacher gate failed
+   after registered fallback. Per-seed `distill_delta_holdout`:
+   {0.3333, 0.3333, 0.0, 0.3333, 0.3333} — 4/5 positive, seed 2 null
+   (preserved). Mean `distill_delta_holdout=0.26666666666666666`;
+   mean `specificity_delta=0.02608695652173913`. The 4/5 positive
+   holdout deltas are infrastructure-confirmed but scientifically
+   inadmissible.
+   **Mechanism diagnosis COMPLETE (2026-07-12, commit `33169cc`):**
+   teacher ceiling (n=17) vanilla=0, raw_prefix=0.17647058823529413,
+   chat_template=0 — none reach the 0.2 gate; registered chat fallback
+   is worse than raw_prefix. Prompt-contract audit: all counts 0; no
+   structural prompt defect. Training trajectory: loss falls
+   ~0.70→~0.16, mean slope -0.0615, second-half -0.0190, underfit=1,
+   instability=1, saturation=0, max final-loss divergence 0.01259;
+   optimization fits token loss but DEV behavior is unstable/weak and
+   not saturated. Final DEV student accuracies (seeds 0–4) =
+   {0.117647, 0, 0, 0, 0.117647}; seed 2 is not uniquely divergent.
+   Conclusion for the original local 0.5B-teacher condition: the blocker is
+   teacher expressivity/prompt-task ceiling, not a prompt bug. Further
+   identical runs of that condition are retired — they will not clear the
+   unchanged teacher gate. No threshold, metric, or eval changes.
+   **Acceptance met:** 5-seed run complete with per-seed values; mechanism
+   diagnosis complete; null seed 2 preserved; no threshold change.
+
+   **Amendment A1 — TESTED-PARTIAL with gate resolved (human-adjudicated
+   2026-08-06).** The frontier DEV-gate teacher passed 5/5
+   (`teacher_dev_delta` mean 0.4941); the unchanged student effect was mean
+   0.2667, CI95 [0.136, 0.397], 4/5 positive with seed 2 null. The original
+   condition remains BLOCKED; the 1/5 null prevents full H-DISTILL acceptance.
+
+3. **S4.1: complete honest reruns.**
+   Re-run every June 26–29 result that depended on the broken scope-slot
+   reranker or leakage-era paths on eval v2, mark each affected ledger
+   entry, and record the honest replacement. **Acceptance:** every
+   INVALIDATED/SUPERSEDED ledger row points to a dated honest rerun log
+   or is explicitly labeled "no longer relevant."
+
+4. **Research/19: implement matched label-prefix vs latent-control arms —
+   IMPLEMENTED; DEV calibration COMPLETE and BLOCKED at DEV articulation gate
+   (2026-07-12).**
+   The two-arm diagnostic is implemented under
+   `src/oczy/experiments/s19_language_organ.py`. Arm A: online-trained cortex
+   decoded to a label prefix (parametric retrieval). Arm B: same cortex state
+   through a fixed-width learned latent coupler into the frozen LM, no label
+   text. Zero-state, swapped-state, shuffled-feedback, vanilla, retrieval, and
+   oracle conditions are specified. DEV-only calibration ran on Kaggle CPU
+   (Qwen/Qwen2.5-0.5B-Instruct, frozen, source `bd1ead9a`). Four attempts:
+   v1 failed (offline model resolution), v2 failed (source-path/provenance
+   failure plus feature explosion), v3 succeeded but artifacts not rooted in
+   `/kaggle/working`, v4 succeeded and collected. v4 infrastructure is fully
+   successful (exit 0, manifest hash `77ef4607…`, source archive SHA
+   `1afe7573…`), but `signoff_dev_articulation_gate=false` — the
+   pre-registered DEV gate is not passed. No signoff request was made; no
+   holdout access was attempted (`holdout_accessed=false`).
+   `parameter_total=60388/64000`, `dev_repeatability_std=0.0`,
+   `dev_confidence_mean=0.0525482`, `dev_specificity_acc=0.134328`,
+   `oracle_ceiling=0.357143`, `raw_trace_count=0`. No scientific verdict
+   beyond BLOCKED is permitted. Next mechanism-level direction: the gate
+   failure points to the Arm B latent-control interface not yet producing DEV
+   articulation that clears the pre-registered gate; the oracle ceiling
+   (0.357143) bounds what the frozen organ can express on these DEV tasks.
+   R19 signed evaluation remains gated on the DEV articulation gate passing.
+   R20 remains separately blocked for lack of explicit human signoff. No
+   threshold, metric, baseline, episode, scoring, eval manifest, or research
+   spec was changed. **Acceptance partially met:** implementation and DEV
+   calibration complete with durable evidence at
+   `experiments_logs/2026-07-12_r19_dev_calibration.json`; held-out scoring
+   remains blocked on the DEV articulation gate passing.
+
+5. **S5.3: build the diagnostic head-to-head comparison table.**
+   One table: both R18 conditions (original local teacher and Amendment A1)
+   vs both R19 arms vs retrieval-baseline vs vanilla, with deletion audits,
+   CIs, per-byte
+   accounting, and explicit classification of every answer path.
+   **Acceptance:** `experiments_logs/DASHBOARD.md` or a dated log contains
+   the table with all columns filled and every path classified as
+   retrieval, metabolism, or vanilla.
+
+6. **Research/20: DEV-only implementation COMPLETE and smoke-verified;
+   meta-test BLOCKED on instrument/signoff.**
+   The `meta_cortex` package is implemented under
+   `src/oczy/experiments/meta_cortex/` with `train-dev`, `validate-dev`,
+   and `audit-dev` only — no meta-test command. The DEV smoke ran on
+   Kaggle CPU (2026-07-12, source `e26d8291879d`, exit 0, audit_status
+   ok; v1 failed offline loader, v2 failed inference-tensor/autograd,
+   v3 succeeded). This is infrastructure/mechanism smoke only; no
+   ACCEPT or REFUTE verdict is issued. **The R20 meta-test requires
+   explicit human sign-off and MUST NOT run without it.** The
+   following do not exist and must be built and signed off before any
+   meta-test run: (1) a frozen `meta_cortex/v1` measuring instrument
+   (task generator, train/dev/test split), (2) a hash-checked manifest
+   with leakage audit, (3) threshold distributions, (4) power
+   analysis, (5) human signoff. No signoff has been requested or
+   granted. The next legitimate step is to propose and freeze the
+   instrument and obtain human signoff — not to run the meta-test.
+   **Acceptance (DEV smoke):** met — exit 0, audit ok, frozen organ
+   hash stable, 207,364 theta params, checkpoint hash recorded.
+   **Acceptance (meta-test):** not met — instrument not frozen, no
+   signoff recorded.
+
+7. **External battery / second model.**
+   After honest baselines (items 3–5) are in place, run the frozen eval on
+   a second small model and promote the external QA + Pi tool-use
+   benchmarks to a standing weekly job with the vanilla column. Add at
+   least one benchmark not authored by this repo. **Acceptance:** a dated
+   log with a second-model column and at least one external benchmark
+   result, both with vanilla comparison.
+
+8. **Research/21: remains blocked on Research/20 acceptance.**
+   Do not start the multi-organ router until S5.4 accepts. **Acceptance:**
+   no work begins until the Research/20 decision gate is passed.
+
+9. **Durable live watch queue — ACTIVE (2026-07-11); first job
+   COMPLETE.** Watch mode for `parallel_scheduler.py` is
+   **implemented and tested**: atomically reload a changed batch,
+   merge only unseen job names as pending, never mutate existing job
+   definitions or states, retry malformed reloads without killing the
+   daemon, and stay alive waiting for future jobs. Existing non-watch
+   behavior remains terminating and backward compatible. The queue
+   setup action is **complete**; the first experiment result is
+   **complete and adjudicated**. Live queue paths: batch
+   `/tmp/oczy-live-queue/batch.json`, state
+   `/tmp/oczy-live-queue/state.json`, campaign
+   `/tmp/oczy-live-queue-campaign.json`. Source commit:
+   `5b5e93c63d769fea7854073a4e6c359e5d36606f`. Capacity is
+   **additive: 5 Kaggle + learned Colab X**. The background scheduler
+   runs with `--watch-batch --watch-interval 30`. **First job:**
+   `r18-distillation-5seed-diagnostic` (Kaggle, kernel
+   `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, pinned source dataset
+   `abdellahkadem/oczy-source-5b5e93c63d76`, source archive sha256
+   `bc1ff926bc679fc26e5f20cfcb0756339b002ff3c1027eb3c24251fe2f6d7f72`,
+   module `oczy.experiments.consolidation_distillation`, args
+   `--seeds 5 --max-steps 10 --stage stage_0_grounding`).
+   **Infrastructure: COMPLETE** (exit 0, all metrics collected).
+   **Scientific verdict for this original local-teacher job: BLOCKED at the
+   teacher validity gate — diagnostic only.** The unchanged teacher gate
+   (`teacher_dev_delta ≥ 0.2`) failed: every seed observed
+   `teacher_dev_delta=0.17647058823529413` < 0.2. No H-DISTILL
+   verdict is permitted because the teacher gate failed after
+   registered fallback. Per-seed `distill_delta_holdout`: {0.3333,
+   0.3333, 0.0, 0.3333, 0.3333} — 4/5 positive, seed 2 null
+   (preserved). Mean `distill_delta_holdout=0.26666666666666666`;
+   mean `specificity_delta=0.02608695652173913`. No threshold,
+   metric, or eval change is implied. The Research/20 meta-test
+   sign-off prohibition is unchanged. **Acceptance:** watch mode
+   implemented and verified by tests (met); the live queue is active;
+   the first job is complete and adjudicated as BLOCKED at the teacher gate
+   for its original local-teacher condition.
 
 Sprint 0 and Sprint 1 can overlap after S0.1–S0.4 land; nothing in Sprints
 2–4 may start before Sprint 0 is fully done.

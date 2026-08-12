@@ -1,0 +1,44 @@
+{
+  "schema_version": "oczy/remote-runner-pool/v1",
+  "accounts": [
+    {
+      "id": "kaggle-primary",
+      "provider": "kaggle",
+      "enabled": true,
+      "capacity": 10,
+      "description": "Primary private CPU kernel account",
+      "config_dir": "~/.kaggle"
+    },
+    {
+      "id": "kaggle-secondary",
+      "provider": "kaggle",
+      "enabled": false,
+      "capacity": 10,
+      "description": "Enable after installing this account's credentials",
+      "config_dir": "~/.config/oczy/accounts/kaggle-secondary"
+    },
+    {
+      "id": "colab-primary",
+      "provider": "colab",
+      "enabled": true,
+      "capacity": 1,
+      "description": "Primary Colab CPU account",
+      "home_dir": "~",
+      "session_config": "~/.config/colab-cli/sessions.json",
+      "client_oauth_config": "~/.colab-cli-oauth-config.json",
+      "auth": "oauth2"
+    },
+    {
+      "id": "colab-secondary",
+      "provider": "colab",
+      "enabled": false,
+      "capacity": 1,
+      "description": "Account-isolated Colab home and OAuth token",
+      "home_dir": "~/.config/oczy/accounts/colab-secondary/home",
+      "session_config": "~/.config/oczy/accounts/colab-secondary/home/.config/colab-cli/sessions.json",
+      "client_oauth_config": "~/.config/oczy/accounts/colab-secondary/home/.colab-cli-oauth-config.json",
+      "auth": "oauth2"
+    }
+  ],
+  "state_files": []
+}

@@ -1,0 +1,128 @@
+{
+  "base_config": {
+    "batch_seed": 101,
+    "batch_size": 32,
+    "catalog_seed": 24001,
+    "conditioning": "film",
+    "control_seed": 303,
+    "counterfactual_weight": 0.0,
+    "d_model": 64,
+    "deep_film": true,
+    "device": "cpu",
+    "dropout": 0.1,
+    "dropout_seed": 202,
+    "encoder_lr_multiplier": 1.0,
+    "encoder_pooling": "mean",
+    "init_seed": 0,
+    "lr": 0.001,
+    "max_train_eval_examples": 256,
+    "n_layers": 2,
+    "n_prefix_tokens": 4,
+    "oracle_mode": "text",
+    "protocol_version": "r24-tiny-decoder/v2",
+    "root_seed": 24001,
+    "scheduler": "constant",
+    "steps": 800,
+    "train_per_family": 20,
+    "val_per_family": 10,
+    "warmup_steps": 0,
+    "weight_decay": 0.01
+  },
+  "case_overrides": {
+    "factor_ac": {
+      "conditioning": "additive",
+      "deep_film": true,
+      "encoder_pooling": "cls"
+    },
+    "factor_acl": {
+      "conditioning": "additive",
+      "deep_film": true,
+      "encoder_lr_multiplier": 0.3,
+      "encoder_pooling": "cls"
+    },
+    "factor_al": {
+      "conditioning": "additive",
+      "deep_film": true,
+      "encoder_lr_multiplier": 0.3
+    },
+    "factor_cl": {
+      "encoder_lr_multiplier": 0.3,
+      "encoder_pooling": "cls"
+    }
+  },
+  "governance": {
+    "authorization_scope": "test all enumerated R24 Phase-A v2 improvement pathways; Kaggle CPU permitted",
+    "confirmation": "winner selected mechanically, then frozen on a fresh catalog with base-vs-finalist across five paired seed tuples",
+    "factorial_status": "tuning only; all four cells run as one non-adaptive batch",
+    "human_signoff_id": "conversation-019fd6c5-14ae-712f-b8ce-d622526d84fb-go-ahead-test-all",
+    "phase_c": "not authorized by this plan",
+    "remote_contract": "clean commit, private, internet-off, CPU, runtime hash verified, up to five workers, submit interval 0",
+    "status": "authorized Phase-A tuning follow-up"
+  },
+  "schema_version": "oczy/r24-phase-a-factorial-plan/v2",
+  "selection_rule": {
+    "candidate_cells": [
+      "base",
+      "conditioning_additive_deep",
+      "encoder_cls",
+      "optimizer_encoder_lr03",
+      "factor_ac",
+      "factor_al",
+      "factor_cl",
+      "factor_acl"
+    ],
+    "eligible_when": {
+      "equal_rule_macro_oracle_minus_swapped_min": 0.02,
+      "oracle_correct_min": 24,
+      "oracle_minus_swapped_correct_min": 5,
+      "paired_oracle_only_gt_control_only": true
+    },
+    "note": "Selection uses only oracle and in-distribution swapped-state results; zero/random are diagnostic.",
+    "rank": [
+      "oracle_correct_desc",
+      "paired_net_desc",
+      "paired_control_only_asc",
+      "changed_factor_count_asc",
+      "case_id_lexicographic"
+    ]
+  },
+  "suite_sha256": "17333600e77e65df82a30afb86bf84b482e30bb6d32b201afe4f047371229aee",
+  "upstream_screen": {
+    "campaign_id": "r24-v2-screen-daa536342c2b-a1",
+    "completed_cases": 22,
+    "identified_factors": {
+      "A": {
+        "case": "conditioning_additive_deep",
+        "oracle_correct": 28,
+        "paired_control_only": 5,
+        "paired_oracle_only": 18,
+        "swapped_correct": 15
+      },
+      "C": {
+        "case": "encoder_cls",
+        "oracle_correct": 26,
+        "paired_control_only": 2,
+        "paired_oracle_only": 17,
+        "swapped_correct": 11
+      },
+      "L": {
+        "case": "optimizer_encoder_lr03",
+        "oracle_correct": 27,
+        "paired_control_only": 1,
+        "paired_oracle_only": 15,
+        "swapped_correct": 13
+      }
+    },
+    "invalid_cases": 0,
+    "source_commit": "daa536342c2b698068b0f17f635575c4095d1fcb",
+    "suite_sha256": "0da6533da23103eaf180719abaa77aba89a7a8f000baef99c89b09d3febee567",
+    "validation_examples": 219,
+    "validation_rules": 30,
+    "validation_sha256": "6626ad31c8577c4b827c47a440df1e5d8538d24433a4f7dba26d58b806fdaabd"
+  },
+  "viewed_but_excluded_diagnostics": {
+    "local_path": "/tmp/r24-followup-local",
+    "note": "Six post-screen exploratory long-budget/data combinations were viewed before this plan. They are not factorial cells, do not enter the registered selection, and cannot be confirmation evidence.",
+    "screen_seed_123_ladder": "diagnostic only"
+  }
+}

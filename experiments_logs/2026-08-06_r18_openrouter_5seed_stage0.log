@@ -1,0 +1,62 @@
+W0806 19:09:59.187000 634697 .venv/lib/python3.12/site-packages/torch/utils/_pytree.py:630] <enum 'KernelPreference'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W0806 19:09:59.203000 634697 .venv/lib/python3.12/site-packages/torch/utils/_pytree.py:630] <enum 'ScaleCalculationMode'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+Loading weights:   0%|          | 0/290 [00:00<?, ?it/s]Loading weights: 100%|██████████| 290/290 [00:00<00:00, 3211.74it/s]
+# teacher: {'provider': 'openrouter', 'model': 'deepseek/deepseek-v4-flash-0731', 'provider_only': ['DeepSeek'], 'temperature': 0.0, 'max_tokens': None, 'seed': 0, 'reasoning_enabled': False}
+# seed 0
+ASI seed_0_seed=0
+ASI seed_0_teacher_dev_delta=0.47058823529411764
+ASI seed_0_vanilla_holdout_acc=0.0
+ASI seed_0_lora_holdout_acc=0.3333333333333333
+ASI seed_0_distill_delta_holdout=0.3333333333333333
+ASI seed_0_specificity_delta=0.0
+ASI seed_0_persistent_bytes=17699231
+ASI seed_0_wall_s=321.7032749739592
+# seed 1
+ASI seed_1_seed=1
+ASI seed_1_teacher_dev_delta=0.5294117647058824
+ASI seed_1_vanilla_holdout_acc=0.0
+ASI seed_1_lora_holdout_acc=0.3333333333333333
+ASI seed_1_distill_delta_holdout=0.3333333333333333
+ASI seed_1_specificity_delta=0.0
+ASI seed_1_persistent_bytes=17699257
+ASI seed_1_wall_s=336.19761680200463
+# seed 2
+ASI seed_2_seed=2
+ASI seed_2_teacher_dev_delta=0.47058823529411764
+ASI seed_2_vanilla_holdout_acc=0.0
+ASI seed_2_lora_holdout_acc=0.0
+ASI seed_2_distill_delta_holdout=0.0
+ASI seed_2_specificity_delta=0.043478260869565216
+ASI seed_2_persistent_bytes=17699263
+ASI seed_2_wall_s=344.3086984840338
+# seed 3
+ASI seed_3_seed=3
+ASI seed_3_teacher_dev_delta=0.47058823529411764
+ASI seed_3_vanilla_holdout_acc=0.0
+ASI seed_3_lora_holdout_acc=0.3333333333333333
+ASI seed_3_distill_delta_holdout=0.3333333333333333
+ASI seed_3_specificity_delta=0.0
+ASI seed_3_persistent_bytes=17699277
+ASI seed_3_wall_s=315.1505739199929
+# seed 4
+ASI seed_4_seed=4
+ASI seed_4_teacher_dev_delta=0.5294117647058824
+ASI seed_4_vanilla_holdout_acc=0.0
+ASI seed_4_lora_holdout_acc=0.3333333333333333
+ASI seed_4_distill_delta_holdout=0.3333333333333333
+ASI seed_4_specificity_delta=0.08695652173913043
+ASI seed_4_persistent_bytes=17699255
+ASI seed_4_wall_s=346.73889580200193
+METRIC distill_delta_holdout=0.26666666666666666
+METRIC distill_specificity_delta=0.02608695652173913
+ASI distill_delta_holdout_ci95=[0.136,0.3973333333333333]
+ASI distill_specificity_delta_ci95=[-0.008000000000000004,0.06017391304347826]
+ASI seeds=5
+ASI lora_rank=8
+ASI lora_alpha=16.0
+ASI max_steps=10
+ASI lora_lr=0.005
+ASI calibrate=False
+ASI svd_target=0.01
+ASI stage=stage_0_grounding
+ASI teacher_source=openrouter

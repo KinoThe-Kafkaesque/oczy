@@ -1,0 +1,95 @@
+{
+  "schema_version": "oczy/launch-provenance/v1",
+  "record_type": "live_runner_queue_launch",
+  "recorded_at_utc": "2026-07-11T14:03:45Z",
+  "durable_provenance_note": "This tracked JSON file is the durable launch provenance record. All paths under /tmp/ are live local scheduler state and may disappear on reboot; this file is the persistent anchor.",
+
+  "implementation": {
+    "commit": "5b5e93c63d769fea7854073a4e6c359e5d36606f",
+    "commit_subject": "add durable live experiment queue",
+    "source_repo": "https://github.com/KinoThe-Kafkaesque/oczy.git"
+  },
+
+  "live_local_state_paths": {
+    "_note": "All paths below are live local scheduler state under /tmp. They are NOT tracked in version control and may vanish on reboot. They are recorded here for operational traceability only.",
+    "batch": "/tmp/oczy-live-queue/batch.json",
+    "state": "/tmp/oczy-live-queue/state.json",
+    "campaign": "/tmp/oczy-live-queue-campaign.json",
+    "campaign_manifest": "/tmp/oczy-live-queue/campaign_manifest.json",
+    "kernel_dir": "/tmp/oczy-live-queue/kernels/r18-distillation-5seed-diagnostic",
+    "output_dir": "/tmp/oczy-live-queue/reports/r18-distillation-5seed-diagnostic"
+  },
+
+  "scheduler": {
+    "mode": "live_watch",
+    "flags": {
+      "watch_batch": true,
+      "watch_interval_seconds": 30
+    },
+    "watch_behavior": "Scheduler stays alive when idle, re-reads batch.json every 30 s, and merges unseen job names as new PENDING jobs. Existing jobs are never modified. Loop exits only on KeyboardInterrupt.",
+    "batch_schema": "oczy/remote-parallel-batch/v2",
+    "state_schema": "oczy/remote-parallel-state/v2"
+  },
+
+  "provider_capacity_contract": {
+    "model": "additive_provider_caps",
+    "_description": "When --max-parallel is omitted, total concurrency is the sum of independent provider capacities: kaggle_max (hard-capped at 10) + learned Colab X (AIMD controller, ceiling colab_max=10). No global cap.",
+    "kaggle_max": 10,
+    "kaggle_max_is_hard_cap": true,
+    "colab_max_ceiling": 10,
+    "colab_capacity": "AIMD-learned limit X, self-correcting on 412 rejections; persisted in state as colab_learned_limit and restored on restart. Not a hardcoded maximum.",
+    "global_cap": null
+  },
+
+  "source_provenance": {
+    "source_dataset": "abdellahkadem/oczy-source-5b5e93c63d76",
+    "source_archive_sha256": "bc1ff926bc679fc26e5f20cfcb0756339b002ff3c1027eb3c24251fe2f6d7f72",
+    "pinned_to_commit": "5b5e93c63d769fea7854073a4e6c359e5d36606f"
+  },
+
+  "campaign": {
+    "schema_version": "oczy/remote-experiment-campaign/v1",
+    "source_commit": "5b5e93c63d769fea7854073a4e6c359e5d36606f",
+    "prepared_at_utc": "2026-07-11T14:02:50Z"
+  },
+
+  "jobs": [
+    {
+      "name": "r18-distillation-5seed-diagnostic",
+      "provider": "kaggle",
+      "profile": "cpu",
+      "phase": "development",
+      "claim_class": "scientific",
+      "module": "oczy.experiments.consolidation_distillation",
+      "arguments": ["--seeds", "5", "--max-steps", "10", "--stage", "stage_0_grounding"],
+      "output_path": "reports/r18-distillation-5seed-diagnostic",
+      "kernel_id": "abdellahkadem/oczy-r18-5seed-5b5e93c63d76",
+      "kernel_title": "Oczy R18 5seed 5b5e93c63d76",
+      "source_dataset": "abdellahkadem/oczy-source-5b5e93c63d76",
+      "source_archive_sha256": "bc1ff926bc679fc26e5f20cfcb0756339b002ff3c1027eb3c24251fe2f6d7f72",
+
+      "diagnostic_classification": "This job is DIAGNOSTIC unless the unchanged teacher_dev_delta >= 0.2 validity gate passes. The prior 3-seed stage_0 run produced teacher_dev_delta=0.1765 (below the 0.2 gate), making the 5-seed rerun diagnostic. No threshold changes.",
+
+      "status_at_record_time": {
+        "state": "succeeded",
+        "submitted_at_epoch": 1783778582.3723054,
+        "submitted_at_utc": "2026-07-11T14:03:02Z",
+        "attempts": 1,
+        "completed_at_epoch": 1783782292.9804573,
+        "completed_at_utc": "2026-07-11T15:04:52Z",
+        "collected_at_epoch": 1783782294.7386103,
+        "collected_at_utc": "2026-07-11T15:04:54Z",
+        "error": null,
+        "exit_code": 0,
+        "_completion_note": "The job completed successfully on Kaggle (exit 0, state=succeeded). All 5 seeds ran to completion. Infrastructure succeeded. However, the scientific classification is BLOCKED at the teacher validity gate (teacher_dev_delta=0.17647058823529413 < 0.2 gate, identical across all seeds). No positive scientific verdict is claimed. See experiments_logs/2026-07-11_r18_five_seed_diagnostic.json for the full adjudication with per-seed metrics."
+      }
+    }
+  ],
+
+  "explicit_non_claims": [
+    "The R18 5-seed diagnostic job has completed (exit 0, state=succeeded). Infrastructure succeeded. No positive scientific verdict is claimed — the teacher validity gate (teacher_dev_delta >= 0.2) failed with teacher_dev_delta=0.17647058823529413 identical across all 5 seeds.",
+    "Paths under /tmp/ are live local state and are not version-controlled; they may not persist across reboots.",
+    "This file records launch provenance and completion status. The full scientific adjudication with per-seed metrics is in experiments_logs/2026-07-11_r18_five_seed_diagnostic.json.",
+    "The scientific classification is BLOCKED at the teacher validity gate / diagnostic only. The 4/5 positive holdout deltas and the seed-2 null are conditional signal, not a verdict. No H-DISTILL verdict is permitted because the teacher gate failed after registered fallback."
+  ]
+}

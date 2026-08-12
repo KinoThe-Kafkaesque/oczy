@@ -35,12 +35,11 @@ Per-stage contract:
 5. Sample 3 generation probes from prompts the stage is meant to learn.
 6. Write per-stage report under ``reports/stage_N.md`` and a master
    ``progress.md``.
-7. Promotion gate:
-      - final_loss <= previous_loss * 0.98  (>= 2% relative improvement)
-      - held_out_top1_acc >= 0.25  (random ~ 1/80 = 0.0125)
-      - at least one probe contains a real English word from the stage's
-        target vocabulary.
-   If any check fails, halt and report.
+7. Training-completion guard (not a semantic-mastery verdict):
+      - best_loss <= previous_best * 2.0 (no stage-to-stage blow-up)
+      - held_out_top1_acc >= 0.30 (non-trivial teacher-forced char modeling)
+   Behavioral samples remain descriptive and must be inspected before any
+   claim that the named skill was mastered.
 
 Run:
     uv run python experiments/lm_progression/run_progression.py
@@ -124,7 +123,7 @@ class StageReport:
     epochs_run: int
     heldout_top1_acc: float
     samples: list[dict[str, str]] = field(default_factory=list)
-    promoted: bool = False
+    promoted: bool = False  # Legacy field name: completion guard passed.
     halt_reason: str = ""
     lr_used: float = 0.0
     diverged_count: int = 0
@@ -424,17 +423,12 @@ class ProgressionDriver:
         return correct / max(1, total)
 
     # ---------------------------------------------------------------
-    # Promotion gate
+    # Training-completion guard
     # ---------------------------------------------------------------
     def _decide_promotion(
         self, report: StageReport, previous_best: float
     ) -> tuple[bool, str]:
-        """Apply the three promotion checks; return (promoted, reason).
-
-        The three checks are documented at the top of this module.  If
-        any is failed, return a non-empty reason string the caller can
-        log.
-        """
+        """Apply stability checks; this is not a semantic-mastery verdict."""
         # Stage 0 is never gated --- it's the calibration baseline.
         if report.stage_idx == 0:
             # Stricter: the model must produce at least some real English
@@ -458,7 +452,7 @@ class ProgressionDriver:
             # for char-level outputs at this scale (model emits plausible
             # char distributions, not full words yet --- the model has to
             # build full words over stages 1+).
-            return True, "calibration stage passed (top1 >= 0.30)"
+            return True, "calibration completion guard passed (top1 >= 0.30)"
 
         loss_improved = report.best_loss <= previous_best * 2.0
         if not loss_improved:
@@ -483,7 +477,10 @@ class ProgressionDriver:
         # learned it.  The samples are still recorded in the report for
         # inspection; we just do not gate on them.
 
-        return True, "passed: loss bounded + top1 >= 0.30"
+        return True, (
+            "training-completion guard passed: loss bounded + top1 >= 0.30; "
+            "behavioral mastery not established"
+        )
 
     # ---------------------------------------------------------------
     # Persistence
@@ -525,7 +522,7 @@ class ProgressionDriver:
     ) -> None:
         path = self.reports_dir / "progress.md"
         lines = ["# LM progression report", ""]
-        lines.append("| Stage | Best loss | Top-1 | Epochs | Promoted |")
+        lines.append("| Stage | Best loss | Top-1 | Epochs | Guard passed |")
         lines.append("|---|---:|---:|---:|---|")
         for r in reports:
             lines.append(
@@ -616,7 +613,7 @@ def main(argv: list[str] | None = None) -> int:
     reports = driver.run(from_stage=args.from_stage, max_stages=args.max_stages)
     print("\n=== Progression summary ===")
     for r in reports:
-        status = "PROMOTED" if r.promoted else f"HALTED ({r.halt_reason})"
+        status = "GUARD PASSED" if r.promoted else f"HALTED ({r.halt_reason})"
         print(
             f"  stage {r.stage_idx} {r.stage_name}: best={r.best_loss:.3f} "
             f"top1={r.heldout_top1_acc:.3f} -> {status}"

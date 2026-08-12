@@ -11,19 +11,22 @@ Modes:
   - ``--driver real``: loads ``LiquidAI/LFM2.5-1.2B-Instruct`` via transformers
     and computes layer-L silhouettes.
 
-On any real-driver failure, the module falls back to mock mode and emits
-``ASI real_driver=failed``.
+On any real-driver failure, the probe fails closed: it emits an actionable
+``ASI real_driver=failed`` diagnostic (error type, message, traceback, and a
+remediation hint) and exits nonzero rather than falling back to mock metrics.
+Use ``--driver mock`` explicitly for the deterministic floor.
 """
 
 from __future__ import annotations
 
 import argparse
 import math
+import os
 import sys
+import traceback
 from typing import Any
 
 import numpy as np
-
 
 # ---------------------------------------------------------------------------
 # Concept battery (matches lanes/lane_03.py)
@@ -154,12 +157,27 @@ def _hf_probe() -> dict[str, float] | None:
 
     from plastic_cortex.kv_cortex import KVCortex, KVCortexConfig
 
-    model_name = "LiquidAI/LFM2.5-1.2B-Instruct"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    # Prefer explicit env (set by the Kaggle bootstrap or a local user).
+    # Fall back to the canonical HF hub id only outside remote/offline mode.
+    env_hf_dir = os.environ.get("OCZY_HF_MODEL_DIR")
+    offline = (
+        os.environ.get("OCZY_REMOTE_CPU_ONLY") == "1"
+        or os.environ.get("HF_HUB_OFFLINE") == "1"
+        or os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+    )
+    model_name = env_hf_dir if env_hf_dir else "LiquidAI/LFM2.5-1.2B-Instruct"
+    load_kwargs: dict[str, Any] = {}
+    if offline or env_hf_dir is not None:
+        load_kwargs["local_files_only"] = True
+        load_kwargs["trust_remote_code"] = False
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name, **load_kwargs)
+    assert tokenizer is not None
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.bfloat16,
         output_hidden_states=True,
+        **load_kwargs,
     )
     model.eval()
 
@@ -192,6 +210,7 @@ def _hf_probe() -> dict[str, float] | None:
         ("last_L15", 16, _last_token),
         ("maxpool_L14", 15, _max_pool),
         ("mean_L14", 14, _mean_pool),
+        ("final_meanpool", 16, _mean_pool),
     ]
 
     silhouettes: dict[str, float] = {
@@ -302,6 +321,38 @@ def _compute_gap(silhouettes: dict[str, float]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _report_real_driver_failure(
+    exc: Exception | None, tb: str | None
+) -> None:
+    """Emit an actionable diagnostic when the real HF driver cannot produce metrics.
+
+    Called only on the ``--driver real`` path when ``_hf_probe`` raises or
+    returns ``None``.  Prints structured ``ASI`` lines so a caller can
+    distinguish a genuine real-driver failure from a completed scientific run,
+    plus a remediation hint.  Never falls back to mock metrics.
+    """
+    print("ASI real_driver=failed")
+    if exc is not None:
+        print(f"ASI real_driver_error_type={type(exc).__name__}")
+        msg = str(exc).strip().replace("\n", " ")
+        if msg:
+            print(f"ASI real_driver_error_message={msg}")
+        if tb and tb.strip() != "NoneType: None":
+            print("ASI real_driver_traceback:")
+            for line in tb.rstrip().splitlines():
+                print(f"  {line}")
+    else:
+        print(
+            "ASI real_driver_error_message=_hf_probe returned no result "
+            "(hidden-state length/shape mismatch or missing layers)"
+        )
+    print(
+        "ASI real_driver_hint=verify the LFM2.5-1.2B-Instruct snapshot is "
+        "available (OCZY_HF_MODEL_DIR or HF cache), that torch/transformers "
+        "are installed and output_hidden_states is supported, then retry; "
+        "or run with --driver mock for the deterministic floor."
+    )
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Layer-L hidden extraction probe"
@@ -315,13 +366,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.driver == "real":
+        probe_exc: Exception | None = None
+        probe_tb: str | None = None
         try:
             silhouettes = _hf_probe()
-        except Exception:
+        except Exception as exc:  # fail closed, not fallback
             silhouettes = None
+            probe_exc = exc
+            probe_tb = traceback.format_exc()
         if silhouettes is None:
-            print("ASI real_driver=failed")
-            silhouettes = _mock_probe()
+            _report_real_driver_failure(probe_exc, probe_tb)
+            return 1
     else:
         silhouettes = _mock_probe()
 

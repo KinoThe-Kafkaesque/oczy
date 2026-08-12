@@ -1,0 +1,102 @@
+{
+  "arms": {
+    "base": {},
+    "finalist": {
+      "conditioning": "additive",
+      "deep_film": true
+    }
+  },
+  "base_config_before_paired_seeds": {
+    "batch_seed": 101,
+    "batch_size": 32,
+    "catalog_seed": 25001,
+    "conditioning": "film",
+    "control_seed": 303,
+    "counterfactual_weight": 0.0,
+    "d_model": 64,
+    "deep_film": true,
+    "device": "cpu",
+    "dropout": 0.1,
+    "dropout_seed": 202,
+    "encoder_lr_multiplier": 1.0,
+    "encoder_pooling": "mean",
+    "init_seed": 0,
+    "lr": 0.001,
+    "max_train_eval_examples": 256,
+    "n_layers": 2,
+    "n_prefix_tokens": 4,
+    "oracle_mode": "text",
+    "protocol_version": "r24-tiny-decoder/v2",
+    "root_seed": 25001,
+    "scheduler": "constant",
+    "steps": 800,
+    "train_per_family": 20,
+    "val_per_family": 10,
+    "warmup_steps": 0,
+    "weight_decay": 0.01
+  },
+  "confirmation_gate": {
+    "finalist_mean_oracle_minus_base_min": 0.0,
+    "finalist_mean_swapped_delta_min": 0.02,
+    "finalist_mean_swapped_delta_minus_base_min": 0.0,
+    "finalist_positive_swapped_delta_seeds": 5,
+    "note": "Zero/random controls are diagnostic and never enter promotion.",
+    "unit": "paired seed; equal-rule macro and family results are mandatory secondary summaries"
+  },
+  "fresh_catalog_seed": 25001,
+  "frozen_selection": {
+    "factorial_suite_sha256": "17333600e77e65df82a30afb86bf84b482e30bb6d32b201afe4f047371229aee",
+    "selection_file": "v2_factorial_selection.json",
+    "winner": "conditioning_additive_deep",
+    "winner_overrides": {
+      "conditioning": "additive",
+      "deep_film": true
+    }
+  },
+  "governance": {
+    "authorization_scope": "test all enumerated R24 Phase-A v2 improvement pathways; Kaggle CPU permitted",
+    "execution": "all 10 jobs (base/finalist x five paired seeds) in one non-adaptive batch; unique retries only for infrastructure failure; no seed replacement",
+    "human_signoff_id": "conversation-019fd6c5-14ae-712f-b8ce-d622526d84fb-go-ahead-test-all",
+    "outcome_boundary": "confirmation qualifies a frozen organ only; it is not Phase C or H-TOY-EXISTENCE evidence",
+    "phase_c": "not authorized by this plan",
+    "remote_contract": "clean commit, private, internet-off, CPU, runtime hash verified, five workers, submit interval 0",
+    "status": "authorized Phase-A confirmation"
+  },
+  "schema_version": "oczy/r24-phase-a-confirmation/v2",
+  "seed_tuples": [
+    {
+      "batch_seed": 1011,
+      "control_seed": 3011,
+      "dropout_seed": 2011,
+      "init_seed": 11
+    },
+    {
+      "batch_seed": 1029,
+      "control_seed": 3029,
+      "dropout_seed": 2029,
+      "init_seed": 29
+    },
+    {
+      "batch_seed": 1047,
+      "control_seed": 3047,
+      "dropout_seed": 2047,
+      "init_seed": 47
+    },
+    {
+      "batch_seed": 1071,
+      "control_seed": 3071,
+      "dropout_seed": 2071,
+      "init_seed": 71
+    },
+    {
+      "batch_seed": 1097,
+      "control_seed": 3097,
+      "dropout_seed": 2097,
+      "init_seed": 97
+    }
+  ],
+  "selected_case": "conditioning_additive_deep",
+  "statistical_note": "Validation rows cluster within 30 rules. Report exact micro counts, equal-rule macro deltas, family strata, and all five paired seeds. Do not pool rows as iid.",
+  "suite_sha256": "1d7e24c928220a9bf84683a9c4c1ccdd40533f93fc8230c95fbb38a0dd775bcc",
+  "upstream_factorial_suite_sha256": "17333600e77e65df82a30afb86bf84b482e30bb6d32b201afe4f047371229aee"
+}

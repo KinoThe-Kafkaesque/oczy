@@ -151,16 +151,85 @@ these organs.
   because they live in different cortex state regions, not the same
   label slot.
 
+
+## Goal 4 — Tool-use behavior transfer (checkpoint above memorization)
+
+Goals 1–3 build the mechanism: steer the LM, feed it real hiddens, close
+the metabolism loop. But the organism curriculum (Stages 0–5) only tests
+**fact memorization** — correcting a word sense, retaining it, and
+recalling it later. Fact recall is necessary but insufficient: the thesis
+calls for memory that becomes **changed dynamics**, and tool use is the
+behavioral proof that dynamics changed, not just labels.
+
+Tool calling is the checkpoint above memorization because it requires the
+cortex to steer the LM into a **behavioral mode** (output bracket-format
+tool calls, select the right tool, integrate tool results) rather than
+just biasing toward a target token. The 1.2B model fails all three
+tool-use tasks in the Pi benchmark (`benchmarks/pi/run_tool_use_benchmark.py`,
+0/3 passed) because:
+
+1. **F1 — No tool call:** the model outputs prose ("I don't have the
+   capability...") instead of `[write(path="...")]`. This is a
+   format-mode failure — the cortex must steer the LM into tool-call
+   output mode, not just bias one token.
+2. **F2 — Lost context:** after receiving a tool result, the model
+   forgets the original question ("could you clarify?"). This is a
+   task-goal retention failure — the cortex's warm_state must carry
+   the task goal across turns, not just the corrected label.
+3. **F3 — Wrong tool:** the model says "there are no files" without
+   searching, or "I can't create files" instead of using `write`.
+   This is a tool-selection failure — the scope-slot reranker must
+   map the request to the correct tool name, not just the correct
+   word sense.
+
+**Why it matters:** if the cortex can only correct fact labels but
+cannot teach the LM a behavioral skill (tool use), then the plasticity
+thesis is proven only for memorization, not for changed dynamics. Tool
+calling is the minimal agentic behavior that distinguishes the two.
+
+**Experiment:** `experiments/08-oczy-pi-tool-calling-curriculum/` — a
+6-stage curriculum that teaches tool use via the CortexAgent correction
+loop (cvec + logit bias + correction_signal), then tests generalization
+through the full Pi CLI benchmark.
+
+**Done when:**
+- The model reliably outputs tool-call format (`tool_format_rate ≥ 0.875`)
+  after correction on Stage 0.
+- The model selects the correct tool and fills parameters from the
+  request (`tool_selection_accuracy ≥ 0.75`) after Stage 1.
+- The model answers the original question using the tool result
+  (`tool_result_integration ≥ 0.75`) after Stage 2.
+- The full Pi benchmark passes ≥2/3 tasks (Stage 5) with the
+  cortex-augmented model, where the vanilla model passes 0/3.
+- `tool_use_delta_per_byte > 0` — the persistent cortex state encodes
+  tool-use behavior, not just memorized corrections.
+
+**Kill:**
+- If vanilla (no cortex) passes any stage → the stage doesn't require
+  plasticity; redesign to be harder.
+- If cvec + logit bias + correction (full stack) doesn't beat
+  correction-only on Stage 2 → the cortex isn't learning a task-goal
+  signal, just memorizing format patterns.
+- If `tool_use_delta_per_byte ≈ 0` → the persistent state isn't encoding
+  behavior; hand off to experiment 06 (bounded-growth consolidation).
+
 ## Sequencing
 
 Goal 1 unblocks everything: without KV injection the cortex can't
 steer the LM, so whether the metabolism closes or not is invisible.
 Goal 2 is required for the cortex's input side to see real LM
 structure. Goal 3 makes the cortex metabolism actually mutate the
-agent rather than just shift its own internal vector.
+agent rather than just shift its own internal vector. Goal 4 is the
+behavioral checkpoint: if the cortex can teach the LM to use tools
+(a skill, not a fact), the plasticity thesis is proven for changed
+dynamics, not just memorization.
 
-Strategic order: 1 → 2 → 3, but Goal 2's investigation can begin in
-parallel once Goal 1's binding surface is understood.
+Strategic order: 1 → 2 → 3 → 4, but Goal 2's investigation can begin in
+parallel once Goal 1's binding surface is understood. Goal 4 can begin
+in parallel with Goal 3 using the existing cvec + logit-bias surfaces
+(no organ tensor upgrades required for the tool-format and tool-selection
+stages); the tool-result integration stage (Stage 2) benefits from
+Goal 3's closed metabolism loop but does not strictly require it.
 
 ## Working roadmap
 
@@ -176,7 +245,9 @@ parallel once Goal 1's binding surface is understood.
 - Energy/attractor basins as the cortex substrate — experiments.txt
   section 7.
 - Implicit consolidation triggers (auto-fire on replay threshold).
-- New curriculum stages beyond the six authored.
+- New organism curriculum stages beyond the six authored (the tool-calling
+  curriculum in Goal 4 is a separate skill curriculum, not an extension
+  of the organism word-sense stages).
 - LM cortex retraining (the 40K char-RNN side-quest).
 
 ## Identified sub-goal: meaningful cvec steering

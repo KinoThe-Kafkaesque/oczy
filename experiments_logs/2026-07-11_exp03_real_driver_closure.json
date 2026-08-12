@@ -1,0 +1,72 @@
+{
+  "schema_version": "oczy/execution-report/v1",
+  "closure_type": "reproducibility_closure",
+  "closure_date": "2026-07-11",
+  "job_name": "exp03-real-hf-layer-probe",
+  "module": "oczy.experiments.layer_l_probe",
+  "provider": "colab",
+  "source_commit": "ad77e93e0463fb40c73eec3d450cce59068eff6e",
+  "source_repo": "https://github.com/KinoThe-Kafkaesque/oczy.git",
+  "command": ["/usr/bin/python3", "-m", "oczy.experiments.layer_l_probe", "--driver", "real"],
+  "arguments": ["--driver", "real"],
+  "required_arguments": ["--driver", "real"],
+  "status": "complete",
+  "exit_code": 0,
+  "error": null,
+  "started_utc": "2026-07-11T13:20:50Z",
+  "finished_utc": "2026-07-11T13:21:39Z",
+  "timeout_seconds": 3600.0,
+  "metrics": {
+    "layer_l_silhouette_gap": 0.10925446726657728
+  },
+  "asi_scores": {
+    "warm_sep_silhouette_R_random": 0.0,
+    "warm_sep_silhouette_final_meanpool": 0.441093729601966,
+    "warm_sep_silhouette_mean_L14": 0.5503481968685433,
+    "warm_sep_silhouette_last_L15": 0.4693433609273699,
+    "warm_sep_silhouette_last_L13": 0.3496683604187436,
+    "warm_sep_silhouette_last_L9": 0.2584109637472365,
+    "warm_sep_silhouette_maxpool_L14": 0.029280024546164074
+  },
+  "registered_threshold": 0.10,
+  "threshold_changed": false,
+  "verdict": "positive/accept (this single real-driver reproducibility closure)",
+  "model_artifact": {
+    "kind": "hf_snapshot",
+    "repo_id": "LiquidAI/LFM2.5-1.2B-Instruct",
+    "revision": "868df74dd56ff8a0c2ac5dbf281690c2dbebe4c9",
+    "manifest_path": "infrastructure/kaggle/model_manifests/lfm2_5-1_2b-instruct.json",
+    "manifest_sha256": "7bed32bcc42b992414d75a02b0e29893559e2ff5e06e6dbf9ab7ed10d70523bb",
+    "files": [
+      {"filename": "config.json", "size_bytes": 1224, "sha256": "15d6157fb6df3f8272e2fe90e18f57727ccf02a125c94469198b0f3281510185"},
+      {"filename": "generation_config.json", "size_bytes": 132, "sha256": "5ffd97da1dec4308543894569662d96e923ed01f7a9d8c7ff5aea7f800738cbd"},
+      {"filename": "model.safetensors", "size_bytes": 2340697936, "sha256": "1ba63d9adb03ae43581db0e136e4416febe0441aff7296397bd455fb6017f73a"},
+      {"filename": "tokenizer.json", "size_bytes": 4733389, "sha256": "df1d8d5ec5d091b460562ffd545e4a5e91d17d4a0db7ebe733be34ed374377bd"},
+      {"filename": "tokenizer_config.json", "size_bytes": 92225, "sha256": "2a52ec012d3df831ba434b081bef3726a6ee22501f062ad8353c557a0cfa0d01"},
+      {"filename": "special_tokens_map.json", "size_bytes": 434, "sha256": "742aefe2b7dec496e8caffdba03a75d0c1a9925d53bd3f3e0d388c96b591b6f4"},
+      {"filename": "chat_template.jinja", "size_bytes": 1783, "sha256": "f05bf4b967dc993bdc7a2fe6e43759ee218eb0eb340d68b063e1c4f8ad148176"}
+    ]
+  },
+  "infrastructure_fix": {
+    "description": "Seven-file exact-revision manifest, direct atomic HTTP streaming with size/SHA verification, required --driver real, fail-closed real driver, HF final mean-pool baseline.",
+    "manifest_files": 7,
+    "transfer_mechanism": "direct atomic HTTP streaming with per-file size and SHA-256 verification",
+    "driver_enforcement": "fail-closed real driver (--driver real required)",
+    "baseline": "HF final mean-pool baseline"
+  },
+  "provenance": {
+    "local_evidence_path": "/tmp/oczy-exp03-real-run-v2/results/exp03-real-hf-layer-probe/stdout.log",
+    "local_result_json": "/tmp/oczy-exp03-real-run-v2/results/exp03-real-hf-layer-probe/result.json",
+    "local_campaign_dir": "/tmp/oczy-exp03-real-run-v2/",
+    "campaign_batch_schema": "oczy/remote-parallel-batch/v2",
+    "campaign_manifest_schema": "oczy/remote-experiment-campaign-manifest/v1",
+    "prepared_at": "2026-07-11T13:17:45Z"
+  },
+  "historical_context": {
+    "previous_campaign_attempt": "Campaign 0d48130 Exp03 was infrastructure-blocked (HF snapshot_download stalled at 0/11 files across all batches); no metrics emitted. That attempt remains historically infrastructure-blocked and is not rewritten as if it succeeded.",
+    "previous_campaign_log": "experiments_logs/2026-07-11_campaign_0d48130.md",
+    "s1_4_precampaign_verdict": "REFUTED on two architectures (Qwen2.5-0.5B-Instruct gap -0.083; LFM2.5-1.2B-Instruct gap +0.058 < +0.10). See experiments_logs/2026-07-01_s1_4_hf_layer_probe.md.",
+    "relationship_to_s1_4": "This single real-driver run on LFM2.5-1.2B-Instruct produced gap=0.1093 > +0.10 (accept). It does not reopen or overturn the pre-registered S1.4 verdict, which was adjudicated on two architectures. No scientific overclaim beyond this single run."
+  },
+  "scope_limit": "Single real-driver run on one architecture (LFM2.5-1.2B-Instruct). No threshold, metric, baseline, episode, scoring, eval manifest, or research spec was changed."
+}

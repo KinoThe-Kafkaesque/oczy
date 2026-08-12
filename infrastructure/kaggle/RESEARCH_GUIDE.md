@@ -1,23 +1,34 @@
 # Remote research compute guide
 
-This is the required workflow for using Kaggle compute for Oczy research. The
-remote service is an execution substrate, not an authority over the experiment.
-It may accelerate a pre-registered workload, but it may not change the
-instrument, select thresholds, inspect meta-test during development, or turn an
-infrastructure smoke result into evidence for the cortex hypothesis.
+This is the required workflow for using remote CPU compute (Kaggle Kernels
+and/or Google Colab CLI) for Oczy research. The remote service is an execution
+substrate, not an authority over the experiment. It may accelerate a
+pre-registered workload, but it may not change the instrument, select
+thresholds, inspect meta-test during development, or turn an infrastructure
+smoke result into evidence for the cortex hypothesis.
+
+For the persistent scheduler workflow, safe enqueue procedure, retry and
+recovery policy, campaign adjudication, and concise operator checklists, see
+[`QUEUEING_GUIDE.md`](QUEUEING_GUIDE.md).
+
+The active remote profile is **CPU only**, available via both Kaggle Kernels
+and the Colab CLI. GPU (T4/P100/L4) and TPU profiles are not active.
+Historical GPU verification is preserved under
+[`archive/gpu/`](archive/gpu/) as archived evidence; it must not be
+resubmitted or used to schedule GPU work.
 
 ## Approved state and fixed references
 
-As of 2026-07-09:
+As of 2026-07-11:
 
 | Resource | Status | Fixed reference |
 |---|---|---|
 | Kaggle CPU | Verified | private CPU kernel path in [`cpu-smoke/`](cpu-smoke/) |
-| Kaggle GPU | Verified | 2×Tesla T4 via `NvidiaTeslaT4`; [`t4-smoke/`](t4-smoke/) |
-| P100 | Blocked | Kaggle PyTorch 2.10 CUDA image lacks sm_60 kernels |
-| L4 request | Blocked | request silently allocated an incompatible P100 |
-| TPU | Not wired | quota exists, but no XLA/JAX parity probe or runner exists |
-| Language organ | Version pinned and remotely verified | `qwen-lm/qwen2.5/transformers/0.5b-instruct/1` |
+| Colab CLI 0.6.0 CPU | Verified | `colab run --keep --session <name> -- <script>` |
+| Qwen CPU probe (Kaggle) | Verified (v1) | [`qwen-cpu-probe/`](qwen-cpu-probe/) |
+| GPU (T4/P100/L4) | Archived --- not active | [`archive/gpu/`](archive/gpu/) |
+| TPU | Not wired | no XLA/JAX parity probe or runner exists |
+| Language organ | Version pinned | `qwen-lm/qwen2.5/transformers/0.5b-instruct/1` |
 
 The pinned Qwen artifact is version 1, 999,604,126 bytes, with:
 
@@ -26,7 +37,6 @@ The pinned Qwen artifact is version 1, 999,604,126 bytes, with:
 - 24 transformer layers and 14 attention heads;
 - `config.json` SHA-256
   `18e18afcaccafade98daf13a54092927904649e1dd4eba8299ab717d5d94ff45`;
-  and
 - `model.safetensors` SHA-256
   `fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe`.
 
@@ -34,41 +44,54 @@ Changing the model variation, quantization, tokenizer, chat template, or model
 version changes the language organ and therefore requires a new pre-registered
 experiment version. It is not a compute-only substitution.
 
-The remote model probe passed on 2×T4 with zero trainable Qwen parameters, no
-parameter gradients, a finite input-embedding gradient, and an unchanged
-parameter fingerprint. See [`RESULTS.md`](RESULTS.md) for exact timings and
-hashes.
+The historical T4-based model probe is preserved in
+[`archive/gpu/RESULTS.md`](archive/gpu/RESULTS.md). The active `qwen-cpu-probe`
+task confirmed the same model hashes on CPU (v1, 2026-07-10).
 
 ## Prepared building blocks
 
 | Building block | Purpose |
 |---|---|
-| [`run_cortex_smoke.py`](run_cortex_smoke.py) | CPU/CUDA gradient, frozen-state, and throughput plumbing without a real LM |
-| [`run_qwen_model_probe.py`](run_qwen_model_probe.py) | Locate and hash the attached Qwen artifact; verify frozen-parameter and input-gradient behavior |
+| [`run_cortex_smoke.py`](run_cortex_smoke.py) | CPU gradient, frozen-state, and throughput plumbing without a real LM |
+| [`run_qwen_model_probe.py`](run_qwen_model_probe.py) | Locate and hash the attached Qwen artifact; verify frozen-parameter and input-gradient behavior on CPU |
 | [`prepare_source_bundle.py`](prepare_source_bundle.py) | Create a commit-addressed source archive and private Kaggle dataset metadata |
-| [`prepare_research_kernel.py`](prepare_research_kernel.py) | Generate a private, internet-off CPU/T4 kernel with source/model/provenance checks |
-| [`RESULTS.md`](RESULTS.md) | Verified hardware results and accelerator nulls |
-
-Generated bundles and kernels belong in a temporary directory or the ignored
-`infrastructure/kaggle/build/` directory. Do not hand-edit a generated
-`run.py`; change the generator or job arguments and regenerate it.
-
+| [`prepare_research_kernel.py`](prepare_research_kernel.py) | Generate a private, internet-off CPU kernel with source/model/provenance checks |
+| [`parallel_scheduler.py`](parallel_scheduler.py) | Durable mixed-provider scheduler with state-owner locking, reviewed account assignments, shared slot leases, AIMD Colab admission, and crash-safe resume |
+| [`runner_pool.py`](runner_pool.py) | Multi-account inventory plus non-submitting, hash-bound dispatch planning for already-reviewed batches |
+| [`colab_provider.py`](colab_provider.py) | Colab CLI 0.6.0 adapter: `run --keep --session`, `collect`, `stop`, `sessions`, capacity rejection classification |
+| [`RESULTS.md`](RESULTS.md) | Verified CPU results and acceptance contract |
 ## Which compute to use
 
-| Work | Default compute | Reason |
+| Work | Preferred provider | Reason |
 |---|---|---|
-| Instrument materialization, split/leakage audits, distribution checks | CPU | deterministic and no frozen-organ gradient workload |
-| Scorer tests, report aggregation, bootstrap CIs | CPU | GPU overhead adds no value |
-| Oracle articulation and frozen-Qwen interface checks | 2×T4 | model forward/backward dominates |
-| Developmental outer-loop training | T4, initially one developmental seed per GPU | independent seeds avoid needless gradient synchronization |
-| Large single-seed training after profiling | T4 with DDP | only when a measured single-seed workload benefits |
-| Immutable meta-test | Same validated substrate as development | compute changes must not become an unregistered variable |
-| TPU | Do not schedule | current PyTorch runner would fall back to CPU; an explicit XLA/JAX implementation and parity run are required first |
+| Instrument materialization, split/leakage audits, distribution checks | Kaggle CPU or Colab CPU | deterministic; no frozen-organ gradient workload |
+| Scorer tests, report aggregation, bootstrap CIs | Kaggle CPU or Colab CPU | GPU overhead adds no value |
+| Oracle articulation and frozen-Qwen interface checks | Kaggle CPU | model forward/backward runs on CPU; Kaggle's private kernel isolation preferred |
+| Developmental outer-loop training | Kaggle CPU or Colab CPU | one developmental seed per CPU job; Colab good for ad-hoc runs |
+| Immutable meta-test | Kaggle CPU | compute changes must not become an unregistered variable; Kaggle's pinned image/dataset guarantees preferred |
+| Batch parallel fan-out | Kaggle + Colab mixed via `parallel_scheduler.py` | scheduler handles both providers with additive provider capacity and AIMD admission |
+| TPU | Do not schedule | no XLA/JAX implementation or parity run exists |
 
-Small 64×64 cortex-only math can be faster on CPU. The verified 2.016× T4
-gain appeared when the differentiable frozen-organ interface used width 896.
-Profile the real workload before fan-out; “GPU available” is not itself a
-reason to consume GPU quota.
+All active remote work uses the CPU profile. The generated Kaggle bootstrap
+enforces CPU through `CUDA_VISIBLE_DEVICES=""` before torch import plus
+CPU-only metadata and profile. Colab jobs never pass `--gpu` or `--tpu`.
+Do not request a GPU accelerator or submit archived GPU kernels.
+
+### Alternative: direct Colab CLI (without scheduler)
+
+For a quick single run outside the scheduler:
+
+```bash
+colab run --keep --session my-run --timeout 3600 -- scripts/train.py --seed 0
+```
+
+The `--keep` flag keeps the session daemon alive after the script exits.
+Stop it explicitly when done:
+
+```bash
+colab stop --session my-run
+colab sessions
+```
 
 ## End-to-end workflow
 
@@ -84,9 +107,11 @@ Before preparing remote artifacts:
 6. run unit/smoke tests locally; and
 7. commit the exact source intended for execution.
 
-For `meta_cortex/v1`, development may use meta-train and meta-validation only.
-Generating or running a meta-test kernel requires the frozen instrument
-manifest hash and a human sign-off identifier.
+For the current INT8 `meta_cortex/v2`, development may use meta-train and
+meta-validation only. Every job must carry `oczy/runtime-manifest/v2` with the
+exact TorchAO W8A32 quantization block. Generating or running a meta-test
+kernel still requires the frozen instrument manifest hash and a human sign-off
+identifier.
 
 ### 2. Build an immutable source dataset
 
@@ -124,26 +149,25 @@ The kernel metadata must contain exactly:
 ]
 ```
 
-Internet remains disabled. Run the model probe after a Kaggle image change or
-before the first real experiment batch:
+Internet remains disabled. Run the CPU model probe after a Kaggle image change
+or before the first real experiment batch:
 
 ```bash
 kaggle kernels push \
-  --path infrastructure/kaggle/qwen-t4-probe \
-  --accelerator NvidiaTeslaT4 \
+  -p infrastructure/kaggle/qwen-cpu-probe \
   --timeout 900
 
-kaggle kernels status abdellahkadem/oczy-qwen-language-organ-t4-probe
+kaggle kernels status abdellahkadem/oczy-qwen-cpu-probe
 kaggle kernels output \
-  abdellahkadem/oczy-qwen-language-organ-t4-probe \
-  --path reports/kaggle/qwen-t4-probe \
+  abdellahkadem/oczy-qwen-cpu-probe \
+  --path reports/kaggle/qwen-cpu-probe \
   --force
 ```
 
-The probe must report the expected file hashes, an actual supported CUDA
-device, zero trainable model parameters, no model-parameter gradients, a
-finite non-zero input-embedding gradient, and an unchanged parameter
-fingerprint.
+The probe must report the expected file hashes, zero trainable model
+parameters, no model-parameter gradients, a finite non-zero input-embedding
+gradient, and an unchanged parameter fingerprint. It must also report
+`cuda_available: false`.
 
 Experiment code must load from `OCZY_MODEL_DIR` (set by the generated
 bootstrap) or an explicit `--model-path`, with `local_files_only=True`. It must
@@ -170,7 +194,7 @@ uv run python infrastructure/kaggle/prepare_research_kernel.py \
   --kernel-id abdellahkadem/oczy-meta-cortex-development-seed-0 \
   --title "Oczy Meta Cortex Development Seed 0" \
   --phase development \
-  --profile t4 \
+  --profile cpu \
   --source-dataset "$SOURCE_DATASET" \
   --source-commit "$SOURCE_COMMIT" \
   --source-archive-sha256 "$SOURCE_SHA" \
@@ -185,6 +209,7 @@ The generator embeds the job spec into `run.py` and writes a reviewable
 `job_spec.json` plus `kernel-metadata.json`. It automatically attaches the
 pinned Qwen model to oracle, development, and meta-test phases. Instrument and
 analysis jobs remain model-free unless a model source is explicitly supplied.
+The `--profile` argument accepts only `cpu`.
 
 For a meta-test job, generation additionally requires:
 
@@ -203,9 +228,10 @@ Review all three generated files. Confirm:
 - source commit and archive hash match the uploaded private dataset;
 - kernel and dataset slugs include the intended seed/run identity;
 - `is_private` is true and `enable_internet` is false;
+- `enable_gpu` is false and `enable_tpu` is false;
+- `machine_shape` is empty (CPU);
 - the phase and module are correct;
 - only the intended arguments changed from the matched control;
-- T4 jobs request `NvidiaTeslaT4` explicitly;
 - the pinned Qwen version is unchanged;
 - no API key, OAuth file, local path, expected answer, or meta-test content is
   embedded; and
@@ -215,8 +241,7 @@ Review all three generated files. Confirm:
 
 ```bash
 kaggle kernels push \
-  --path "$JOB" \
-  --accelerator NvidiaTeslaT4 \
+  -p "$JOB" \
   --timeout 21600
 
 kaggle kernels status abdellahkadem/oczy-meta-cortex-development-seed-0
@@ -227,13 +252,14 @@ kaggle kernels output \
   --force
 ```
 
+No `--accelerator` flag is used. CPU kernels set `enable_gpu: false` in their
+metadata; the generated bootstrap sets `CUDA_VISIBLE_DEVICES=""` before
+importing torch and verifies the env var is still empty at startup, with
+no CUDA or NVML runtime query performed.
+
 Check `kaggle quota --csv` before fan-out. Start with one seed. Expand to the
 pre-registered seed set only after the first artifact passes provenance,
 hardware, model, and output-schema checks.
-
-The requested accelerator is not evidence of the allocated accelerator. Trust
-the runtime hardware record in `remote_run_provenance.json` and the experiment
-report. The L4→P100 fallback already demonstrated this failure mode.
 
 ### 7. Validate and promote the artifacts
 
@@ -253,7 +279,7 @@ Before interpretation, verify:
 
 - `source_manifest.commit` and archive SHA match the planned run;
 - model artifact and frozen-parameter hashes match;
-- actual hardware matches the approved profile;
+- actual hardware is CPU (`cuda_available: false`, `cuda_device_count: 0`);
 - the remote module and arguments match `job_spec.json`;
 - all expected seed/condition artifacts exist;
 - no checkpoint or report contains forbidden raw traces or meta-test leakage;
@@ -270,8 +296,7 @@ are intentionally ignored by Git.
 Treat a run as **BLOCKED/INVALID**, not as a scientific null, when:
 
 - source, archive, model, or instrument hashes differ;
-- Kaggle allocates the wrong hardware;
-- a P100 or unsupported compute capability appears;
+- CUDA is visible or a GPU device appears in the provenance report;
 - internet-backed model fallback occurs;
 - the model gains parameter gradients or changes;
 - a required artifact is missing or corrupt;
@@ -289,13 +314,30 @@ Having TPU quota does not make TPU an approved executor. TPU may be added only
 after a separate versioned probe demonstrates:
 
 1. an explicit `torch_xla` or JAX path—never CPU fallback;
-2. parity with the CPU/T4 tensor update and scorer fixtures;
+2. parity with the CPU tensor update and scorer fixtures;
 3. frozen Qwen parameter and tokenizer identity;
 4. stable static shapes for the compiled step;
 5. actual TPU topology and device utilization in provenance; and
 6. a measured advantage after compilation time is included.
 
-Until then, use CPU and the verified 2×T4 path.
+Until then, use CPU only.
+
+
+## Queueing remote experiments
+
+For seed fan-out, configurations, or ablations, use the mixed-provider
+campaign preparer and parallel scheduler. The complete operational workflow is
+in [`QUEUEING_GUIDE.md`](QUEUEING_GUIDE.md).
+
+The current capacity model is additive when `--max-parallel` is omitted:
+Kaggle admits up to 5 jobs and Colab admits up to its dynamically learned
+limit. An explicit `--max-parallel N` applies a combined global cap. Persistent
+watch mode uses `--watch-batch`; it merges unseen names as new pending jobs and
+does not alter existing definitions or states.
+
+Use a durable queue directory outside `/tmp`, one batch writer, and exactly one
+scheduler owner per state file. Start with one canary seed, verify its pulled
+provenance and output schema, and only then enqueue the registered fan-out.
 
 ## Short preflight checklist
 
@@ -304,8 +346,8 @@ Until then, use CPU and the verified 2×T4 path.
 - [ ] Exact source committed; worktree clean.
 - [ ] Source bundle and archive SHA reviewed.
 - [ ] Qwen model source is the pinned version-1 reference.
-- [ ] Private kernel, internet disabled, timeout set.
-- [ ] Correct CPU/T4 phase selected; no TPU/P100/L4 assumption.
+- [ ] Private kernel, internet disabled, GPU/TPU disabled, timeout set.
+- [ ] CPU profile selected; no GPU/TPU assumption.
 - [ ] First seed passes before fan-out.
-- [ ] Actual hardware and all hashes verified from pulled artifacts.
+- [ ] Actual hardware is CPU; all hashes verified from pulled artifacts.
 - [ ] Nulls, errors, commands, URL/version, and artifacts logged durably.

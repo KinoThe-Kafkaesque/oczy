@@ -2,6 +2,12 @@
 
 Research proposal: ../../research/04-context-scoped-attractors.md
 
+## Status
+
+- **Implementation:** `src/oczy/experiments/scope_selectivity_stressor.py` — implemented and tested.
+- **Campaign 0d48130 (2026-07-11):** **POSITIVE** (scope selectivity) — `scope_selectivity_index=1.0`. Single-run, no cross-seed variance. Evidence: [`campaign log`](../../experiments_logs/2026-07-11_campaign_0d48130.md)
+
+
 ## Objective
 
 Does replacing the cortex's single global `warm_state` with a **context-addressed slot store** let two senses of one token coexist — so correcting the technical sense in its context does not obliterate the common sense in another context — measured by a non-saturating Sense-Selectivity-Index on the 8 Stage-2 episodes?

@@ -69,7 +69,7 @@ def prepare_bundle(
             "--allow-dirty-worktree for a non-scored development bundle"
         )
 
-    generated_names = ("source.tar.gz", "source_manifest.json", "dataset-metadata.json")
+    generated_names = ("source.tar.gz.bin", "source_manifest.json", "dataset-metadata.json")
     output.mkdir(parents=True, exist_ok=True)
     existing = [output / name for name in generated_names if (output / name).exists()]
     if existing and not force:
@@ -77,7 +77,7 @@ def prepare_bundle(
     for path in existing:
         path.unlink()
 
-    archive_path = output / "source.tar.gz"
+    archive_path = output / "source.tar.gz.bin"
     subprocess.run(
         [
             "git",

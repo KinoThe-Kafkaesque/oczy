@@ -19,9 +19,8 @@ Validation rules:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
-
 from oczy.experiments.organism_curriculum.dataset import (
+    DEFAULT_SPLIT_SALT,
     Episode,
     Stage,
     build_curriculum,
@@ -119,6 +118,14 @@ def validate_stage(stage: Stage, baseline_tokens: set[str] | None = None) -> Val
     """Validate a single stage, returning a report of warnings and errors."""
     baseline_tokens = baseline_tokens or _BASELINE_TOKENS
     report = ValidationReport()
+    if stage.probe_timing not in ("after_stage", "after_episode"):
+        report.add_error(
+            f"{stage.name}: unknown probe_timing {stage.probe_timing!r}"
+        )
+    if stage.consolidate_after and stage.probe_timing != "after_stage":
+        report.add_error(
+            f"{stage.name}: consolidate_after requires probe_timing='after_stage'"
+        )
     if not stage.episodes:
         report.add_warning("%s: stage has no episodes" % stage.name)
     for ep in stage.episodes:
@@ -145,7 +152,7 @@ def validate_curriculum(stages: tuple[Stage, ...]) -> ValidationReport:
 def validate_split(
     stages: tuple[Stage, ...],
     fraction: float = 0.3,
-    salt: str = "v2",
+    salt: str = DEFAULT_SPLIT_SALT,
 ) -> ValidationReport:
     """Validate the held-out split across all stages.
 
@@ -161,6 +168,23 @@ def validate_split(
             report.add_error(f"{stage.name}: holdout split is empty ({total} probes)")
         if total > 0 and len(dev) == 0:
             report.add_warning(f"{stage.name}: dev split is empty ({total} probes)")
+        if salt != "v2":
+            categories: dict[str, set[str]] = {}
+            for ep in stage.episodes:
+                for probe in ep.probes:
+                    categories.setdefault(probe.category, set()).add(
+                        f"{ep.id}|{probe.request}|{probe.category}"
+                    )
+            for category, probe_ids in categories.items():
+                if len(probe_ids) >= 2 and 0.0 < fraction < 1.0:
+                    if not (probe_ids & holdout):
+                        report.add_error(
+                            f"{stage.name}: holdout omits category {category!r}"
+                        )
+                    if not (probe_ids & dev):
+                        report.add_error(
+                            f"{stage.name}: dev split omits category {category!r}"
+                        )
     return report
 
 

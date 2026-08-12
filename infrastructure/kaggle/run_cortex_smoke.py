@@ -1,4 +1,4 @@
-"""Kaggle CPU/GPU smoke workload for offline cortex development.
+"""Kaggle CPU smoke workload for offline cortex development.
 
 This is an infrastructure test, not a Research/20 experiment.  It exercises
 the expected compute path without using eval/v2, meta_cortex/v1, episode IDs,
@@ -7,10 +7,9 @@ retrieval, or a real language model:
     learned writer -> fast state -> consolidation -> latent coupler
         -> frozen differentiable organ
 
-The same source is submitted to CPU and GPU kernels.  Its JSON artifact proves
-which hardware actually ran, whether gradients remained finite, whether the
-held-out synthetic loss improved, and whether the frozen organ stayed exactly
-unchanged.
+The source runs on a CPU kernel.  Its JSON artifact proves whether gradients
+remained finite, whether the held-out synthetic loss improved, and whether the
+frozen organ stayed exactly unchanged.
 """
 
 from __future__ import annotations
@@ -145,7 +144,7 @@ class CortexPath(nn.Module):
 
 
 class OfflineCortexSystem(nn.Module):
-    """Keep the trainable cortex and frozen organ together for data parallelism."""
+    """Keep the trainable cortex and frozen organ together."""
 
     def __init__(self, config: SmokeConfig) -> None:
         super().__init__()
@@ -179,11 +178,9 @@ def _source_hash() -> str:
 
 
 def _resolve_device(requested: str) -> torch.device:
-    if requested == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if requested == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA was requested but torch.cuda.is_available() is false")
-    return torch.device(requested)
+    if requested != "cpu":
+        raise RuntimeError("only CPU is supported; GPU/CUDA selection has been removed")
+    return torch.device("cpu")
 
 
 def _make_batch(
@@ -227,62 +224,26 @@ def _evaluate(
     return float(loss.item())
 
 
-def _synchronize(device: torch.device) -> None:
-    if device.type == "cuda":
-        torch.cuda.synchronize(device)
-
-
 def _device_report(device: torch.device) -> dict[str, Any]:
-    report: dict[str, Any] = {
+    return {
         "selected": str(device),
-        "cuda_available": torch.cuda.is_available(),
-        "cuda_device_count": torch.cuda.device_count(),
+        "cuda_available": False,
+        "cuda_device_count": 0,
         "torch_cuda_version": torch.version.cuda,
-        "cudnn_version": torch.backends.cudnn.version() if torch.cuda.is_available() else None,
+        "cudnn_version": None,
+        "name": platform.processor() or platform.machine(),
     }
-    if device.type == "cuda":
-        properties = torch.cuda.get_device_properties(device)
-        report.update(
-            {
-                "name": properties.name,
-                "total_memory_bytes": properties.total_memory,
-                "compute_capability": f"{properties.major}.{properties.minor}",
-                "visible_devices": [
-                    {
-                        "index": index,
-                        "name": torch.cuda.get_device_properties(index).name,
-                        "total_memory_bytes": torch.cuda.get_device_properties(index).total_memory,
-                        "compute_capability": (
-                            f"{torch.cuda.get_device_properties(index).major}."
-                            f"{torch.cuda.get_device_properties(index).minor}"
-                        ),
-                    }
-                    for index in range(torch.cuda.device_count())
-                ],
-            }
-        )
-    else:
-        report.update({"name": platform.processor() or platform.machine()})
-    return report
 
 
 def run(config: SmokeConfig, requested_device: str) -> dict[str, Any]:
     torch.manual_seed(config.seed)
     torch.set_float32_matmul_precision("high")
     device = _resolve_device(requested_device)
-    if device.type == "cuda":
-        torch.cuda.manual_seed_all(config.seed)
-
     base_system = OfflineCortexSystem(config).to(device)
     organ = _freeze(base_system.organ)
     system: nn.Module = base_system
     parallel_mode = "single-device"
     devices_used = [str(device)]
-    if device.type == "cuda" and torch.cuda.device_count() > 1:
-        device_ids = list(range(torch.cuda.device_count()))
-        system = nn.DataParallel(base_system, device_ids=device_ids)
-        parallel_mode = "torch.nn.DataParallel"
-        devices_used = [f"cuda:{index}" for index in device_ids]
     teacher = _freeze(
         nn.Linear(
             config.d_cortex,
@@ -302,7 +263,6 @@ def run(config: SmokeConfig, requested_device: str) -> dict[str, Any]:
 
     training_losses: list[float] = []
     gradients_finite = True
-    _synchronize(device)
     started = time.perf_counter()
     for _ in range(config.steps):
         key, value, query = _make_batch(config.batch_size, config.d_cortex, device)
@@ -318,7 +278,6 @@ def run(config: SmokeConfig, requested_device: str) -> dict[str, Any]:
                 break
         optimizer.step()
         training_losses.append(float(loss.detach().item()))
-    _synchronize(device)
     elapsed_seconds = time.perf_counter() - started
 
     final_eval_loss = _evaluate(system, base_system, organ, teacher, eval_batch)
@@ -391,7 +350,7 @@ def _default_output() -> Path:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+    parser.add_argument("--device", choices=("cpu",), default="cpu")
     parser.add_argument("--batch-size", type=int, default=SmokeConfig.batch_size)
     parser.add_argument("--eval-batch-size", type=int, default=SmokeConfig.eval_batch_size)
     parser.add_argument("--steps", type=int, default=SmokeConfig.steps)

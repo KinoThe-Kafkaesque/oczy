@@ -1231,3 +1231,114 @@ Remaining blocks:
   (`use_ingestion_pipeline=True`) with the stressor's chunking config fixed
   it. All consolidation_uptake metrics now at 1.0: `post_warm=1, post_cold=1,
   delta=1, output_shift=1, cold_output_shift=1`.
+
+---
+
+## July 2026 — R18 consolidation-as-distillation implementation (July 9)
+
+- **R18 implementation**: Created `src/oczy/experiments/consolidation_distillation.py`
+  (stub → 17KB real module). Wired `autoresearch.sh` to run it instead of
+  `experiment_orchestrator`. Bumped autoresearch to segment 10
+  (codebase-knowledge-recall), metric `distill_delta_holdout`.
+- **Run #200**: FAILED on eval_guard (protected eval/ assets changed).
+- **Run #201**: Stub baseline logged (`distill_delta_holdout=0.0`).
+- **Run #202**: Real implementation ran on Qwen2.5-0.5B + LoRA (rank 2, 1 seed,
+  1 max_step, ~220s). Holdout acc remained 0.0; `teacher_dev_delta ~0.176`
+  below validity gate of 0.2. The gate failure was later confirmed by
+  `2026-07-11_r18_mechanism_diagnostics.json`.
+- **Numba CPU kernel acceleration** (`62ab18e`): Wired Numba JIT kernels
+  (`_numba_kernels.py`) into `lm_cortex.py` for `LMPlasticCortex` character-level
+  RNN training loops. Separate acceleration technique from the TorchAO INT8
+  cutover on the Qwen organ path.
+- **Kaggle infrastructure commits**: `6dee16b` added guarded Kaggle research
+  compute workflow; CPU/T4/P100/L4 smoke test configs and Qwen T4 probe.
+
+---
+ 
+## Research/20 — INT8 meta_cortex/v2 Kaggle campaign (July 2026)
+
+### Infrastructure
+
+- **959e114** — Fixed Kaggle bootstrap to route experiment modules through
+  `infrastructure.kaggle.run_experiment_module` (common runner). Previously
+  `prepare_research_kernel.py` appended `--observed-manifest-json` directly
+  to the experiment module, which does not own that CLI. Now the bootstrap
+  invokes the wrapper and forwards experiment arguments via repeated `--arg`
+  entries. Added `kernel_id` to the job spec for execution provenance.
+  105 preparation tests + 401 campaign regression tests passed.
+
+- **c8daf85** — Fixed orchestrator crash-loop on terminal training failures.
+  Added `_raise_if_jobs_not_terminal()` guard: when the scheduler returns
+  non-zero and all jobs are in terminal state, the orchestrator lets
+  `_validate_training_state` produce a single clear error instead of
+  crash-looping.
+
+- **ebb7b6e** — Added `_clean_stale_lock()` before both scheduler stages.
+  Detects orphaned `state.json.owner.lock` files whose owner PID is dead
+  and removes them, preventing lock-contention cascades when the
+  orchestrator restarts.
+
+### Training campaign
+
+- **Immutable artifacts** (commit `959e114e44ff`):
+  - Source dataset: `abdellahkadem/oczy-source-959e114e44ff`
+  - Source archive SHA-256: `d56249037f2757a546684f6206634aacd724af3825f7f6dbf075db79ad5a3c18`
+  - Instrument definition: `f62f18ef3dd4eb7cf62d82e24b7c0fea5011516dbaf16d3ea50cc7890c9db14f`
+  - Public instrument dataset: `abdellahkadem/oczy-r20-int8-calibration-f62f18ef3dd4`
+  - Runtime manifest SHA-256: `a6214355c1c6b9192d435e62f3add6bef5db8c3a6c1cf3a55cb2a9dbfc91182e`
+  - Organ hash (Kaggle): `a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea`
+
+- **Dependencies**:
+  - TorchAO `0.17.0` W8A32 per-row (Int8WeightOnlyConfig v2)
+  - Pinned wheel: `torchao-0.17.0-cp310-abi3-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl`
+    (SHA-256 `87a418ce...`, dataset `abdellahkadem/oczy-r20-int8-deps-92c99ca`)
+  - Model: `Qwen/Qwen2.5-0.5B-Instruct` via `qwen-lm/qwen2.5/transformers/0.5b-instruct/1`
+  - Kaggle CPU runtime: Python 3.12.13, torch 2.10.0+cpu, transformers 5.0.0,
+    tokenizers 0.22.2, safetensors 0.7.0
+
+- **First wave (d0–d4, 30 train tasks per family, 2 outer steps)**:
+  - d0 (`7057...`): killed by Kaggle 12h CPU limit
+  - d1 (`5996...`): killed by Kaggle 12h CPU limit
+  - d2 (`8811...`): **succeeded**, runtime manifest verified
+  - d3 (`8429...`): killed by Kaggle 12h CPU limit
+  - d4 (`8461...`): **completed** on Kaggle but scheduler timed out before
+    collection; manually recovered, runtime manifest verified
+
+- **Second wave (d0h/d1h/d3h, 15 train tasks per family, 2 outer steps)**:
+  d0h succeeded normally; d3h completed but crossed the scheduler timeout and
+  was recovered with exit 0/runtime equality; d1h was cancelled by Kaggle's
+  hard limit and produced no checkpoint.
+
+- **Third wave (d1q8, 8 train tasks per family, 2 outer steps)**:
+  unique retry for seed `5996565330439180020`; currently RUNNING. All model,
+  source, runtime, optimizer, validation, and seed bindings remain fixed.
+
+- **Retry-aware orchestration** (`920c3ef`): preserves failed attempts while
+  requiring one verified success per canonical seed. Batch/state validation
+  accepts unique retry names but rejects missing/unexpected seeds and
+  unverified successes.
+
+- **Durable scheduling**: systemd user service `oczy-r20-training.service`
+  polls every 30s with a 46,800s local timeout and shared runner-pool lease.
+  Terminal exit 1 no longer restarts indefinitely. Its `OnSuccess` trigger
+  starts `oczy-r20-dev-orchestrator.service`, which validates checkpoints,
+  publishes the archive, and generates the calibration queue.
+
+### Next steps (blocked on training completion)
+
+- Automatic continuation validates all five checkpoints and publishes the
+  checkpoint archive dataset.
+- Calibration fan-out is fixed at **90 jobs**: 90 DEV tasks / 5-task ranges
+  × 5 checkpoint seeds = 90.
+- After collection: local merge, `calibrate-dev`, power analysis, candidate
+  finalization.
+- Meta-test remains blocked pending human signoff
+
+### Remaining issues
+
+- The orchestrator's in-process scheduler can contend with orphaned owner
+  locks under supervisor crash pressure; the systemd-owned scheduler is the
+  active durable execution path.
+- Kaggle's 12h CPU cap remains the limiting resource. The current d1q8 retry
+  reduces only training tasks (15→8) to obtain the fifth canonical-seed
+  checkpoint without changing seeds, optimizer, runtime, or instrument.

@@ -18,6 +18,9 @@ from typing import Any, Literal
 
 ProbeCategory = Literal["transfer", "scope", "forgetting", "retention"]
 MatchMode = Literal["exact", "sense", "contains"]
+ProbeTiming = Literal["after_stage", "after_episode"]
+
+DEFAULT_SPLIT_SALT = "v2.2"
 
 
 @dataclass(frozen=True)
@@ -119,6 +122,8 @@ class Stage:
     consolidate_before: bool
     consolidate_after: bool
     episodes: tuple[Episode, ...]
+    teach_episodes: bool = True
+    probe_timing: ProbeTiming = "after_stage"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -126,6 +131,8 @@ class Stage:
             "description": self.description,
             "consolidate_before": self.consolidate_before,
             "consolidate_after": self.consolidate_after,
+            "teach_episodes": self.teach_episodes,
+            "probe_timing": self.probe_timing,
             "episodes": [ep.to_dict() for ep in self.episodes],
         }
 
@@ -141,6 +148,8 @@ class Stage:
             consolidate_before=bool(data.get("consolidate_before", False)),
             consolidate_after=bool(data.get("consolidate_after", False)),
             episodes=episodes,
+            teach_episodes=bool(data.get("teach_episodes", True)),
+            probe_timing=data.get("probe_timing", "after_stage"),  # type: ignore[arg-type]
         )
 
 
@@ -197,51 +206,33 @@ def build_curriculum(
         stages.append(load_stage(path))
     return tuple(stages)
 
-def split_probes(stage: Stage, fraction: float = 0.3, salt: str = "v2") -> tuple[set[str], set[str]]:
-    """Partition stage probes into dev and holdout sets via stable hashing.
+def _probe_id(episode: Episode, probe: Probe) -> str:
+    return f"{episode.id}|{probe.request}|{probe.category}"
 
-    Each probe is identified by ``"episode_id|probe_request|probe_category"``.
-    Hashing is deterministic: same stage + salt always produces the same split.
 
-    Args:
-        stage: The curriculum stage whose probes to split.
-        fraction: Fraction of probes assigned to holdout (0.0–1.0).
-        salt: Salt string for hash stability across runs.
-
-    Returns:
-        ``(dev_ids, holdout_ids)`` — two sets of probe identifier strings.
-        Every stage is guaranteed a non-empty holdout: if thresholding
-        assigns no probes, the lowest-force-hash probes are promoted (1 for
-        stages under 4 probes, ceil(fraction * total) otherwise).
-    """
-    probes: list[tuple[str, Probe, Episode]] = []
-    for ep in stage.episodes:
-        for probe in ep.probes:
-            probe_id = f"{ep.id}|{probe.request}|{probe.category}"
-            probes.append((probe_id, probe, ep))
-
+def _legacy_split_probes(
+    stage: Stage,
+    fraction: float,
+    salt: str,
+) -> tuple[set[str], set[str]]:
+    """Reproduce the historical v2/v2.1 threshold-hash partition exactly."""
+    probes = [
+        (_probe_id(ep, probe), probe, ep)
+        for ep in stage.episodes
+        for probe in ep.probes
+    ]
     total = len(probes)
     if total == 0:
         return set(), set()
 
     holdout: set[str] = set()
     dev: set[str] = set()
-
     for probe_id, _, _ in probes:
         h = hashlib.sha256(f"{salt}:{probe_id}".encode()).digest()
         val = int.from_bytes(h[:4], "big") / 0xFFFFFFFF
-        if val < fraction:
-            holdout.add(probe_id)
-        else:
-            dev.add(probe_id)
+        (holdout if val < fraction else dev).add(probe_id)
 
-    # Guarantee a non-empty holdout for ANY stage: an empty holdout is an
-    # ERROR by validate_split's contract, and an unlucky hash can produce one
-    # (stage 0 grounding: all 8 probes hash > 0.3 under salt "v2"). When
-    # thresholding leaves holdout empty, promote the lowest-force-hash probes
-    # up to the expected holdout size. Non-empty splits are never altered, so
-    # every previously measurable split stays byte-identical.
-    if total > 0 and len(holdout) == 0:
+    if len(holdout) == 0:
         target = 1 if total < 4 else math.ceil(fraction * total)
         sorted_ids = sorted(
             probes,
@@ -249,12 +240,68 @@ def split_probes(stage: Stage, fraction: float = 0.3, salt: str = "v2") -> tuple
                 f"force_holdout:{salt}:{p[0]}".encode()
             ).digest(),
         )
-        for probe_id, _, _ in sorted_ids:
-            if len(holdout) >= target:
-                break
-            if probe_id in dev:
-                dev.remove(probe_id)
-                holdout.add(probe_id)
+        for probe_id, _, _ in sorted_ids[:target]:
+            dev.discard(probe_id)
+            holdout.add(probe_id)
+    return dev, holdout
+
+
+def split_probes(
+    stage: Stage,
+    fraction: float = 0.3,
+    salt: str = DEFAULT_SPLIT_SALT,
+) -> tuple[set[str], set[str]]:
+    """Partition probes deterministically, stratified by probe category.
+
+    ``salt="v2"`` remains an exact compatibility path for already registered
+    v2/v2.1 experiments.  v2.2 and later salts rank probes by stable hash within
+    each category and allocate an exact ``ceil(fraction * category_size)``
+    holdout.  This prevents a stage holdout from accidentally omitting the
+    capability named by that stage (for example, Stage 3 transfer probes).
+
+    Args:
+        stage: The curriculum stage whose probes to split.
+        fraction: Fraction of probes assigned to holdout (0.0–1.0).
+        salt: Split-policy version and hash salt. ``"v2"`` selects the legacy
+            threshold-hash policy; the default selects the v2.2 stratified
+            policy.
+
+    Returns:
+        ``(dev_ids, holdout_ids)`` — two sets of probe identifier strings.
+        Categories with at least two probes retain both dev and holdout items
+        for fractions strictly between zero and one.
+    """
+    if salt == "v2":
+        return _legacy_split_probes(stage, fraction, salt)
+    if not 0.0 <= fraction <= 1.0:
+        raise ValueError("fraction must be between 0.0 and 1.0")
+
+    probes_by_category: dict[str, list[str]] = {}
+    for ep in stage.episodes:
+        for probe in ep.probes:
+            probes_by_category.setdefault(probe.category, []).append(
+                _probe_id(ep, probe)
+            )
+
+    holdout: set[str] = set()
+    dev: set[str] = set()
+    for category, probe_ids in sorted(probes_by_category.items()):
+        ranked = sorted(
+            probe_ids,
+            key=lambda probe_id: hashlib.sha256(
+                f"{salt}:{category}:{probe_id}".encode()
+            ).digest(),
+        )
+        if fraction <= 0.0:
+            target = 0
+        elif fraction >= 1.0:
+            target = len(ranked)
+        else:
+            target = math.ceil(fraction * len(ranked))
+            if len(ranked) >= 2:
+                target = min(target, len(ranked) - 1)
+        holdout.update(ranked[:target])
+        dev.update(ranked[target:])
 
     return dev, holdout
 

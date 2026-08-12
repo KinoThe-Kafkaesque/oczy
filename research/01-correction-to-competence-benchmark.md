@@ -1,7 +1,9 @@
 # 01 — Correction-to-Competence Benchmark v2: de-saturating the eval
 *The eval can no longer tell two architectures apart; rebuild it so a behavior difference is the only thing it can register.*
 
-Status: PROPOSED | Thesis anchor: experiments.txt §14 (Correction-to-Competence Benchmark), §10 (mistake immune system), §9/§13 (compression / how to train), §1 (correction-gated cortex) | Goal anchor: GOALS.md Goal 1 (LM-side steering) + Goal 3 (organ tensor upgrades / metabolism loop) | Depends on / relates to: 02-kv-slot-fact-injection, 03-layer-l-hidden-extraction, 04-context-scoped-attractors, 05-metabolism-loop-closure, 06-bounded-growth-consolidation, 07-conversation-world-model-rl
+Status: TESTED-NULL (2026-07-11) | Thesis anchor: experiments.txt §14 (Correction-to-Competence Benchmark), §10 (mistake immune system), §9/§13 (compression / how to train), §1 (correction-gated cortex) | Goal anchor: GOALS.md Goal 1 (LM-side steering) + Goal 3 (organ tensor upgrades / metabolism loop) | Depends on / relates to: 02-kv-slot-fact-injection, 03-layer-l-hidden-extraction, 04-context-scoped-attractors, 05-metabolism-loop-closure, 06-bounded-growth-consolidation, 07-conversation-world-model-rl
+
+> **Outcome (2026-07-11):** TESTED-NULL. Campaign 0d48130 (colab, commit `537260c`) ran the v2 scorecard: `v2_behavior_delta_mock=0.0`, `v2_discrimination=0.0`. The benchmark produced 5 de-saturation events (separated exact-vs-domain recall, signed interference forgetting both spread=1.0) but detected **zero behavior delta** — no architecture pair separated on the new scorecard. `domain_recall=1.0` but `exact_recall=0.0`. The de-saturation itself is a result (the eval can now distinguish exact from domain), but the S/H behavioral null (H2) is the measured verdict. Evidence: `../experiments_logs/2026-07-11_campaign_0d48130.md`.
 
 ## Problem
 The headline eval is saturated and cannot discriminate the architecture variants it exists to compare.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manage Oczy Runner Pool"
+  short_description: "Plan, dispatch, inspect, and recover remote jobs"
+  default_prompt: "Use $manage-oczy-runner-pool to inspect the remote queue and safely plan or run approved jobs."

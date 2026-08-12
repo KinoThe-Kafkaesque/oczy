@@ -1,8 +1,11 @@
 """Generate a private, provenance-checked Kaggle research kernel.
 
 The generated bootstrap verifies a commit-addressed Oczy source archive,
-discovers the attached version-pinned model, disables network-backed model
-resolution, records runtime provenance, and then executes one Python module.
+resolves the attached model via manifest-directed identity (no hard-coded
+filename/config heuristics), disables network-backed model resolution,
+observes the local runtime manifest, compares it against the expected
+identity, records runtime provenance, and then executes the common runner
+with both expected and observed manifests.
 It does not submit the kernel; generation, review, and submission are separate
 steps.
 """
@@ -12,18 +15,34 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = "oczy/kaggle-research-job/v1"
-DEFAULT_MODEL_SOURCE = "qwen-lm/qwen2.5/transformers/0.5b-instruct/1"
+SCHEMA_VERSION = "oczy/kaggle-research-job/v2"
 PROFILES = {
     "cpu": {"enable_gpu": False, "machine_shape": ""},
-    "t4": {"enable_gpu": True, "machine_shape": "NvidiaTeslaT4"},
 }
 PHASES = ("instrument", "oracle", "development", "meta-test", "analysis")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+WHL_BASENAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*\.whl$")
+OPAQUE_TARGZ_BASENAME_PATTERN = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._+-]*\.tar\.gz\.bin$"
+)
+DESTINATION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+OFFLINE_WHEEL_KEYS = frozenset({"dataset", "filename", "sha256"})
+OFFLINE_ARCHIVE_KEYS = frozenset({"dataset", "filename", "sha256", "format", "destination"})
+
+
+def _title_slug(title: str) -> str:
+    """Kaggle clean-URL title slug.
+
+    Lowercase, collapse each run of non-ASCII-alphanumeric characters to a
+    single hyphen, and strip leading/trailing hyphens.  This mirrors how
+    Kaggle derives the final path component of a kernel URL from its title.
+    """
+    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
 
 
 BOOTSTRAP_TEMPLATE = '''\
@@ -38,14 +57,24 @@ import platform
 import runpy
 import sys
 import tarfile
+import tempfile
 import time
 import traceback
 from pathlib import Path
 
+# --- CPU-only offline contract: must be set before importing torch ---
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ["OMP_NUM_THREADS"] = "4"
+os.environ["MKL_NUM_THREADS"] = "4"
+os.environ["OCZY_REMOTE_CPU_ONLY"] = "1"
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import torch
 
 
-JOB_SPEC = __JOB_SPEC__
+JOB_SPEC = json.loads(__JOB_SPEC__)
 
 
 def sha256_file(path: Path) -> str:
@@ -55,6 +84,115 @@ def sha256_file(path: Path) -> str:
             digest.update(chunk)
     return digest.hexdigest()
 
+
+def install_offline_wheels() -> None:
+    wheels = JOB_SPEC.get("offline_wheels") or []
+    if not wheels:
+        return
+    import subprocess as _sp
+    for entry in wheels:
+        filename = entry["filename"]
+        candidates: list[Path] = []
+        for candidate in Path("/kaggle/input").rglob(filename):
+            if candidate.is_symlink():
+                try:
+                    real = candidate.resolve(strict=True)
+                except (FileNotFoundError, RuntimeError):
+                    continue
+            else:
+                real = candidate.resolve()
+            if real.is_file():
+                candidates.append(real)
+        if len(candidates) == 0:
+            raise RuntimeError(
+                f"offline wheel {filename!r}: no regular-file candidate found "
+                f"under /kaggle/input"
+            )
+        if len(candidates) > 1:
+            rendered = ", ".join(str(p) for p in candidates)
+            raise RuntimeError(
+                f"offline wheel {filename!r}: ambiguous candidates ({len(candidates)}): "
+                f"{rendered}"
+            )
+        real_path = candidates[0]
+        actual = sha256_file(real_path)
+        if actual != entry["sha256"]:
+            raise RuntimeError(
+                f"offline wheel {filename} hash mismatch: "
+                f"expected {entry['sha256']}, got {actual}"
+            )
+        _sp.check_call(
+            [sys.executable, "-m", "pip", "install", "--no-index", "--no-deps",
+             "--force-reinstall", str(real_path)],
+        )
+
+
+
+def extract_offline_archives() -> None:
+    archives = JOB_SPEC.get("offline_archives") or []
+    if not archives:
+        return
+    base = Path("/tmp/oczy-offline-inputs")
+    for entry in archives:
+        filename = entry["filename"]
+        destination_name = entry["destination"]
+        candidates: list[Path] = []
+        for candidate in Path("/kaggle/input").rglob(filename):
+            if candidate.is_symlink():
+                try:
+                    real = candidate.resolve(strict=True)
+                except (FileNotFoundError, RuntimeError):
+                    continue
+            else:
+                real = candidate.resolve()
+            if real.is_file():
+                candidates.append(real)
+        if len(candidates) == 0:
+            raise RuntimeError(
+                f"offline archive {filename!r}: no regular-file candidate found "
+                f"under /kaggle/input"
+            )
+        if len(candidates) > 1:
+            rendered = ", ".join(str(p) for p in candidates)
+            raise RuntimeError(
+                f"offline archive {filename!r}: ambiguous candidates ({len(candidates)}): "
+                f"{rendered}"
+            )
+        real_path = candidates[0]
+        actual = sha256_file(real_path)
+        if actual != entry["sha256"]:
+            raise RuntimeError(
+                f"offline archive {filename} hash mismatch: "
+                f"expected {entry['sha256']}, got {actual}"
+            )
+        dest = base / destination_name
+        if dest.exists():
+            raise RuntimeError(
+                f"offline archive destination already exists: {dest}"
+            )
+        base.mkdir(parents=True, exist_ok=True)
+        dest.mkdir(parents=True, exist_ok=False)
+        dest_resolved = dest.resolve()
+        _DISALLOWED_TYPES = (
+            tarfile.SYMTYPE, tarfile.LNKTYPE, tarfile.CHRTYPE,
+            tarfile.BLKTYPE, tarfile.FIFOTYPE,
+        )
+        with tarfile.open(real_path, "r:gz") as handle:
+            for member in handle.getmembers():
+                if member.name.startswith("/") or ".." in member.name.split("/"):
+                    raise RuntimeError(
+                        f"unsafe archive member path: {member.name!r}"
+                    )
+                if member.type in _DISALLOWED_TYPES:
+                    raise RuntimeError(
+                        f"unsupported archive member type {member.type!r}: {member.name!r}"
+                    )
+                target = (dest / member.name).resolve()
+                if not target.is_relative_to(dest_resolved):
+                    raise RuntimeError(
+                        f"unsafe archive member path traversal: {member.name!r} -> {target}"
+                    )
+            handle.extractall(dest, filter="data")
 
 def write_report(payload: dict) -> None:
     path = Path("/kaggle/working/remote_run_provenance.json")
@@ -96,31 +234,18 @@ def safe_extract(archive: Path, destination: Path) -> Path:
     return root
 
 
-def find_model() -> Path | None:
-    if not JOB_SPEC.get("model_source"):
-        return None
-    matches = []
-    for config_path in Path("/kaggle/input").rglob("config.json"):
-        try:
-            config = json.loads(config_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if config.get("model_type") == "qwen2" and config.get("hidden_size") == 896:
-            candidate = config_path.parent.resolve()
-            if (candidate / "model.safetensors").is_file():
-                matches.append(candidate)
-    unique = sorted(set(matches), key=str)
-    if len(unique) != 1:
-        raise RuntimeError(f"expected one attached Qwen model, found {len(unique)}")
-    return unique[0]
-
-
 def add_source_paths(root: Path) -> None:
-    paths = [root, root / "src"]
+    # The archive root (root.parent) must be on sys.path so that
+    # ``infrastructure.kaggle.runtime_manifest`` and other repo-level
+    # packages are importable from extracted source, not from a
+    # pre-installed infrastructure package.
+    paths = [root.parent, root, root / "src"]
     paths.extend(sorted(root.glob("*/src")))
-    for path in reversed(paths):
-        if path.is_dir():
-            sys.path.insert(0, str(path))
+    valid = [str(p) for p in paths if p.is_dir()]
+    for path in reversed(valid):
+        sys.path.insert(0, path)
+    existing = os.environ.get("PYTHONPATH", "")
+    os.environ["PYTHONPATH"] = os.pathsep.join(valid + ([existing] if existing else []))
 
 
 def hardware() -> dict:
@@ -128,56 +253,189 @@ def hardware() -> dict:
         "platform": platform.platform(),
         "python": sys.version.split()[0],
         "torch": torch.__version__,
-        "cuda_available": torch.cuda.is_available(),
-        "cuda_device_count": torch.cuda.device_count(),
+        "cuda_available": False,
+        "cuda_device_count": 0,
         "torch_cuda_version": torch.version.cuda,
     }
-    if torch.cuda.is_available():
-        data["devices"] = [
-            {
-                "index": index,
-                "name": torch.cuda.get_device_properties(index).name,
-                "compute_capability": (
-                    f"{torch.cuda.get_device_properties(index).major}."
-                    f"{torch.cuda.get_device_properties(index).minor}"
-                ),
-                "total_memory_bytes": torch.cuda.get_device_properties(index).total_memory,
-            }
-            for index in range(torch.cuda.device_count())
-        ]
     return data
 
 
+def _resolve_model_from_manifest(expected_manifest: dict) -> Path | None:
+    """Resolve the model root from expected artifact manifest entries.
+
+    For each artifact file in the expected manifest, scans
+    ``/kaggle/input`` for files/directories whose relative name,
+    size, and SHA-256 match the expected entry.  Requires exactly one
+    consistent candidate root and returns it.  Returns ``None`` for
+    model-free jobs.
+    """
+    model_block = expected_manifest["model"]
+    convention = model_block["resolved_model_convention"]
+    if convention == "none":
+        return None
+
+    artifact_files = model_block["artifact_files"]
+    first_file = artifact_files[0]
+    first_name = first_file["path"]
+    first_sha = first_file["sha256"]
+    first_size = first_file["size_bytes"]
+
+    candidates: list[Path] = []
+    # Search for the first artifact file by path and size.
+    for root_path in Path("/kaggle/input").glob("*"):
+        if not root_path.is_dir():
+            continue
+        for candidate_path in root_path.rglob(first_name):
+            if not candidate_path.is_file():
+                continue
+            actual_size = candidate_path.stat().st_size
+            if actual_size != first_size:
+                continue
+            actual_sha = sha256_file(candidate_path)
+            if actual_sha != first_sha:
+                continue
+            candidates.append(candidate_path.resolve())
+
+    unique = sorted(set(candidates), key=str)
+    if len(unique) == 0:
+        raise RuntimeError(
+            f"no candidate found for manifest file {first_name!r} "
+            f"(sha256={first_sha[:12]}..., size={first_size})"
+        )
+    if len(unique) != 1:
+        rendered = ", ".join(str(p) for p in unique)
+        raise RuntimeError(
+            f"ambiguous candidates for {first_name!r}: found "
+            f"{len(unique)}: {rendered}"
+        )
+
+    # Determine the model root from the first matched file.
+    matched = unique[0]
+    if convention == "llama-cpp-gguf-file":
+        # Single GGUF file — the file itself is the root.
+        return matched
+    else:
+        # transformers-pretrained-directory — the parent directory.
+        return matched.parent
+
+
+def _set_model_env_vars(model_root: Path | None, convention: str) -> None:
+    """Set convention-appropriate model environment variables."""
+    if model_root is None:
+        return
+    if convention == "llama-cpp-gguf-file":
+        os.environ["OCZY_MODEL_PATH"] = str(model_root)
+    elif convention == "transformers-pretrained-directory":
+        os.environ["OCZY_HF_MODEL_DIR"] = str(model_root)
+
+
 def main() -> int:
+    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+    profile = JOB_SPEC.get("profile")
+    if cuda_visible != "" or profile != "cpu":
+        raise RuntimeError(
+            "CPU-only contract violated: CUDA_VISIBLE_DEVICES must be empty "
+            "and profile must be 'cpu'. Refusing to run with GPU access."
+        )
+    cuda_available = False
     report = {
         "schema_version": JOB_SPEC["schema_version"],
         "job_spec": JOB_SPEC,
         "status": "starting",
         "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "hardware": hardware(),
+        "cpu_only_contract": {
+            "profile": JOB_SPEC.get("profile"),
+            "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+            "cuda_available": cuda_available,
+            "omp_num_threads": os.environ.get("OMP_NUM_THREADS"),
+            "mkl_num_threads": os.environ.get("MKL_NUM_THREADS"),
+            "oczy_remote_cpu_only": os.environ.get("OCZY_REMOTE_CPU_ONLY"),
+            "hf_hub_offline": os.environ.get("HF_HUB_OFFLINE"),
+            "transformers_offline": os.environ.get("TRANSFORMERS_OFFLINE"),
+        },
     }
     write_report(report)
+    extract_offline_archives()
+    install_offline_wheels()
     try:
         archive, source_manifest = find_source()
-        source_root = safe_extract(archive, Path("/kaggle/working/source"))
+        source_root = safe_extract(archive, Path(tempfile.mkdtemp()))
         add_source_paths(source_root)
-        model_dir = find_model()
-        if model_dir is not None:
-            os.environ["OCZY_MODEL_DIR"] = str(model_dir)
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+        # --- Manifest-directed model resolution and observation ---
+        expected_manifest = JOB_SPEC["runtime_manifest"]
+        import importlib.util as _ilu
+        _rm_path = source_root / "infrastructure" / "kaggle" / "runtime_manifest.py"
+        _spec = _ilu.spec_from_file_location("_runtime_manifest", _rm_path)
+        assert _spec is not None and _spec.loader is not None, f"runtime_manifest.py not found at {_rm_path}"
+        _rm_mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_rm_mod)
+        compare_runtime_manifests = _rm_mod.compare_runtime_manifests
+        observe_runtime_manifest = _rm_mod.observe_runtime_manifest
+        RuntimeManifestError = _rm_mod.RuntimeManifestError
+        strict_canonical_json = _rm_mod.strict_canonical_json
+
+        convention = expected_manifest["model"]["resolved_model_convention"]
+        model_root = _resolve_model_from_manifest(expected_manifest)
+        _set_model_env_vars(model_root, convention)
+
+        try:
+            observed_manifest = observe_runtime_manifest(
+                model_root=model_root,
+                logical_model_id=expected_manifest["model"]["logical_model_id"],
+                resolved_model_convention=convention,
+                generation_config=expected_manifest["greedy_generation"],
+                quantization=expected_manifest["model"]["quantization"],
+            )
+        except RuntimeManifestError as exc:
+            report.update(
+                {
+                    "status": "observation_failure",
+                    "error": str(exc),
+                    "finished_utc": time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                    ),
+                }
+            )
+            write_report(report)
+            return 1
+
+        mismatches = compare_runtime_manifests(expected_manifest, observed_manifest)
+
         report.update(
             {
                 "status": "running",
                 "source_manifest": source_manifest,
                 "source_root": str(source_root),
-                "model_dir": str(model_dir) if model_dir is not None else None,
+                "model_root": str(model_root) if model_root is not None else None,
+                "expected_runtime_manifest_sha256": expected_manifest["manifest_sha256"],
+                "observed_runtime_manifest_sha256": observed_manifest["manifest_sha256"],
+                "runtime_manifest_mismatches": mismatches[:20] if mismatches else [],
             }
         )
         write_report(report)
-        sys.argv = [JOB_SPEC["module"], *JOB_SPEC["arguments"]]
-        runpy.run_module(JOB_SPEC["module"], run_name="__main__", alter_sys=True)
+        os.chdir(source_root)
+
+        # Run the experiment through the common module runner.  The wrapper
+        # consumes runtime manifests and forwards only the reviewed experiment
+        # arguments to the actual module.
+        expected_json = strict_canonical_json(expected_manifest).decode("utf-8")
+        observed_json = strict_canonical_json(observed_manifest).decode("utf-8")
+        runner_module = "infrastructure.kaggle.run_experiment_module"
+        runner_argv = [
+            runner_module,
+            "--module", JOB_SPEC["module"],
+            "--source-commit", JOB_SPEC["source_commit"],
+            "--provider", "kaggle",
+            "--job-name", JOB_SPEC["kernel_id"],
+            "--report", "/kaggle/working/execution_report.json",
+            "--expected-manifest-json", expected_json,
+            "--observed-manifest-json", observed_json,
+        ]
+        runner_argv.extend(f"--arg={arg}" for arg in JOB_SPEC["arguments"])
+        sys.argv = runner_argv
+        runpy.run_module(runner_module, run_name="__main__", alter_sys=True)
     except SystemExit as error:
         code = error.code if isinstance(error.code, int) else (0 if error.code is None else 1)
         report["status"] = "complete" if code == 0 else "error"
@@ -209,6 +467,101 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _validate_offline_wheels(wheels: list[dict[str, str]] | None) -> None:
+    if not wheels:
+        return
+    seen_filenames: set[str] = set()
+    seen_keys: set[tuple[str, str]] = set()
+    for entry in wheels:
+        if set(entry.keys()) != OFFLINE_WHEEL_KEYS:
+            raise ValueError(
+                f"offline wheel entry must have exactly keys {sorted(OFFLINE_WHEEL_KEYS)}; "
+                f"got {sorted(entry.keys())}"
+            )
+        filename = entry["filename"]
+        if not WHL_BASENAME_PATTERN.fullmatch(filename):
+            raise ValueError(
+                f"offline wheel filename must be a basename-only .whl file; got {filename!r}"
+            )
+        sha256 = entry["sha256"]
+        if not SHA256_PATTERN.fullmatch(sha256):
+            raise ValueError(
+                f"offline wheel sha256 must be a lowercase 64-character hex string; "
+                f"got {sha256!r}"
+            )
+        dataset = entry["dataset"]
+        if not dataset or "/" not in dataset:
+            raise ValueError(
+                f"offline wheel dataset must be an owner/dataset-slug; got {dataset!r}"
+            )
+        if filename in seen_filenames:
+            raise ValueError(f"duplicate offline wheel filename: {filename!r}")
+        seen_filenames.add(filename)
+        key = (dataset, filename)
+        if key in seen_keys:
+            raise ValueError(
+                f"duplicate offline wheel entry: dataset={dataset!r}, filename={filename!r}"
+            )
+        seen_keys.add(key)
+
+
+def _validate_offline_archives(
+    archives: list[dict[str, str]] | None,
+    wheel_filenames: set[str],
+) -> None:
+    if not archives:
+        return
+    seen_filenames: set[str] = set()
+    seen_json: set[str] = set()
+    seen_destinations: set[str] = set()
+    for entry in archives:
+        if set(entry.keys()) != OFFLINE_ARCHIVE_KEYS:
+            raise ValueError(
+                f"offline archive entry must have exactly keys {sorted(OFFLINE_ARCHIVE_KEYS)}; "
+                f"got {sorted(entry.keys())}"
+            )
+        filename = entry["filename"]
+        if not OPAQUE_TARGZ_BASENAME_PATTERN.fullmatch(filename):
+            raise ValueError(
+                "offline archive transport filename must be a basename-only "
+                f".tar.gz.bin file; got {filename!r}"
+            )
+        sha256 = entry["sha256"]
+        if not SHA256_PATTERN.fullmatch(sha256):
+            raise ValueError(
+                f"offline archive sha256 must be a lowercase 64-character hex string; "
+                f"got {sha256!r}"
+            )
+        fmt = entry["format"]
+        if fmt != "tar.gz":
+            raise ValueError(
+                f"offline archive format must be 'tar.gz'; got {fmt!r}"
+            )
+        destination = entry["destination"]
+        if not DESTINATION_PATTERN.fullmatch(destination):
+            raise ValueError(
+                f"offline archive destination must be a single safe directory name; "
+                f"got {destination!r}"
+            )
+        dataset = entry["dataset"]
+        if not dataset or "/" not in dataset:
+            raise ValueError(
+                f"offline archive dataset must be an owner/dataset-slug; got {dataset!r}"
+            )
+        if filename in seen_filenames or filename in wheel_filenames:
+            raise ValueError(f"duplicate offline archive filename: {filename!r}")
+        seen_filenames.add(filename)
+        if destination in seen_destinations:
+            raise ValueError(f"duplicate offline archive destination: {destination!r}")
+        seen_destinations.add(destination)
+        entry_json = json.dumps(entry, sort_keys=True)
+        if entry_json in seen_json:
+            raise ValueError(
+                f"duplicate offline archive entry: {entry_json}"
+            )
+        seen_json.add(entry_json)
+
+
 def prepare_kernel(
     *,
     output: Path,
@@ -224,7 +577,10 @@ def prepare_kernel(
     model_source: str | None,
     instrument_manifest_sha256: str | None,
     human_signoff_id: str | None,
+    runtime_manifest: dict[str, Any],
     force: bool,
+    offline_wheels: list[dict[str, str]] | None = None,
+    offline_archives: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     if phase not in PHASES:
         raise ValueError(f"unknown phase: {phase}")
@@ -240,6 +596,17 @@ def prepare_kernel(
         raise ValueError("meta-test generation requires manifest hash and human sign-off ID")
     if instrument_manifest_sha256 and not SHA256_PATTERN.fullmatch(instrument_manifest_sha256):
         raise ValueError("instrument manifest hash must be a lowercase SHA-256")
+    _validate_offline_wheels(offline_wheels)
+    wheel_filenames = {w["filename"] for w in (offline_wheels or [])}
+    _validate_offline_archives(offline_archives, wheel_filenames)
+    title_slug = _title_slug(title)
+    id_slug = kernel_id.rsplit("/", 1)[-1]
+    if title_slug != id_slug:
+        raise ValueError(
+            f"title {title!r} resolves to slug {title_slug!r} but kernel_id "
+            f"{kernel_id!r} ends with {id_slug!r}; Kaggle would create the "
+            f"kernel under a different slug and polling the requested id would fail"
+        )
 
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -247,29 +614,35 @@ def prepare_kernel(
     if any(path.exists() for path in generated) and not force:
         raise FileExistsError(f"refusing to overwrite generated files in {output}")
 
-    profile_data = PROFILES[profile]
-    effective_model_source = model_source
-    if effective_model_source is None and phase in {"oracle", "development", "meta-test"}:
-        effective_model_source = DEFAULT_MODEL_SOURCE
     job_spec: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "phase": phase,
         "profile": profile,
+        "kernel_id": kernel_id,
         "source_dataset": source_dataset,
         "source_commit": source_commit,
         "source_archive_sha256": source_archive_sha256,
-        "model_source": effective_model_source,
+        "model_source": model_source,
         "module": module,
         "arguments": arguments,
         "instrument_manifest_sha256": instrument_manifest_sha256,
         "human_signoff_id": human_signoff_id,
+        "runtime_manifest": runtime_manifest,
+        "offline_wheels": offline_wheels or [],
+        "offline_archives": offline_archives or [],
     }
     rendered_spec = json.dumps(job_spec, sort_keys=True)
     (output / "run.py").write_text(
-        BOOTSTRAP_TEMPLATE.replace("__JOB_SPEC__", rendered_spec),
+        BOOTSTRAP_TEMPLATE.replace("__JOB_SPEC__", repr(rendered_spec)),
         encoding="utf-8",
     )
     _write_json(output / "job_spec.json", job_spec)
+    wheel_datasets = [w["dataset"] for w in (offline_wheels or [])]
+    archive_datasets = [a["dataset"] for a in (offline_archives or [])]
+    all_datasets = [source_dataset]
+    for ds in wheel_datasets + archive_datasets:
+        if ds not in all_datasets:
+            all_datasets.append(ds)
     _write_json(
         output / "kernel-metadata.json",
         {
@@ -279,17 +652,16 @@ def prepare_kernel(
             "language": "python",
             "kernel_type": "script",
             "is_private": True,
-            "enable_gpu": profile_data["enable_gpu"],
+            "enable_gpu": False,
             "enable_tpu": False,
             "enable_internet": False,
-            "machine_shape": profile_data["machine_shape"],
-            "dataset_sources": [source_dataset],
+            "machine_shape": "",
+            "dataset_sources": all_datasets,
             "competition_sources": [],
             "kernel_sources": [],
-            "model_sources": [effective_model_source] if effective_model_source else [],
+            "model_sources": [model_source] if model_source else [],
         },
     )
-    return job_spec
 
 
 def parse_args() -> argparse.Namespace:
@@ -298,7 +670,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kernel-id", required=True)
     parser.add_argument("--title", required=True)
     parser.add_argument("--phase", choices=PHASES, required=True)
-    parser.add_argument("--profile", choices=tuple(PROFILES), required=True)
+    parser.add_argument("--profile", choices=tuple(PROFILES), default="cpu")
     parser.add_argument("--source-dataset", required=True)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--source-archive-sha256", required=True)
@@ -307,12 +679,60 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-source")
     parser.add_argument("--instrument-manifest-sha256")
     parser.add_argument("--human-signoff-id")
+    parser.add_argument(
+        "--runtime-manifest",
+        required=True,
+        help="Path to runtime manifest JSON file.",
+    )
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--offline-wheel",
+        dest="offline_wheels",
+        action="append",
+        default=[],
+        help="JSON wheel entry: {\"dataset\":\"owner/slug\",\"filename\":\"pkg.whl\",\"sha256\":\"...\"}",
+    )
+    parser.add_argument(
+        "--offline-archive",
+        dest="offline_archives",
+        action="append",
+        default=[],
+        help="JSON opaque gzip-tar transport entry: {\"dataset\":\"owner/slug\",\"filename\":\"data.tar.gz.bin\",\"sha256\":\"...\",\"format\":\"tar.gz\",\"destination\":\"dirname\"}",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    runtime_manifest_path = Path(args.runtime_manifest)
+    if not runtime_manifest_path.is_file():
+        print(f"error: runtime manifest not found: {runtime_manifest_path}", file=sys.stderr)
+        return 2
+    try:
+        runtime_manifest = json.loads(runtime_manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(f"error: invalid runtime manifest JSON: {exc}", file=sys.stderr)
+        return 2
+    offline_wheels = None
+    if args.offline_wheels:
+        offline_wheels = []
+        for raw in args.offline_wheels:
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                print(f"error: invalid offline wheel JSON: {exc}", file=sys.stderr)
+                return 2
+            offline_wheels.append(entry)
+    offline_archives = None
+    if args.offline_archives:
+        offline_archives = []
+        for raw in args.offline_archives:
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                print(f"error: invalid offline archive JSON: {exc}", file=sys.stderr)
+                return 2
+            offline_archives.append(entry)
     spec = prepare_kernel(
         output=args.output,
         kernel_id=args.kernel_id,
@@ -327,7 +747,10 @@ def main() -> int:
         model_source=args.model_source,
         instrument_manifest_sha256=args.instrument_manifest_sha256,
         human_signoff_id=args.human_signoff_id,
+        runtime_manifest=runtime_manifest,
         force=args.force,
+        offline_wheels=offline_wheels,
+        offline_archives=offline_archives,
     )
     print(json.dumps(spec, indent=2, sort_keys=True))
     return 0

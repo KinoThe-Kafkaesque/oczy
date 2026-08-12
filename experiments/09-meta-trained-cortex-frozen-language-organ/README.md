@@ -143,6 +143,44 @@ Before outer-loop training:
 Any later change requires `meta_cortex/v2`; the optimizing loop may not modify
 v1.
 
+### INT8 cutover: `meta_cortex/v2` (2026-07-15)
+
+An explicit human decision replaced the FP32 frozen language organ with the
+sole gradient-compatible INT8 recipe:
+
+- TorchAO `Int8WeightOnlyConfig` version 2;
+- symmetric per-row INT8 linear weights;
+- FP32 activations (`W8A32`);
+- `set_inductor_config=false`.
+
+Dynamic-activation A8W8 is not used: its TorchAO forward result has no
+`grad_fn`, so it breaks the required gradient from the frozen language organ
+to the soft bank. W8A32 preserves finite, nonzero soft-bank gradients.
+
+The gradient-enabled teacher-forced forward uses deterministic activation
+checkpointing so a single outer episode does not retain multiple complete Qwen
+graphs until backward. Evaluation and inference forwards remain direct.
+
+The v1 instrument and its checkpoints, calibration shards, organ hashes,
+runtime manifests, and signoffs remain immutable historical artifacts. They
+must not be mixed with v2. The v2 cutover keeps the scorer, endpoints, probe
+counts, model architecture, and statistical rules unchanged, but rebinds the
+instrument to the INT8 organ hash and the versioned v2 seed namespace.
+`oczy/runtime-manifest/v2` additionally pins TorchAO and the exact
+quantization recipe.
+
+All developmental checkpoints and DEV calibration distributions must be
+regenerated under v2 before a candidate manifest or signoff request exists.
+Meta-test execution remains blocked.
+
+A local one-step DEV `train-dev` mechanism smoke completed with exit 0 in
+1379.14 seconds. It took one optimizer step, wrote the checkpoint and result,
+kept the frozen organ hash stable at
+`60de9f75e8ae1d2507429877b4b2da48ec64c3e28eaad03db23cd3de43a1b4da`,
+and reported `audit_status=ok`. The best DEV validation score was 0.0; this is
+not evidence for H-META-CORTEX.
+
+
 ## Phase 1: oracle articulation gate
 
 For each task family, give the frozen language organ the complete rule and
@@ -321,21 +359,21 @@ for any claimed family.
 - `experiments_logs/<date>_s20_meta_trained_cortex.md` — final run record.
 - `reports/meta_cortex/` — developmental and immutable meta-test JSON reports.
 
-## Reproduce (once implemented)
+## Reproduce (after v2 DEV calibration and human signoff)
 
 ```bash
 # Build and audit the separate measuring instrument. This does not touch eval/v2.
 uv run python -m oczy.experiments.meta_cortex.instrument \
-  --version v1 --materialize --audit-distributions
+  --version v2 --materialize --audit-distributions
 
-# Human signs off the generated v1 manifest, margins, and task counts here.
+# Human signs off the generated v2 manifest, margins, and task counts here.
 
 # Developmental outer-loop training; meta-test remains inaccessible.
 uv run python -m oczy.experiments.meta_cortex.train_outer \
-  --instrument v1 --developmental-seeds 5
+  --instrument v2 --developmental-seeds 5
 
 # One-shot frozen meta-test after sign-off.
 uv run python -m oczy.experiments.meta_cortex.run_meta_test \
-  --instrument v1 --conditions C0,C1,C2,C3,C4,C5,C6,C7,C8,C9 \
+  --instrument v2 --conditions C0,C1,C2,C3,C4,C5,C6,C7,C8,C9 \
   --evaluation-seeds 5 --delete-traces --audit
 ```

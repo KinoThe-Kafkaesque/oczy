@@ -2,7 +2,9 @@
 
 _Prove that a correction metabolized through `CortexAgent` produces compounding cold-state drift, and that the drift — not a stored label string — drives the answer._
 
-**Status:** PROPOSED | **Thesis anchor:** experiments.txt §2 (fast-weight organ), §3 (neural hippocampus), §4 (learned plasticity), §11 (nested learning) | **Goal anchor:** GOALS.md Goal 3 (organ upgrades to tensor inputs) | **Depends on / relates to:** depends on `03-layer-l-hidden-extraction`; cross-link `01-correction-to-competence-benchmark`, `06-bounded-growth-consolidation`.
+**Status:** TESTED-NULL (2026-07-11) | **Thesis anchor:** experiments.txt §2 (fast-weight organ), §3 (neural hippocampus), §4 (learned plasticity), §11 (nested learning) | **Goal anchor:** GOALS.md Goal 3 (organ upgrades to tensor inputs) | **Depends on / relates to:** depends on `03-layer-l-hidden-extraction`; cross-link `01-correction-to-competence-benchmark`, `06-bounded-growth-consolidation`.
+
+> **Outcome (2026-07-11):** TESTED-NULL. Campaign 0d48130 (colab, commit `537260c`): `metabolism_drift_delta=0.0`, `drift_uptake=0.0`, `delta_target=0.0`. The loop *runs* — 4 consolidations, compounding_slope=0.1755, final_cold_norm=0.731 — but **no captured behavioral delta**. The compounding index is 1.0 (step directions align) yet drift_uptake=0.0 means the drift does not translate to behavioral change. This is the pre-registered honest null (H2 kill criterion c: drift-only domain-shift indistinguishable from zero-cold). Evidence: `../experiments_logs/2026-07-11_campaign_0d48130.md`.
 
 ## Problem
 

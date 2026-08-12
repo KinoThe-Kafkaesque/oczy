@@ -33,7 +33,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from .cvec_driver import ReservedPosition
+from ._types import ReservedPosition
 
 # ---------------------------------------------------------------------------
 # Parallel-task model choice (S1.1).  Fall back to a constructor-required
@@ -116,30 +116,76 @@ class HFDriver:
     def load(cls, model_id: str | None = None) -> "HFDriver":
         """Lazy model + tokenizer init via HuggingFace.
 
-        ``model_id`` defaults to whatever ``hf_model_choice.DEFAULT_MODEL_ID``
-        says (if the parallel S1.1 module exists); falls back to requiring an
-        explicit argument.
+        ``model_id`` defaults to ``OCZY_MODEL_DIR`` (when set) or whatever
+        ``hf_model_choice.DEFAULT_MODEL_ID`` says (if the parallel S1.1 module
+        exists); falls back to requiring an explicit argument.
+
+        When ``OCZY_MODEL_DIR`` is the resolved source, or when offline mode
+        is active (``OCZY_REMOTE_CPU_ONLY=1``, ``HF_HUB_OFFLINE=1``, or
+        ``TRANSFORMERS_OFFLINE=1``), loading uses ``local_files_only=True``
+        and ``trust_remote_code=False``.  In ``OCZY_REMOTE_CPU_ONLY=1`` the
+        driver fails clearly rather than falling back to network resolution
+        if the pinned local model is missing.
         """
+        import os
+
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         mid = model_id
+        env_model_dir = os.environ.get("OCZY_MODEL_DIR")
+        cpu_only = os.environ.get("OCZY_REMOTE_CPU_ONLY") == "1"
+        offline = (
+            cpu_only
+            or os.environ.get("HF_HUB_OFFLINE") == "1"
+            or os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+        )
+
         if mid is None:
-            if DEFAULT_MODEL_ID is not None:
+            if env_model_dir:
+                mid = env_model_dir
+            elif cpu_only:
+                raise RuntimeError(
+                    "OCZY_REMOTE_CPU_ONLY=1 but OCZY_MODEL_DIR is not set and "
+                    "no model_id was provided; cannot fall back to network "
+                    "model resolution in CPU-only mode."
+                )
+            elif DEFAULT_MODEL_ID is not None:
                 mid = DEFAULT_MODEL_ID
             else:
                 raise ValueError(
-                    "HFDriver.load() requires model_id=...; "
+                    "HFDriver.load() requires model_id=... or OCZY_MODEL_DIR=...; "
                     "hf_model_choice module not yet available (S1.1 parallel task)"
                 )
+
+        # In CPU-only mode, verify the pinned local model directory exists
+        # before attempting to load it.
+        if cpu_only and env_model_dir and mid == env_model_dir:
+            if not os.path.isdir(env_model_dir):
+                raise RuntimeError(
+                    f"OCZY_REMOTE_CPU_ONLY=1: pinned local model not found at "
+                    f"OCZY_MODEL_DIR={env_model_dir!r}; cannot fall back to "
+                    f"network resolution in CPU-only mode."
+                )
+
+        # Use local-only loading when the env path is the model source or
+        # when offline mode is active.
+        use_local_only = offline or (
+            env_model_dir is not None and mid == env_model_dir
+        )
+        load_kwargs: dict[str, Any] = {}
+        if use_local_only:
+            load_kwargs["local_files_only"] = True
+            load_kwargs["trust_remote_code"] = False
 
         model = AutoModelForCausalLM.from_pretrained(
             mid,
             dtype=torch.float32,
             device_map="cpu",
+            **load_kwargs,
         )
         model.eval()
 
-        tokenizer = AutoTokenizer.from_pretrained(mid)
+        tokenizer = AutoTokenizer.from_pretrained(mid, **load_kwargs)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
         # Fix pad_token_id warning on the model config.

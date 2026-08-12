@@ -2,7 +2,9 @@
 
 *Two senses of one token must coexist as distinct basins — correcting one sense must not obliterate the other.*
 
-Status: PROPOSED | Thesis anchor: experiments.txt §7 (energy/attractor memory), §1 (correction-gated cortex), §4 (learned plasticity) | Goal anchor: Goal 3 (organ tensor upgrades; scope-control done-when: "correction of one sense does not obliterate the other because they live in different cortex state regions"), relates Goal 2 (layer-L peek) | Depends on / relates to: `03-layer-l-hidden-extraction`, `01-correction-to-competence-benchmark`, `06-bounded-growth-consolidation`, `05-metabolism-loop-closure`
+Status: ACCEPTED (2026-07-11, single-run) | Thesis anchor: experiments.txt §7 (energy/attractor memory), §1 (correction-gated cortex), §4 (learned plasticity) | Goal anchor: Goal 3 (organ tensor upgrades; scope-control done-when: "correction of one sense does not obliterate the other because they live in different cortex state regions"), relates Goal 2 (layer-L peek) | Depends on / relates to: `03-layer-l-hidden-extraction`, `01-correction-to-competence-benchmark`, `06-bounded-growth-consolidation`, `05-metabolism-loop-closure`
+
+> **Outcome (2026-07-11):** ACCEPTED (single-run caveat). Campaign 0d48130 (colab, commit `537260c`): `scope_selectivity_index=1.0` — context-addressed slots achieved perfect sense selectivity on the Stage-2 episodes. **Caveat:** single-run, no cross-seed variance data. The SSI ≥ 0.5 acceptance threshold is met; the single-slot baseline comparison and obliteration_rate were not separately reported in the campaign metrics. Evidence: `../experiments_logs/2026-07-11_campaign_0d48130.md`.
 
 ## Problem
 

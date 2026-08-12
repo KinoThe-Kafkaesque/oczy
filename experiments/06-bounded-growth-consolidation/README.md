@@ -2,6 +2,12 @@
 
 Research proposal: ../../research/06-bounded-growth-consolidation.md
 
+## Status
+
+- **Implementation:** `src/oczy/experiments/bounded_growth/bounded_growth_eval.py` — implemented and tested.
+- **Campaign 0d48130 (2026-07-11):** **POSITIVE** (bounded growth, 5 seeds) — `bounded_growth_m1_ratio=0.002079` with zero variance across all 5 seeds. Structural footprints bit-identical; bytes_per_delta spread ≤20 B. Evidence: [`campaign log`](../../experiments_logs/2026-07-11_campaign_0d48130.md)
+
+
 ## Objective
 
 Can replacing the random-projection `ExperienceAutoencoder` and the per-concept-row `IdentityHypernetwork` with a trained compact encoder and a trained concept-*embedding* hypernetwork cut the combined serialized footprint of those two organs by **≥10x** — and the whole-organism `memory_bytes_per_behavior_delta` by **≥2x** — *without* dropping any eval-suite behavior score below the current `OrganismAgent` (transfer 0.25 / scope 0.1667 / forgetting 1.0 / identity 1.0)?

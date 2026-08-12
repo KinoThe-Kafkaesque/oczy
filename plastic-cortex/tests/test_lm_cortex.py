@@ -162,6 +162,22 @@ def test_grow_preserves_observation_state():
     assert len(grown._recent_novel) == novel_len_before
 
 
+def test_novelty_increases_for_unseen_text():
+    """Rare text must score as more novel than heavily observed text."""
+    from plastic_cortex.char_tokenizer import CharTokenizer
+
+    tokenizer = CharTokenizer()
+    tokenizer.fit(["aaaa", "bbbb"])
+    model = LMPlasticCortex({"hidden_dim": 8, "vocab_size": tokenizer.vocab_size})
+    model.tokenizer = tokenizer
+    a_id = tokenizer.encode("a")[0]
+    model._seen_tokens[a_id] = 100
+    model._seen_bigrams[(a_id, a_id)] = 99
+    model._token_total = 100
+
+    assert model.novelty("bbbb") > model.novelty("aaaa")
+
+
 def test_grow_preserves_tokenizer():
     from plastic_cortex.char_tokenizer import CharTokenizer
 

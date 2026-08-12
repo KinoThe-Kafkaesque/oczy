@@ -1,0 +1,127 @@
+{
+  "factorial_campaign": {
+    "campaign_id": "r24-v2-factorial-b7e5ddaab443-a1",
+    "complete": 4,
+    "invalid": 0,
+    "source_commit": "b7e5ddaab4439aa3991f9f003db77e68d1f2577c"
+  },
+  "factorial_suite_sha256": "17333600e77e65df82a30afb86bf84b482e30bb6d32b201afe4f047371229aee",
+  "per_rule_derivation": {
+    "aggregate_exact_match_verified_against_each original artifact": true,
+    "method": "reload remote decoder.pt and oracle.pt, evaluate frozen validation under source b7e5dda evaluation function"
+  },
+  "recorded_utc": "2026-08-09T00:03:52Z",
+  "records": [
+    {
+      "case_id": "base",
+      "changed_factor_count": 0,
+      "eligible": true,
+      "equal_rule_macro_delta": 0.03333333333333333,
+      "oracle_correct": 24,
+      "paired_control_only": 2,
+      "paired_net": 7,
+      "paired_oracle_only": 9,
+      "swapped_correct": 17,
+      "total": 219
+    },
+    {
+      "case_id": "conditioning_additive_deep",
+      "changed_factor_count": 1,
+      "eligible": true,
+      "equal_rule_macro_delta": 0.06765873015873015,
+      "oracle_correct": 28,
+      "paired_control_only": 5,
+      "paired_net": 13,
+      "paired_oracle_only": 18,
+      "swapped_correct": 15,
+      "total": 219
+    },
+    {
+      "case_id": "encoder_cls",
+      "changed_factor_count": 1,
+      "eligible": true,
+      "equal_rule_macro_delta": 0.07400793650793651,
+      "oracle_correct": 26,
+      "paired_control_only": 2,
+      "paired_net": 15,
+      "paired_oracle_only": 17,
+      "swapped_correct": 11,
+      "total": 219
+    },
+    {
+      "case_id": "factor_ac",
+      "changed_factor_count": 2,
+      "eligible": false,
+      "equal_rule_macro_delta": 0.06091269841269841,
+      "oracle_correct": 22,
+      "paired_control_only": 3,
+      "paired_net": 12,
+      "paired_oracle_only": 15,
+      "swapped_correct": 10,
+      "total": 219
+    },
+    {
+      "case_id": "factor_acl",
+      "changed_factor_count": 3,
+      "eligible": false,
+      "equal_rule_macro_delta": 0.05416666666666667,
+      "oracle_correct": 21,
+      "paired_control_only": 4,
+      "paired_net": 11,
+      "paired_oracle_only": 15,
+      "swapped_correct": 10,
+      "total": 219
+    },
+    {
+      "case_id": "factor_al",
+      "changed_factor_count": 2,
+      "eligible": false,
+      "equal_rule_macro_delta": 0.04126984126984127,
+      "oracle_correct": 23,
+      "paired_control_only": 3,
+      "paired_net": 8,
+      "paired_oracle_only": 11,
+      "swapped_correct": 15,
+      "total": 219
+    },
+    {
+      "case_id": "factor_cl",
+      "changed_factor_count": 2,
+      "eligible": true,
+      "equal_rule_macro_delta": 0.10337301587301588,
+      "oracle_correct": 25,
+      "paired_control_only": 1,
+      "paired_net": 20,
+      "paired_oracle_only": 21,
+      "swapped_correct": 5,
+      "total": 219
+    },
+    {
+      "case_id": "optimizer_encoder_lr03",
+      "changed_factor_count": 1,
+      "eligible": true,
+      "equal_rule_macro_delta": 0.06845238095238095,
+      "oracle_correct": 27,
+      "paired_control_only": 1,
+      "paired_net": 14,
+      "paired_oracle_only": 15,
+      "swapped_correct": 13,
+      "total": 219
+    }
+  ],
+  "schema_version": "oczy/r24-phase-a-factorial-selection/v2",
+  "screen_campaign": {
+    "campaign_id": "r24-v2-screen-daa536342c2b-a1",
+    "complete": 22,
+    "invalid": 0,
+    "source_commit": "daa536342c2b698068b0f17f635575c4095d1fcb",
+    "validation_sha256": "6626ad31c8577c4b827c47a440df1e5d8538d24433a4f7dba26d58b806fdaabd"
+  },
+  "selection_rule_sha256": "b3ece8b156587b1deca608d1af10bec9a32b73670a7601b65d3605986988426b",
+  "status": "tuning selection only; not confirmation evidence",
+  "winner": "conditioning_additive_deep",
+  "winner_overrides": {
+    "conditioning": "additive",
+    "deep_film": true
+  }
+}

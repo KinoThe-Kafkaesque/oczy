@@ -1,23 +1,179 @@
+"""CPU-only, offline-reproducible Kaggle remote-runner contract tests.
+
+These tests defend the desired contract for Oczy's active Kaggle surface:
+
+1. The generator accepts/defaults to CPU and rejects ``t4``/unknown profiles.
+2. Generated metadata is private/offline with GPU/TPU false and empty machine
+   shape for every phase; model attachment rules and meta-test sign-off remain
+   correct.
+3. Generated bootstrap compiles, sets CPU/offline/thread environment before
+   torch-dependent execution, contains no runtime CUDA query, changes cwd to
+   source root, and records error provenance.
+4. Active checked-in kernel metadata includes only CPU tasks; archived GPU
+   metadata is excluded from active discovery.
+5. Cortex and Qwen runners cannot select or query CUDA through their public
+   CLI/default contract; active runner execution must not call any
+   ``torch.cuda.*`` API.
+6. HFDriver chooses ``OCZY_MODEL_DIR`` and local-only loading in remote CPU
+   mode without touching the network, using fakes/monkeypatches rather than
+   loading Qwen.
+7. Default HF layer probe model resolution honors the pinned model environment
+   while explicit model ids remain explicit.
+
+No real network, Kaggle credentials, model download, or protected eval access
+is required.
+"""
+
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import runpy
 import subprocess
+import sys
+import tarfile
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 
 KAGGLE_DIR = Path(__file__).resolve().parents[2] / "infrastructure" / "kaggle"
-prepare_kernel = runpy.run_path(KAGGLE_DIR / "prepare_research_kernel.py")["prepare_kernel"]
-prepare_bundle = runpy.run_path(KAGGLE_DIR / "prepare_source_bundle.py")["prepare_bundle"]
-model_probe = runpy.run_path(KAGGLE_DIR / "run_qwen_model_probe.py")
+_prepare_kernel_impl = runpy.run_path(str(KAGGLE_DIR / "prepare_research_kernel.py"))["prepare_kernel"]
+prepare_bundle = runpy.run_path(str(KAGGLE_DIR / "prepare_source_bundle.py"))["prepare_bundle"]
+model_probe = runpy.run_path(str(KAGGLE_DIR / "run_qwen_model_probe.py"))
 artifact_manifest = model_probe["artifact_manifest"]
 locate_model = model_probe["locate_model"]
+runtime_manifest_mod = runpy.run_path(str(KAGGLE_DIR / "runtime_manifest.py"))
+RUNTIME_MANIFEST_SCHEMA_VERSION = runtime_manifest_mod["RUNTIME_MANIFEST_SCHEMA_VERSION"]
+compute_manifest_sha256 = runtime_manifest_mod["compute_manifest_sha256"]
+compute_component_sha256 = runtime_manifest_mod["compute_component_sha256"]
+validate_runtime_manifest = runtime_manifest_mod["validate_runtime_manifest"]
+
+COMMIT = "a" * 40
+ARCHIVE_SHA = "b" * 64
+SOURCE_DATASET = f"owner/oczy-source-{COMMIT[:12]}"
+
+MODEL_SHA_DUMMY = "e" * 64
+
+
+def _greedy_generation() -> dict[str, Any]:
+    return {
+        "max_new_tokens": 16,
+        "min_new_tokens": 0,
+        "do_sample": False,
+        "num_beams": 1,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "top_k": 0,
+        "repetition_penalty": 1.0,
+        "length_penalty": 1.0,
+        "no_repeat_ngram_size": 0,
+        "use_cache": True,
+        "eos_token_ids": [2],
+        "pad_token_id": 2,
+        "stop_strings": [],
+    }
+
+
+def _with_self_hash(manifest: dict[str, Any]) -> dict[str, Any]:
+    manifest = json.loads(json.dumps(manifest))
+    manifest["manifest_sha256"] = compute_manifest_sha256(manifest)
+    validate_runtime_manifest(manifest)
+    return manifest
+
+
+def _no_model_runtime_manifest() -> dict[str, Any]:
+    return _with_self_hash(
+        {
+            "schema_version": RUNTIME_MANIFEST_SCHEMA_VERSION,
+            "python_version": "3.11.9",
+            "packages": {
+                "torch": "2.3.0",
+                "transformers": "4.44.0",
+                "tokenizers": "0.19.1",
+                "safetensors": "0.4.3",
+                "torchao": "0.17.0",
+            },
+            "model": {
+                "logical_model_id": None,
+                "resolved_model_convention": "none",
+                "artifact_files": [],
+                "model_weights_sha256": None,
+                "model_config_sha256": None,
+                "tokenizer_sha256": None,
+                "chat_template_sha256": None,
+                "quantization": None,
+            },
+            "greedy_generation": None,
+            "manifest_sha256": "",
+        }
+    )
+
+
+def _model_runtime_manifest(
+    *,
+    logical_model_id: str = "qwen-lm/qwen2.5",
+    convention: str = "llama-cpp-gguf-file",
+    filename: str = "model.gguf",
+    size_bytes: int = 11,
+    sha256: str = MODEL_SHA_DUMMY,
+) -> dict[str, Any]:
+    artifact_files = [
+        {
+            "path": filename,
+            "size_bytes": size_bytes,
+            "sha256": sha256,
+            "roles": ["chat_template", "config", "tokenizer", "weights"],
+        }
+    ]
+    component = compute_component_sha256(artifact_files)
+    return _with_self_hash(
+        {
+            "schema_version": RUNTIME_MANIFEST_SCHEMA_VERSION,
+            "python_version": "3.11.9",
+            "packages": {
+                "torch": "2.3.0",
+                "transformers": "4.44.0",
+                "tokenizers": "0.19.1",
+                "safetensors": "0.4.3",
+                "torchao": "0.17.0",
+            },
+            "model": {
+                "logical_model_id": logical_model_id,
+                "resolved_model_convention": convention,
+                "artifact_files": artifact_files,
+                "model_weights_sha256": component,
+                "model_config_sha256": component,
+                "tokenizer_sha256": component,
+                "chat_template_sha256": component,
+                "quantization": None,
+            },
+            "greedy_generation": _greedy_generation(),
+            "manifest_sha256": "",
+        }
+    )
+
+
+def prepare_kernel(**kwargs: Any) -> dict[str, Any]:
+    if "runtime_manifest" not in kwargs:
+        kwargs["runtime_manifest"] = (
+            _model_runtime_manifest(logical_model_id=kwargs["model_source"])
+            if kwargs.get("model_source")
+            else _no_model_runtime_manifest()
+        )
+    _prepare_kernel_impl(**kwargs)
+    return json.loads((Path(kwargs["output"]) / "job_spec.json").read_text(encoding="utf-8"))
 
 
 def _git(repo: Path, *arguments: str) -> None:
     subprocess.run(["git", *arguments], cwd=repo, check=True, capture_output=True)
+
+
+# ---------------------------------------------------------------------------
+# 1. Generator profile contract
+# ---------------------------------------------------------------------------
 
 
 def test_source_bundle_is_commit_addressed_and_rejects_dirty_worktree(tmp_path: Path) -> None:
@@ -40,7 +196,7 @@ def test_source_bundle_is_commit_addressed_and_rejects_dirty_worktree(tmp_path: 
         force=False,
     )
 
-    archive = output / "source.tar.gz"
+    archive = output / "source.tar.gz.bin"
     assert manifest["commit"]
     assert manifest["dataset_id"].endswith(manifest["commit"][:12])
     assert manifest["worktree_dirty_at_packaging"] is False
@@ -61,48 +217,241 @@ def test_source_bundle_is_commit_addressed_and_rejects_dirty_worktree(tmp_path: 
         )
 
 
-def test_research_kernel_is_private_pinned_and_compilable(tmp_path: Path) -> None:
-    commit = "a" * 40
-    archive_sha = "b" * 64
-    output = tmp_path / "job"
+def test_source_bundle_archive_name_is_opaque_to_kaggle_auto_extraction(tmp_path: Path) -> None:
+    """Kaggle auto-extracts recognized archive suffixes (``.tar.gz``, ``.zip``,
+    ``.tar``) at mount time, which would remove the sibling archive the manifest
+    declares. The bundle must ship under an opaque filename Kaggle mounts
+    unchanged, while remaining a valid gzip tar readable via ``tarfile``.
+
+    This test would fail if the archive were named ``source.tar.gz`` (a
+    Kaggle-recognized suffix) and passes for the opaque ``source.tar.gz.bin``.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "test@example.invalid")
+    _git(repo, "config", "user.name", "Test User")
+    (repo / "pyproject.toml").write_text("[project]\nname='fixture'\n", encoding="utf-8")
+    _git(repo, "add", "pyproject.toml")
+    _git(repo, "commit", "-m", "fixture")
+
+    output = tmp_path / "bundle"
+    manifest = prepare_bundle(
+        repo_root=repo,
+        revision="HEAD",
+        output=output,
+        dataset_id=None,
+        allow_dirty_worktree=False,
+        force=False,
+    )
+
+    archive_filename = manifest["archive"]["filename"]
+    archive_path = output / archive_filename
+
+    # Kaggle-recognized archive suffixes that trigger auto-extraction at mount.
+    kaggle_auto_extract_suffixes = (".tar.gz", ".tar.bz2", ".tar.xz", ".zip", ".tar")
+    assert not archive_filename.endswith(kaggle_auto_extract_suffixes), (
+        f"archive filename {archive_filename!r} ends with a Kaggle-recognized "
+        f"archive suffix and would be auto-extracted, removing the sibling "
+        f"the manifest declares"
+    )
+
+    # SHA-256 provenance from the manifest must match the actual file bytes.
+    assert manifest["archive"]["sha256"] == hashlib.sha256(archive_path.read_bytes()).hexdigest()
+
+    # Despite the opaque extension, the file must be a valid gzip tar.
+    with tarfile.open(str(archive_path), "r:gz") as tf:
+        members = tf.getnames()
+    assert "oczy/pyproject.toml" in members, (
+        f"oczy/pyproject.toml not found in archive; members={members[:10]}..."
+    )
+
+
+def test_generator_rejects_t4_profile(tmp_path: Path) -> None:
+    """The generator must reject the retired ``t4`` profile."""
+    with pytest.raises(ValueError, match="unknown profile"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-development-seed-0",
+            title="Oczy Development Seed 0",
+            phase="development",
+            profile="t4",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.meta_cortex.train_outer",
+            arguments=["--developmental-seed", "0"],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=False,
+        )
+
+
+def test_generator_rejects_unknown_profile(tmp_path: Path) -> None:
+    """The generator must reject any profile that is not ``cpu``."""
+    with pytest.raises(ValueError, match="unknown profile"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-development-seed-0",
+            title="Oczy Development Seed 0",
+            phase="development",
+            profile="l4",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.meta_cortex.train_outer",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=False,
+        )
+
+
+def test_generator_cli_defaults_to_cpu_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CLI ``--profile`` argument must default to ``cpu``."""
+    gen = runpy.run_path(str(KAGGLE_DIR / "prepare_research_kernel.py"))
+    parse_args = gen["parse_args"]
+
+    monkeypatch.setattr(sys, "argv", [
+        "prepare_research_kernel.py",
+        "--output", str(tmp_path / "job"),
+        "--kernel-id", "owner/oczy-test",
+        "--title", "Test",
+        "--phase", "analysis",
+        "--source-dataset", SOURCE_DATASET,
+        "--source-commit", COMMIT,
+        "--source-archive-sha256", ARCHIVE_SHA,
+        "--module", "oczy.experiments.dummy",
+        "--runtime-manifest", json.dumps(_no_model_runtime_manifest()),
+    ])
+    args = parse_args()
+    assert args.profile == "cpu"
+
+
+def test_generator_cli_rejects_t4_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI ``--profile`` argument must not accept ``t4``."""
+    gen = runpy.run_path(str(KAGGLE_DIR / "prepare_research_kernel.py"))
+    parse_args = gen["parse_args"]
+
+    monkeypatch.setattr(sys, "argv", [
+        "prepare_research_kernel.py",
+        "--output", "/tmp/job",
+        "--kernel-id", "owner/oczy-test",
+        "--title", "Test",
+        "--phase", "analysis",
+        "--profile", "t4",
+        "--source-dataset", SOURCE_DATASET,
+        "--source-commit", COMMIT,
+        "--source-archive-sha256", ARCHIVE_SHA,
+        "--module", "oczy.experiments.dummy",
+    ])
+    with pytest.raises(SystemExit):
+        parse_args()
+
+
+# ---------------------------------------------------------------------------
+# 2. Generated metadata is private/offline/CPU for every phase
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("phase", ["instrument", "oracle", "development", "analysis"])
+def test_generated_metadata_is_cpu_private_offline_for_every_phase(
+    tmp_path: Path, phase: str
+) -> None:
+    """Every non-meta-test phase must produce CPU-only, private, offline metadata."""
+    output = tmp_path / f"job-{phase}"
     spec = prepare_kernel(
         output=output,
-        kernel_id="owner/oczy-development-seed-0",
-        title="Oczy Development Seed 0",
-        phase="development",
-        profile="t4",
-        source_dataset=f"owner/oczy-source-{commit[:12]}",
-        source_commit=commit,
-        source_archive_sha256=archive_sha,
-        module="oczy.experiments.meta_cortex.train_outer",
-        arguments=["--developmental-seed", "0"],
+        kernel_id=f"owner/oczy-{phase}",
+        title=f"Oczy {phase.title()}",
+        phase=phase,
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
         model_source=None,
         instrument_manifest_sha256=None,
         human_signoff_id=None,
         force=False,
     )
-
     metadata = json.loads((output / "kernel-metadata.json").read_text())
-    assert spec["source_commit"] == commit
+
     assert metadata["is_private"] is True
     assert metadata["enable_internet"] is False
-    assert metadata["machine_shape"] == "NvidiaTeslaT4"
-    assert metadata["model_sources"] == ["qwen-lm/qwen2.5/transformers/0.5b-instruct/1"]
-    compile((output / "run.py").read_text(), str(output / "run.py"), "exec")
+    assert metadata["enable_gpu"] is False
+    assert metadata["enable_tpu"] is False
+    assert metadata["machine_shape"] == ""
+    assert spec["profile"] == "cpu"
+
+
+def test_generated_metadata_model_attachment_rules(tmp_path: Path) -> None:
+    """Model-bearing kernels use an explicit model_source; no-model kernels stay model-free."""
+    for phase in ("oracle", "development", "instrument", "analysis"):
+        output = tmp_path / f"no-model-{phase}"
+        prepare_kernel(
+            output=output,
+            kernel_id=f"owner/oczy-{phase}",
+            title=f"Oczy {phase.title()}",
+            phase=phase,
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=False,
+        )
+        metadata = json.loads((output / "kernel-metadata.json").read_text())
+        spec = json.loads((output / "job_spec.json").read_text())
+        assert metadata["model_sources"] == []
+        assert spec["runtime_manifest"]["model"]["resolved_model_convention"] == "none"
+
+    output = tmp_path / "explicit-model"
+    manifest = _model_runtime_manifest(logical_model_id="custom/model/1")
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-instrument",
+        title="Oczy Instrument",
+        phase="instrument",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source="custom/model/1",
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        runtime_manifest=manifest,
+        force=False,
+    )
+    metadata = json.loads((output / "kernel-metadata.json").read_text())
+    spec = json.loads((output / "job_spec.json").read_text())
+    assert metadata["model_sources"] == ["custom/model/1"]
+    assert spec["runtime_manifest"] == manifest
 
 
 def test_meta_test_kernel_requires_manifest_and_human_signoff(tmp_path: Path) -> None:
-    commit = "a" * 40
+    """Meta-test phase still requires instrument manifest hash and human sign-off."""
     with pytest.raises(ValueError, match="human sign-off"):
         prepare_kernel(
             output=tmp_path / "job",
             kernel_id="owner/oczy-meta-test",
             title="Oczy Meta Test",
             phase="meta-test",
-            profile="t4",
-            source_dataset=f"owner/oczy-source-{commit[:12]}",
-            source_commit=commit,
-            source_archive_sha256="b" * 64,
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
             module="oczy.experiments.meta_cortex.run_meta_test",
             arguments=[],
             model_source=None,
@@ -110,6 +459,1464 @@ def test_meta_test_kernel_requires_manifest_and_human_signoff(tmp_path: Path) ->
             human_signoff_id=None,
             force=False,
         )
+
+
+def test_meta_test_kernel_succeeds_with_signoff(tmp_path: Path) -> None:
+    """Meta-test phase with full sign-off produces correct CPU metadata."""
+    output = tmp_path / "meta-job"
+    spec = prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-meta-test",
+        title="Oczy Meta Test",
+        phase="meta-test",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.meta_cortex.run_meta_test",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=ARCHIVE_SHA,
+        human_signoff_id="researcher@example.invalid",
+        force=False,
+    )
+    metadata = json.loads((output / "kernel-metadata.json").read_text())
+    assert metadata["enable_gpu"] is False
+    assert metadata["machine_shape"] == ""
+    assert metadata["is_private"] is True
+    assert metadata["enable_internet"] is False
+    assert spec["instrument_manifest_sha256"] == ARCHIVE_SHA
+    assert spec["human_signoff_id"] == "researcher@example.invalid"
+    assert spec["model_source"] is None
+    assert spec["runtime_manifest"]["model"]["resolved_model_convention"] == "none"
+
+
+# ---------------------------------------------------------------------------
+# 2b. Title/id slug consistency — regression for Kaggle clean-URL mismatch
+# ---------------------------------------------------------------------------
+
+
+def test_prepare_kernel_rejects_title_id_slug_mismatch(tmp_path: Path) -> None:
+    """Regression: Kaggle derives the kernel URL slug from the *title*, not
+    the metadata ``id``.  When the title-derived slug differs from the
+    ``id``'s final component, Kaggle creates the kernel under an unexpected
+    slug and subsequent polling of the requested ``id`` fails.
+
+    Real failure: id ``abdellahkadem/oczy-scheduler-smoke-1`` with title
+    ``Oczy Scheduler CPU Smoke 1`` was created as
+    ``abdellahkadem/oczy-scheduler-cpu-smoke-1``, so polling the requested
+    id never found the kernel.
+
+    Generation must reject this *before* producing any files.
+    """
+    with pytest.raises(ValueError, match="resolves to slug"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="abdellahkadem/oczy-scheduler-smoke-1",
+            title="Oczy Scheduler CPU Smoke 1",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="run_cortex_smoke",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=False,
+        )
+    # No generated files should exist.
+    assert not (tmp_path / "job" / "kernel-metadata.json").exists()
+    assert not (tmp_path / "job" / "run.py").exists()
+    assert not (tmp_path / "job" / "job_spec.json").exists()
+
+
+def test_prepare_kernel_accepts_matching_title_id_slug(tmp_path: Path) -> None:
+    """When the title-derived slug equals the ``id``'s final component,
+    generation succeeds and the metadata records both verbatim."""
+    job_spec = prepare_kernel(
+        output=tmp_path / "job",
+        kernel_id="abdellahkadem/oczy-scheduler-smoke-1",
+        title="Oczy Scheduler Smoke 1",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="run_cortex_smoke",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=False,
+    )
+    assert job_spec["phase"] == "development"
+    meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text())
+    assert meta["id"] == "abdellahkadem/oczy-scheduler-smoke-1"
+    assert meta["title"] == "Oczy Scheduler Smoke 1"
+
+
+# ---------------------------------------------------------------------------
+# 3. Generated bootstrap compiles and sets CPU/offline/thread env before torch
+# ---------------------------------------------------------------------------
+
+
+def test_generated_bootstrap_compiles(tmp_path: Path) -> None:
+    """The generated run.py must be syntactically valid Python."""
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=["--seed", "0"],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=False,
+    )
+    compile((output / "run.py").read_text(), str(output / "run.py"), "exec")
+
+
+def test_generated_bootstrap_sets_cpu_offline_thread_env_before_torch(tmp_path: Path) -> None:
+    """The bootstrap must set CPU/offline/thread env vars *before* importing torch."""
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=False,
+    )
+    source = (output / "run.py").read_text()
+
+    # The env-setting block must appear before `import torch`.
+    env_block_marker = 'CUDA_VISIBLE_DEVICES'
+    torch_import_marker = 'import torch'
+
+    env_pos = source.find(env_block_marker)
+    torch_pos = source.find(torch_import_marker)
+    assert env_pos != -1, "CUDA_VISIBLE_DEVICES not found in bootstrap"
+    assert torch_pos != -1, "import torch not found in bootstrap"
+    assert env_pos < torch_pos, "CPU/offline env vars must be set before import torch"
+
+    # Verify all required env vars are present.
+    for var in (
+        "CUDA_VISIBLE_DEVICES",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OCZY_REMOTE_CPU_ONLY",
+        "HF_HUB_OFFLINE",
+        "TRANSFORMERS_OFFLINE",
+        "TOKENIZERS_PARALLELISM",
+    ):
+        assert var in source, f"{var} not set in bootstrap"
+
+
+def test_generated_bootstrap_has_no_runtime_cuda_query(tmp_path: Path) -> None:
+    """The bootstrap must not query CUDA at runtime.
+
+    CUDA_VISIBLE_DEVICES='' is set before torch import as enforcement (not a
+    probe), and the CPU-only contract is recorded with constant values.
+    torch.version.cuda (build metadata) is allowed — it is torch.version, not
+    torch.cuda, and does not initialize CUDA or emit NVML warnings.
+    """
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=False,
+    )
+    source = (output / "run.py").read_text()
+
+    # No runtime CUDA API calls anywhere in the bootstrap.  torch.version.cuda
+    # is build metadata (torch.version, not torch.cuda) and does not match.
+    assert "torch.cuda." not in source, (
+        "bootstrap must not call any torch.cuda.* API; "
+        "torch.version.cuda build metadata is allowed but torch.cuda.* is not"
+    )
+
+    # Enforcement: CUDA_VISIBLE_DEVICES set to empty string before torch import.
+    assert 'CUDA_VISIBLE_DEVICES"] = ""' in source
+
+    # CPU-only contract block must be recorded with constant (non-probed) values.
+    assert "cpu_only_contract" in source
+
+
+def test_generated_bootstrap_changes_cwd_to_source_root(tmp_path: Path) -> None:
+    """The bootstrap must os.chdir(source_root) before running the target module."""
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=False,
+    )
+    source = (output / "run.py").read_text()
+    assert "os.chdir(source_root)" in source
+    # chdir must happen before runpy.run_module.
+    chdir_pos = source.find("os.chdir(source_root)")
+    runpy_pos = source.find("runpy.run_module")
+    assert chdir_pos != -1
+    assert runpy_pos != -1
+    assert chdir_pos < runpy_pos, "os.chdir(source_root) must happen before runpy.run_module"
+
+
+def test_generated_bootstrap_extracts_source_to_temp_not_persisted(tmp_path: Path) -> None:
+    """The bootstrap must extract the source archive into a temporary directory
+    under the system temp dir (``tempfile.mkdtemp``), never into a path below
+    ``/kaggle/working``.
+
+    Extracting into ``/kaggle/working/source`` caused ``kaggle kernels output``
+    to download every tracked source file alongside the run report.  A
+    ``tempfile.mkdtemp()`` directory lives outside ``/kaggle/working`` and is
+    not persisted as kernel output, so only the provenance report is
+    downloaded.
+
+    The bootstrap must still ``os.chdir(source_root)`` so the target module
+    runs from the extracted source root.
+    """
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=False,
+    )
+    source = (output / "run.py").read_text()
+
+    # Source must be extracted via tempfile.mkdtemp() — a non-persisted
+    # directory under the system temp dir, not /kaggle/working.
+    assert "import tempfile" in source, "bootstrap must import tempfile"
+    assert "tempfile.mkdtemp()" in source, (
+        "bootstrap must extract source via tempfile.mkdtemp()"
+    )
+    assert "/kaggle/working/source" not in source, (
+        "bootstrap must not extract source into /kaggle/working/source; "
+        "that path is persisted by kaggle kernels output and bloats downloads"
+    )
+
+    # The cwd-to-source-root contract is preserved: the temp path is still
+    # used as the working directory before runpy.run_module.
+    chdir_pos = source.find("os.chdir(source_root)")
+    runpy_pos = source.find("runpy.run_module")
+    assert chdir_pos != -1, "os.chdir(source_root) must remain in bootstrap"
+    assert runpy_pos != -1
+    assert chdir_pos < runpy_pos, (
+        "os.chdir(source_root) must happen before runpy.run_module"
+    )
+
+
+
+def test_generated_bootstrap_propagates_model_identity_contract(tmp_path: Path) -> None:
+    """The bootstrap must carry the exact runtime manifest and convention-specific env exports."""
+    output = tmp_path / "job"
+    manifest = _model_runtime_manifest(logical_model_id="custom/model/1")
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source="custom/model/1",
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        runtime_manifest=manifest,
+        force=False,
+    )
+    source = (output / "run.py").read_text()
+    assert "_resolve_model_from_manifest" in source
+    assert "_set_model_env_vars" in source
+    assert 'os.environ["OCZY_MODEL_PATH"]' in source
+    assert json.loads((output / "job_spec.json").read_text())["runtime_manifest"] == manifest
+
+
+def test_generated_bootstrap_records_error_provenance(tmp_path: Path) -> None:
+    """The bootstrap must record error type, message, and traceback on failure."""
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=False,
+    )
+    source = (output / "run.py").read_text()
+    # Error provenance: type, message, traceback, exit_code, status.
+    assert '"type"' in source or 'type(error).__name__' in source
+    assert 'traceback.format_exc()' in source
+    assert '"error"' in source or "'error'" in source
+    assert 'exit_code' in source
+
+def test_generated_bootstrap_job_spec_round_trips_with_none_optional_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The generated run.py JOB_SPEC must be valid executable Python that
+    round-trips exactly, even when optional fields are None and arguments
+    contain characters that are unsafe in raw JSON-as-Python.
+
+    Raw JSON ``null`` is not a Python identifier, so the uncorrected renderer
+    (``JOB_SPEC = {... null ...}``) raises ``NameError`` before provenance is
+    written.  The corrected renderer (``JOB_SPEC = json.loads(<repr>)``)
+    safely quotes the canonical JSON string and lets ``json.loads`` handle
+    ``null`` → ``None``, ``true`` → ``True``, etc.
+
+    This test executes the generated run.py top level (import torch, define
+    JOB_SPEC and helpers) without entering ``main()``, so no Kaggle, network,
+    or model access occurs.
+    """
+    # Arguments with characters that break raw JSON-as-Python or require
+    # careful quoting: quotes, backslashes, newlines, tabs, unicode, empty.
+    special_args = [
+        "--name", "O'Brien",
+        "--quote", 'say "hello"',
+        "--path", "back\\slash",
+        "--multiline", "line1\nline2\ttab",
+        "--unicode", "café—résumé",
+        "--empty", "",
+    ]
+    output = tmp_path / "job"
+    expected_spec = prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="analysis",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=special_args,
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=False,
+    )
+
+    # The bootstrap sets env vars at top level; save originals for teardown.
+    for var in (
+        "CUDA_VISIBLE_DEVICES", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+        "OCZY_REMOTE_CPU_ONLY", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE",
+        "TOKENIZERS_PARALLELISM",
+    ):
+        monkeypatch.setenv(var, os.environ.get(var, ""))
+
+    # Execute the top level without entering main().  run_name != "__main__"
+    # skips the ``if __name__ == "__main__"`` guard, so no Kaggle/network/model
+    # access occurs — only imports, env setup, and JOB_SPEC assignment.
+    namespace = runpy.run_path(str(output / "run.py"), run_name="_test_import")
+
+    job_spec = namespace["JOB_SPEC"]
+    assert job_spec == expected_spec
+    # None optional fields must survive as Python None, not JSON null.
+    assert job_spec["model_source"] is None
+    assert job_spec["instrument_manifest_sha256"] is None
+    assert job_spec["human_signoff_id"] is None
+    # Special argument strings must survive byte-for-byte.
+    assert job_spec["arguments"] == special_args
+
+
+def test_job_spec_rendering_safely_quotes_all_json_value_types() -> None:
+    """The JOB_SPEC rendering approach must handle every JSON value type,
+    not just strings and None.  Booleans (``true``/``false``) and nested lists
+    are invalid as raw JSON-as-Python (NameError) but round-trip correctly
+    through ``json.loads(repr(canonical_json))``.
+
+    The job_spec has no boolean fields, so this test verifies the rendering
+    mechanism directly with a synthetic spec containing True, False, None,
+    lists, and strings with quotes/backslashes/newlines.
+    """
+    synthetic = {
+        "flag_true": True,
+        "flag_false": False,
+        "none_value": None,
+        "nested_list": [1, "two", True, None, False, ["inner"]],
+        "special_string": 'quote\'s and "double" and \\back and\nnewline',
+        "unicode": "café—résumé",
+    }
+    canonical = json.dumps(synthetic, sort_keys=True)
+
+    # Corrected renderer: JOB_SPEC = json.loads(<repr of canonical JSON>).
+    # repr() safely quotes any string content; json.loads handles all JSON
+    # types (null→None, true→True, false→False).
+    namespace: dict[str, object] = {}
+    exec(f"import json; JOB_SPEC = json.loads({repr(canonical)})", namespace)
+    assert namespace["JOB_SPEC"] == synthetic
+
+    # Uncorrected renderer: JOB_SPEC = <raw JSON>.  JSON true/false/null are
+    # not Python identifiers, so this raises NameError — the bootstrap bug.
+    with pytest.raises(NameError):
+        exec(f"JOB_SPEC = {canonical}", {})
+
+# ---------------------------------------------------------------------------
+# 4. Active checked-in metadata includes only CPU; GPU is archived
+# ---------------------------------------------------------------------------
+
+
+def _load_kernel_metadata(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_active_kernel_dirs_are_cpu_only() -> None:
+    """Every kernel-metadata.json directly under infrastructure/kaggle/*/ must
+    be CPU-only (enable_gpu=false, machine_shape='')."""
+    active_dirs = [
+        d for d in KAGGLE_DIR.iterdir()
+        if d.is_dir() and (d / "kernel-metadata.json").is_file()
+    ]
+    assert len(active_dirs) >= 2, "expected at least cpu-smoke and qwen-cpu-probe"
+    for d in active_dirs:
+        meta = _load_kernel_metadata(d / "kernel-metadata.json")
+        assert meta["enable_gpu"] is False, f"{d.name} has enable_gpu=true"
+        assert meta["enable_tpu"] is False, f"{d.name} has enable_tpu=true"
+        assert meta["machine_shape"] == "", f"{d.name} has non-empty machine_shape"
+        assert meta["is_private"] is True, f"{d.name} is not private"
+        assert meta["enable_internet"] is False, f"{d.name} has internet enabled"
+
+
+def test_gpu_metadata_is_archived_and_excluded_from_active_discovery() -> None:
+    """GPU kernel metadata must live under archive/gpu/ and not at the active
+    level."""
+    archive_gpu = KAGGLE_DIR / "archive" / "gpu"
+    assert archive_gpu.is_dir(), "archive/gpu/ directory must exist"
+
+    archived_dirs = [
+        d for d in archive_gpu.iterdir()
+        if d.is_dir() and (d / "kernel-metadata.json").is_file()
+    ]
+    assert len(archived_dirs) >= 1, "expected at least one archived GPU kernel"
+
+    for d in archived_dirs:
+        meta = _load_kernel_metadata(d / "kernel-metadata.json")
+        # Archived metadata should have GPU enabled (that's why it was archived).
+        assert meta["enable_gpu"] is True, f"{d.name} in archive should have enable_gpu=true"
+
+    # No active-level directory should have GPU metadata.
+    active_dirs = [
+        d for d in KAGGLE_DIR.iterdir()
+        if d.is_dir() and (d / "kernel-metadata.json").is_file()
+    ]
+    for d in active_dirs:
+        meta = _load_kernel_metadata(d / "kernel-metadata.json")
+        assert meta["enable_gpu"] is False, f"{d.name} is active but has enable_gpu=true"
+
+
+def test_active_dirs_include_cpu_smoke_and_qwen_cpu_probe() -> None:
+    """The active surface must include the CPU cortex smoke and CPU Qwen probe."""
+    active_ids = set()
+    for d in KAGGLE_DIR.iterdir():
+        if d.is_dir() and (d / "kernel-metadata.json").is_file():
+            meta = _load_kernel_metadata(d / "kernel-metadata.json")
+            active_ids.add(meta["id"])
+    assert "abdellahkadem/oczy-cortex-cpu-smoke" in active_ids
+    assert "abdellahkadem/oczy-qwen-cpu-probe" in active_ids
+
+
+def test_archived_gpu_dirs_are_not_active() -> None:
+    """No archived GPU kernel id should appear among active kernel ids."""
+    archive_gpu = KAGGLE_DIR / "archive" / "gpu"
+    archived_ids = set()
+    for d in archive_gpu.iterdir():
+        if d.is_dir() and (d / "kernel-metadata.json").is_file():
+            meta = _load_kernel_metadata(d / "kernel-metadata.json")
+            archived_ids.add(meta["id"])
+
+    active_ids = set()
+    for d in KAGGLE_DIR.iterdir():
+        if d.is_dir() and (d / "kernel-metadata.json").is_file():
+            meta = _load_kernel_metadata(d / "kernel-metadata.json")
+            active_ids.add(meta["id"])
+
+    assert archived_ids.isdisjoint(active_ids), (
+        f"archived GPU ids overlap with active ids: {archived_ids & active_ids}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 5. Cortex and Qwen runners cannot select or query CUDA
+# ---------------------------------------------------------------------------
+
+
+def test_cortex_smoke_cli_rejects_cuda_and_auto(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The cortex smoke --device argument must only accept 'cpu'."""
+    cortex = runpy.run_path(str(KAGGLE_DIR / "run_cortex_smoke.py"))
+    parse_args = cortex["parse_args"]
+
+    # 'cuda' and 'auto' must not be valid choices.
+    for bad_device in ("cuda", "auto"):
+        monkeypatch.setattr(sys, "argv", ["run_cortex_smoke.py", "--device", bad_device])
+        with pytest.raises(SystemExit):
+            parse_args()
+
+    # Default must be 'cpu'.
+    monkeypatch.setattr(sys, "argv", ["run_cortex_smoke.py"])
+    args = parse_args()
+    assert args.device == "cpu"
+
+
+def test_cortex_smoke_resolve_device_rejects_non_cpu() -> None:
+    """_resolve_device must reject anything other than 'cpu'."""
+    cortex = runpy.run_path(str(KAGGLE_DIR / "run_cortex_smoke.py"))
+    _resolve_device = cortex["_resolve_device"]
+    import torch
+
+    assert _resolve_device("cpu") == torch.device("cpu")
+    for bad in ("cuda", "auto"):
+        with pytest.raises(RuntimeError, match="CPU"):
+            _resolve_device(bad)
+
+
+def test_cortex_smoke_run_always_uses_cpu() -> None:
+    """run() must produce a report with device.selected == 'cpu'."""
+    cortex = runpy.run_path(str(KAGGLE_DIR / "run_cortex_smoke.py"))
+    run = cortex["run"]
+    SmokeConfig = cortex["SmokeConfig"]
+
+    config = SmokeConfig(steps=2, batch_size=8, eval_batch_size=8)
+    report = run(config, "cpu")
+    assert report["device"]["selected"] == "cpu"
+    assert report["architecture"]["parallel_mode"] == "single-device"
+    assert report["architecture"]["devices_used"] == ["cpu"]
+
+
+def test_cortex_smoke_source_has_no_cuda_apis() -> None:
+    """The cortex smoke runner source must not call any torch.cuda.* API.
+
+    torch.version.cuda (build metadata) is allowed — it is torch.version, not
+    torch.cuda, and does not initialize CUDA or emit NVML warnings. A source-
+    level check is used because torch's own optimizer internally calls
+    torch.cuda.is_available() during step(), which would false-positive a
+    runtime monkeypatch test.
+    """
+    source = (KAGGLE_DIR / "run_cortex_smoke.py").read_text(encoding="utf-8")
+    assert "torch.cuda." not in source, (
+        "cortex smoke runner must not call any torch.cuda.* API"
+    )
+
+
+def test_cortex_smoke_device_report_is_constant_cpu() -> None:
+    """_device_report must emit constant CPU values without probing CUDA."""
+    cortex = runpy.run_path(str(KAGGLE_DIR / "run_cortex_smoke.py"))
+    _device_report = cortex["_device_report"]
+    import torch
+
+    report = _device_report(torch.device("cpu"))
+    assert report["selected"] == "cpu"
+    assert report["cuda_available"] is False
+    assert report["cuda_device_count"] == 0
+    assert report["cudnn_version"] is None
+
+
+def test_qwen_probe_cli_has_no_allow_cpu_or_cuda_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Qwen probe CLI must not expose --allow-cpu or any CUDA selection."""
+    qwen = runpy.run_path(str(KAGGLE_DIR / "run_qwen_model_probe.py"))
+    parse_args = qwen["parse_args"]
+
+    # --allow-cpu must not be a valid argument.
+    monkeypatch.setattr(sys, "argv", ["run_qwen_model_probe.py", "--allow-cpu"])
+    with pytest.raises(SystemExit):
+        parse_args()
+
+    # Default args should work and have no device-related option.
+    monkeypatch.setattr(sys, "argv", ["run_qwen_model_probe.py"])
+    args = parse_args()
+    assert not hasattr(args, "allow_cpu")
+    assert not hasattr(args, "device")
+
+
+def test_qwen_probe_run_probe_always_uses_cpu(tmp_path: Path) -> None:
+    """run_probe must select cpu device and float32 dtype."""
+    qwen = runpy.run_path(str(KAGGLE_DIR / "run_qwen_model_probe.py"))
+    run_probe = qwen["run_probe"]
+
+    # Create a minimal fake model directory.
+    model = tmp_path / "qwen"
+    model.mkdir()
+    (model / "config.json").write_text(
+        json.dumps({
+            "model_type": "qwen2",
+            "hidden_size": 896,
+            "num_hidden_layers": 2,
+            "num_attention_heads": 2,
+            "vocab_size": 100,
+        }),
+        encoding="utf-8",
+    )
+    (model / "model.safetensors").write_bytes(b"weights")
+
+    # metadata_only=True avoids loading transformers/torch model.
+    report = run_probe(model, metadata_only=True)
+    assert report["metadata_only"] is True
+    assert report["checks"]["config_valid"] is True
+
+
+def test_qwen_probe_source_has_no_cuda_apis() -> None:
+    """The qwen probe runner source must not call any torch.cuda.* API.
+
+    torch.version.cuda (build metadata) is allowed — it is torch.version, not
+    torch.cuda, and does not initialize CUDA or emit NVML warnings.
+    """
+    source = (KAGGLE_DIR / "run_qwen_model_probe.py").read_text(encoding="utf-8")
+    assert "torch.cuda." not in source, (
+        "qwen probe runner must not call any torch.cuda.* API"
+    )
+
+
+def test_qwen_probe_device_report_is_constant_cpu() -> None:
+    """_device_report must emit constant CPU values without probing CUDA."""
+    qwen = runpy.run_path(str(KAGGLE_DIR / "run_qwen_model_probe.py"))
+    _device_report = qwen["_device_report"]
+    import torch
+
+    report = _device_report(torch.device("cpu"))
+    assert report["selected"] == "cpu"
+    assert report["cuda_available"] is False
+    assert report["cuda_device_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 6. HFDriver honors OCZY_MODEL_DIR with local_files_only in remote CPU mode
+# ---------------------------------------------------------------------------
+
+
+def test_hfdriver_load_uses_oczy_model_dir_in_remote_cpu_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In remote CPU mode, HFDriver.load() must resolve OCZY_MODEL_DIR and pass
+    local_files_only=True to from_pretrained — without touching the network."""
+    from oczy.lm.hf_driver import HFDriver
+
+    # Create a fake model directory.
+    model_dir = tmp_path / "pinned-model"
+    model_dir.mkdir()
+
+    monkeypatch.setenv("OCZY_REMOTE_CPU_ONLY", "1")
+    monkeypatch.setenv("OCZY_MODEL_DIR", str(model_dir))
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+
+    captured: dict = {}
+
+    class FakeModel:
+        class config:
+            hidden_size = 896
+            vocab_size = 100
+            num_hidden_layers = 2
+            pad_token_id = None
+
+        def eval(self):
+            return self
+
+        def parameters(self):
+            return iter([])
+
+    class FakeTokenizer:
+        pad_token = None
+        eos_token = "<eos>"
+        eos_token_id = 0
+
+    def fake_from_pretrained_cls(mid, **kwargs):
+        captured["model_kwargs"] = kwargs
+        return FakeModel()
+
+    def fake_from_pretrained_tok(mid, **kwargs):
+        captured["tokenizer_kwargs"] = kwargs
+        return FakeTokenizer()
+
+    import transformers
+
+    monkeypatch.setattr(transformers.AutoModelForCausalLM, "from_pretrained", staticmethod(fake_from_pretrained_cls))
+    monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", staticmethod(fake_from_pretrained_tok))
+
+    driver = HFDriver.load()
+    assert driver.model_id == str(model_dir)
+    assert captured["model_kwargs"].get("local_files_only") is True
+    assert captured["model_kwargs"].get("trust_remote_code") is False
+    assert captured["tokenizer_kwargs"].get("local_files_only") is True
+    assert captured["tokenizer_kwargs"].get("trust_remote_code") is False
+
+
+def test_hfdriver_load_fails_without_model_dir_in_cpu_only_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In CPU-only mode without OCZY_MODEL_DIR or explicit model_id, load must
+    raise RuntimeError, not fall back to network resolution."""
+    from oczy.lm.hf_driver import HFDriver
+
+    monkeypatch.setenv("OCZY_REMOTE_CPU_ONLY", "1")
+    monkeypatch.delenv("OCZY_MODEL_DIR", raising=False)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+    with pytest.raises(RuntimeError, match="OCZY_MODEL_DIR"):
+        HFDriver.load()
+
+
+def test_hfdriver_load_fails_when_pinned_model_dir_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In CPU-only mode, if OCZY_MODEL_DIR points to a nonexistent directory,
+    load must raise RuntimeError rather than falling back to network."""
+    from oczy.lm.hf_driver import HFDriver
+
+    monkeypatch.setenv("OCZY_REMOTE_CPU_ONLY", "1")
+    monkeypatch.setenv("OCZY_MODEL_DIR", str(tmp_path / "nonexistent"))
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+
+    with pytest.raises(RuntimeError, match="pinned local model not found"):
+        HFDriver.load()
+
+
+def test_hfdriver_explicit_model_id_takes_priority_over_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit model_id must take priority over OCZY_MODEL_DIR."""
+    from oczy.lm.hf_driver import HFDriver
+
+    model_dir = tmp_path / "env-model"
+    model_dir.mkdir()
+    monkeypatch.setenv("OCZY_MODEL_DIR", str(model_dir))
+    # No offline env → explicit model_id should not get local_files_only.
+    monkeypatch.delenv("OCZY_REMOTE_CPU_ONLY", raising=False)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+    captured: dict = {}
+
+    class FakeModel:
+        class config:
+            hidden_size = 896
+            vocab_size = 100
+            num_hidden_layers = 2
+            pad_token_id = None
+
+        def eval(self):
+            return self
+
+        def parameters(self):
+            return iter([])
+
+    class FakeTokenizer:
+        pad_token = None
+        eos_token = "<eos>"
+        eos_token_id = 0
+
+    def fake_from_pretrained_cls(mid, **kwargs):
+        captured["mid"] = mid
+        captured["model_kwargs"] = kwargs
+        return FakeModel()
+
+    def fake_from_pretrained_tok(mid, **kwargs):
+        captured["tokenizer_kwargs"] = kwargs
+        return FakeTokenizer()
+
+    import transformers
+
+    monkeypatch.setattr(transformers.AutoModelForCausalLM, "from_pretrained", staticmethod(fake_from_pretrained_cls))
+    monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", staticmethod(fake_from_pretrained_tok))
+
+    driver = HFDriver.load("Qwen/Qwen2.5-0.5B-Instruct")
+    assert driver.model_id == "Qwen/Qwen2.5-0.5B-Instruct"
+    assert captured["mid"] == "Qwen/Qwen2.5-0.5B-Instruct"
+    # Without offline env and explicit model_id != OCZY_MODEL_DIR, no local_files_only.
+    assert "local_files_only" not in captured["model_kwargs"]
+
+
+def test_hfdriver_local_only_when_offline_env_set_even_with_explicit_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When offline env is set, even an explicit model_id must get
+    local_files_only=True."""
+    from oczy.lm.hf_driver import HFDriver
+
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.delenv("OCZY_REMOTE_CPU_ONLY", raising=False)
+    monkeypatch.delenv("OCZY_MODEL_DIR", raising=False)
+
+    captured: dict = {}
+
+    class FakeModel:
+        class config:
+            hidden_size = 896
+            vocab_size = 100
+            num_hidden_layers = 2
+            pad_token_id = None
+
+        def eval(self):
+            return self
+
+        def parameters(self):
+            return iter([])
+
+    class FakeTokenizer:
+        pad_token = None
+        eos_token = "<eos>"
+        eos_token_id = 0
+
+    def fake_from_pretrained_cls(mid, **kwargs):
+        captured["model_kwargs"] = kwargs
+        return FakeModel()
+
+    def fake_from_pretrained_tok(mid, **kwargs):
+        captured["tokenizer_kwargs"] = kwargs
+        return FakeTokenizer()
+
+    import transformers
+
+    monkeypatch.setattr(transformers.AutoModelForCausalLM, "from_pretrained", staticmethod(fake_from_pretrained_cls))
+    monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", staticmethod(fake_from_pretrained_tok))
+
+    driver = HFDriver.load("some/model/1")
+    assert captured["model_kwargs"].get("local_files_only") is True
+    assert captured["tokenizer_kwargs"].get("local_files_only") is True
+
+
+# ---------------------------------------------------------------------------
+# 7. HF layer probe model resolution honors pinned model env
+# ---------------------------------------------------------------------------
+
+
+def test_hf_layer_probe_main_honors_oczy_model_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """main() with no --model-id must resolve OCZY_MODEL_DIR as the model id."""
+    import oczy.experiments.hf_layer_probe as hfp
+
+    model_dir = tmp_path / "pinned-model"
+    monkeypatch.setenv("OCZY_MODEL_DIR", str(model_dir))
+    monkeypatch.delenv("OCZY_REMOTE_CPU_ONLY", raising=False)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+    captured: dict = {}
+
+    def fake_run_probe(model_id, poolings=("mean", "last", "max")):
+        captured["model_id"] = model_id
+        return {
+            "model_id": model_id,
+            "n_layers": 24,
+            "n_embd": 896,
+            "corpus_hash": "abc",
+            "silhouettes": {"mean": {"L0": 0.5, "L23": 0.4}},
+            "final_score": 0.4,
+            "max_mid": 0.5,
+            "gap": 0.1,
+            "verdict": "ACCEPT",
+            "mid_layer_range": "8-15",
+            "primary_pooling": "mean",
+        }
+
+    monkeypatch.setattr(hfp, "run_probe", fake_run_probe)
+    # Provide --output to avoid writing to default path.
+    output_file = tmp_path / "probe.md"
+    rc = hfp.main(["--quiet", "--output", str(output_file)])
+    assert rc == 0
+    assert captured["model_id"] == str(model_dir)
+
+
+def test_hf_layer_probe_main_explicit_model_id_overrides_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit --model-id must take priority over OCZY_MODEL_DIR."""
+    import oczy.experiments.hf_layer_probe as hfp
+
+    monkeypatch.setenv("OCZY_MODEL_DIR", str(tmp_path / "env-model"))
+
+    captured: dict = {}
+
+    def fake_run_probe(model_id, poolings=("mean", "last", "max")):
+        captured["model_id"] = model_id
+        return {
+            "model_id": model_id,
+            "n_layers": 24,
+            "n_embd": 896,
+            "corpus_hash": "abc",
+            "silhouettes": {"mean": {"L0": 0.5, "L23": 0.4}},
+            "final_score": 0.4,
+            "max_mid": 0.5,
+            "gap": 0.1,
+            "verdict": "ACCEPT",
+            "mid_layer_range": "8-15",
+            "primary_pooling": "mean",
+        }
+
+    monkeypatch.setattr(hfp, "run_probe", fake_run_probe)
+    output_file = tmp_path / "probe.md"
+    rc = hfp.main(["--quiet", "--output", str(output_file), "--model-id", "explicit/model/1"])
+    assert rc == 0
+    assert captured["model_id"] == "explicit/model/1"
+
+
+def test_hf_layer_probe_run_probe_uses_local_only_when_offline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_probe must pass local_files_only=True when offline env is set."""
+    import oczy.experiments.hf_layer_probe as hfp
+
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.delenv("OCZY_REMOTE_CPU_ONLY", raising=False)
+    monkeypatch.delenv("OCZY_MODEL_DIR", raising=False)
+
+    captured: dict = {}
+
+    class FakeModel:
+        class config:
+            num_hidden_layers = 2
+            hidden_size = 8
+
+        def eval(self):
+            return self
+
+    class FakeTokenizer:
+        pad_token = None
+        eos_token = "<eos>"
+
+    # We need to intercept the imports inside run_probe.
+    # run_probe does `import torch` and `from transformers import ...` locally.
+    # We monkeypatch the transformers classes directly.
+    import transformers
+
+    def fake_tokenizer_from_pretrained(mid, **kwargs):
+        captured["tokenizer_kwargs"] = kwargs
+        return FakeTokenizer()
+
+    def fake_model_from_pretrained(mid, **kwargs):
+        captured["model_kwargs"] = kwargs
+        return FakeModel()
+
+    monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", staticmethod(fake_tokenizer_from_pretrained))
+    monkeypatch.setattr(transformers.AutoModelForCausalLM, "from_pretrained", staticmethod(fake_model_from_pretrained))
+
+    # run_probe also calls _forward_all_phrases which needs a real model.
+    # We monkeypatch it to return empty dict to avoid forward pass.
+    monkeypatch.setattr(hfp, "_forward_all_phrases", lambda model, tokenizer, phrases: {})
+    monkeypatch.setattr(hfp, "_compute_silhouettes", lambda ph, nl, cm, p: {"L0": 0.5, "L1": 0.3})
+    monkeypatch.setattr(hfp, "_content_mask", lambda phrase, tokenizer: None)
+
+    hfp.run_probe("any/model")
+
+    assert captured["tokenizer_kwargs"].get("local_files_only") is True
+    assert captured["model_kwargs"].get("local_files_only") is True
+    assert captured["model_kwargs"].get("trust_remote_code") is False
+
+
+def test_hf_layer_probe_run_probe_explicit_id_without_offline_allows_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_probe with an explicit model_id and no offline env must NOT pass
+    local_files_only (network resolution still allowed for local users)."""
+    import oczy.experiments.hf_layer_probe as hfp
+
+    monkeypatch.delenv("OCZY_REMOTE_CPU_ONLY", raising=False)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+    monkeypatch.delenv("OCZY_MODEL_DIR", raising=False)
+
+    captured: dict = {}
+
+    class FakeModel:
+        class config:
+            num_hidden_layers = 2
+            hidden_size = 8
+
+        def eval(self):
+            return self
+
+    class FakeTokenizer:
+        pad_token = None
+        eos_token = "<eos>"
+
+    import transformers
+
+    def fake_tokenizer_from_pretrained(mid, **kwargs):
+        captured["tokenizer_kwargs"] = kwargs
+        return FakeTokenizer()
+
+    def fake_model_from_pretrained(mid, **kwargs):
+        captured["model_kwargs"] = kwargs
+        return FakeModel()
+
+    monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", staticmethod(fake_tokenizer_from_pretrained))
+    monkeypatch.setattr(transformers.AutoModelForCausalLM, "from_pretrained", staticmethod(fake_model_from_pretrained))
+
+    monkeypatch.setattr(hfp, "_forward_all_phrases", lambda model, tokenizer, phrases: {})
+    monkeypatch.setattr(hfp, "_compute_silhouettes", lambda ph, nl, cm, p: {"L0": 0.5, "L1": 0.3})
+    monkeypatch.setattr(hfp, "_content_mask", lambda phrase, tokenizer: None)
+
+    hfp.run_probe("explicit/model/1")
+
+    assert "local_files_only" not in captured["model_kwargs"]
+    assert "local_files_only" not in captured["tokenizer_kwargs"]
+
+
+# ---------------------------------------------------------------------------
+# 8. Bootstrap GGUF/HF artifact discovery, env export, and provenance
+# ---------------------------------------------------------------------------
+
+_GGUF_FILENAME = "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
+
+
+def _generate_minimal_kernel(tmp_path: Path) -> Path:
+    """Generate a minimal CPU development kernel and return its output dir."""
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+    )
+    return output
+
+
+def _exec_bootstrap(
+    output: Path, kaggle_input: Path, monkeypatch: pytest.MonkeyPatch
+) -> dict:
+    """Exec the generated run.py in a controlled namespace.
+
+    Replaces the hardcoded ``/kaggle/input`` path with *kaggle_input* and
+    stubs torch so the source can be exec'd without CUDA initialisation.
+    Env vars touched by the bootstrap are tracked via monkeypatch for cleanup.
+    """
+    import types
+
+    # Pre-register env vars so monkeypatch restores originals at teardown
+    # even when the bootstrap sets them directly via os.environ[...]=...
+    for var in (
+        "CUDA_VISIBLE_DEVICES", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+        "OCZY_REMOTE_CPU_ONLY", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE",
+        "TOKENIZERS_PARALLELISM", "OCZY_MODEL_DIR", "OCZY_MODEL_PATH",
+        "OCZY_HF_MODEL_DIR", "PYTHONPATH",
+    ):
+        monkeypatch.setenv(var, "")
+
+    source = (output / "run.py").read_text(encoding="utf-8")
+    source = source.replace('"/kaggle/input"', repr(str(kaggle_input)))
+    # Stub torch to avoid heavy import / CUDA init.
+    fake_torch = types.ModuleType("torch")
+    fake_torch.__version__ = "0.0.0-fake"
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    namespace: dict = {}
+    exec(compile(source, str(output / "run.py"), "exec"), namespace)
+    return namespace
+
+
+def test_generated_bootstrap_contains_manifest_resolution_and_env_exports(
+    tmp_path: Path,
+) -> None:
+    """The generated run.py resolves models from the reviewed runtime manifest."""
+    output = _generate_minimal_kernel(tmp_path)
+    source = (output / "run.py").read_text(encoding="utf-8")
+    assert "def _resolve_model_from_manifest(" in source
+    assert "def _set_model_env_vars(" in source
+    assert 'os.environ["OCZY_MODEL_PATH"]' in source
+    assert 'os.environ["OCZY_HF_MODEL_DIR"]' in source
+
+
+def test_generated_bootstrap_records_manifest_provenance(tmp_path: Path) -> None:
+    """The provenance report must include expected/observed manifest hashes and resolved root."""
+    output = _generate_minimal_kernel(tmp_path)
+    source = (output / "run.py").read_text(encoding="utf-8")
+    assert '"expected_runtime_manifest_sha256"' in source
+    assert '"observed_runtime_manifest_sha256"' in source
+    assert '"model_root"' in source
+
+def test_generated_bootstrap_routes_manifests_through_common_runner(
+    tmp_path: Path,
+) -> None:
+    """Runtime flags belong to the wrapper, never the experiment CLI."""
+    output = tmp_path / "job"
+    spec = prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=["train-dev", "--seed", "7"],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=False,
+    )
+    source = (output / "run.py").read_text(encoding="utf-8")
+
+    assert spec["kernel_id"] == "owner/oczy-test"
+    assert 'runner_module = "infrastructure.kaggle.run_experiment_module"' in source
+    assert '"--module", JOB_SPEC["module"]' in source
+    assert 'runner_argv.extend(f"--arg={arg}" for arg in JOB_SPEC["arguments"])' in source
+    assert 'sys.argv.extend(["--observed-manifest-json"' not in source
+
+
+def _write_manifest_file(path: Path, content: bytes) -> dict[str, Any]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return {
+        "filename": path.name,
+        "size_bytes": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+    }
+
+
+def test_bootstrap_resolves_exact_gguf_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Manifest-directed resolution returns the unique file matching name, size, and hash."""
+    output = _generate_minimal_kernel(tmp_path)
+    kaggle_input = tmp_path / "kaggle-input"
+    gguf = kaggle_input / "lfm-gguf" / _GGUF_FILENAME
+    info = _write_manifest_file(gguf, b"fake-weights")
+    manifest = _model_runtime_manifest(
+        filename=info["filename"],
+        size_bytes=info["size_bytes"],
+        sha256=info["sha256"],
+    )
+
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    result = ns["_resolve_model_from_manifest"](manifest)
+    assert result == gguf.resolve()
+
+
+def test_bootstrap_rejects_zero_gguf_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A model-bearing manifest with no byte-exact mounted candidate fails closed."""
+    output = _generate_minimal_kernel(tmp_path)
+    kaggle_input = tmp_path / "kaggle-input"
+    kaggle_input.mkdir(parents=True)
+    manifest = _model_runtime_manifest(filename=_GGUF_FILENAME, size_bytes=7, sha256="1" * 64)
+
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    with pytest.raises(RuntimeError, match="no candidate found"):
+        ns["_resolve_model_from_manifest"](manifest)
+
+
+def test_bootstrap_rejects_multiple_gguf_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two mounted files with the same reviewed bytes are ambiguous and rejected."""
+    output = _generate_minimal_kernel(tmp_path)
+    kaggle_input = tmp_path / "kaggle-input"
+    contents = b"same-reviewed-weights"
+    first = kaggle_input / "dataset-a" / _GGUF_FILENAME
+    second = kaggle_input / "dataset-b" / _GGUF_FILENAME
+    info = _write_manifest_file(first, contents)
+    _write_manifest_file(second, contents)
+    manifest = _model_runtime_manifest(
+        filename=info["filename"],
+        size_bytes=info["size_bytes"],
+        sha256=info["sha256"],
+    )
+
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    with pytest.raises(RuntimeError, match="ambiguous candidates"):
+        ns["_resolve_model_from_manifest"](manifest)
+
+
+def test_bootstrap_resolves_hf_directory_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Transformers-directory convention resolves to the parent of the exact manifest file."""
+    output = _generate_minimal_kernel(tmp_path)
+    kaggle_input = tmp_path / "kaggle-input"
+    config = kaggle_input / "lfm-hf" / "config.json"
+    info = _write_manifest_file(config, b'{"model_type":"lfm2","hidden_size":2048}')
+    manifest = _model_runtime_manifest(
+        convention="transformers-pretrained-directory",
+        filename=info["filename"],
+        size_bytes=info["size_bytes"],
+        sha256=info["sha256"],
+    )
+
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    result = ns["_resolve_model_from_manifest"](manifest)
+    assert result == config.parent.resolve()
+
+
+def test_bootstrap_no_model_manifest_resolves_to_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The explicit no-model branch never scans mounts and returns None."""
+    output = _generate_minimal_kernel(tmp_path)
+    kaggle_input = tmp_path / "kaggle-input"
+    kaggle_input.mkdir(parents=True)
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    assert ns["_resolve_model_from_manifest"](_no_model_runtime_manifest()) is None
+
+
+# ---------------------------------------------------------------------------
+# 9. Metabolism loop GGUF model path resolver
+# ---------------------------------------------------------------------------
+
+
+def test_metabolism_resolver_honors_oczy_model_path_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_resolve_gguf_model_path must return OCZY_MODEL_PATH when the file exists."""
+    from oczy.experiments.metabolism_loop import _resolve_gguf_model_path
+
+    gguf = tmp_path / "model.gguf"
+    gguf.write_bytes(b"weights")
+    monkeypatch.setenv("OCZY_MODEL_PATH", str(gguf))
+    # Ensure cache fallback is not accidentally hit.
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "nonexistent-home")
+
+    assert _resolve_gguf_model_path() == str(gguf)
+
+
+def test_metabolism_resolver_falls_back_to_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without OCZY_MODEL_PATH, the resolver must find the GGUF in the HF cache."""
+    from oczy.experiments.metabolism_loop import _resolve_gguf_model_path
+
+    monkeypatch.delenv("OCZY_MODEL_PATH", raising=False)
+    cache_parent = (
+        tmp_path
+        / ".cache" / "huggingface" / "hub"
+        / "models--LiquidAI--LFM2.5-1.2B-Instruct-GGUF"
+        / "snapshots" / "abc123"
+    )
+    cache_parent.mkdir(parents=True)
+    gguf = cache_parent / _GGUF_FILENAME
+    gguf.write_bytes(b"weights")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    assert _resolve_gguf_model_path() == str(gguf)
+
+
+def test_metabolism_resolver_raises_when_no_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_resolve_gguf_model_path must raise FileNotFoundError when no local GGUF exists."""
+    from oczy.experiments.metabolism_loop import _resolve_gguf_model_path
+
+    monkeypatch.delenv("OCZY_MODEL_PATH", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    with pytest.raises(FileNotFoundError, match=_GGUF_FILENAME):
+        _resolve_gguf_model_path()
+
+
+def test_metabolism_resolver_ignores_nonexistent_env_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When OCZY_MODEL_PATH points to a nonexistent file and no cache exists,
+    the resolver must raise FileNotFoundError rather than returning a bad path."""
+    from oczy.experiments.metabolism_loop import _resolve_gguf_model_path
+
+    monkeypatch.setenv("OCZY_MODEL_PATH", str(tmp_path / "nonexistent.gguf"))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    with pytest.raises(FileNotFoundError, match=_GGUF_FILENAME):
+        _resolve_gguf_model_path()
+
+
+# ---------------------------------------------------------------------------
+# 10. Layer-L probe HF model dir and local_files_only remote contract
+# ---------------------------------------------------------------------------
+
+
+def _patch_hf_probe_deps(monkeypatch: pytest.MonkeyPatch, captured: dict) -> None:
+    """Stub transformers and plastic_cortex so _hf_probe can be called without
+    real ML dependencies.  Captures from_pretrained kwargs and returns fakes
+    that make _hf_probe return early (hidden_states=None)."""
+    import types
+
+    import transformers
+
+    # Stub plastic_cortex (imported at top of _hf_probe but never reached when
+    # hidden_states is None).
+    fake_pc = types.ModuleType("plastic_cortex")
+    fake_kv = types.ModuleType("plastic_cortex.kv_cortex")
+    fake_kv.KVCortex = type("KVCortex", (), {})
+    fake_kv.KVCortexConfig = type("KVCortexConfig", (), {})
+    fake_pc.kv_cortex = fake_kv
+    monkeypatch.setitem(sys.modules, "plastic_cortex", fake_pc)
+    monkeypatch.setitem(sys.modules, "plastic_cortex.kv_cortex", fake_kv)
+
+    class _FakeOutput:
+        hidden_states = None  # Triggers early return in _hf_probe.
+
+    class _FakeModel:
+        def eval(self):
+            return self
+
+        def __call__(self, **kwargs):
+            return _FakeOutput()
+
+    class _FakeTokenizer:
+        pad_token = None
+        eos_token = "<eos>"
+
+        def __call__(self, phrase, return_tensors="pt"):
+            return {"input_ids": [[1, 2, 3]]}
+
+    def _fake_tok(mid, **kwargs):
+        captured["model_name"] = mid
+        captured["tokenizer_kwargs"] = kwargs
+        return _FakeTokenizer()
+
+    def _fake_model(mid, **kwargs):
+        captured["model_kwargs"] = kwargs
+        return _FakeModel()
+
+    monkeypatch.setattr(
+        transformers.AutoTokenizer,
+        "from_pretrained",
+        staticmethod(_fake_tok),
+    )
+    monkeypatch.setattr(
+        transformers.AutoModelForCausalLM,
+        "from_pretrained",
+        staticmethod(_fake_model),
+    )
+
+
+def test_layer_l_probe_hf_probe_uses_oczy_hf_model_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_hf_probe must use OCZY_HF_MODEL_DIR as model_name with local_files_only=True
+    and trust_remote_code=False."""
+    import oczy.experiments.layer_l_probe as llp
+
+    hf_dir = tmp_path / "hf-model"
+    hf_dir.mkdir()
+    monkeypatch.setenv("OCZY_HF_MODEL_DIR", str(hf_dir))
+    monkeypatch.delenv("OCZY_REMOTE_CPU_ONLY", raising=False)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+    captured: dict = {}
+    _patch_hf_probe_deps(monkeypatch, captured)
+
+    assert llp._hf_probe() is None  # None because fake hidden_states is None.
+    assert captured["model_name"] == str(hf_dir)
+    assert captured["tokenizer_kwargs"].get("local_files_only") is True
+    assert captured["model_kwargs"].get("local_files_only") is True
+    assert captured["model_kwargs"].get("trust_remote_code") is False
+
+
+def test_layer_l_probe_hf_probe_local_only_when_offline_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_hf_probe must pass local_files_only=True when offline env is set,
+    even without OCZY_HF_MODEL_DIR — model_name falls back to the hub id."""
+    import oczy.experiments.layer_l_probe as llp
+
+    monkeypatch.delenv("OCZY_HF_MODEL_DIR", raising=False)
+    monkeypatch.setenv("OCZY_REMOTE_CPU_ONLY", "1")
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+    captured: dict = {}
+    _patch_hf_probe_deps(monkeypatch, captured)
+
+    assert llp._hf_probe() is None
+    assert captured["model_name"] == "LiquidAI/LFM2.5-1.2B-Instruct"
+    assert captured["tokenizer_kwargs"].get("local_files_only") is True
+    assert captured["model_kwargs"].get("local_files_only") is True
+
+
+def test_layer_l_probe_hf_probe_allows_network_when_no_env_no_offline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_hf_probe must NOT pass local_files_only when no env and no offline mode,
+    preserving network resolution for local users."""
+    import oczy.experiments.layer_l_probe as llp
+
+    monkeypatch.delenv("OCZY_HF_MODEL_DIR", raising=False)
+    monkeypatch.delenv("OCZY_REMOTE_CPU_ONLY", raising=False)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+    captured: dict = {}
+    _patch_hf_probe_deps(monkeypatch, captured)
+
+    assert llp._hf_probe() is None
+    assert captured["model_name"] == "LiquidAI/LFM2.5-1.2B-Instruct"
+    assert "local_files_only" not in captured["tokenizer_kwargs"]
+    assert "local_files_only" not in captured["model_kwargs"]
+
+
+# ---------------------------------------------------------------------------
+# Qwen locator and artifact manifest (existing, preserved)
+# ---------------------------------------------------------------------------
 
 
 def test_qwen_locator_and_artifact_manifest(tmp_path: Path) -> None:
@@ -124,3 +1931,1108 @@ def test_qwen_locator_and_artifact_manifest(tmp_path: Path) -> None:
     assert locate_model(model) == model.resolve()
     files = {item["path"]: item for item in artifact_manifest(model)}
     assert files["model.safetensors"]["sha256"] == hashlib.sha256(b"weights").hexdigest()
+
+
+def test_qwen_locator_honors_oczy_model_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """locate_model must check OCZY_MODEL_DIR before scanning Kaggle paths."""
+    model = tmp_path / "pinned-qwen"
+    model.mkdir()
+    (model / "config.json").write_text(
+        json.dumps({"model_type": "qwen2", "hidden_size": 896}),
+        encoding="utf-8",
+    )
+    (model / "model.safetensors").write_bytes(b"weights")
+
+    monkeypatch.setenv("OCZY_MODEL_DIR", str(model))
+    # No explicit path — should find via env.
+    result = locate_model(None)
+    assert result == model.resolve()
+
+
+# ---------------------------------------------------------------------------
+# 12. Offline wheel generation and bootstrap contract
+# ---------------------------------------------------------------------------
+
+
+def _valid_wheel_entry(
+    dataset: str = "owner/torchao-deps",
+    filename: str = "torchao-0.17.0-cp312-cp312-linux_x86_64.whl",
+    sha256: str = "a" * 64,
+) -> dict[str, str]:
+    return {"dataset": dataset, "filename": filename, "sha256": sha256}
+
+
+def test_offline_wheels_valid_generation_zero_wheels(tmp_path: Path) -> None:
+    """Zero offline wheels produce an empty list in job_spec and no extra datasets."""
+    spec = prepare_kernel(
+        output=tmp_path / "job",
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=None,
+    )
+    assert spec["offline_wheels"] == []
+    meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text(encoding="utf-8"))
+    assert meta["dataset_sources"] == [SOURCE_DATASET]
+
+
+def test_offline_wheels_valid_generation_single_wheel(tmp_path: Path) -> None:
+    """A single valid wheel appears in job_spec and kernel metadata dataset_sources."""
+    wheel = _valid_wheel_entry()
+    spec = prepare_kernel(
+        output=tmp_path / "job",
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=[wheel],
+    )
+    assert spec["offline_wheels"] == [wheel]
+    meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text(encoding="utf-8"))
+    assert meta["dataset_sources"] == [SOURCE_DATASET, wheel["dataset"]]
+
+
+def test_offline_wheels_valid_generation_multiple_distinct(tmp_path: Path) -> None:
+    """Multiple distinct wheels all appear in job_spec and metadata."""
+    w1 = _valid_wheel_entry(dataset="a/ds1", filename="pkg1.whl")
+    w2 = _valid_wheel_entry(dataset="b/ds2", filename="pkg2.whl")
+    spec = prepare_kernel(
+        output=tmp_path / "job",
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=[w1, w2],
+    )
+    assert spec["offline_wheels"] == [w1, w2]
+
+
+def test_offline_wheels_round_trips_to_bootstrap(tmp_path: Path) -> None:
+    """The wheel entry round-trips through job_spec into the generated run.py."""
+    wheel = _valid_wheel_entry()
+    prepare_kernel(
+        output=tmp_path / "job",
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=[wheel],
+    )
+    source = (tmp_path / "job" / "run.py").read_text(encoding="utf-8")
+    assert "install_offline_wheels" in source
+    assert '"offline_wheels"' in source
+    assert wheel["filename"] in source
+    assert wheel["sha256"] in source
+
+
+def test_offline_wheels_rejects_malformed_filename_path_separators(
+    tmp_path: Path,
+) -> None:
+    """Filenames with path separators (e.g. 'sub/pkg.whl') are rejected."""
+    with pytest.raises(ValueError, match="basename-only"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_wheels=[_valid_wheel_entry(filename="sub/pkg.whl")],
+        )
+
+
+def test_offline_wheels_rejects_malformed_filename_no_whl_extension(
+    tmp_path: Path,
+) -> None:
+    """Filenames without a .whl extension are rejected."""
+    with pytest.raises(ValueError, match="basename-only"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_wheels=[_valid_wheel_entry(filename="not_a_wheel")],
+        )
+
+
+def test_offline_wheels_rejects_malformed_filename_empty(tmp_path: Path) -> None:
+    """An empty filename is rejected."""
+    with pytest.raises(ValueError, match="basename-only"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_wheels=[_valid_wheel_entry(filename="")],
+        )
+
+
+def test_offline_wheels_rejects_duplicate_filename(tmp_path: Path) -> None:
+    """Two entries with the same filename (even different datasets) are rejected."""
+    with pytest.raises(ValueError, match="duplicate offline wheel filename"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_wheels=[
+                _valid_wheel_entry(dataset="a/ds1", filename="pkg.whl"),
+                _valid_wheel_entry(dataset="b/ds2", filename="pkg.whl"),
+            ],
+        )
+
+
+def test_offline_wheels_rejects_duplicate_entry(tmp_path: Path) -> None:
+    """Two identical (dataset, filename) entries are rejected."""
+    with pytest.raises(ValueError, match="duplicate offline wheel filename"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_wheels=[
+                _valid_wheel_entry(dataset="a/ds1", filename="pkg.whl"),
+                _valid_wheel_entry(dataset="a/ds1", filename="pkg.whl"),
+            ],
+        )
+
+
+def _write_wheel_file(
+    kaggle_input: Path, filename: str, content: bytes
+) -> Path:
+    """Write a wheel file into an arbitrary subdirectory under kaggle_input."""
+    sub = kaggle_input / "some-mount"
+    sub.mkdir(parents=True, exist_ok=True)
+    path = sub / filename
+    path.write_bytes(content)
+    return path
+
+
+def test_offline_wheels_bootstrap_zero_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bootstrap raises RuntimeError when no regular-file candidate is found
+    under /kaggle/input for the requested basename."""
+    wheel = _valid_wheel_entry()
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=[wheel],
+    )
+    kaggle_input = tmp_path / "kaggle_input"
+    kaggle_input.mkdir()
+    # No file with matching basename anywhere.
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    with pytest.raises(RuntimeError, match="no regular-file candidate found"):
+        ns["install_offline_wheels"]()
+
+
+def test_offline_wheels_bootstrap_hash_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bootstrap raises RuntimeError when the wheel file hash does not match."""
+    wheel = _valid_wheel_entry(sha256="c" * 64)
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=[wheel],
+    )
+    kaggle_input = tmp_path / "kaggle_input"
+    _write_wheel_file(kaggle_input, wheel["filename"], b"wrong content")
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    with pytest.raises(RuntimeError, match="hash mismatch"):
+        ns["install_offline_wheels"]()
+
+
+def test_offline_wheels_bootstrap_symlink_matching_bytes_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Kaggle mounts input files as symlinks — the bootstrap must resolve and
+    install the real file, verifying hash against the resolved bytes."""
+    import hashlib
+    content = b"valid wheel content"
+    real_hash = hashlib.sha256(content).hexdigest()
+    wheel = _valid_wheel_entry(sha256=real_hash)
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=[wheel],
+    )
+    kaggle_input = tmp_path / "kaggle_input"
+    # Create real file with correct content outside kaggle_input.
+    real_path = tmp_path / "real_wheel.whl"
+    real_path.write_bytes(content)
+    # Create symlink under an arbitrary Kaggle mount directory.
+    mount_dir = kaggle_input / "oczy-r20-int8-deps-92c99ca"
+    mount_dir.mkdir(parents=True)
+    (mount_dir / wheel["filename"]).symlink_to(real_path)
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    import subprocess as _sp
+    monkeypatch.setattr(_sp, "check_call", lambda *args, **kw: None)
+    # Must not raise — symlink resolves, hash matches, install attempted.
+    ns["install_offline_wheels"]()
+
+
+def test_offline_wheels_bootstrap_ambiguous_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Multiple regular-file candidates with the same basename are rejected."""
+    wheel = _valid_wheel_entry()
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=[wheel],
+    )
+    kaggle_input = tmp_path / "kaggle_input"
+    for i, content in enumerate([b"content A", b"content B"]):
+        sub = kaggle_input / f"mount-{i}"
+        sub.mkdir(parents=True)
+        (sub / wheel["filename"]).write_bytes(content)
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    with pytest.raises(RuntimeError, match="ambiguous candidates"):
+        ns["install_offline_wheels"]()
+
+
+def test_offline_wheels_bootstrap_broken_symlink_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A broken symlink is skipped during candidate collection; if no other
+    candidate exists, the bootstrap fails with zero-candidates."""
+    wheel = _valid_wheel_entry()
+    output = tmp_path / "job"
+    prepare_kernel(
+        output=output,
+        kernel_id="owner/oczy-test",
+        title="Oczy Test",
+        phase="development",
+        profile="cpu",
+        source_dataset=SOURCE_DATASET,
+        source_commit=COMMIT,
+        source_archive_sha256=ARCHIVE_SHA,
+        module="oczy.experiments.dummy",
+        arguments=[],
+        model_source=None,
+        instrument_manifest_sha256=None,
+        human_signoff_id=None,
+        force=True,
+        offline_wheels=[wheel],
+    )
+    kaggle_input = tmp_path / "kaggle_input"
+    mount_dir = kaggle_input / "some-mount"
+    mount_dir.mkdir(parents=True)
+    (mount_dir / wheel["filename"]).symlink_to(tmp_path / "does_not_exist.whl")
+    ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+    with pytest.raises(RuntimeError, match="no regular-file candidate found"):
+        ns["install_offline_wheels"]()
+
+
+def test_offline_wheels_rejects_wrong_keys(tmp_path: Path) -> None:
+    """An entry with extra or missing keys is rejected."""
+    # Missing key
+    with pytest.raises(ValueError, match="must have exactly keys"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_wheels=[{"filename": "p.whl", "sha256": "a" * 64}],
+        )
+
+
+def test_offline_wheels_rejects_non_lowercase_sha256(tmp_path: Path) -> None:
+    """Uppercase hex in sha256 is rejected."""
+    with pytest.raises(ValueError, match="lowercase 64-character hex"):
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_wheels=[_valid_wheel_entry(sha256="A" * 64)],
+        )
+
+
+# ---------------------------------------------------------------------------
+# 13. Offline archive generation and bootstrap contract
+# ---------------------------------------------------------------------------
+
+
+def _valid_archive_entry(
+    dataset: str = "owner/calibration-archive",
+    filename: str = "calibration_data.tar.gz.bin",
+    sha256: str = "d" * 64,
+    fmt: str = "tar.gz",
+    destination: str = "calibration",
+) -> dict[str, str]:
+    return {
+        "dataset": dataset,
+        "filename": filename,
+        "sha256": sha256,
+        "format": fmt,
+        "destination": destination,
+    }
+
+
+def _make_tar(tmp_path: Path, name: str, members: list[tuple[str, bytes]]) -> Path:
+    """Create a tar.gz at *name* with *members* as (arcname, content) tuples."""
+    import io
+    archive_path = tmp_path / name
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for arcname, content in members:
+            info = tarfile.TarInfo(name=arcname)
+            info.size = len(content)
+            tf.addfile(info, io.BytesIO(content))
+    archive_path.write_bytes(buf.getvalue())
+    return archive_path
+
+
+def _write_archive_file(
+    kaggle_input: Path, filename: str, content: bytes
+) -> Path:
+    """Write an archive file into an arbitrary subdirectory under kaggle_input."""
+    sub = kaggle_input / "some-mount"
+    sub.mkdir(parents=True, exist_ok=True)
+    path = sub / filename
+    path.write_bytes(content)
+    return path
+
+
+class TestOfflineArchiveGeneration:
+    """Generator validation — no extraction under /kaggle."""
+
+    def test_zero_archives(self, tmp_path: Path) -> None:
+        """Zero offline archives produce empty list in job_spec, no extra datasets."""
+        spec = prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_archives=None,
+        )
+        assert spec["offline_archives"] == []
+        meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text(encoding="utf-8"))
+        assert meta["dataset_sources"] == [SOURCE_DATASET]
+
+    def test_single_archive(self, tmp_path: Path) -> None:
+        """A single valid archive appears in job_spec and dataset_sources."""
+        archive = _valid_archive_entry()
+        spec = prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_archives=[archive],
+        )
+        assert spec["offline_archives"] == [archive]
+        meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text(encoding="utf-8"))
+        assert archive["dataset"] in meta["dataset_sources"]
+
+    def test_multiple_distinct(self, tmp_path: Path) -> None:
+        """Multiple distinct archives all appear in job_spec."""
+        a1 = _valid_archive_entry(dataset="a/ds1", filename="data1.tar.gz.bin", destination="d1")
+        a2 = _valid_archive_entry(dataset="b/ds2", filename="data2.tar.gz.bin", destination="d2")
+        spec = prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_archives=[a1, a2],
+        )
+        assert spec["offline_archives"] == [a1, a2]
+
+    def test_distinct_archives_same_dataset_dedup(self, tmp_path: Path) -> None:
+        """Two archives from the same dataset appear only once in dataset_sources."""
+        a1 = _valid_archive_entry(dataset="a/ds1", filename="f1.tar.gz.bin", destination="d1")
+        a2 = _valid_archive_entry(dataset="a/ds1", filename="f2.tar.gz.bin", destination="d2")
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_archives=[a1, a2],
+        )
+        meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text(encoding="utf-8"))
+        assert meta["dataset_sources"].count("a/ds1") == 1
+
+    def test_round_trips_to_bootstrap(self, tmp_path: Path) -> None:
+        """The archive entry round-trips through job_spec into generated run.py."""
+        archive = _valid_archive_entry()
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_archives=[archive],
+        )
+        source = (tmp_path / "job" / "run.py").read_text(encoding="utf-8")
+        assert "extract_offline_archives" in source
+        assert '"offline_archives"' in source
+        assert archive["filename"] in source
+        assert archive["sha256"] in source
+        assert archive["destination"] in source
+
+    def test_rejects_not_tar_gz_format(self, tmp_path: Path) -> None:
+        """Any format other than 'tar.gz' is rejected."""
+        with pytest.raises(ValueError, match="format must be 'tar.gz'"):
+            prepare_kernel(
+                output=tmp_path / "job",
+                kernel_id="owner/oczy-test",
+                title="Oczy Test",
+                phase="development",
+                profile="cpu",
+                source_dataset=SOURCE_DATASET,
+                source_commit=COMMIT,
+                source_archive_sha256=ARCHIVE_SHA,
+                module="oczy.experiments.dummy",
+                arguments=[],
+                model_source=None,
+                instrument_manifest_sha256=None,
+                human_signoff_id=None,
+                force=True,
+                offline_archives=[_valid_archive_entry(fmt="zip")],
+            )
+
+    def test_rejects_malformed_filename(self, tmp_path: Path) -> None:
+        """Paths, bare archives, and names without the opaque suffix are rejected."""
+        bad_names = [
+            "sub/data.tar.gz.bin",
+            "data.tar.gz",
+            "noext",
+            "",
+            "data.zip",
+            "data.tar.gz.dat",
+        ]
+        for name in bad_names:
+            with pytest.raises(ValueError, match="basename-only"):
+                prepare_kernel(
+                    output=tmp_path / "job",
+                    kernel_id="owner/oczy-test",
+                    title="Oczy Test",
+                    phase="development",
+                    profile="cpu",
+                    source_dataset=SOURCE_DATASET,
+                    source_commit=COMMIT,
+                    source_archive_sha256=ARCHIVE_SHA,
+                    module="oczy.experiments.dummy",
+                    arguments=[],
+                    model_source=None,
+                    instrument_manifest_sha256=None,
+                    human_signoff_id=None,
+                    force=True,
+                    offline_archives=[_valid_archive_entry(filename=name)],
+                )
+
+    def test_rejects_bad_destination(self, tmp_path: Path) -> None:
+        """Destinations with separators, dots, or unsafe chars are rejected."""
+        bad_dests = ["../escape", "sub/dir", "", "-bad", ".hidden", "has space"]
+        for dest in bad_dests:
+            with pytest.raises(ValueError, match="safe directory name"):
+                prepare_kernel(
+                    output=tmp_path / "job",
+                    kernel_id="owner/oczy-test",
+                    title="Oczy Test",
+                    phase="development",
+                    profile="cpu",
+                    source_dataset=SOURCE_DATASET,
+                    source_commit=COMMIT,
+                    source_archive_sha256=ARCHIVE_SHA,
+                    module="oczy.experiments.dummy",
+                    arguments=[],
+                    model_source=None,
+                    instrument_manifest_sha256=None,
+                    human_signoff_id=None,
+                    force=True,
+                    offline_archives=[_valid_archive_entry(destination=dest)],
+                )
+
+    def test_rejects_duplicate_filename(self, tmp_path: Path) -> None:
+        """Duplicate archive filenames are rejected."""
+        with pytest.raises(ValueError, match="duplicate offline archive filename"):
+            prepare_kernel(
+                output=tmp_path / "job",
+                kernel_id="owner/oczy-test",
+                title="Oczy Test",
+                phase="development",
+                profile="cpu",
+                source_dataset=SOURCE_DATASET,
+                source_commit=COMMIT,
+                source_archive_sha256=ARCHIVE_SHA,
+                module="oczy.experiments.dummy",
+                arguments=[],
+                model_source=None,
+                instrument_manifest_sha256=None,
+                human_signoff_id=None,
+                force=True,
+                offline_archives=[
+                    _valid_archive_entry(dataset="a/ds1", filename="x.tar.gz.bin", destination="d1"),
+                    _valid_archive_entry(dataset="b/ds2", filename="x.tar.gz.bin", destination="d2"),
+                ],
+            )
+
+    def test_rejects_duplicate_destination(self, tmp_path: Path) -> None:
+        """Duplicate archive destinations are rejected."""
+        with pytest.raises(ValueError, match="duplicate offline archive destination"):
+            prepare_kernel(
+                output=tmp_path / "job",
+                kernel_id="owner/oczy-test",
+                title="Oczy Test",
+                phase="development",
+                profile="cpu",
+                source_dataset=SOURCE_DATASET,
+                source_commit=COMMIT,
+                source_archive_sha256=ARCHIVE_SHA,
+                module="oczy.experiments.dummy",
+                arguments=[],
+                model_source=None,
+                instrument_manifest_sha256=None,
+                human_signoff_id=None,
+                force=True,
+                offline_archives=[
+                    _valid_archive_entry(dataset="a/ds1", filename="f1.tar.gz.bin", destination="dest"),
+                    _valid_archive_entry(dataset="b/ds2", filename="f2.tar.gz.bin", destination="dest"),
+                ],
+            )
+
+    def test_duplicate_dataset_ids_deduped(self, tmp_path: Path) -> None:
+        """Multiple archives from the same dataset appear once in dataset_sources."""
+        prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_archives=[
+                _valid_archive_entry(dataset="a/ds1", filename="f1.tar.gz.bin", destination="d1"),
+                _valid_archive_entry(dataset="a/ds1", filename="f2.tar.gz.bin", destination="d2"),
+            ],
+        )
+        meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text(encoding="utf-8"))
+        assert meta["dataset_sources"].count("a/ds1") == 1
+
+    def test_rejects_wrong_keys(self, tmp_path: Path) -> None:
+        """Entries with extra or missing keys are rejected."""
+        with pytest.raises(ValueError, match="must have exactly keys"):
+            prepare_kernel(
+                output=tmp_path / "job",
+                kernel_id="owner/oczy-test",
+                title="Oczy Test",
+                phase="development",
+                profile="cpu",
+                source_dataset=SOURCE_DATASET,
+                source_commit=COMMIT,
+                source_archive_sha256=ARCHIVE_SHA,
+                module="oczy.experiments.dummy",
+                arguments=[],
+                model_source=None,
+                instrument_manifest_sha256=None,
+                human_signoff_id=None,
+                force=True,
+                offline_archives=[{"filename": "x.tar.gz.bin", "sha256": "d" * 64, "format": "tar.gz", "destination": "d"}],
+            )
+
+    def test_rejects_non_lowercase_sha256(self, tmp_path: Path) -> None:
+        """Uppercase hex in sha256 is rejected."""
+        with pytest.raises(ValueError, match="lowercase 64-character hex"):
+            prepare_kernel(
+                output=tmp_path / "job",
+                kernel_id="owner/oczy-test",
+                title="Oczy Test",
+                phase="development",
+                profile="cpu",
+                source_dataset=SOURCE_DATASET,
+                source_commit=COMMIT,
+                source_archive_sha256=ARCHIVE_SHA,
+                module="oczy.experiments.dummy",
+                arguments=[],
+                model_source=None,
+                instrument_manifest_sha256=None,
+                human_signoff_id=None,
+                force=True,
+                offline_archives=[_valid_archive_entry(sha256="D" * 64)],
+            )
+
+    def test_rejects_bad_dataset(self, tmp_path: Path) -> None:
+        """A dataset without owner/slug is rejected."""
+        for bad_ds in ["", "no_slash"]:
+            with pytest.raises(ValueError, match="owner/dataset-slug"):
+                prepare_kernel(
+                    output=tmp_path / "job",
+                    kernel_id="owner/oczy-test",
+                    title="Oczy Test",
+                    phase="development",
+                    profile="cpu",
+                    source_dataset=SOURCE_DATASET,
+                    source_commit=COMMIT,
+                    source_archive_sha256=ARCHIVE_SHA,
+                    module="oczy.experiments.dummy",
+                    arguments=[],
+                    model_source=None,
+                    instrument_manifest_sha256=None,
+                    human_signoff_id=None,
+                    force=True,
+                    offline_archives=[_valid_archive_entry(dataset=bad_ds)],
+                )
+
+    def test_archives_and_wheels_coexist(self, tmp_path: Path) -> None:
+        """Archives and wheels can coexist with distinct filenames."""
+        wheel = _valid_wheel_entry(filename="pkg.whl")
+        archive = _valid_archive_entry(filename="data.tar.gz.bin")
+        spec = prepare_kernel(
+            output=tmp_path / "job",
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_wheels=[wheel],
+            offline_archives=[archive],
+        )
+        assert spec["offline_wheels"] == [wheel]
+        assert spec["offline_archives"] == [archive]
+        meta = json.loads((tmp_path / "job" / "kernel-metadata.json").read_text(encoding="utf-8"))
+        assert wheel["dataset"] in meta["dataset_sources"]
+        assert archive["dataset"] in meta["dataset_sources"]
+
+
+class TestOfflineArchiveBootstrap:
+    """Bootstrap extraction — exercises /kaggle/input resolution."""
+
+    _ARCHIVE_ROOT = Path("/tmp/oczy-offline-inputs")
+
+    def setup_method(self) -> None:
+        import shutil
+        if self._ARCHIVE_ROOT.exists():
+            shutil.rmtree(self._ARCHIVE_ROOT)
+
+    def teardown_method(self) -> None:
+        import shutil
+        if self._ARCHIVE_ROOT.exists():
+            shutil.rmtree(self._ARCHIVE_ROOT)
+
+    def _prepare(self, tmp_path: Path, archives: list[dict]) -> Path:
+        output = tmp_path / "job"
+        prepare_kernel(
+            output=output,
+            kernel_id="owner/oczy-test",
+            title="Oczy Test",
+            phase="development",
+            profile="cpu",
+            source_dataset=SOURCE_DATASET,
+            source_commit=COMMIT,
+            source_archive_sha256=ARCHIVE_SHA,
+            module="oczy.experiments.dummy",
+            arguments=[],
+            model_source=None,
+            instrument_manifest_sha256=None,
+            human_signoff_id=None,
+            force=True,
+            offline_archives=archives,
+        )
+        return output
+
+    def test_valid_extraction(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Opaque gzip-tar bytes pass SHA verification and extract successfully."""
+        import hashlib
+        content = b"hello\n"
+        archive_path = _make_tar(tmp_path, "real.tar.gz", [("readme.txt", content)])
+        archive_bytes = archive_path.read_bytes()
+        archive_sha = hashlib.sha256(archive_bytes).hexdigest()
+        archive = _valid_archive_entry(
+            filename="data.tar.gz.bin", sha256=archive_sha,
+        )
+        assert archive["filename"].endswith(".tar.gz.bin")
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        _write_archive_file(kaggle_input, archive["filename"], archive_bytes)
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        # Must not raise.
+        ns["extract_offline_archives"]()
+        dest = Path("/tmp/oczy-offline-inputs") / archive["destination"]
+        assert dest.is_dir()
+        assert (dest / "readme.txt").read_text() == "hello\n"
+
+    def test_zero_candidates(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Bootstrap raises when no regular-file candidate is found."""
+        archive = _valid_archive_entry()
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        kaggle_input.mkdir()
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="no regular-file candidate found"):
+            ns["extract_offline_archives"]()
+
+    def test_hash_mismatch(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Bootstrap raises when archive hash does not match."""
+        archive = _valid_archive_entry(sha256="c" * 64)
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        _write_archive_file(kaggle_input, archive["filename"], b"wrong content")
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="hash mismatch"):
+            ns["extract_offline_archives"]()
+
+    def test_ambiguous_candidates(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Multiple regular-file candidates with the same basename are rejected."""
+        archive = _valid_archive_entry()
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        for i in range(2):
+            sub = kaggle_input / f"mount-{i}"
+            sub.mkdir(parents=True)
+            (sub / archive["filename"]).write_bytes(b"content")
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="ambiguous candidates"):
+            ns["extract_offline_archives"]()
+
+    def test_preexisting_destination(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Bootstrap rejects extraction when destination already exists."""
+        import hashlib
+        archive_path = _make_tar(tmp_path, "real.tar.gz", [("f.txt", b"data")])
+        archive_bytes = archive_path.read_bytes()
+        archive = _valid_archive_entry(sha256=hashlib.sha256(archive_bytes).hexdigest())
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        _write_archive_file(kaggle_input, archive["filename"], archive_bytes)
+        # Pre-create the destination.
+        (Path("/tmp/oczy-offline-inputs") / archive["destination"]).mkdir(parents=True)
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="destination already exists"):
+            ns["extract_offline_archives"]()
+
+    def test_symlink_resolve_succeeds(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Kaggle symlink mounts are resolved and the real file verified."""
+        import hashlib
+        archive_path = _make_tar(tmp_path, "real.tar.gz", [("readme.txt", b"data")])
+        archive_bytes = archive_path.read_bytes()
+        archive_sha = hashlib.sha256(archive_bytes).hexdigest()
+        archive = _valid_archive_entry(sha256=archive_sha)
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        # Real file outside kaggle_input.
+        real_path = tmp_path / "real_archive.tar.gz"
+        real_path.write_bytes(archive_bytes)
+        # Symlink under mount directory.
+        mount_dir = kaggle_input / "some-mount"
+        mount_dir.mkdir(parents=True)
+        (mount_dir / archive["filename"]).symlink_to(real_path)
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        # Must not raise.
+        ns["extract_offline_archives"]()
+        dest = Path("/tmp/oczy-offline-inputs") / archive["destination"]
+        assert (dest / "readme.txt").read_text() == "data"
+
+    def test_broken_symlink_skipped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A broken symlink is skipped; fails with zero-candidates if no other."""
+        archive = _valid_archive_entry()
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        mount_dir = kaggle_input / "some-mount"
+        mount_dir.mkdir(parents=True)
+        (mount_dir / archive["filename"]).symlink_to(tmp_path / "does_not_exist.tar.gz")
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="no regular-file candidate found"):
+            ns["extract_offline_archives"]()
+
+    def test_rejects_absolute_member(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Archive members with absolute paths are rejected."""
+        import io
+        import hashlib
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            info = tarfile.TarInfo(name="/etc/passwd")
+            info.size = 3
+            tf.addfile(info, io.BytesIO(b"bad"))
+        archive_bytes = buf.getvalue()
+        archive = _valid_archive_entry(sha256=hashlib.sha256(archive_bytes).hexdigest())
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        _write_archive_file(kaggle_input, archive["filename"], archive_bytes)
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="unsafe archive member path"):
+            ns["extract_offline_archives"]()
+
+    def test_rejects_traversal_member(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Archive members with .. traversal are rejected."""
+        import io
+        import hashlib
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            info = tarfile.TarInfo(name="../escape.txt")
+            info.size = 3
+            tf.addfile(info, io.BytesIO(b"bad"))
+        archive_bytes = buf.getvalue()
+        archive = _valid_archive_entry(sha256=hashlib.sha256(archive_bytes).hexdigest())
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        _write_archive_file(kaggle_input, archive["filename"], archive_bytes)
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="unsafe archive member path"):
+            ns["extract_offline_archives"]()
+
+    def test_rejects_symlink_member(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Archive symlink members are rejected."""
+        import io
+        import hashlib
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            info = tarfile.TarInfo(name="link")
+            info.type = tarfile.SYMTYPE
+            info.linkname = "/etc/passwd"
+            tf.addfile(info)
+        archive_bytes = buf.getvalue()
+        archive = _valid_archive_entry(sha256=hashlib.sha256(archive_bytes).hexdigest())
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        _write_archive_file(kaggle_input, archive["filename"], archive_bytes)
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="unsupported archive member type"):
+            ns["extract_offline_archives"]()
+
+    def test_rejects_hardlink_member(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Archive hardlink members are rejected."""
+        import io
+        import hashlib
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            # Need a regular file first, then link to it
+            reg = tarfile.TarInfo(name="real")
+            reg.size = 3
+            tf.addfile(reg, io.BytesIO(b"abc"))
+            info = tarfile.TarInfo(name="hlink")
+            info.type = tarfile.LNKTYPE
+            info.linkname = "real"
+            tf.addfile(info)
+        archive_bytes = buf.getvalue()
+        archive = _valid_archive_entry(sha256=hashlib.sha256(archive_bytes).hexdigest())
+        output = self._prepare(tmp_path, [archive])
+        kaggle_input = tmp_path / "kaggle_input"
+        _write_archive_file(kaggle_input, archive["filename"], archive_bytes)
+        ns = _exec_bootstrap(output, kaggle_input, monkeypatch)
+        with pytest.raises(RuntimeError, match="unsupported archive member type"):
+            ns["extract_offline_archives"]()

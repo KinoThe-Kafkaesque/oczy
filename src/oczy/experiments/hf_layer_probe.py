@@ -247,10 +247,29 @@ def run_probe(
     - ``silhouettes``: ``{pooling: {layer_key: score}}``
     - ``gap``, ``verdict`` (for primary pooling — the first in *poolings*)
     """
+    import os
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    env_model_dir = os.environ.get("OCZY_MODEL_DIR")
+    offline = (
+        os.environ.get("OCZY_REMOTE_CPU_ONLY") == "1"
+        or os.environ.get("HF_HUB_OFFLINE") == "1"
+        or os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+    )
+    # When the model_id is the pinned OCZY_MODEL_DIR path, or when offline
+    # mode is active, use local-only loading.  Explicit --model-id values
+    # from local users are passed through unchanged (network resolution
+    # still allowed unless offline env is set).
+    use_local_only = offline or (
+        env_model_dir is not None and model_id == env_model_dir
+    )
+    load_kwargs: dict[str, Any] = {}
+    if use_local_only:
+        load_kwargs["local_files_only"] = True
+        load_kwargs["trust_remote_code"] = False
+
+    tokenizer = AutoTokenizer.from_pretrained(model_id, **load_kwargs)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -259,6 +278,7 @@ def run_probe(
         torch_dtype=torch.float32,
         device_map="cpu",
         output_hidden_states=True,
+        **load_kwargs,
     )
     model.eval()
 
@@ -471,12 +491,17 @@ def main(argv: list[str] | None = None) -> int:
 
     model_id = args.model_id
     if model_id is None:
-        try:
-            from oczy.lm.hf_model_choice import HF_MODEL_ID  # type: ignore[import-untyped]
-            model_id = HF_MODEL_ID
-        except ImportError:
-            print("ERROR: --model-id required (hf_model_choice not available)")
-            return 1
+        import os
+        env_model_dir = os.environ.get("OCZY_MODEL_DIR")
+        if env_model_dir:
+            model_id = env_model_dir
+        else:
+            try:
+                from oczy.lm.hf_model_choice import HF_MODEL_ID  # type: ignore[import-untyped]
+                model_id = HF_MODEL_ID
+            except ImportError:
+                print("ERROR: --model-id required (hf_model_choice not available)")
+                return 1
 
     if not args.quiet:
         print(f"Probing: {model_id}")

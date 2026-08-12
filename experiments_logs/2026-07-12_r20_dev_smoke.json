@@ -1,0 +1,375 @@
+{
+  "schema_version": "oczy/execution-report/v1",
+  "record_type": "r20_dev_smoke_adjudication",
+  "adjudication_date": "2026-07-12",
+  "research_spec": "research/20-meta-trained-cortex-frozen-language-organ.md",
+  "experiment_spec": "experiments/09-meta-trained-cortex-frozen-language-organ/README.md",
+  "source_repo": "https://github.com/KinoThe-Kafkaesque/oczy.git",
+  "provider": "kaggle",
+  "profile": "cpu",
+  "module": "oczy.experiments.meta_cortex",
+  "command": [
+    "/usr/bin/python3",
+    "-m",
+    "oczy.experiments.meta_cortex",
+    "train-dev",
+    "--model-id",
+    "Qwen/Qwen2.5-0.5B-Instruct",
+    "--checkpoint-out",
+    "/kaggle/working/r20_dev_checkpoint",
+    "--result-out",
+    "/kaggle/working/r20_dev_result.json",
+    "--root-seed",
+    "20260709",
+    "--train-tasks-per-family",
+    "1",
+    "--validation-tasks-per-family",
+    "1",
+    "--min-events",
+    "2",
+    "--max-events",
+    "2",
+    "--outer-steps",
+    "1",
+    "--tasks-per-step",
+    "1",
+    "--validation-interval",
+    "1",
+    "--generation-interval",
+    "1",
+    "--source-provenance",
+    "e26d8291879d078b701f19802f72041e08cfd6a6"
+  ],
+  "command_note": "Exact runtime command copied from the v3 execution report; one train and one validation task per family (3+3 total), two events per task, and one outer optimizer step.",
+  "status": "complete",
+  "exit_code": 0,
+  "error": null,
+  "started_utc": "2026-07-12T13:41:52Z",
+  "finished_utc": "2026-07-12T14:19:59Z",
+  "timeout_seconds": null,
+  "immutable_hashes": {
+    "source_commit": "e26d8291879d078b701f19802f72041e08cfd6a6",
+    "source_archive_sha256": "686c3b6a3de6e093f3646a3cdea6d0097d5de49cc6ef7231e262cf08643d99d5",
+    "source_dataset": "abdellahkadem/oczy-source-e26d8291879d",
+    "source_dirty_entry_count": 0,
+    "source_worktree_dirty_at_packaging": false,
+    "kernel_id": "abdellahkadem/oczy-r20-dev-v3-e26d8291879d",
+    "model_repo_id": "Qwen/Qwen2.5-0.5B-Instruct",
+    "model_revision": null,
+    "model_config_sha256": null,
+    "model_safetensors_sha256": null,
+    "model_params_requires_grad": false,
+    "checkpoint_theta_sha256": "8d6c41c5dacbf31394e381dbdb5d6b8e496565bf14c2dedbbaa36f4987301d17",
+    "frozen_organ_hash_before_after": "d8a3a3b262b3397f8948f13da10d3394e1a36b98a2ea374dc8711333d8d2b278"
+  },
+  "hardware": {
+    "platform": "Linux-6.12.90+-x86_64-with-glibc2.35",
+    "python": "3.12.13",
+    "torch": "2.10.0+cpu",
+    "cuda_available": false,
+    "cuda_device_count": 0,
+    "torch_cuda_version": null
+  },
+  "hardware_note": "Captured directly from remote_run_provenance.json.",
+  "cpu_only_contract": {
+    "cuda_available": false,
+    "cuda_device_count": 0,
+    "gpu_architecture": null,
+    "torch_cuda_version": null,
+    "cpu_only_enforced": true,
+    "cpu_only_evidence": "Direct remote provenance: profile=cpu, CUDA unavailable, CUDA_VISIBLE_DEVICES empty, OCZY_REMOTE_CPU_ONLY=1.",
+    "profile": "cpu",
+    "cuda_visible_devices": "",
+    "oczy_remote_cpu_only": "1",
+    "hf_hub_offline": "1",
+    "transformers_offline": "1",
+    "omp_num_threads": "4",
+    "mkl_num_threads": "4"
+  },
+  "model_artifact": {
+    "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+    "organ_class": "QwenFrozenOrgan",
+    "frozen_surface": "tokenizer, embeddings, transformer blocks, normalization, LM head",
+    "params_requires_grad": false,
+    "perception": "final-layer mean-pooled request features under torch.no_grad",
+    "articulation": "cortex-owned coupler emits fixed-width soft input embeddings (bank_width=3, feature_dim=896)",
+    "organ_hash_before_after": "d8a3a3b262b3397f8948f13da10d3394e1a36b98a2ea374dc8711333d8d2b278",
+    "organ_hash_unchanged": true,
+    "config_sha256": null,
+    "safetensors_sha256": null
+  },
+  "implementation_commits": [
+    {
+      "commit": "e77314ba553dc8761bb9b66a4312bf20b02d8130",
+      "date": "2026-07-12T14:22:02+01:00",
+      "author": "KinoThe-Kafkaesque <kino@nyanpasu.dev>",
+      "message": "implement R20 dev-only meta-cortex",
+      "files_changed": 14,
+      "insertions": 11096,
+      "deletions": 0,
+      "modules": [
+        "src/oczy/experiments/meta_cortex/__init__.py",
+        "src/oczy/experiments/meta_cortex/__main__.py",
+        "src/oczy/experiments/meta_cortex/artifacts.py",
+        "src/oczy/experiments/meta_cortex/cli.py",
+        "src/oczy/experiments/meta_cortex/contracts.py",
+        "src/oczy/experiments/meta_cortex/model.py",
+        "src/oczy/experiments/meta_cortex/organ.py",
+        "src/oczy/experiments/meta_cortex/taskgen.py",
+        "src/oczy/experiments/meta_cortex/training.py",
+        "src/oczy/experiments/tests/test_meta_cortex_artifacts_cli.py",
+        "src/oczy/experiments/tests/test_meta_cortex_model.py",
+        "src/oczy/experiments/tests/test_meta_cortex_organ.py",
+        "src/oczy/experiments/tests/test_meta_cortex_taskgen.py",
+        "src/oczy/experiments/tests/test_meta_cortex_training.py"
+      ],
+      "summary": "Initial DEV-only meta-cortex package: differentiable fast-weight cortex (model.py), frozen Qwen organ adapter (organ.py), deterministic A/B/C task generators (taskgen.py), outer-loop trainer with causal DEV interventions (training.py), artifact/checkpoint persistence (artifacts.py), contracts/config (contracts.py), and three-command DEV-only CLI (train-dev, validate-dev, audit-dev). No evaluate, meta-test, materialize, freeze, signoff, or manifest command exists."
+    },
+    {
+      "commit": "e38f91da3aa684ffebcd5eace08fd2d7fbe8215c",
+      "date": "2026-07-12T14:31:17+01:00",
+      "author": "KinoThe-Kafkaesque <kino@nyanpasu.dev>",
+      "message": "fix R20 offline model resolution",
+      "files_changed": 2,
+      "insertions": 338,
+      "deletions": 3,
+      "modules_changed": [
+        "src/oczy/experiments/meta_cortex/organ.py",
+        "src/oczy/experiments/tests/test_meta_cortex_organ.py"
+      ],
+      "summary": "Added _resolve_load_target() to QwenFrozenOrgan: under OCZY_REMOTE_CPU_ONLY/HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE, resolves OCZY_MODEL_DIR/OCZY_HF_MODEL_DIR before falling back to hub ID. Raises FrozenOrganError with actionable ASI message before any HuggingFace call when offline and no local snapshot exists. Fixes v1 offline loader failure (LocalEntryNotFoundError when hub ID passed to from_pretrained with local_files_only=True)."
+    },
+    {
+      "commit": "e26d8291879d078b701f19802f72041e08cfd6a6",
+      "date": "2026-07-12T14:40:31+01:00",
+      "author": "KinoThe-Kafkaesque <kino@nyanpasu.dev>",
+      "message": "fix R20 feature tensors for outer training",
+      "files_changed": 2,
+      "insertions": 162,
+      "deletions": 8,
+      "modules_changed": [
+        "src/oczy/experiments/meta_cortex/organ.py",
+        "src/oczy/experiments/tests/test_meta_cortex_organ.py"
+      ],
+      "summary": "Changed encode_texts from torch.inference_mode() to torch.no_grad() so returned feature tensors are ordinary non-inference tensors usable by trainable downstream cortex layers for backward. Fixes v2 inference-tensor/autograd failure (inference tensors cannot be saved for backward by trainable cortex parameters)."
+    }
+  ],
+  "smoke_attempts": [
+    {
+      "attempt": 1,
+      "kernel_id": null,
+      "source_commit": null,
+      "source_archive_sha256": null,
+      "state": "failed",
+      "exit_code": null,
+      "error": "offline model resolution failure",
+      "failure_classification": "infrastructure",
+      "failure_detail": "LocalEntryNotFoundError when Qwen/Qwen2.5-0.5B-Instruct hub ID passed to from_pretrained with local_files_only=True under offline/remote mode. No OCZY_MODEL_DIR/OCZY_HF_MODEL_DIR resolution existed.",
+      "fix_commit": "e38f91da3aa684ffebcd5eace08fd2d7fbe8215c",
+      "reports_collected": false,
+      "source_commit_inference": "e77314ba553dc8761bb9b66a4312bf20b02d8130"
+    },
+    {
+      "attempt": 2,
+      "kernel_id": null,
+      "source_commit": null,
+      "source_archive_sha256": null,
+      "state": "failed",
+      "exit_code": null,
+      "error": "inference-tensor/autograd failure",
+      "failure_classification": "infrastructure",
+      "failure_detail": "encode_texts ran under torch.inference_mode(), producing inference tensors that cannot be saved for backward by trainable cortex layers. Outer-loop backpropagation through the frozen organ into cortex parameters failed.",
+      "fix_commit": "e26d8291879d078b701f19802f72041e08cfd6a6",
+      "reports_collected": false,
+      "source_commit_inference": "e38f91da3aa684ffebcd5eace08fd2d7fbe8215c"
+    },
+    {
+      "attempt": 3,
+      "kernel_id": "abdellahkadem/oczy-r20-dev-v3-e26d8291879d",
+      "source_commit": "e26d8291879d078b701f19802f72041e08cfd6a6",
+      "source_archive_sha256": "686c3b6a3de6e093f3646a3cdea6d0097d5de49cc6ef7231e262cf08643d99d5",
+      "state": "succeeded",
+      "exit_code": 0,
+      "error": null,
+      "failure_classification": null,
+      "failure_detail": null,
+      "audit_status": "ok",
+      "reports_collected": true,
+      "started_utc": "2026-07-12T13:41:52Z",
+      "finished_utc": "2026-07-12T14:19:59Z"
+    }
+  ],
+  "v3_operational_metrics": {
+    "classification": "DEVELOPMENT_ONLY",
+    "classification_note": "Infrastructure/mechanism smoke only. These metrics prove the DEV pipeline runs end-to-end (load organ, outer-train, validate, audit, checkpoint). They are not scientific evidence for or against H-META-CORTEX.",
+    "cortex_architecture": {
+      "d_cortex": 64,
+      "fast_state_shape": [
+        64,
+        64
+      ],
+      "slow_state_shape": [
+        64,
+        64
+      ],
+      "feature_dim": 896,
+      "bank_width": 3,
+      "bank_shape": [
+        3,
+        896
+      ],
+      "cortex_dim_contract": "d_cortex fixed at 64 by contracts.CORTEX_DIM; v1 cortex is fixed at 64x64"
+    },
+    "theta_parameters": {
+      "parameter_count": 207364,
+      "parameter_bytes": 829456,
+      "parameter_dtype": "float32",
+      "parameter_count_verified": true,
+      "parameter_count_verification": "Sum of parameter_breakdown() at D=896, C=64, L=3: feature_projection=57408, role_embeddings=320, event_fusion=16448, writer_hidden=16512, writer_key=8256, writer_value=8256, writer_eta=129, writer_decay=129, consolidation_probe=64, consolidation_hidden=8256, consolidation_gate=65, reader_hidden=24704, reader_out=8256, slot_embeddings=192, layer_norm=128, coupler_output=58240, coupler_log_gain=1. Total=207364. Bytes=207364*4=829456."
+    },
+    "outer_training": {
+      "optimizer_step_count": 1,
+      "optimizer_name": "adamw",
+      "best_validation_step": 1,
+      "best_validation_score": 0.0,
+      "best_validation_score_note": "Validation score = trained_vs_update_disabled_delta (training.py:1597-1598). Score 0.0 after one optimizer step means trained accuracy equals update-disabled accuracy at this DEV scale. This is an observed non-scientific diagnostic, not a passed or failed scientific threshold.",
+      "outer_steps": 1,
+      "train_tasks_per_family": 1,
+      "validation_tasks_per_family": 1,
+      "catalog_train_count": 3,
+      "catalog_validation_count": 3
+    },
+    "trace_deletion_audit": {
+      "trace_count_after_deletion": 0,
+      "trace_deletion_passed": true
+    },
+    "online_optimizer_audit": {
+      "online_optimizer_counts_unchanged": true,
+      "online_optimizer_audit_note": "Optimizer step count did not change during any online episode. No backpropagation or optimizer step ran inside the evaluation/inference path."
+    },
+    "causal_dev_deltas": {
+      "trained_vs_update_disabled_delta": 0.0,
+      "trained_vs_untrained_delta": 0.0,
+      "trained_vs_shuffled_delta": 0.0,
+      "trained_vs_zeroed_delta": 0.0,
+      "trained_vs_swapped_delta": 0.0666667,
+      "causal_dev_deltas_note": "All deltas are trained-minus-control accuracy deltas at DEV smoke scale (1 train and 1 validation task per family; 3+3 total; 1 optimizer step). Four are 0.0 and swapped is 0.0666667. These are non-scientific diagnostics."
+    }
+  },
+  "v3_audits": {
+    "audit_status": "ok",
+    "frozen_organ_hash": {
+      "organ_hash_before": "d8a3a3b262b3397f8948f13da10d3394e1a36b98a2ea374dc8711333d8d2b278",
+      "organ_hash_after": "d8a3a3b262b3397f8948f13da10d3394e1a36b98a2ea374dc8711333d8d2b278",
+      "organ_hash_unchanged": true,
+      "organ_hash_note": "Frozen language organ parameter hash identical before and after developmental training. Organ parameters never received updates."
+    },
+    "checkpoint_theta_hash": {
+      "theta_hash": "8d6c41c5dacbf31394e381dbdb5d6b8e496565bf14c2dedbbaa36f4987301d17",
+      "theta_hash_note": "SHA-256 over sorted named-parameter raw bytes of the developmental checkpoint."
+    },
+    "theta_unchanged_during_validation": {
+      "theta_unchanged": true,
+      "note": "validate-dev verifies theta hash before and after inference-only validation; hash unchanged confirms no optimizer step during validation."
+    }
+  },
+  "test_suites": {
+    "focused_suite": {
+      "passed": 275,
+      "skipped": 2,
+      "failed": 0,
+      "errors": 0,
+      "timing": "final post-fix suite",
+      "note": "Final focused meta_cortex suite after offline-loader and feature-tensor regressions."
+    },
+    "organ_suite": {
+      "passed": 54,
+      "skipped": 2,
+      "failed": 0,
+      "errors": 0,
+      "timing": "after extra organ regressions",
+      "note": "Organ-specific test suite (test_meta_cortex_organ.py) after the offline-model and feature-tensor fix regressions were added."
+    },
+    "test_suites_note": "Final focused suite: 275 passed, 2 skipped. Organ-only regression run: 54 passed, 2 skipped. Local DEV verification, not Kaggle scientific evidence."
+  },
+  "gate_outcome": {
+    "classification": "DEVELOPMENT_ONLY",
+    "meta_test_classification": "BLOCKED",
+    "classification_detail": "DEVELOPMENT_ONLY: the v3 smoke proves the DEV pipeline (organ load, outer-train, validate, audit, checkpoint) runs end-to-end on Kaggle CPU with exit 0 and all audits ok. This is infrastructure/mechanism smoke, not a scientific result. meta_test: BLOCKED — no frozen meta_cortex/v1 instrument, distribution checks, power analysis, manifest, or human signoff exists.",
+    "holdout_accessed": false,
+    "signoff_requested": false,
+    "scientific_verdict": "none",
+    "scientific_verdict_note": "No ACCEPT or REFUTE verdict is permitted. The one-step DEV metrics (validation score 0.0, causal deltas near-zero) are observed non-scientific diagnostics, not meta-test results."
+  },
+  "adjudication": {
+    "classification": "DEVELOPMENT_ONLY",
+    "meta_test_status": "BLOCKED",
+    "infrastructure_vs_scientific_separation": "Attempts v1 and v2 failed at the infrastructure level (offline model resolution, inference-tensor/autograd). Attempt v3 succeeded at the infrastructure level (exit 0, audit_status ok, all audits passed). The scientific meta-test is independently BLOCKED: the Phase 0 measuring instrument (meta_cortex/v1) has not been materialized, frozen, distribution-checked, power-analyzed, or human-signed-off. Infrastructure success of the DEV smoke is distinct from scientific meta-test authorization.",
+    "operational_success_scope": "The v3 smoke demonstrates frozen-organ loading/hash stability, one outer optimizer step and checkpoint, inference-only DEV validation, trace deletion, unchanged online optimizer counts, and DEV causal controls. Scale: 1 train + 1 validation task per family (3+3 total), 2 events per task, 1 outer step.",
+    "scientific_non_result": "The one-step DEV validation score (0.0) and causal deltas (four at 0.0, one at 0.0666667) are observed non-scientific diagnostics. They reflect a single optimizer step at minimal DEV scale, not a meta-test evaluation. No scientific conclusion about H-META-CORTEX can be drawn.",
+    "meta_test_blocker": "R20 meta-test is BLOCKED. The Phase 0 instrument freeze (research/20 spec:122-136) has not been completed. No frozen meta_cortex/v1 instrument, no distribution checks, no power analysis, no manifest, and no human signoff exists. The CLI deliberately exposes no evaluate, meta-test, materialize, freeze, signoff, or manifest command."
+  },
+  "meta_test_prerequisites_missing": [
+    {
+      "prerequisite": "Frozen meta_cortex/v1 instrument",
+      "status": "missing",
+      "spec_reference": "research/20-meta-trained-cortex-frozen-language-organ.md:98-99, experiments/09-.../README.md:76-81",
+      "detail": "The separate measuring instrument (deterministic task generators, split seeds, scorers, probe counts, prompt templates) must be materialized under meta_cortex/instrument/v1/ with per-file SHA-256 hashes in a MANIFEST.json. No instrument directory or manifest exists."
+    },
+    {
+      "prerequisite": "Distribution checks (no-update and repeated-run on meta-validation)",
+      "status": "missing",
+      "spec_reference": "research/20:128-129, experiments/09:134-136",
+      "detail": "No-update and repeated-run distributions on meta-validation must be measured to derive the specificity equivalence margin. No distribution data exists."
+    },
+    {
+      "prerequisite": "Power analysis and frozen sample size",
+      "status": "missing",
+      "spec_reference": "research/20:130-131, experiments/09:138",
+      "detail": "A meta-validation power analysis must determine and freeze task counts (>=30 independent meta-test rules per family). No power analysis has been run."
+    },
+    {
+      "prerequisite": "Frozen manifest with hashes, margins, and task counts",
+      "status": "missing",
+      "spec_reference": "research/20:127-133, experiments/09:139-141",
+      "detail": "A MANIFEST.json recording soft-bank width, abstain threshold, equivalence margin, task counts, and per-file hashes must be frozen. No manifest exists."
+    },
+    {
+      "prerequisite": "Human sign-off on manifest, margin, and sample size",
+      "status": "missing",
+      "spec_reference": "research/20:132, experiments/09:141",
+      "detail": "Explicit human sign-off on the frozen manifest, equivalence margin, and sample size is required before any meta-test command is enabled. No signoff has been requested or granted."
+    },
+    {
+      "prerequisite": "Oracle controllability gate (Phase A/Phase 1)",
+      "status": "not_run",
+      "spec_reference": "research/20:139-144, experiments/09:146-160",
+      "detail": "The oracle gate (frozen organ given complete rule in text must beat organ-only zero-information with 95% CI excluding zero) must pass per family before meta-test. No oracle gate has been run."
+    },
+    {
+      "prerequisite": "Meta-test CLI command",
+      "status": "deliberately_absent",
+      "spec_reference": "src/oczy/experiments/meta_cortex/cli.py:15-18",
+      "detail": "The CLI intentionally exposes only train-dev, validate-dev, and audit-dev. No evaluate, meta-test, run-meta-test, materialize, freeze, signoff, manifest, C7, or C8 command/option exists. This is a design guard, not an omission."
+    }
+  ],
+  "explicit_non_claims": [
+    "No positive or negative scientific verdict is claimed. The classification is DEVELOPMENT_ONLY and meta-test is BLOCKED.",
+    "No ACCEPT or REFUTE of H-META-CORTEX is permitted or implied.",
+    "The v3 infrastructure success (exit 0, audit_status ok) is distinct from any scientific result.",
+    "The one-step DEV validation score (0.0) is an observed non-scientific diagnostic, not a passed or failed threshold.",
+    "The causal DEV deltas (four at 0.0, one at 0.0666667) are observed non-scientific diagnostics from a single optimizer step at DEV scale, not meta-test causal interventions.",
+    "No meta-test evaluation was run, requested, or authorized.",
+    "No holdout access was attempted (holdout_accessed=false).",
+    "No human signoff was requested or granted (signoff_requested=false).",
+    "No frozen meta_cortex/v1 instrument, distribution checks, power analysis, manifest, or human signoff exists.",
+    "No threshold, metric, baseline, episode, scoring, eval manifest, or research spec was changed.",
+    "Attempts v1 and v2 are infrastructure failures, not scientific failures — no scientific result was produced or invalidated.",
+    "The test suite counts (275 passed/2 skipped focused; 54 passed/2 skipped organ) are from local DEV runs confirming unit/contract tests pass, not from the Kaggle v3 smoke kernel.",
+    "The frozen organ hash (d8a3a3b2...) being identical before/after confirms the organ was frozen during DEV training; it is an operational audit, not a meta-test frozen-organ-hash audit.",
+    "The checkpoint theta hash (8d6c41c5...) records the developmental checkpoint identity; it is not a meta-test frozen-parameter audit.",
+    "R20 meta-test remains BLOCKED independently of R19's DEV articulation gate status. R19 and R20 signoffs are distinct.",
+    "The source commits for v1 (e77314b) and v2 (e38f91d) are inferred from the fix-commit correspondence (each fix commit message directly names the failure mode it resolves), not from direct run-record evidence."
+  ],
+  "scope_limit": "R20 DEV-only implementation and smoke from source commit e26d8291879d078b701f19802f72041e08cfd6a6 on Kaggle CPU (Qwen/Qwen2.5-0.5B-Instruct, frozen). Three smoke attempts: v1 failed (offline model resolution), v2 failed (inference-tensor/autograd), v3 succeeded (exit 0, audit_status ok). The v3 smoke proves the DEV pipeline (organ load, outer-train one step, validate, audit, checkpoint) runs end-to-end. All metrics (validation score 0.0, causal deltas, trace count 0, organ hash unchanged) are observed non-scientific diagnostics at DEV scale. meta-test is BLOCKED: no frozen meta_cortex/v1 instrument, distribution checks, power analysis, manifest, or human signoff exists. The CLI deliberately exposes no meta-test command. No threshold, metric, baseline, episode, scoring, eval manifest, or research spec was changed. No ACCEPT/REFUTE verdict is permitted."
+}

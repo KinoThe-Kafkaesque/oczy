@@ -1,0 +1,225 @@
+{
+  "schema_version": "oczy/execution-report/v1",
+  "record_type": "r18_mechanism_diagnostics_adjudication",
+  "adjudication_date": "2026-07-12",
+  "source_commit": "33169cc0340bf752a67adf63721ec64cb5f3c9f8",
+  "source_repo": "https://github.com/KinoThe-Kafkaesque/oczy.git",
+  "provider": "kaggle",
+  "profile": "cpu",
+  "campaign_log": "experiments_logs/2026-07-11_campaign_0d48130.md",
+  "prior_diagnostic_record": "experiments_logs/2026-07-11_r18_five_seed_diagnostic.json",
+  "research_spec": "research/18-consolidation-as-distillation.md",
+  "status": "complete",
+  "exit_code": 0,
+  "error": null,
+  "started_utc": null,
+  "finished_utc": null,
+  "timeout_seconds": null,
+
+  "hardware": {
+    "platform": "Linux-x86_64-with-glibc",
+    "python": null,
+    "torch": null,
+    "cuda_available": false,
+    "cuda_device_count": 0,
+    "torch_cuda_version": null
+  },
+
+  "cpu_only_contract": {
+    "cuda_available": false,
+    "cuda_visible_devices": "",
+    "hf_hub_offline": "1",
+    "mkl_num_threads": "4",
+    "oczy_remote_cpu_only": "1",
+    "omp_num_threads": "4",
+    "transformers_offline": "1"
+  },
+
+  "model_artifact": {
+    "kind": "kaggle_attached_dataset",
+    "model_source": "qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
+    "hf_model_dir": "/kaggle/input/models/qwen-lm/qwen2.5/transformers/0.5b-instruct/1"
+  },
+
+  "lora_config": {
+    "lora_alpha": 16.0,
+    "lora_lr": 0.005,
+    "lora_rank": 8.0,
+    "max_steps": 10,
+    "svd_target": 0.01,
+    "stage": "stage_0_grounding",
+    "seeds": 5
+  },
+
+  "gate_reference": {
+    "gate_name": "teacher_dev_delta >= 0.2",
+    "registered_threshold": 0.2,
+    "threshold_changed": false,
+    "gate_status": "FAILED",
+    "gate_comparison": "0.17647058823529413 < 0.2 → FAILED",
+    "h_distill_verdict_permitted": false,
+    "h_distill_verdict_reason": "Teacher gate remains failed after registered fallback. Neither raw_prefix (0.17647058823529413) nor chat_template (0.0) reaches the 0.2 gate. No H-DISTILL verdict is permitted."
+  },
+
+  "jobs": {
+    "teacher_ceiling": {
+      "job_name": "r18-teacher-ceiling",
+      "module": "oczy.experiments.r18_teacher_ceiling_diagnostic",
+      "status": "complete",
+      "exit_code": 0,
+      "error": null,
+      "n_dev_items": 17,
+      "modes": {
+        "vanilla": {
+          "accuracy": 0.0,
+          "gate_passes": false,
+          "gate_margin": -0.2
+        },
+        "raw_prefix": {
+          "accuracy": 0.17647058823529413,
+          "gate_passes": false,
+          "gate_margin": -0.023529411764705884
+        },
+        "chat_template": {
+          "accuracy": 0.0,
+          "gate_passes": false,
+          "gate_margin": -0.2
+        }
+      },
+      "finding": "Neither raw_prefix (0.17647058823529413) nor chat_template (0.0) reaches the 0.2 gate. The registered chat fallback (0.0) is worse than raw_prefix (0.17647058823529413). The teacher expressivity/prompt-task ceiling is the blocker.",
+      "new_prompt_variants_introduced": false,
+      "holdout_accessed": false,
+      "gate_altered": false
+    },
+
+    "prompt_contract": {
+      "job_name": "r18-prompt-contract",
+      "module": "oczy.experiments.r18_prompt_contract_diagnostic",
+      "status": "complete",
+      "exit_code": 0,
+      "error": null,
+      "audit_counts": {
+        "issue": 0,
+        "malformed": 0,
+        "missing": 0,
+        "truncated": 0,
+        "answer_leak": 0,
+        "mismatch": 0
+      },
+      "teacher_correct_rate": 0.17647058823529413,
+      "raw_prompt_accuracy": 0.0,
+      "chat_template_prompt_accuracy": 0.0,
+      "finding": "No structural prompt defect found. All audit counts (issue, malformed, missing, truncated, answer-leak, mismatch) are 0. Teacher_correct_rate=0.17647058823529413 matches the teacher ceiling. Raw and chat-template prompt accuracies are 0.",
+      "holdout_accessed": false,
+      "gate_altered": false
+    },
+
+    "training_trajectory": {
+      "job_name": "r18-training-trajectory",
+      "module": "oczy.experiments.r18_training_trajectory_diagnostic",
+      "status": "complete",
+      "exit_code": 0,
+      "error": null,
+      "submissions": {
+        "first_submission": {
+          "status": "failed",
+          "exit_code": null,
+          "error": "HTTP 400 due to long kernel slug",
+          "is_run_of_record": false,
+          "preserved": true
+        },
+        "retry_short_slug": {
+          "status": "complete",
+          "exit_code": 0,
+          "error": null,
+          "wall_s_approx": 12798,
+          "is_run_of_record": true,
+          "preserved": true
+        }
+      },
+      "train_loss": {
+        "start_approx": 0.70,
+        "end_approx": 0.16,
+        "mean_slope": -0.0615,
+        "second_half_slope": -0.0190
+      },
+      "diagnostics": {
+        "underfit": 1,
+        "instability": 1,
+        "saturation": 0,
+        "max_final_loss_divergence_across_seeds": 0.01259
+      },
+      "finding": "Optimization fits token loss (0.70 → 0.16) but DEV behavior is unstable/weak and not saturated. Underfit=1 and instability=1 indicate the LoRA has not converged on the behavior; saturation=0 confirms it is not a capacity ceiling. Max final-loss divergence 0.01259 across seeds is small — seeds are not diverging in optimization space.",
+      "holdout_accessed": false,
+      "gate_altered": false
+    }
+  },
+
+  "per_seed_final_values": {
+    "teacher_dev_delta": {
+      "seed_0": 0.17647058823529413,
+      "seed_1": 0.17647058823529413,
+      "seed_2": 0.17647058823529413,
+      "seed_3": 0.17647058823529413,
+      "seed_4": 0.17647058823529413,
+      "identical_across_seeds": true
+    },
+    "final_dev_student_accuracy": {
+      "seed_0": 0.117647,
+      "seed_1": 0.0,
+      "seed_2": 0.0,
+      "seed_3": 0.0,
+      "seed_4": 0.117647,
+      "identical_across_seeds": false,
+      "note": "Seeds 0 and 4 score 0.117647; seeds 1, 2, and 3 score 0.0. Seed 2 is not uniquely divergent — seeds 1 and 3 also score 0."
+    },
+    "seed_divergence_assessment": {
+      "seed_2_uniquely_divergent": false,
+      "seeds_scoring_zero": [1, 2, 3],
+      "seeds_scoring_nonzero": [0, 4],
+      "note": "The prior 5-seed diagnostic identified seed 2 as the null seed (distill_delta_holdout=0.0). The trajectory diagnostic shows seeds 1 and 3 also score 0 on final DEV student accuracy, so seed 2 is not uniquely divergent."
+    }
+  },
+
+  "adjudication": {
+    "classification": "BLOCKED",
+    "classification_detail": "BLOCKED at teacher validity gate / diagnostic only. Teacher gate remains FAILED after all three mechanism diagnostics.",
+    "h_distill_verdict_permitted": false,
+    "h_distill_verdict_reason": "Teacher gate failed (0.17647058823529413 < 0.2) under both registered prompting modes. No H-DISTILL verdict is permitted.",
+    "mechanism_separation": {
+      "prompt_integrity": {
+        "verdict": "NO DEFECT",
+        "evidence": "Prompt-contract audit: all six defect counts (issue, malformed, missing, truncated, answer-leak, mismatch) are 0. No structural prompt defect found.",
+        "implication": "The failed teacher gate is NOT caused by malformed prompts, missing corrections, truncated requests, answer leakage, or prompt-answer mismatch."
+      },
+      "capability_ceiling": {
+        "verdict": "TEACHER EXPRESSIVITY / PROMPT-TASK CEILING IS THE BLOCKER",
+        "evidence": "Teacher ceiling: vanilla=0.0, raw_prefix=0.17647058823529413, chat_template=0.0 (n=17). Neither registered prompting mode reaches the 0.2 gate. The registered chat fallback (0.0) is worse than raw_prefix (0.17647058823529413).",
+        "implication": "The Qwen2.5-0.5B-Instruct model cannot express the taught behavior on DEV even with the correction in-context (raw prefix). The ceiling is a model-capability / task-difficulty limit, not a prompt-construction artifact."
+      },
+      "optimization_dynamics": {
+        "verdict": "TOKEN LOSS FITS BUT DEV BEHAVIOR IS UNSTABLE/WEAK AND NOT SATURATED",
+        "evidence": "Training trajectory: train loss falls 0.70 → 0.16 (mean slope -0.0615, second-half -0.0190). Diagnostics: underfit=1, instability=1, saturation=0. Max final-loss divergence 0.01259. Final DEV student accuracies: {0.117647, 0, 0, 0, 0.117647}.",
+        "implication": "The LoRA optimization successfully reduces token-level KL loss, but this does not translate to stable DEV behavior. Underfit=1 and instability=1 indicate the adapter has not converged on behavior; saturation=0 confirms this is not a capacity ceiling. The optimization-behavior gap is a secondary issue — the primary blocker is the teacher capability ceiling."
+      }
+    },
+    "conservative_adjudication": "The three diagnostics decompose the failed teacher gate into three independent axes: (1) prompt integrity — no defect found; (2) capability ceiling — teacher expressivity/prompt-task ceiling is the blocker (neither registered prompting mode reaches 0.2); (3) optimization dynamics — token loss fits but DEV behavior is unstable/weak and not saturated. The primary blocker is the capability ceiling. No scientific positive or threshold change is claimed. The teacher gate remains FAILED. No H-DISTILL verdict is permitted. Further identical R18 reruns are retired — they will not clear the unchanged teacher gate.",
+    "next_work_direction": "R19 DEV calibration while signed evaluation (Research/20 meta-test) remains gated.",
+    "infrastructure_vs_scientific_separation": "All three diagnostic jobs completed successfully (exit 0). The trajectory retry (short-slug) is the run of record. Infrastructure success is distinct from scientific success — the teacher gate remains FAILED."
+  },
+
+  "explicit_non_claims": [
+    "No positive scientific verdict is claimed. The classification is BLOCKED at the teacher validity gate.",
+    "No H-DISTILL verdict is permitted because the teacher gate failed after registered fallback.",
+    "No threshold, metric, baseline, episode, scoring, eval manifest, or research spec was changed.",
+    "The teacher_dev_delta >= 0.2 gate is unchanged and was not moved to accommodate the observed 0.17647058823529413.",
+    "The prompt-contract audit finding (no defect) does not imply the teacher gate passes — it rules out prompt construction as the cause.",
+    "The optimization-dynamics finding (token loss fits) does not imply DEV behavior is adequate — underfit=1 and instability=1 indicate behavioral non-convergence.",
+    "The capability-ceiling finding identifies the blocker but does not prescribe a fix — it is a diagnosis, not a solution.",
+    "Seed 2 is not uniquely divergent — seeds 1 and 3 also score 0 on final DEV student accuracy.",
+    "The failed first trajectory submission (HTTP 400, long slug) is preserved alongside the successful short-slug retry; the retry is the run of record.",
+    "Infrastructure success (exit 0 for all three diagnostics) is distinct from scientific success (gate passed)."
+  ],
+
+  "scope_limit": "Three R18 mechanism diagnostics (teacher ceiling, prompt-contract audit, training trajectory) run from source commit 33169cc0340bf752a67adf63721ec64cb5f3c9f8 on Kaggle CPU. DEV-only: no holdout probes were accessed by any diagnostic. No threshold, metric, baseline, episode, scoring, eval manifest, or research spec was changed. The teacher_dev_delta >= 0.2 validity gate is unchanged. No H-DISTILL verdict is permitted because the teacher gate remains FAILED."
+}

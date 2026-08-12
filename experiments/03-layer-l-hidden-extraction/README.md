@@ -2,6 +2,13 @@
 
 Research proposal: ../../research/03-layer-l-hidden-extraction.md
 
+## Status
+
+- **Implementation:** `src/oczy/experiments/layer_l_probe.py` — implemented and tested.
+- **Campaign 0d48130 (2026-07-11):** **Infrastructure blocked** — repeated HF snapshot transfer failures; no metrics emitted. Not a scientific null or refutation.
+- **Authoritative pre-campaign verdict: S1.4 REFUTED** — mid-layer hiddens do NOT cluster by concept better than the final layer on Qwen2.5-0.5B (gap −0.083) or LFM2.5-1.2B (gap +0.058); both below the +0.10 threshold. See [`S1.4 HF layer probe`](../../experiments_logs/2026-07-01_s1_4_hf_layer_probe.md). Evidence: [`campaign log`](../../experiments_logs/2026-07-11_campaign_0d48130.md)
+
+
 ## Objective
 
 Does feeding `KVCortex.observe()` the **real residual at a mid/upper layer L** (instead of the current final-layer mean-pool) make the cortex's `warm_state` measurably more semantically separable, and make Hebbian-trained `proj_hidden` carry structure that reflects the real hidden manifold?
