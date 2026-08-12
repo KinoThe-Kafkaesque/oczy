@@ -20,3 +20,9 @@ sessions/
 # .gitkeep placeholders keep the dirs tracked.
 src/oczy/experiments/organism_curriculum/reports/*.json
 src/oczy/experiments/lm_perception/reports/*.json
+
+# Stray empty shell-redirect artifacts (accidental `> full` style leftovers).
+/full
+/full-text
+/github
+/json
