@@ -1,9 +1,9 @@
 # Oczy — Current Project State
 
-**Last updated:** 2026-07-16
+**Last updated:** 2026-08-06
 
 **Evidence cutoff:** repository and local experiment artifacts inspected through
-2026-07-16
+2026-08-06
 
 **Purpose:** canonical living handoff for what Oczy is, what has actually been
 demonstrated, what changed in the research direction, and where the remaining
@@ -68,6 +68,14 @@ retrieval-like paths: visible prefix content, KV content equivalent to a
 prefix, logit manipulation, and the scope-slot reranker. None establishes a
 cortex that learns an unseen rule from experience and later expresses it
 through a frozen model.
+
+R18 Amendment A1 now supplies admissible **partial LoRA-distillation evidence**:
+the substituted frontier teacher clears the unchanged admission gate on all
+five seeds and the student effect is positive on 4/5 seeds. That is evidence
+for compressing contextual behavior into a small weight delta, not a
+project-level demonstration of the full cortex thesis. Human adjudication on
+2026-08-06 classifies the amended R18 condition **TESTED-PARTIAL with gate
+resolved**; the original local-teacher condition remains BLOCKED.
 
 The July 9 direction is still scientifically plausible and worth testing, but
 it is high risk. The project now has a sharper central experiment instead of a
@@ -164,6 +172,8 @@ The table below separates useful mechanisms from evidence for the thesis.
 | Other answer-time organs | Archived or retained only for a narrow appeal | Hippocampus answer path bit-identical to base; DSI unsupported/net harmful on this battery; critic, identity, immune, and autoencoder were noise or harmful |
 | External QA | Overfitting warning | Organism **0.388** versus vanilla **0.512** |
 | Pi tool-use battery | Current external result: **0/3** | Current proxy prepends stored facts; it is not yet evidence of cortex learning or routing |
+| R18 original local-teacher condition | **BLOCKED** at teacher validity gate; diagnostic only | `teacher_dev_delta=0.1765 < 0.2` on all five seeds; holdout mean 0.2667 and 4/5 positive remain scientifically inadmissible for that condition |
+| R18 Amendment A1 (frontier DEV-gate teacher) | **TESTED-PARTIAL with gate resolved** (human-adjudicated 2026-08-06) | Gate passed all five seeds (`teacher_dev_delta` mean 0.4941); unchanged student effect mean 0.2667, CI95 [0.136, 0.397], 4/5 positive (seed 2 null); partial rather than full acceptance because the mechanism failed in 1/5 seeds |
 
 Detailed evidence:
 
@@ -216,8 +226,9 @@ recorded as prominently as positives. Not every catalogued project ran.
 | Exp05 metabolism-loop | **NULL** (metabolism drift) | `metabolism_drift_delta=0.0`, `drift_uptake=0.0` | 1 |
 | Exp06 bounded-growth | **POSITIVE** | `bounded_growth_m1_ratio=0.002079`, zero variance | 5 |
 | Exp07 conversation-world-model | **POSITIVE** (marker-free) + **NULL** (critic AUC) | `marker_free_uptake_gap=1.0`, `critic_auc_delta=0.0` | 1 |
-| R18 teacher gate | **BLOCKED** (teacher validity gate failed) | `teacher_dev_delta=0.1765` < 0.2 gate; `distill_delta_holdout=0.3333` | 1 |
-| R18 distillation 3-seed | **BLOCKED** (teacher gate failed; diagnostic only) | `distill_delta_holdout` mean=0.2222, bimodal {0.3333, 0.3333, 0.0}; `teacher_dev_delta=0.1765` all seeds | 3 |
+| R18 teacher gate (original local 0.5B condition) | **BLOCKED** (teacher validity gate failed) | `teacher_dev_delta=0.1765` < 0.2 gate; `distill_delta_holdout=0.3333` | 1 |
+| R18 distillation 3-seed (original condition) | **BLOCKED** (teacher gate failed; diagnostic only) | `distill_delta_holdout` mean=0.2222, bimodal {0.3333, 0.3333, 0.0}; `teacher_dev_delta=0.1765` all seeds | 3 |
+| R18 Amendment A1 (subsequent 2026-08-06; not part of campaign) | **TESTED-PARTIAL with gate resolved** (human-adjudicated) | `teacher_dev_delta` mean=0.4941, gate passed 5/5; `distill_delta_holdout` mean=0.2667, CI95 [0.136, 0.397], 4/5 positive; seed 2 null prevents full acceptance | 5 |
 | R14 M2b additive-organs | **NULL (metricless)** | 3 seeds, exit 0, no `METRIC`/`ASI` values | 3 |
 
 Exp03's original campaign run was infrastructure-blocked (HF snapshot
@@ -241,7 +252,7 @@ Evidence: [`experiments_logs/2026-07-11_exp03_real_driver_closure.json`](experim
 (durable execution report); [`experiments_logs/2026-07-11_campaign_0d48130.md`](experiments_logs/2026-07-11_campaign_0d48130.md)
 (original campaign adjudication); adjudication in [`experiments_logs/LEDGER.md`](experiments_logs/LEDGER.md).
 
-### R18 five-seed diagnostic (2026-07-11, commit `5b5e93c`)
+### R18 original-condition five-seed diagnostic (2026-07-11, commit `5b5e93c`)
 
 A follow-up 5-seed `stage_0` rerun was submitted via the durable live
 watch queue (Kaggle CPU, kernel
@@ -284,13 +295,48 @@ permitted.
   {0.117647, 0, 0, 0, 0.117647}. Teacher remains 0.17647. Seed 2 is
   not uniquely divergent — seeds 1 and 3 also score 0.
 
-**Conclusion:** no structural prompt defect; registered chat fallback
-is worse than raw_prefix; the teacher expressivity/prompt-task ceiling
-is the blocker. Optimization fits token loss but DEV behavior is
-unstable/weak and not saturated. Further identical R18 reruns are
-retired — they will not clear the unchanged teacher gate. Next work
-points to R19 DEV calibration while signed evaluation (Research/20
-meta-test) remains gated. No threshold, metric, or eval changes.
+**Conclusion for the original local 0.5B-teacher condition:** no structural
+prompt defect; registered chat fallback is worse than raw_prefix; the teacher
+expressivity/prompt-task ceiling is the blocker. Optimization fits token loss
+but DEV behavior is unstable/weak and not saturated. Further identical runs of
+that original condition are retired — they will not clear the unchanged
+teacher gate. No threshold, metric, or eval changes.
+
+### R18 Amendment A1 — frontier-teacher gate resolved (2026-08-06)
+
+Amendment A1 is a separate, human-authorized condition. It changes only the
+DEV-gate teacher to OpenRouter `deepseek/deepseek-v4-flash-0731`, pinned to the
+DeepSeek provider with no fallback. Requests use temperature 0, seed 0,
+reasoning disabled, and omit `max_tokens`. The student remains
+Qwen/Qwen2.5-0.5B-Instruct; LoRA still distills the local 0.5B prefix logits;
+the metric, eval/v2 `salt="v2"` split, and `teacher_dev_delta >= 0.2` threshold
+are unchanged.
+
+A standalone 17-probe DEV check first scored 9/17 with the correction and 0/17
+without it (`teacher_dev_delta=0.5294`). The completed 5-seed stage-0 run then
+measured per-seed `teacher_dev_delta` {0.4706, 0.5294, 0.4706, 0.4706,
+0.5294}, mean 0.4941: **the gate passed on all five seeds**.
+
+The unchanged student path produced per-seed `distill_delta_holdout` {0.3333,
+0.3333, 0.0, 0.3333, 0.3333}; mean 0.2667, CI95 [0.136, 0.397], with 4/5
+positive and seed 2 null. Mean specificity delta was 0.0261, CI95 [-0.008,
+0.060]. Wall time was about 27.7 minutes; estimated API spend was about
+$0.0005, well below the approved $5 ceiling. The student values exactly
+reproduce the earlier pattern because A1 substitutes only the admission-gate
+teacher, not the local distillation target.
+
+**Human adjudication (2026-08-06): TESTED-PARTIAL with gate resolved.** The
+teacher blocker is resolved and the holdout evidence is admissible for
+Amendment A1, but the mechanism remains unreliable in 1/5 seeds, so this is not
+a full H-DISTILL acceptance. The original condition remains BLOCKED; it has not
+been rewritten.
+
+Evidence:
+[`experiments_logs/2026-08-06_stage0_openrouter_teacher_gate.md`](experiments_logs/2026-08-06_stage0_openrouter_teacher_gate.md),
+[`experiments_logs/2026-08-06_r18_openrouter_5seed_stage0.md`](experiments_logs/2026-08-06_r18_openrouter_5seed_stage0.md),
+and raw log
+[`experiments_logs/2026-08-06_r18_openrouter_5seed_stage0.log`](experiments_logs/2026-08-06_r18_openrouter_5seed_stage0.log).
+
 ### R19 DEV calibration (2026-07-12, source `bd1ead9a`)
 
 Research/19's DEV-only calibration ran on Kaggle CPU (Qwen/Qwen2.5-0.5B-Instruct,
@@ -440,14 +486,16 @@ ACCEPT/REFUTE claim is made.
 ## 5. Current research direction
 
 The July 9 conversation and repository audit produced a dependency-ordered
-sequence. Research/18 and /19 remain useful diagnostics; Research/20 is now
-the core premise test; Research/21 is conditional on it. Research/22 adds a
+sequence. Research/18 Amendment A1 is human-adjudicated TESTED-PARTIAL with
+the teacher gate resolved, while Research/19 remains a blocked diagnostic.
+Research/20 is the core premise test and Research/21 is conditional on it.
+Research/22 adds a
 pending standalone LoRA-EPM addressability comparator in Stage A and keeps
 Stage B cortex integration conditional on Research/20 acceptance.
 
 | Order | Work | Role | Current state |
 |---|---|---|---|
-| 1 | [`research/18-consolidation-as-distillation.md`](research/18-consolidation-as-distillation.md) | Plastic-LM-weight comparator: distill transient context into LoRA, delete traces, test survival | **BLOCKED** (teacher gate failed): 5-seed run complete (exit 0), `teacher_dev_delta=0.1765` < 0.2 gate all seeds; `distill_delta_holdout` mean=0.2667, 4/5 positive (seed 2 null); no H-DISTILL verdict permitted. Mechanism diagnosis complete (2026-07-12, commit `33169cc`): teacher ceiling vanilla=0/raw_prefix=0.1765/chat_template=0 (none reach gate), prompt-contract audit all-zero (no structural defect), trajectory underfit+unstable (loss falls but DEV behavior weak); seed 2 not uniquely divergent. Further identical R18 reruns retired; next work is R19 DEV calibration; no threshold changes |
+| 1 | [`research/18-consolidation-as-distillation.md`](research/18-consolidation-as-distillation.md) | Plastic-LM-weight comparator: distill transient context into LoRA, delete traces, test survival | **TESTED-PARTIAL with gate resolved** (human-adjudicated 2026-08-06). Original local 0.5B-teacher condition remains **BLOCKED** (`teacher_dev_delta=0.1765 < 0.2` on all five seeds; mechanism diagnosis `33169cc`; identical original-condition reruns retired). Under A1, the provider-pinned frontier DEV-gate teacher passed 5/5 (`teacher_dev_delta` mean 0.4941) without changing the student, local LoRA target, metric, split, or threshold. Unchanged student effect: `distill_delta_holdout` mean 0.2667, CI95 [0.136, 0.397], 4/5 positive with seed 2 null; specificity mean 0.0261. The 1/5 null prevents full H-DISTILL acceptance |
 | 2 | [`research/19-lm-as-language-organ.md`](research/19-lm-as-language-organ.md) | Direct diagnostic with matched label-prefix and latent-control articulation arms | Implemented; DEV calibration **BLOCKED** at pre-registered DEV articulation gate (2026-07-12, source `bd1ead9a`): v4 infrastructure succeeded (exit 0, artifacts collected), but `signoff_dev_articulation_gate=false`; `holdout_accessed=false`, no signoff requested. `parameter_total=60388/64000`, `dev_confidence_mean=0.0525482`, `dev_specificity_acc=0.134328`, `oracle_ceiling=0.357143`, `raw_trace_count=0`. No scientific verdict beyond BLOCKED. R20 remains separately blocked. |
 | 3 | [`research/20-meta-trained-cortex-frozen-language-organ.md`](research/20-meta-trained-cortex-frozen-language-organ.md) | Core test: meta-learn write/read/consolidate/articulate, then learn an unseen rule online through state only | **INT8 v2 DEV implementation complete and one-step smoke-verified** (2026-07-15); meta-test remains **BLOCKED** — v2 checkpoints, calibration distributions, power analysis, candidate manifest, and human signoff must be regenerated |
 | 4 | [`research/21-cortex-routed-frozen-specialist-organs.md`](research/21-cortex-routed-frozen-specialist-organs.md) | Conditional extension: cortex routes between frozen language and action/tool organs using recurrent goal state | New specification; do not start before Research/20 accepts |
@@ -496,7 +544,7 @@ side channel.
 | Research/20 / Experiment 09 | DEV-only implementation complete; smoke-verified on Kaggle CPU (2026-07-12); meta-test blocked (no frozen instrument/signoff) | [`src/oczy/experiments/meta_cortex/`](src/oczy/experiments/meta_cortex/) — `model.py`, `organ.py`, `training.py`, `contracts.py`, `taskgen.py`, `artifacts.py`, `cli.py`, `__main__.py`; tests in `src/oczy/experiments/tests/test_meta_cortex_*.py` |
 | Research/21 multi-organ router | Specification only | No implementation module yet |
 | Research/22 zero-shot LoRA EPM routing | Specification only / PENDING; no implementation and no scientific claim | [`research/22-parametric-memory-decoding-zero-shot-lora-routing.md`](research/22-parametric-memory-decoding-zero-shot-lora-routing.md) — Stage A independently tests PMD addressability with mandatory retrieval; Stage B cortex integration remains blocked on Research/20 acceptance |
-| Remote compute pool | Mixed Kaggle/Colab CPU; Kaggle verified v4 smoke/probe/bootstrap; Colab CLI 0.6.0 verified v2 queue-starvation fix; GPU (T4/P100/L4) archived; TPU not wired | [`infrastructure/kaggle/`](infrastructure/kaggle/) |
+| Remote compute pool | Mixed Kaggle/Colab CPU; Kaggle verified v4 smoke/probe/bootstrap; Colab CLI 0.6.0 verified v2 queue-starvation fix; GPU (T4/P100/L4) archived; local T550 probed 2026-07-26 and not wired in; TPU not wired | [`infrastructure/kaggle/`](infrastructure/kaggle/); T550 probe [`experiments_logs/2026-07-26_local_t550_gpu_throughput_probe.md`](experiments_logs/2026-07-26_local_t550_gpu_throughput_probe.md) |
 | Pi tool-use work / Experiment 08 | Code-backed 6-stage dataset/scorer/validator implemented; live augmented run still pending; external result remains 0/3 | [`src/oczy/experiments/tool_calling_curriculum/`](src/oczy/experiments/tool_calling_curriculum/) plus [`benchmarks/pi/`](benchmarks/pi/) |
 | Dashboard | Generator exists; canonical output absent | [`scripts/dashboard.py`](scripts/dashboard.py); planned `experiments_logs/DASHBOARD.md` |
 | Weekly external battery | Research spec exists; runner absent | [`research/16-s4-external-benchmark-battery.md`](research/16-s4-external-benchmark-battery.md); planned `scripts/weekly_battery.sh` |
@@ -511,6 +559,7 @@ The remote compute pool now supports two CPU-only providers:
 | Kaggle CLI 2.2.3 | Active, verified | 2026-07-10 | `cpu-smoke` v4, `qwen-cpu-probe` v1, `cpu-bootstrap-probe` v4 |
 | Colab CLI 0.6.0 | Active, verified | 2026-07-11 | CPU sessions, dynamic AIMD admission, queue-starvation fix |
 | GPU (T4/P100/L4) | Archived --- do not submit | 2026-07-09 | Historical evidence under `infrastructure/kaggle/archive/gpu/` |
+| Local T550 (Turing, 4 GB) | Probed, not wired in | 2026-07-26 | 1.1–2.0× CPU at batch=1, loses at batch=4; weaker than archived T4; see [`experiments_logs/2026-07-26_local_t550_gpu_throughput_probe.md`](experiments_logs/2026-07-26_local_t550_gpu_throughput_probe.md) |
 
 **Kaggle verification (2026-07-10):** The `cpu-smoke` kernel
 (`abdellahkadem/oczy-cortex-cpu-smoke`) was re-verified remotely (v4): it ran
@@ -618,7 +667,7 @@ For commit `f48dccc`, the explicitly authorized scoped guard passed with
    not reopened or overturned. **Acceptance met:** durable execution report
    at [`experiments_logs/2026-07-11_exp03_real_driver_closure.json`](experiments_logs/2026-07-11_exp03_real_driver_closure.json);
    S1.4 is not reopened.
-4. **R18 five-seed diagnostic — COMPLETE (2026-07-11); scientifically
+4. **R18 original-condition five-seed diagnostic — COMPLETE (2026-07-11); scientifically
    BLOCKED at teacher gate.** The 5-seed `stage_0` rerun (Kaggle CPU,
    kernel `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, source commit
    `5b5e93c63d769fea7854073a4e6c359e5d36606f`) completed with exit 0.
@@ -643,14 +692,20 @@ For commit `f48dccc`, the explicitly authorized scoped guard passed with
    optimization fits token loss but DEV behavior is unstable/weak and
    not saturated. Final DEV student accuracies (seeds 0–4) =
    {0.117647, 0, 0, 0, 0.117647}; seed 2 is not uniquely divergent.
-   Conclusion: the blocker is teacher expressivity/prompt-task ceiling,
-   not a prompt bug. Further identical R18 reruns are retired — they
-   will not clear the unchanged teacher gate. Next work is R19 DEV
-   calibration; R19 signed evaluation remains gated on human approval,
-   and the Research/20 meta-test remains separately blocked. No
-   threshold, metric, or eval changes. **Acceptance met:** 5-seed run
-   complete with per-seed values; mechanism diagnosis
-   complete; null seed 2 preserved; no threshold change.
+   Conclusion for the original local 0.5B-teacher condition: the blocker is
+   teacher expressivity/prompt-task ceiling, not a prompt bug. Further
+   identical runs of that condition are retired — they will not clear the
+   unchanged teacher gate. No threshold, metric, or eval changes.
+   **Acceptance met:** 5-seed run complete with per-seed values; mechanism
+   diagnosis complete; null seed 2 preserved; no threshold change.
+
+   **Amendment A1 follow-up — TESTED-PARTIAL with gate resolved
+   (human-adjudicated 2026-08-06).** The human-authorized frontier DEV-gate
+   teacher cleared the same threshold on all five seeds (`teacher_dev_delta`
+   mean 0.4941). The unchanged student path retained the earlier mean holdout
+   delta 0.2667 (CI95 [0.136, 0.397]), 4/5 positive with seed 2 null. This
+   resolves the gate for A1 without rewriting the original BLOCKED condition;
+   the seed-2 null prevents full acceptance.
 5. **S4.1: complete honest reruns.** Re-run every June 26–29 result that
    depended on the broken scope-slot reranker or leakage-era paths on eval
    v2. **Acceptance:** every INVALIDATED/SUPERSEDED ledger row points to a
@@ -690,9 +745,9 @@ manifest, or research spec was changed. Evidence:
 
 ### P1b — Build the S5.3 diagnostic head-to-head table
 
-One table: R18 (consolidation-as-distillation) vs both R19 arms vs
-retrieval-baseline vs vanilla, with deletion audits, CIs, per-byte
-accounting, and explicit classification of every answer path.
+One table: both R18 conditions (original local teacher and Amendment A1)
+vs both R19 arms vs retrieval-baseline vs vanilla, with deletion audits, CIs,
+per-byte accounting, and explicit classification of every answer path.
 **Acceptance:** `experiments_logs/DASHBOARD.md` or a dated log contains the
 table with all columns filled and every path classified as retrieval,
 metabolism, or vanilla.
@@ -790,8 +845,8 @@ If and only if Research/20 accepts:
   module `oczy.experiments.consolidation_distillation`, args
   `--seeds 5 --max-steps 10 --stage stage_0_grounding`).
   **Infrastructure: COMPLETE** (exit 0, all metrics collected).
-  **Scientific verdict: BLOCKED at the teacher validity gate —
-  diagnostic only.** The unchanged teacher gate
+  **Scientific verdict for this original local-teacher job: BLOCKED at the
+  teacher validity gate — diagnostic only.** The unchanged teacher gate
   (`teacher_dev_delta ≥ 0.2`) failed: every seed observed
   `teacher_dev_delta=0.17647058823529413` < 0.2. No H-DISTILL
   verdict is permitted because the teacher gate failed after

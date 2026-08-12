@@ -316,12 +316,28 @@ the home curriculum.
 - [ ] **S4.3 — Second model.**
   Run the frozen eval on a second small model. Single-model results
   (LFM2.5 only, 12 days) say nothing about the architecture generalizing.
+  Choose the second model to be **stronger**, not just another 0.5B-class
+  organ: Continual Harness (Karten et al., arXiv:2605.09998) shows harness/
+  refinement gains are capability-dependent with a hard floor below which
+  mechanism differences are invisible — and Oczy's own R18 teacher ceiling
+  (0.5B, `teacher_dev_delta=0.1765`) already sits under that floor. A
+  1.5–4B-class organ is the discriminating choice; if infra cannot host it,
+  log the floor interpretation explicitly rather than claiming a mechanism
+  null. See `notes/2026-07-26_continual_harness_applicability.md`.
 - [ ] **S4.4 — Headline dashboard.**
   One table, auto-generated per run: `behavior_delta_per_byte` (post
   raw-trace deletion), uptake, transfer, scope, forgetting, identity —
   held-out, multi-seed, vanilla column — appended to
   `experiments_logs/` by the harness itself so no human (or agent) curates
   the numbers.
+  - Report as a **cost-vs-completion Pareto plane** with per-seed traces and
+    a third axis for model capability (reporting pattern from
+    arXiv:2605.09998 Fig. 6: seed medians + faint per-seed lines, cost =
+    tokens/memory bytes, completion = stages passed).
+  - Score cortex consolidation skills **against an oracle, independent of
+    end-task efficiency** (pattern from arXiv:2605.09998 Fig. 8: refined
+    navigation skills scored by path-cost deficit vs a Dijkstra oracle), so
+    skill-level improvement is attributable and not rebranded as metabolism.
 
 ### Definition of done
 All surviving claims reproduced on eval v2 with statistics; external + second
@@ -367,7 +383,7 @@ test: a meta-trained cortex controlling a frozen language organ with retrieval
 disabled in the primary condition. Research/21 is the dependent multi-organ
 extension.
 
-- [ ] **S5.1 — research/18: consolidation as context distillation.** — **BLOCKED (teacher gate failed; Campaign 0d48130 + 5-seed diagnostic, 2026-07-11)**
+- [x] **S5.1 — research/18: consolidation as context distillation.** — **TESTED-PARTIAL with gate resolved (Amendment A1, human-adjudicated 2026-08-06); original local-teacher condition remains BLOCKED**
   Per-fact transient prefix → KL-distilled LoRA → delete prefix + traces →
   survival on holdout. Plasticity in LM weights; retained as the mouth-weight
   comparator, not the frozen-organ cortex condition.
@@ -397,12 +413,19 @@ extension.
 > optimization fits token loss but DEV behavior is unstable/weak and
 > not saturated. Final DEV student accuracies (seeds 0–4) =
 > {0.117647, 0, 0, 0, 0.117647}; seed 2 is not uniquely divergent.
-> Conclusion: the blocker is teacher expressivity/prompt-task ceiling,
-> not a prompt bug. Further identical R18 reruns are retired — they
-> will not clear the unchanged teacher gate. Next work points to R19
-> signed evaluation remains gated on human approval; the Research/20
-> meta-test remains separately blocked. No threshold, metric, or eval changes. Evidence:
+> Conclusion for the original local 0.5B-teacher condition: the blocker is
+> teacher expressivity/prompt-task ceiling, not a prompt bug. Further identical
+> runs of that condition are retired — they will not clear the unchanged
+> teacher gate. No threshold, metric, or eval changes. Evidence:
 > `experiments_logs/2026-07-11_campaign_0d48130.md`.
+>
+> **Amendment A1 adjudication (2026-08-06): TESTED-PARTIAL with gate resolved.**
+> The provider-pinned frontier DEV-gate teacher passed 5/5 (`teacher_dev_delta`
+> mean 0.4941). The unchanged student effect was mean 0.2667, CI95
+> [0.136, 0.397], 4/5 positive with seed 2 null. The amended evidence is
+> admissible, but the 1/5 null prevents full H-DISTILL acceptance. The original
+> condition remains BLOCKED. Evidence:
+> `experiments_logs/2026-08-06_r18_openrouter_5seed_stage0.md`.
 - [x] **S5.2 — research/19: direct cortex learning, two articulation arms.** — **Implemented; DEV calibration BLOCKED at pre-registered DEV articulation gate**
   The same ≤64k-param online-trained cortex is evaluated through (A) a
   label-prefix parametric-retrieval readout and (B) a fixed-width latent-control
@@ -516,8 +539,8 @@ remains frozen unless an item explicitly calls for the governance path.
    execution report at `experiments_logs/2026-07-11_exp03_real_driver_closure.json`;
    S1.4 is not reopened.
 
-2. **R18 five-seed diagnostic — COMPLETE (2026-07-11); scientifically
-   BLOCKED at teacher gate.** The 5-seed `stage_0` rerun (Kaggle CPU,
+2. **R18 original-condition five-seed diagnostic — COMPLETE (2026-07-11);
+   scientifically BLOCKED at teacher gate.** The 5-seed `stage_0` rerun (Kaggle CPU,
    kernel `abdellahkadem/oczy-r18-5seed-5b5e93c63d76`, source commit
    `5b5e93c63d769fea7854073a4e6c359e5d36606f`) completed with exit 0.
    **Scientific verdict: BLOCKED — diagnostic only.** The unchanged
@@ -540,14 +563,18 @@ remains frozen unless an item explicitly calls for the governance path.
    optimization fits token loss but DEV behavior is unstable/weak and
    not saturated. Final DEV student accuracies (seeds 0–4) =
    {0.117647, 0, 0, 0, 0.117647}; seed 2 is not uniquely divergent.
-   Conclusion: the blocker is teacher expressivity/prompt-task ceiling,
-   not a prompt bug. Further identical R18 reruns are retired — they
-   will not clear the unchanged teacher gate. Next work points to R19
-   signed evaluation remains gated on human approval; the Research/20
-   meta-test remains separately blocked. No threshold, metric, or eval
-   changes. **Acceptance
-   met:** 5-seed run complete with per-seed values; mechanism diagnosis
-   complete; null seed 2 preserved; no threshold change.
+   Conclusion for the original local 0.5B-teacher condition: the blocker is
+   teacher expressivity/prompt-task ceiling, not a prompt bug. Further
+   identical runs of that condition are retired — they will not clear the
+   unchanged teacher gate. No threshold, metric, or eval changes.
+   **Acceptance met:** 5-seed run complete with per-seed values; mechanism
+   diagnosis complete; null seed 2 preserved; no threshold change.
+
+   **Amendment A1 — TESTED-PARTIAL with gate resolved (human-adjudicated
+   2026-08-06).** The frontier DEV-gate teacher passed 5/5
+   (`teacher_dev_delta` mean 0.4941); the unchanged student effect was mean
+   0.2667, CI95 [0.136, 0.397], 4/5 positive with seed 2 null. The original
+   condition remains BLOCKED; the 1/5 null prevents full H-DISTILL acceptance.
 
 3. **S4.1: complete honest reruns.**
    Re-run every June 26–29 result that depended on the broken scope-slot
@@ -589,8 +616,9 @@ remains frozen unless an item explicitly calls for the governance path.
    remains blocked on the DEV articulation gate passing.
 
 5. **S5.3: build the diagnostic head-to-head comparison table.**
-   One table: R18 (consolidation-as-distillation) vs both R19 arms vs
-   retrieval-baseline vs vanilla, with deletion audits, CIs, per-byte
+   One table: both R18 conditions (original local teacher and Amendment A1)
+   vs both R19 arms vs retrieval-baseline vs vanilla, with deletion audits,
+   CIs, per-byte
    accounting, and explicit classification of every answer path.
    **Acceptance:** `experiments_logs/DASHBOARD.md` or a dated log contains
    the table with all columns filled and every path classified as
@@ -652,8 +680,8 @@ remains frozen unless an item explicitly calls for the governance path.
    module `oczy.experiments.consolidation_distillation`, args
    `--seeds 5 --max-steps 10 --stage stage_0_grounding`).
    **Infrastructure: COMPLETE** (exit 0, all metrics collected).
-   **Scientific verdict: BLOCKED at the teacher validity gate —
-   diagnostic only.** The unchanged teacher gate
+   **Scientific verdict for this original local-teacher job: BLOCKED at the
+   teacher validity gate — diagnostic only.** The unchanged teacher gate
    (`teacher_dev_delta ≥ 0.2`) failed: every seed observed
    `teacher_dev_delta=0.17647058823529413` < 0.2. No H-DISTILL
    verdict is permitted because the teacher gate failed after
@@ -664,8 +692,8 @@ remains frozen unless an item explicitly calls for the governance path.
    metric, or eval change is implied. The Research/20 meta-test
    sign-off prohibition is unchanged. **Acceptance:** watch mode
    implemented and verified by tests (met); the live queue is active;
-   the first job is complete and adjudicated as BLOCKED at the
-   teacher gate.
+   the first job is complete and adjudicated as BLOCKED at the teacher gate
+   for its original local-teacher condition.
 
 Sprint 0 and Sprint 1 can overlap after S0.1–S0.4 land; nothing in Sprints
 2–4 may start before Sprint 0 is fully done.
