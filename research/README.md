@@ -61,7 +61,7 @@ Nulls and refutations are reported alongside wins.
 | 06 | **ACCEPTED** | `bounded_growth_m1_ratio=0.002079` | 5 (kaggle) | Zero variance; bit-identical footprints; bytes_per_delta spread ≤20 B |
 | 07 | **ACCEPTED-PARTIAL** | `marker_free_uptake_gap=1.0`; `critic_auc_delta=0.0` | 1 (colab) | Predictive AUC positive (0.8125/1.0); critic AUC improvement null |
 | 14 | **TESTED-METRICLESS-NULL** | no METRIC/ASI emitted | 3 (kaggle) | Exit 0 after 11,787 s; harness completed but produced no scored output |
-| 18 | **TESTED-PARTIAL** | `distill_delta_holdout` mean=0.2222 | 3 (kaggle) | Gate passed (1 seed, 0.3333); full run bimodal {0.3333, 0.3333, 0.0} |
+| 18 | **TESTED-PARTIAL with gate resolved** | `distill_delta_holdout` mean=0.2667, CI95 [0.136, 0.397] | 5 (local, Amendment A1) | Human-adjudicated 2026-08-06: frontier teacher passed unchanged gate 5/5; student positive 4/5, seed 2 null. Original local-teacher condition remains BLOCKED |
 
 ## Post-remediation frontier
 
@@ -72,11 +72,63 @@ answer-time content store?
 
 | # | Project | Role in the new sequence | Primary distinction | Status |
 |---|---|---|---|---|
-| [18](18-consolidation-as-distillation.md) | Weight-editing comparator | Experience is consolidated into LoRA weights inside the LM. | **TESTED-PARTIAL** (2026-07-11) |
+| [18](18-consolidation-as-distillation.md) | Weight-editing comparator | Experience is consolidated into LoRA weights inside the LM. | **TESTED-PARTIAL with gate resolved** (Amendment A1, human-adjudicated 2026-08-06); original local-teacher condition BLOCKED |
 | [19](19-lm-as-language-organ.md) | Direct-learning diagnostic | A label-prefix parametric-retrieval arm is separated from latent control of a frozen language organ. | PENDING |
 | [20](20-meta-trained-cortex-frozen-language-organ.md) | Core cortex hypothesis; [Experiment 09](../experiments/09-meta-trained-cortex-frozen-language-organ/) | The write, read, consolidation, and articulation rules are meta-trained; only cortex state changes on an unseen task. | PENDING |
 | [21](21-cortex-routed-frozen-specialist-organs.md) | Multi-organ extension | A learned cortex routes shared state into independently frozen language and action organs. | BLOCKED (depends on 20) |
 | [22](22-parametric-memory-decoding-zero-shot-lora-routing.md) | LoRA-bank addressability comparator and conditional cortex integration | Stage A tests strict versus calibrated PMD on a shared frozen backbone/LoRA bank; Stage B requires both a valid Stage A route and Research/20 acceptance. | PENDING (Stage A); BLOCKED (Stage B depends on 20 + valid Stage A) |
+
+## Thesis reframe and proposed entries R23.5–R30 (DRAFT, 2026-07-26)
+
+An external review of the research program
+(`chat-export-1785143922754.json`, Qwen3.8-Max-Preview) produced a major
+thesis reframe and a sequence of proposed research entries. These are
+**drafts, not yet human-approved pre-registrations.** The reframe and
+literature landscape are documented in
+[`notes/2026-07-26_in-context_serialization_thesis_reframe.md`](../notes/2026-07-26_in-context_serialization_thesis_reframe.md)
+and
+[`notes/2026-07-26_in_context_serialization_literature.md`](../notes/2026-07-26_in_context_serialization_literature.md).
+
+**The reframe:** LLMs already do in-context learning. The question is not
+"can a system learn?" but "can the result of in-context learning be
+serialized into a compact persistent representation that survives sessions?"
+The cortex is not a learner; it is a **compressor** (a "save button" for
+in-context learning).
+
+| # | Project | Role in the new sequence | Primary distinction | Status |
+|---|---|---|---|---|
+| [23.5](23.5-in-context-adaptation-serialization-baseline.md) | **In-context adaptation serialization baseline** | Cheapest possible test: can a soft prompt or latent vector recover the in-context behavioral shift? | No meta-training, no cortex; just compression feasibility. | DRAFT |
+| [24](24-toy-existence-check.md) | **Toy existence check** | Does a meta-trained toy cortex beat a random one on single-patterned users? | Toy scale, 3 interactions, structurally different held-out family. | DRAFT |
+| [24.5](24.5-prior-coverage-analysis.md) | **Prior coverage analysis** | Does the meta-training distribution cover the space of real user patterns? | No GPU; distribution characterization and clustering. | DRAFT |
+| [25](25-coupling-geometry-ablation.md) | **Coupling geometry ablation** | Is additive coupling the structural reason R02/R09/R19 failed? | Additive vs. multiplicative/FiLM vs. attention-gated vs. prefix-equivalent. | DRAFT |
+| [26](26-meta-trained-vs-random-vs-trivial-retrieval.md) | **Meta vs. random vs. trivial retrieval** | The missing control: does meta-learning contribute beyond architecture and retrieval? | Five conditions including explicit nearest-neighbor retrieval baseline. | DRAFT |
+| [27](27-retrieval-exclusion-trace-corruption.md) | **Retrieval exclusion via trace corruption** | The thesis experiment: is the cortex necessary, or is it retrieval? | Four-condition decomposition of R13's trace-deletion test. | DRAFT |
+| [28](28-user-pattern-generalization-boundary.md) | **User-pattern generalization boundary** | How far from the prior can a user pattern be before few-shot identification breaks? | Five-level generalization gradient replacing the vague "unseen rules" framing. | DRAFT |
+| [29](29-information-bottleneck-measurement.md) | **Information bottleneck measurement** | Where is information lost in the pipeline? | Per-stage probe: cortex state vs. raw traces vs. organ activations. | DRAFT |
+| [30](30-decision-gate.md) | **Decision gate** | Continue, pivot, or stop? | Structured evaluation of R23.5–R29 with explicit kill criteria. | DRAFT |
+
+Sequencing:
+
+```
+R23.5 (serialization baseline)  ← cheapest, do first
+  │
+R24   (toy existence)           ← do in parallel
+R24.5 (prior coverage)          ← do in parallel, no GPU
+R25   (coupling geometry)       ← informed by R24
+R26   (meta vs random)          ← the missing control
+  │
+  ├── if R23.5–R26 all fail, stop
+  │
+R27   (retrieval exclusion)     ← the thesis experiment
+R28   (generalization boundary) ← the product constraint
+R29   (information bottleneck)  ← the per-stage diagnostic
+  │
+R30   (decision gate)           ← continue, pivot, or stop
+```
+
+Every entry produces a useful result regardless of outcome. A negative at
+R23.5 or R24 saves months. A positive at R27 is the thesis. A gradient at R28
+is a contribution even if the top level fails.
 
 Dependency and verdict order:
 
@@ -180,3 +232,19 @@ standalone strict-versus-calibrated PMD addressability comparator over a shared
 frozen backbone and LoRA memory bank. Its Stage A is independent of
 Research/20, while Stage B cortex integration requires both a valid Stage A
 route and Research/20 acceptance. Research/21 was not changed.
+
+**2026-07-26 external review — DRAFT entries R23.5–R30:** An external review
+of the research program (`chat-export-1785143922754.json`,
+Qwen3.8-Max-Preview) produced a thesis reframe and nine proposed research
+entries (R23.5–R30). These are recorded as drafts in `research/` and are
+**not yet human-approved pre-registrations.** The reframe collapses the
+question from "can a system learn?" to "can in-context learning be serialized
+into a compact persistent representation that survives sessions?" The cortex
+is reframed from a learner to a compressor ("save button for in-context
+learning"). Conceptual basis:
+[`notes/2026-07-26_in-context_serialization_thesis_reframe.md`](../notes/2026-07-26_in-context_serialization_thesis_reframe.md).
+Literature landscape:
+[`notes/2026-07-26_in_context_serialization_literature.md`](../notes/2026-07-26_in_context_serialization_literature.md).
+No hypotheses, success criteria, or kill criteria in entries 01–22 were
+modified. The chat transcript is preserved at `chat-export-1785143922754.json`
+in the repo root.
