@@ -401,8 +401,20 @@ def _run_one_seed(
     lora_alpha: float,
     calibrate: bool = False,
     svd_target: float = 0.01,
+    *,
+    teacher_client: Any = None,
 ) -> dict[str, Any]:
-    """Run research 18 for one random seed."""
+    """Run research 18 for one random seed.
+
+    ``teacher_client`` (optional) substitutes the **dev-gate teacher** only:
+    when provided, the teacher-with-prefix answers come from
+    ``teacher_client.answer_probe(probe.request, correction=...)`` instead of
+    the local reserved-position prefix.  The student, distillation, metric,
+    and the ``teacher_dev_delta >= 0.2`` gate are unchanged — this is the
+    registered one-variable teacher substitution (see
+    ``notes/2026-07-26_r18-r19_deblock_proposal.md``, §4a).  The default
+    (``None``) keeps the original local teacher path exactly.
+    """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -435,9 +447,14 @@ def _run_one_seed(
                 continue
             ans_v = driver.generate(probe.request, max_tokens=32)
             vanilla_dev_correct += probe_matches(ans_v, probe, ep)
-            driver.set_reserved_position(ReservedPosition(text=ep.correction_utterance))
-            ans_t = driver.generate(probe.request, max_tokens=32)
-            driver.clear_reserved_position()
+            if teacher_client is not None:
+                ans_t = teacher_client.answer_probe(
+                    probe.request, correction=ep.correction_utterance
+                )
+            else:
+                driver.set_reserved_position(ReservedPosition(text=ep.correction_utterance))
+                ans_t = driver.generate(probe.request, max_tokens=32)
+                driver.clear_reserved_position()
             teacher_dev_correct += probe_matches(ans_t, probe, ep)
             teacher_dev_total += 1
     teacher_dev_delta = (teacher_dev_correct - vanilla_dev_correct) / max(teacher_dev_total, 1)
@@ -536,6 +553,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--calibrate", action="store_true", help="SVD-initialize LoRA from dev distillation gradient")
     parser.add_argument("--svd-target", type=float, default=0.01, help="target Frobenius norm for calibrated LoRA effective matrix")
     parser.add_argument("--stage", type=str, default="stage_0_grounding", help="target stage")
+    parser.add_argument(
+        "--teacher",
+        choices=("local", "openrouter"),
+        default="local",
+        help="dev-gate teacher source: 'local' (registered 0.5B-prefix path, "
+        "default) or 'openrouter' (frontier teacher "
+        "deepseek/deepseek-v4-flash-0731 via OpenRouter, provider pinned to "
+        "DeepSeek; one-variable substitution from the R18 de-block proposal).",
+    )
     args = parser.parse_args(argv)
 
     verify_manifest()
@@ -547,6 +573,12 @@ def main(argv: list[str] | None = None) -> int:
     other_stages = build_curriculum(stage_names=other_names)
 
     driver = HFDriver.load()
+    teacher_client = None
+    if args.teacher == "openrouter":
+        from oczy.lm.openrouter_teacher import OpenRouterTeacher, OpenRouterTeacherConfig
+
+        teacher_client = OpenRouterTeacher(OpenRouterTeacherConfig(seed=0))
+        print(f"# teacher: {teacher_client.config.describe()}", file=sys.stderr)
     results: list[dict[str, Any]] = []
     for seed in range(args.seeds):
         print(f"# seed {seed}", file=sys.stderr)
@@ -564,6 +596,7 @@ def main(argv: list[str] | None = None) -> int:
             lora_alpha=args.lora_alpha,
             calibrate=args.calibrate,
             svd_target=args.svd_target,
+            teacher_client=teacher_client,
         )
         r["wall_s"] = time.monotonic() - t0
         results.append(r)
@@ -571,6 +604,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ASI seed_{seed}_{k}={v}", file=sys.stderr)
         gc.collect()
     driver.close()
+    if teacher_client is not None:
+        teacher_client.close()
     gc.collect()
 
     deltas = [r["distill_delta_holdout"] for r in results]
@@ -590,6 +625,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"ASI calibrate={args.calibrate}")
     print(f"ASI svd_target={args.svd_target}")
     print(f"ASI stage={args.stage}")
+    print(f"ASI teacher_source={args.teacher}")
 
     return 0
 

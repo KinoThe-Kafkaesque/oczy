@@ -26,6 +26,11 @@ from typing import TYPE_CHECKING, Any
 
 from ._types import ReservedPosition
 from .adapter import LanguageAdapter, LanguageAdapterConfig
+from .openrouter_teacher import (
+    OpenRouterTeacher,
+    OpenRouterTeacherConfig,
+    resolve_openrouter_api_key,
+)
 
 if TYPE_CHECKING:
     from .cvec_driver import CVecDriverConfig, LlamaCVecDriver
@@ -50,4 +55,7 @@ __all__ = [
     "CVecDriverConfig",
     "LlamaCVecDriver",
     "ReservedPosition",
+    "OpenRouterTeacher",
+    "OpenRouterTeacherConfig",
+    "resolve_openrouter_api_key",
 ]
