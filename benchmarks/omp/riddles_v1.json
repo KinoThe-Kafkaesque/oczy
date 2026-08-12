@@ -1,0 +1,804 @@
+{
+  "schema_version": "1.0",
+  "benchmark_version": "oczy_original_riddle_benchmark_v1",
+  "provenance": {
+    "author": "RiddleSelector (Benchmark Selection Chair)",
+    "date_composed": "2026-07-13",
+    "method": "Selected 20 items from two independently composed source banks: 17 from the alternative bank (riddles_v1_alternative.json, author RiddleInventor) and 3 from the reviewed bank (riddles_v1_reviewed.json, author RiddleCurator). Composition: alt_01..alt_07, reviewed oorb_08, alt_09, reviewed oorb_10, alt_11..alt_19, reviewed oorb_20. Every answer and proof was independently re-verified by brute-force enumeration, BFS, Dijkstra, GF(2) span, exhaustive truth-table evaluation, or direct computation in a Python harness. No candidate model was queried.",
+    "attestation": "No candidate model was queried at any point during selection, audit, or repair. No classic or recognizable puzzle template, anthology, or external source was consulted.",
+    "sources": [
+      {
+        "file": "riddles_v1_alternative.json",
+        "author": "RiddleInventor",
+        "items_selected": 17
+      },
+      {
+        "file": "riddles_v1_reviewed.json",
+        "author": "RiddleCurator",
+        "items_selected": 3
+      }
+    ]
+  },
+  "exclusions": {
+    "no_trivia": true,
+    "no_obscure_vocabulary": true,
+    "no_natural_language_counterfactual_semantics": true,
+    "no_recognizable_classic_templates": true,
+    "no_one_step_textbook_applications": true,
+    "note": "Rule counterfactuals use explicit finite alternate-rule systems, not natural-language counterfactuals. Spatial items use explicit coordinates/axes. Causal items distinguish observation from intervention via do-calculus-style structural models. Planning items prove lower bounds and exhibit achieving solutions."
+  },
+  "categories": [
+    "logical_constraints",
+    "temporal_order",
+    "causal_intervention",
+    "spatial_transformation",
+    "quantifier_scope",
+    "rule_counterfactual",
+    "information_value",
+    "invariant_parity",
+    "planning_minimality",
+    "consistency_meta_reasoning"
+  ],
+  "riddles": [
+    {
+      "id": "oorb_01",
+      "category": "logical_constraints",
+      "difficulty": "medium",
+      "prompt": "Four workers — P, Q, R, S — are each assigned a distinct task numbered 1 through 4. The constraints are: (i) P is not assigned task 1 or task 4; (ii) either Q's task number is exactly two more than R's, or R is assigned task 1; (iii) the worker assigned task 3 is neither R nor Q; (iv) S is assigned a lower-numbered task than P. Which task is Q assigned?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "Task 1"
+        },
+        {
+          "option_id": "B",
+          "text": "Task 2"
+        },
+        {
+          "option_id": "C",
+          "text": "Task 3"
+        },
+        {
+          "option_id": "D",
+          "text": "Task 4"
+        },
+        {
+          "option_id": "E",
+          "text": "Cannot be determined from the constraints"
+        }
+      ],
+      "correct_option_id": "D",
+      "proof": "P cannot take task 1 or task 4, so P is in {2, 3}. If P = 2, then S < 2 forces S = 1, leaving tasks {3, 4} for Q and R; but task 3 must be held by neither Q nor R, and only Q and R remain for those tasks — contradiction. Hence P = 3. Then S is in {1, 2} and task 3 is held by P (satisfying constraint (iii)). If S = 1, tasks {2, 4} remain for Q and R; constraint (ii) requires Q = R + 2 (the disjunct R = 1 is impossible since S = 1 already occupies task 1), giving R = 2, Q = 4 — valid. If S = 2, tasks {1, 4} remain for Q and R; R = 1 satisfies the second disjunct of (ii) directly, giving R = 1, Q = 4 — valid. Both solutions have Q = 4, so Q is uniquely determined.",
+      "ambiguity_audit": "Exhaustive enumeration over all 4! = 24 permutations of tasks to workers yields exactly 2 satisfying assignments: (P=3, Q=4, R=2, S=1) and (P=3, Q=4, R=1, S=2). R and S swap between the two solutions, but Q is pinned to 4 in both. Option E is ruled out because Q is determined. The disjunctive constraint (ii) is the source of the two solutions: in one, Q = R + 2 is the operative disjunct; in the other, R = 1 is.",
+      "originality_note": "Newly composed constraint system; no classic logic-grid source used. The disjunctive constraint (ii) and the 'task-3 holder is neither Q nor R' condition are non-standard.",
+      "verification": "Exhaustive enumeration over all 4! = 24 permutations of tasks to workers; exactly 2 assignments satisfy all constraints, both with Q = 4. Verified programmatically.",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_01",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_02",
+      "category": "logical_constraints",
+      "difficulty": "hard",
+      "prompt": "Five gems V, W, X, Y, Z sit in a line. Each is one of ruby, sapphire, or emerald. Constraints: (i) exactly two gems are rubies, and no two rubies are adjacent; (ii) W and Y have the same color; (iii) V and X have different colors; (iv) there are strictly more sapphires than emeralds; (v) Z is not a sapphire; (vi) V is a ruby; (vii) exactly two gems are sapphires. What color is gem X?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "Ruby"
+        },
+        {
+          "option_id": "B",
+          "text": "Sapphire"
+        },
+        {
+          "option_id": "C",
+          "text": "Emerald"
+        },
+        {
+          "option_id": "D",
+          "text": "Cannot be determined"
+        },
+        {
+          "option_id": "E",
+          "text": "Sapphire or emerald"
+        }
+      ],
+      "correct_option_id": "C",
+      "proof": "V is ruby (vi). With exactly two rubies (i) and Z not sapphire (v): if Z were emerald, the second ruby would occupy position 2, 3, or 4, but exhaustive search shows no solution with Z=emerald satisfies all constraints. Hence Z is the second ruby (positions 1 and 5, non-adjacent). The remaining three slots W, X, Y hold exactly two sapphires and one emerald (vii + iv). W=Y (ii): if both were emerald, sapphires=1 < emeralds=2, violating (iv); so W=Y=sapphire, consuming both sapphires. Then X must be emerald. V!=X (iii): ruby!=emerald. Unique solution: V=ruby, W=sapphire, X=emerald, Y=sapphire, Z=ruby.",
+      "ambiguity_audit": "Exhaustive search over all 3^5 = 243 colorings yields exactly one satisfying assignment, so X is uniquely emerald. Options D and E are eliminated by uniqueness. The 'more sapphires than emeralds' (iv) and 'exactly two sapphires' (vii) together force W,Y to be the two sapphires, removing any freedom in X.",
+      "originality_note": "Custom multi-constraint coloring puzzle; values and constraint set composed fresh. No standard 'gems in a row' puzzle template consulted.",
+      "verification": "Brute force over 3^5 = 243 assignments with all seven constraints; exactly 1 solution: (R,S,E,S,R).",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_02",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_03",
+      "category": "temporal_order",
+      "difficulty": "hard",
+      "prompt": "Six messengers — Cleo, Aron, Bren, Elin, Dax, Fenn — depart on six consecutive days numbered 1 through 6, one per day. Constraints: (i) Bren departs after Cleo; (ii) exactly two messengers depart between Aron and Dax (their day numbers differ by 3); (iii) Elin departs before Fenn; (iv) Cleo departs before Aron; (v) the messenger departing on day 4 is neither Bren nor Fenn; (vi) Dax departs after Elin but before Fenn; (vii) Aron departs before Elin. How many messengers depart between Cleo and Dax?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "1"
+        },
+        {
+          "option_id": "B",
+          "text": "2"
+        },
+        {
+          "option_id": "C",
+          "text": "3"
+        },
+        {
+          "option_id": "D",
+          "text": "4"
+        },
+        {
+          "option_id": "E",
+          "text": "5"
+        }
+      ],
+      "correct_option_id": "C",
+      "proof": "From (iv) Cleo<Aron and (vii) Aron<Elin and (vi) Elin<Dax<Fenn, so Cleo<Aron<Elin<Dax<Fenn — five messengers in this relative order, occupying five of six days. (ii) |Aron-Dax|=3; since Elin sits between them (Aron<Elin<Dax), the only fit is Aron and Dax three apart with Elin between. (v) day 4 is neither Bren nor Fenn. The unique full ordering is Cleo=1, Aron=2, Bren=3, Elin=4, Dax=5, Fenn=6: check Bren(3)>Cleo(1), |2-5|=3, Elin(4)<Fenn(6), Cleo<Aron, day4=Elin (not Bren/Fenn), Elin<Dax<Fenn, Aron<Elin. Cleo=day1, Dax=day5, so messengers on days 2,3,4 (Aron, Bren, Elin) lie between them: 3.",
+      "ambiguity_audit": "Exhaustive permutation search over 6! = 720 orderings yields exactly one valid ordering, so the count between Cleo and Dax is uniquely 3. No constraint is ambiguous; 'exactly two between' is operationalized as day-number difference of 3.",
+      "originality_note": "Custom departure-ordering puzzle with a chain of relative constraints; narrative and values composed fresh.",
+      "verification": "Exhaustive search over 720 permutations; 1 solution: Cleo,Aron,Bren,Elin,Dax,Fenn. Cleo=1, Dax=5 -> 3 between.",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_03",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_04",
+      "category": "temporal_order",
+      "difficulty": "very_hard",
+      "prompt": "Five processes A, B, C, D, E run on a discrete timeline of slots 1..12. Each occupies a contiguous interval of slots. Their lengths are: A = 5 slots, B = 3 slots, C = 2 slots, D = 4 slots, E = 3 slots. Constraints: (i) A starts before B; (ii) B ends before A ends; (iii) C runs entirely within A's interval and entirely within B's interval; (iv) C starts strictly after B starts; (v) D starts exactly when B ends (D occupies the slot where B ends and continues); (vi) A and D overlap in exactly 2 slots; (vii) E runs entirely within D's interval; (viii) E and C overlap in exactly 1 slot. How many slots have exactly three processes running simultaneously?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "0"
+        },
+        {
+          "option_id": "B",
+          "text": "1"
+        },
+        {
+          "option_id": "C",
+          "text": "2"
+        },
+        {
+          "option_id": "D",
+          "text": "3"
+        },
+        {
+          "option_id": "E",
+          "text": "4"
+        }
+      ],
+      "correct_option_id": "C",
+      "proof": "All constraints are relative (no absolute slot is pinned), so the configuration is determined up to translation; the count of slots with exactly three active processes is translation-invariant. Fixing A at slot 1 (A=[1,5]) WLOG: B must end before 5 and start after 1 with length 3, so B=[2,4]; C (length 2) within both A and B, starting after B's start -> C=[3,4]; D starts at B's end (slot 4), length 4 -> D=[4,7]; A intersect D = {4,5} = 2 slots; E (length 3) within D=[4,7] and overlapping C=[3,4] in exactly 1 slot -> E=[4,6] (overlap {4}). Per-slot active counts: s1={A}=1, s2={A,B}=2, s3={A,B,C}=3, s4={A,B,C,D,E}=5, s5={A,D,E}=3, s6={D,E}=2, s7={D}=1. Exactly three active: slots 3 and 5 -> 2 slots.",
+      "ambiguity_audit": "Exhaustive search over all valid interval placements on 12 slots yields 6 solutions, all translations of each other; each has the same per-slot active-count multiset [1,2,3,5,3,2,1], giving exactly 2 slots with three active processes. The answer is invariant, so no absolute-position ambiguity affects it.",
+      "originality_note": "Custom interval-containment puzzle; process lengths and overlap constraints composed fresh. No standard scheduling/interval puzzle template consulted.",
+      "verification": "Exhaustive enumeration of all interval placements on slots 1..12 satisfying all 8 constraints: 6 solutions (translations). Each yields active-count multiset [1,2,3,5,3,2,1]; count of '3' = 2.",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_04",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_05",
+      "category": "causal_intervention",
+      "difficulty": "hard",
+      "prompt": "A greenhouse controller has six boolean components wired as follows (ON=1, OFF=0): Sunlight sensor X is ON. Lamp A = X. Shade B = NOT A. Vent C = A AND B. Fan D = A OR C. Alarm E = B OR D. Lock F = C AND D. In the default state all wiring runs undisturbed. A technician now manually forces the shade B to deploy (sets B = ON), overriding its sensor-driven value, while X remains ON. After this intervention, which statement is true about lock F?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "F is OFF because C remains OFF (B does not feed C)."
+        },
+        {
+          "option_id": "B",
+          "text": "F is ON because both C and D become ON."
+        },
+        {
+          "option_id": "C",
+          "text": "F is OFF because D was already ON and cannot affect F."
+        },
+        {
+          "option_id": "D",
+          "text": "F's state cannot be determined from the wiring."
+        },
+        {
+          "option_id": "E",
+          "text": "F is ON because B directly engages F."
+        }
+      ],
+      "correct_option_id": "B",
+      "proof": "This is an intervention (do), not an observation: B is severed from its parent A and fixed at ON. With X=ON: A = X = ON (unaffected). B = ON (forced). C = A AND B = 1 AND 1 = ON. D = A OR C = 1 OR 1 = ON. F = C AND D = 1 AND 1 = ON. So F is engaged because both C and D are ON. Option A is wrong (C does turn ON via A AND B). Option C misreads F's dependency. Option E is wrong (B does not directly feed F; F = C AND D).",
+      "ambiguity_audit": "The structural equations are deterministic boolean functions with a single exogenous input X, so every intervention yields a unique state — no probabilistic ambiguity. The do/see distinction is explicit: B is set by intervention, not observed, so no back-door confounding arises. All five options describe distinct, checkable states.",
+      "originality_note": "Custom structural causal model with a 6-node boolean circuit; narrative and wiring composed fresh. No textbook SCM example consulted.",
+      "verification": "Forward simulation of the structural equations under do(B=1): A=1,B=1,C=1,D=1,E=1,F=1. Verified programmatically.",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_05",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_06",
+      "category": "causal_intervention",
+      "difficulty": "very_hard",
+      "prompt": "A seven-component boolean circuit has one exogenous input A = ON. The wiring is: B = NOT A; C = A AND B; D = A OR C; E = B OR D; F = C AND E; G = D XOR F. In the default (undisturbed) state, G = 1. You may intervene on exactly one component, setting it to the opposite of its default value. Which single intervention both flips the intervened component away from its default AND leaves G = 1?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "Set B to ON (default OFF)"
+        },
+        {
+          "option_id": "B",
+          "text": "Set C to ON (default OFF)"
+        },
+        {
+          "option_id": "C",
+          "text": "Set D to OFF (default ON)"
+        },
+        {
+          "option_id": "D",
+          "text": "Set E to OFF (default ON)"
+        },
+        {
+          "option_id": "E",
+          "text": "Set F to ON (default OFF)"
+        }
+      ],
+      "correct_option_id": "D",
+      "proof": "Default: A=1,B=0,C=0,D=1,E=1,F=0,G=1. Tracing each intervention (severing the target from its equation and fixing it): do(B=1): C=1,D=1,E=1,F=1,G=0. do(C=1): D=1,E=1,F=1,G=0. do(D=0): E=0,F=0,G=0. do(E=0): F=C AND 0=0, G=D XOR 0=1 XOR 0=1 -> G stays 1, and E flips 1->0. do(F=1): G=1 XOR 1=0. Only do(E=0) both changes the target and preserves G=1. The mechanism: E=0 zeroes F (F=C AND E), and G=D XOR F with D still 1 and F now 0 yields 1.",
+      "ambiguity_audit": "All variables are deterministic boolean functions of a single exogenous constant A, so each intervention produces a unique state — no ambiguity. The 'flips away from default' clause excludes trivial interventions that set a variable to its existing value. Exhaustive check confirms do(E=0) is the unique satisfying intervention.",
+      "originality_note": "Custom 7-node boolean SCM with XOR; composed fresh. No classic causal-example source consulted.",
+      "verification": "Exhaustive simulation of all six single-variable interventions (A,B,C,D,E,F) setting each to 1-default; only do(E=0) yields G=1 while changing the target. Verified programmatically.",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_06",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_07",
+      "category": "spatial_transformation",
+      "difficulty": "medium",
+      "prompt": "A triangle has vertices at (1,1), (4,1), and (1,3) in the Cartesian plane. A transformation T is applied to every vertex: first translate by (-1, 0), then rotate 90 degrees clockwise about the origin, then reflect across the x-axis. What are the coordinates of the image of the vertex originally at (4, 1)?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "(1, 3)"
+        },
+        {
+          "option_id": "B",
+          "text": "(1, -3)"
+        },
+        {
+          "option_id": "C",
+          "text": "(3, 1)"
+        },
+        {
+          "option_id": "D",
+          "text": "(-1, 3)"
+        },
+        {
+          "option_id": "E",
+          "text": "(-3, 1)"
+        }
+      ],
+      "correct_option_id": "A",
+      "proof": "Step 1 (translate (-1,0)): (4,1) -> (3,1). Step 2 (rotate 90 degrees clockwise about origin: (x,y)->(y,-x)): (3,1) -> (1,-3). Step 3 (reflect across x-axis: (x,y)->(x,-y)): (1,-3) -> (1,3). The image is (1,3). Option B is the state after step 2 only (missing the x-axis reflection). Option C applies a counter-clockwise rotation. Option D reflects across the y-axis instead of x. Option E rotates counter-clockwise then reflects.",
+      "ambiguity_audit": "Axes and rotation direction are explicitly defined; the three steps are applied in a fixed, stated order. Each option corresponds to a distinct, identifiable error (skipping a step, wrong rotation direction, wrong axis), so no option is ambiguous.",
+      "originality_note": "Custom coordinate transformation with a 3-step composition; values composed fresh.",
+      "verification": "Direct computation: (4,1)->(3,1)->(1,-3)->(1,3). Verified programmatically.",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_07",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_08",
+      "category": "spatial_transformation",
+      "difficulty": "very_hard",
+      "prompt": "A cube has its faces colored: top = white, bottom = black, front = red, back = blue, left = green, right = yellow. The cube undergoes four rotations in sequence, each defined by an explicit old-face→new-position mapping:\n1. Forward: top→front, front→bottom, bottom→back, back→top (left and right unchanged).\n2. Yaw: front→right, right→back, back→left, left→front (top and bottom unchanged).\n3. Roll right: top→right, right→bottom, bottom→left, left→top (front and back unchanged).\n4. Forward: top→front, front→bottom, bottom→back, back→top (left and right unchanged).\nAfter these four rotations, which face is on top?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "White (originally on top)"
+        },
+        {
+          "option_id": "B",
+          "text": "Black (originally on bottom)"
+        },
+        {
+          "option_id": "C",
+          "text": "Red (originally in front)"
+        },
+        {
+          "option_id": "D",
+          "text": "Green (originally on the left)"
+        },
+        {
+          "option_id": "E",
+          "text": "Yellow (originally on the right)"
+        }
+      ],
+      "correct_option_id": "E",
+      "proof": "Step 1 (forward: top→front, front→bottom, bottom→back, back→top): top=blue, front=white, bottom=red, back=black, left=green, right=yellow. Step 2 (yaw: front→right, right→back, back→left, left→front): top=blue, front=green, bottom=red, back=yellow, left=black, right=white. Step 3 (roll right: top→right, right→bottom, bottom→left, left→top): top=black, front=green, bottom=white, back=yellow, left=red, right=blue. Step 4 (forward: top→front, front→bottom, bottom→back, back→top): top=yellow, front=black, bottom=green, back=white, left=red, right=blue. Yellow (originally on the right) is on top.",
+      "ambiguity_audit": "Unambiguous. Each rotation is defined by an explicit old-face→new-position mapping, removing any dependence on viewing convention or interpretation of 'clockwise'. The four-rotation sequence is deterministic and verified by tracking all six faces through each step. The answer requires tracking the right face through 4 rotations: right→right (forward leaves right unchanged)→back (yaw: right→back)→back (roll right leaves back unchanged)→top (forward: back→top).",
+      "originality_note": "Newly composed in this pass. The four-rotation sequence (pitch, yaw, roll, pitch) requiring tracking a face through 4 transformations is original. The repeated pitch at steps 1 and 4 with intervening yaw and roll creates a non-trivial trajectory.",
+      "verification": "Forward simulation of the four explicit face-mapping rotations: step 1 forward, step 2 yaw, step 3 roll-right, step 4 forward. Final top = yellow. Verified programmatically.",
+      "source": {
+        "bank": "reviewed",
+        "original_id": "oorb_08",
+        "original_source_id": "new_08"
+      }
+    },
+    {
+      "id": "oorb_09",
+      "category": "quantifier_scope",
+      "difficulty": "hard",
+      "prompt": "Four students a, b, c, d each took three subjects X, Y, Z. The pass table (1 = pass, 0 = fail) is: a: X=0, Y=1, Z=1; b: X=1, Y=1, Z=0; c: X=0, Y=1, Z=1; d: X=1, Y=0, Z=0. Which of the following quantified statements is true?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "Every student passed at least one subject that no other student passed."
+        },
+        {
+          "option_id": "B",
+          "text": "There is a subject that every student passed."
+        },
+        {
+          "option_id": "C",
+          "text": "For every subject, at least two students passed it."
+        },
+        {
+          "option_id": "D",
+          "text": "Every student who passed X also passed Y."
+        },
+        {
+          "option_id": "E",
+          "text": "Some student passed every subject that was failed by at least one student."
+        }
+      ],
+      "correct_option_id": "C",
+      "proof": "A is false: student a passed Y and Z, but Y is also passed by b and c, and Z is also passed by c — a has no uniquely-passed subject. B is false: X was failed by a and c; Y was failed by d; Z was failed by b and d — no subject is universally passed. C is true: X passed by b,d (2); Y passed by a,b,c (3); Z passed by a,c (2) — every subject has at least 2 passers. D is false: d passed X but failed Y. E is false: the subjects failed by someone are X, Y, Z (all three); no student passed all three (a failed X, b failed Z, c failed X, d failed Y and Z).",
+      "ambiguity_audit": "The pass table is a finite, fully specified 4x3 binary relation, so every quantified statement has a definite truth value. Exhaustive evaluation confirms exactly one statement (C) is true. Each distractor is a plausible scope-misread that fails on a specific counterexample.",
+      "originality_note": "Custom pass matrix and quantified-statement set; composed fresh. No standard logic-textbook relation used.",
+      "verification": "Exhaustive evaluation of all five statements over the 4x3 relation: only C is true. Verified programmatically.",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_09",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_10",
+      "category": "quantifier_scope",
+      "difficulty": "very_hard",
+      "prompt": "In a library of five books, each book is classified as either fiction or nonfiction, and as either long or short. Some books are illustrated. The following rules are known:\n1. Every long fiction book is illustrated.\n2. Some nonfiction books are not illustrated.\n3. Every illustrated book is either short or fiction.\n4. No short nonfiction book is illustrated.\n5. Every long book is either fiction or illustrated.\n6. Some short books are illustrated.\nWhich statement MUST be true?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "Every long book is fiction"
+        },
+        {
+          "option_id": "B",
+          "text": "Every illustrated book is long"
+        },
+        {
+          "option_id": "C",
+          "text": "Some nonfiction books are illustrated"
+        },
+        {
+          "option_id": "D",
+          "text": "Every short book is fiction"
+        },
+        {
+          "option_id": "E",
+          "text": "No fiction book is illustrated"
+        }
+      ],
+      "correct_option_id": "A",
+      "proof": "Step 1: From rule 3, I → (¬L ∨ F). Step 2: From rule 4 (contrapositive), I → (L ∨ F). Step 3: Combining: I → (¬L ∨ F) ∧ (L ∨ F) = F. So every illustrated book is fiction. Step 4: From rule 5, L → (F ∨ I). Step 5: Since I → F (from step 3), L → (F ∨ F) = F. Therefore every long book is fiction. This is a 5-step derivation requiring combining two implications to derive I→F, then substituting into rule 5.",
+      "ambiguity_audit": "Unambiguous. Exhaustive enumeration over 2^15 possible classification assignments (5 books × 3 predicates: fiction, long, illustrated) yields 570 consistent models. 'Every long book is fiction' holds in all 570. No other option holds in all models.",
+      "originality_note": "Newly composed in this pass. The library/book classification narrative with a 5-step derivation combining contrapositives and substitution is original. The key insight — deriving I→F from rules 3 and 4, then using it with rule 5 — is a non-trivial multi-step quantifier reasoning chain.",
+      "verification": "exhaustive model enumeration; result: long_fiction; models_checked: 32768; consistent_models: 570; all_satisfy: long_fiction. Verified programmatically.",
+      "source": {
+        "bank": "reviewed",
+        "original_id": "oorb_10",
+        "original_source_id": "new_10"
+      }
+    },
+    {
+      "id": "oorb_11",
+      "category": "rule_counterfactual",
+      "difficulty": "medium",
+      "prompt": "A 3x3 grid is filled with symbols. Row-major it is: A A A / A B A / A A A (the center cell is B, all other cells are A). Two scoring rule sets are defined. Rule Set Alpha: +2 for each row whose three cells are all the same symbol; +3 for each column whose three cells are all the same; +1 for each diagonal (main or anti) whose three cells are all the same. Rule Set Beta: +3 for each all-same row; +2 for each all-same column; +5 if all four corner cells are the same symbol. If the center cell is changed from B to A (making every cell A), by how many more points does the Alpha score increase than the Beta score increases?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "2"
+        },
+        {
+          "option_id": "B",
+          "text": "5"
+        },
+        {
+          "option_id": "C",
+          "text": "7"
+        },
+        {
+          "option_id": "D",
+          "text": "0"
+        },
+        {
+          "option_id": "E",
+          "text": "12"
+        }
+      ],
+      "correct_option_id": "A",
+      "proof": "Before the change: Alpha — rows 1 and 3 are all-A (+2 each = 4); columns 1 and 3 are all-A (+3 each = 6); no diagonal is all-same (center is B); Alpha = 10. Beta — rows 1 and 3 all-A (+3 each = 6); columns 1 and 3 all-A (+2 each = 4); corners all-A (+5); Beta = 15. After the change (all cells A): Alpha — 3 all-same rows (+6), 3 all-same columns (+9), 2 all-same diagonals (+2); Alpha = 17. Beta — 3 all-same rows (+9), 3 all-same columns (+6), corners all-A (+5); Beta = 20. Alpha increase = 17-10 = 7; Beta increase = 20-15 = 5; difference = 7-5 = 2.",
+      "ambiguity_audit": "Both rule sets are fully specified finite functions over a 3x3 grid; the before and after states are deterministic. The four scores are independently computed and the difference is unique. Distractors 5 and 7 are the individual increases; 0 and 12 are arithmetic slips.",
+      "originality_note": "Custom dual-rule-system scoring on a 3x3 grid; rule weights and grid composed fresh. No standard game-scoring puzzle consulted.",
+      "verification": "All four scores computed by direct rule application: Alpha 10->17 (+7), Beta 15->20 (+5), difference 2. Verified programmatically.",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_11",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_12",
+      "category": "rule_counterfactual",
+      "difficulty": "very_hard",
+      "prompt": "Five teams — Aurora, Borealis, Caelum, Doria, Eos — play a single round-robin (10 matches). Results: Borealis 1-0 Aurora; Aurora 3-0 Caelum; Aurora 2-2 Doria; Aurora 1-0 Eos; Borealis 2-0 Caelum; Borealis 1-0 Doria; Eos 2-0 Borealis; Caelum 4-2 Doria; Eos 5-0 Caelum; Doria 1-1 Eos. Points: win = 3, draw = 1. Two ranking rule sets share the same points ordering but differ on ties. Rule Set 1 (RS1): ties broken by goal difference, then goals scored. Rule Set 2 (RS2): ties broken by head-to-head points among the tied teams, then goal difference. Under Rule Set 2, which team finishes second?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "Aurora"
+        },
+        {
+          "option_id": "B",
+          "text": "Eos"
+        },
+        {
+          "option_id": "C",
+          "text": "Borealis"
+        },
+        {
+          "option_id": "D",
+          "text": "Caelum"
+        },
+        {
+          "option_id": "E",
+          "text": "Doria"
+        }
+      ],
+      "correct_option_id": "A",
+      "proof": "Computed table: Borealis P=9 (1st, no tie). Aurora P=7, Eos P=7 (tied for 2nd). Caelum P=3, Doria P=2. Under RS1: Aurora GD=+3, Eos GD=+6 -> Eos 2nd. Under RS2: the tied group is {Aurora, Eos}; head-to-head: Aurora beat Eos 1-0, so Aurora has 3 head-to-head points vs Eos's 0 -> Aurora ranks above Eos. Hence RS2 2nd = Aurora. (Borealis is 1st under both; Caelum and Doria are 4th/5th under both.)",
+      "ambiguity_audit": "All 10 match results are fully specified, so the table is deterministic. Both tiebreak rules are explicit finite procedures. The only rank position that differs between RS1 and RS2 is 2nd (Aurora vs Eos); the question asks specifically for the RS2 result. Distractor B (Eos) is the RS1 answer — a plausible intermediate error.",
+      "originality_note": "Custom round-robin table and dual-tiebreak rule system; all match scores composed fresh. No real or classic sports table referenced.",
+      "verification": "Full table computed from 10 matches; RS1 ranking: Borealis, Eos, Aurora, Caelum, Doria; RS2 ranking: Borealis, Aurora, Eos, Caelum, Doria. RS2 2nd = Aurora. Verified programmatically.",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_12",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_13",
+      "category": "information_value",
+      "difficulty": "hard",
+      "prompt": "A diagnostic system must identify which of six machine models (M1-M6) is faulty, known to be exactly one. Four binary probes are available, each yielding yes/no: Probe P: 'Is the model number at most 3?' (yes: M1,M2,M3; no: M4,M5,M6). Probe Q: 'Is the model number 1 or 4?' (yes: M1,M4; no: M2,M3,M5,M6). Probe R: 'Is the model number 1, 2, 4, or 5?' (yes: M1,M2,M4,M5; no: M3,M6). Probe S: 'Is the model number 1, 2, or 6?' (yes: M1,M2,M6; no: M3,M4,M5). Probes may be chosen adaptively (the next probe can depend on prior answers). What is the minimum number of probes needed in the worst case to identify the faulty model?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "2"
+        },
+        {
+          "option_id": "B",
+          "text": "3"
+        },
+        {
+          "option_id": "C",
+          "text": "4"
+        },
+        {
+          "option_id": "D",
+          "text": "5"
+        },
+        {
+          "option_id": "E",
+          "text": "Impossible with these four probes"
+        }
+      ],
+      "correct_option_id": "B",
+      "proof": "Lower bound: six hypotheses require distinguishing 6 outcomes; each binary probe yields at most a 2-way split, so k probes produce at most 2^k leaves. 2^2 = 4 < 6, so 2 probes cannot suffice in the worst case — at least 3 are necessary. Achievability: Probe P first splits {M1,M2,M3}|{M4,M5,M6}. In the yes-branch, Probe Q splits {M1}|{M2,M3} (M1 is isolated; M2,M3 remain), then Probe R (or S) distinguishes M2 from M3 (R: M2 yes, M3 no). In the no-branch, Probe Q splits {M4}|{M5,M6}, then Probe R distinguishes M5 (yes) from M6 (no). Thus 3 probes suffice in every branch. Minimum worst-case = 3.",
+      "ambiguity_audit": "The probe partitions are fully specified finite sets, so the decision tree is well-defined. The information-theoretic lower bound (ceil(log2 6) = 3) is tight here because an explicit adaptive strategy achieves depth 3. Option E is ruled out by the constructive strategy. Exhaustive search confirms no depth-2 tree covers all 6 models.",
+      "originality_note": "Custom probe partitions and adaptive-identification problem; composed fresh. No standard 'twenty questions' textbook instance used.",
+      "verification": "Exhaustive decision-tree search over the four probes (adaptive): minimum worst-case depth = 3; no depth-2 tree distinguishes all 6. Lower bound ceil(log2 6) = 3. Verified programmatically.",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_13",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_14",
+      "category": "information_value",
+      "difficulty": "hard",
+      "prompt": "A fault is known to be exactly one of five hypotheses H1-H5 with prior probabilities P(H1)=0.30, P(H2)=0.30, P(H3)=0.20, P(H4)=0.10, P(H5)=0.10. Five binary tests are available: Ta asks 'Is the fault H1 or H2?'; Tb asks 'Is the fault H1 or H3?'; Tc asks 'Is the fault H1?'; Td asks 'Is the fault H4 or H5?'; Te asks 'Is the fault H1, H2, or H3?'. Each test perfectly reports the truth. Which single test maximizes the expected information gain (reduction in Shannon entropy, in bits)?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "Ta"
+        },
+        {
+          "option_id": "B",
+          "text": "Tb"
+        },
+        {
+          "option_id": "C",
+          "text": "Tc"
+        },
+        {
+          "option_id": "D",
+          "text": "Td"
+        },
+        {
+          "option_id": "E",
+          "text": "Te"
+        }
+      ],
+      "correct_option_id": "B",
+      "proof": "Prior entropy H = -(0.3 log2 0.3 x2 + 0.2 log2 0.2 + 0.1 log2 0.1 x2) = 2.171 bits. Expected gain = H - [P(yes) H(yes-branch) + P(no) H(no-branch)]. Ta: P(yes)=0.6, split {0.3,0.3}|{0.2,0.1,0.1} -> gain 0.971. Tb: P(yes)=0.5, split {0.3,0.2}|{0.3,0.1,0.1} -> gain 1.000. Tc: P(yes)=0.3, split {0.3}|{0.3,0.2,0.1,0.1} -> gain 0.881. Td: P(yes)=0.2, split {0.1,0.1}|{0.3,0.3,0.2} -> gain 0.722. Te: P(yes)=0.8, split {0.3,0.3,0.2}|{0.1,0.1} -> gain 0.722. Tb has the strictly highest expected gain (1.000 bits) because it produces the most balanced partition (P(yes)=0.5), maximizing entropy reduction — even though it does not isolate the most probable hypothesis.",
+      "ambiguity_audit": "Priors sum to 1.0 and all test partitions are fully specified, so every expected gain is a definite real number. Tb is the unique maximum (1.000 vs 0.971 for Ta). The counterintuitive result — that isolating the most likely hypothesis (Tc) is not optimal — is exactly what entropy maximization predicts; the distractors correspond to plausible but incorrect heuristics.",
+      "originality_note": "Custom prior distribution and test partitions; composed fresh. No standard information-theory textbook example used.",
+      "verification": "Shannon entropy and expected information gain computed for all five tests: Ta=0.971, Tb=1.000, Tc=0.881, Td=0.722, Te=0.722. Unique max = Tb. Verified programmatically.",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_14",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_15",
+      "category": "invariant_parity",
+      "difficulty": "hard",
+      "prompt": "Seven lights are arranged in a row, initially all OFF. An operation consists of choosing three consecutive lights and flipping each (OFF->ON, ON->OFF); the leftmost such triple starts at position 1, so the five available triples are positions (1,2,3), (2,3,4), (3,4,5), (4,5,6), (5,6,7). Is it possible, by any sequence of operations, to reach a configuration in which exactly one light is ON?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "Yes — any single position can be made the sole ON light."
+        },
+        {
+          "option_id": "B",
+          "text": "Yes — only position 4 can be made the sole ON light."
+        },
+        {
+          "option_id": "C",
+          "text": "Yes — only positions 1 or 7 can be made the sole ON light."
+        },
+        {
+          "option_id": "D",
+          "text": "No — it is impossible."
+        },
+        {
+          "option_id": "E",
+          "text": "Cannot be determined from the operations given."
+        }
+      ],
+      "correct_option_id": "D",
+      "proof": "Color the seven positions with three colors in the repeating pattern R, B, G, R, B, G, R (positions 1-7). Every available triple of consecutive positions contains exactly one position of each color (e.g., (1,2,3) = R,B,G; (2,3,4) = B,G,R; etc.). Therefore each operation flips exactly one R, one B, and one G light, changing the parity (odd/even count of ON lights) of each color class by 1 simultaneously. Consequently, after any number k of operations, the parities of the three color classes are all equal (all even if k is even, all odd if k is odd). Starting from all-OFF, all three parities are even (0,0,0). A configuration with exactly one light ON has color-parities (1,0,0), (0,1,0), or (0,0,1) — never all equal — so it is unreachable. (The reachable state space, verified by GF(2) span, has 2^5 = 32 states, none with a single ON light.)",
+      "ambiguity_audit": "The operation set and initial state are fully specified and finite. The 3-coloring invariant is a rigorous necessary condition; exhaustive GF(2) enumeration of all 32 reachable states confirms no single-ON state appears. The three 'yes' options are each refuted by the invariant. Option E is ruled out by the constructive proof.",
+      "originality_note": "Custom light-flipping puzzle with a 3-coloring parity invariant; composed fresh. No classic peg-solitaire or lights-out template consulted.",
+      "verification": "GF(2) span of the five triple-flip vectors over 7 positions: 32 reachable states; none has Hamming weight 1. 3-coloring parity invariant confirms impossibility. Verified programmatically.",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_15",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_16",
+      "category": "invariant_parity",
+      "difficulty": "hard",
+      "prompt": "Three piles of stones contain 5, 3, and 1 stones respectively (state (5,3,1)). An operation chooses two piles, removes one stone from each, and adds two stones to the third pile (e.g., (a,b,c) -> (a-1, b-1, c+2)). Operations may be applied any number of times, but no pile may go negative. Which of the following states is reachable from (5,3,1)?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "(3, 3, 3)"
+        },
+        {
+          "option_id": "B",
+          "text": "(4, 4, 1)"
+        },
+        {
+          "option_id": "C",
+          "text": "(2, 3, 4)"
+        },
+        {
+          "option_id": "D",
+          "text": "(2, 2, 5)"
+        },
+        {
+          "option_id": "E",
+          "text": "(6, 3, 0)"
+        }
+      ],
+      "correct_option_id": "C",
+      "proof": "Invariant: each operation changes two piles by -1 and one by +2, so every pairwise difference changes by a multiple of 3 (e.g., (a-1)-(b-1) = a-b unchanged; (a-1)-(c+2) = a-c-3; (b-1)-(c+2) = b-c-3). Hence (a-b) mod 3, (a-c) mod 3, and (b-c) mod 3 are all invariant; the total a+b+c is also invariant (= 9). For the start (5,3,1): (a-b) mod 3 = 2, (a-c) mod 3 = 1. Checking the options: (3,3,3): (3-3) mod 3 = 0 != 2 -> unreachable. (4,4,1): (4-4) mod 3 = 0 != 2 -> unreachable. (2,2,5): (2-2) mod 3 = 0 != 2 -> unreachable. (6,3,0): (6-3) mod 3 = 0 != 2 -> unreachable. (2,3,4): (2-3) mod 3 = 2, (2-4) mod 3 = 1, sum = 9 — invariant-compatible, and reachable via (5,3,1)->(4,2,3)->(3,1,5)->(2,3,4).",
+      "ambiguity_audit": "The operation is fully specified and the state space is finite (all piles nonnegative, sum 9). The pairwise-difference mod-3 invariant is necessary; exhaustive BFS confirms it is also sufficient (all 18 invariant-satisfying states are reachable, and no others). Each distractor violates the invariant, so the answer is unique.",
+      "originality_note": "Custom stone-pile operation with a mod-3 difference invariant; composed fresh. No classic water-jug or chip-firing puzzle consulted.",
+      "verification": "BFS over all nonnegative states with sum 9: 18 reachable from (5,3,1), exactly the invariant-satisfying states. (2,3,4) reachable in 3 steps; all four distractors violate the mod-3 invariant. Verified programmatically.",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_16",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_17",
+      "category": "planning_minimality",
+      "difficulty": "hard",
+      "prompt": "You are given the permutation [3, 1, 4, 2]. An operation reverses a contiguous subarray (any segment of consecutive positions, of length at least 2). What is the minimum number of subarray reversals needed to transform [3, 1, 4, 2] into the sorted order [1, 2, 3, 4]?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "1"
+        },
+        {
+          "option_id": "B",
+          "text": "2"
+        },
+        {
+          "option_id": "C",
+          "text": "3"
+        },
+        {
+          "option_id": "D",
+          "text": "4"
+        },
+        {
+          "option_id": "E",
+          "text": "5"
+        }
+      ],
+      "correct_option_id": "C",
+      "proof": "Lower bound via breakpoints: extend the permutation with sentinels 0 and 5, giving [0, 3, 1, 4, 2, 5]. A breakpoint is a position where consecutive entries differ by more than 1. Breakpoints: (0,3), (3,1), (1,4), (4,2), (2,5) — 5 breakpoints. The sorted array has 0 breakpoints. A single reversal can remove at most 2 breakpoints (it only affects the two boundary adjacencies). So at least ceil(5/2) = 3 reversals are required. Achievability (3 reversals): [3,1,4,2] -> reverse positions 1-2 -> [1,3,4,2] -> reverse positions 3-4 -> [1,3,2,4] -> reverse positions 2-3 -> [1,2,3,4]. Hence the minimum is 3.",
+      "ambiguity_audit": "The permutation is fully specified and the operation is deterministic. The breakpoint lower bound is a rigorous necessary condition, and a 3-reversal solution is exhibited, so the minimum is exactly 3. Exhaustive BFS confirms no 2-reversal solution exists. Distractor 2 is the most plausible optimistic error, ruled out by the breakpoint bound.",
+      "originality_note": "Custom reversal-distance problem; permutation composed fresh. No standard 'sorting by reversals' textbook instance used.",
+      "verification": "BFS over all permutations reachable by subarray reversals from [3,1,4,2]: distance to [1,2,3,4] = 3. Breakpoint lower bound = ceil(5/2) = 3. Verified programmatically.",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_17",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_18",
+      "category": "planning_minimality",
+      "difficulty": "very_hard",
+      "prompt": "A collector vehicle starts at position 0 on a number line and can carry at most 3 items at a time. Seven items are located at positions +2, +5, +8, +9 (on the positive side) and -3, -6, -7 (on the negative side). The collector must pick up every item and deliver it to position 0, and must finish at position 0. The collector carries items to 0, may carry up to 3 per trip, and travels along the line at unit cost per unit distance. What is the minimum total distance the collector must travel?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "28"
+        },
+        {
+          "option_id": "B",
+          "text": "32"
+        },
+        {
+          "option_id": "C",
+          "text": "36"
+        },
+        {
+          "option_id": "D",
+          "text": "40"
+        },
+        {
+          "option_id": "E",
+          "text": "44"
+        }
+      ],
+      "correct_option_id": "C",
+      "proof": "Lower bound: the farthest positive item (+9) requires a round trip from 0 to +9 and back (distance at least 18); that trip can carry at most 3 items, removing the three farthest positive items (+9, +8, +5). One positive item (+2) remains, requiring a round trip of distance at least 4. The farthest negative item (-7) requires a round trip of distance at least 14, carrying all three negative items (-7, -6, -3). Total lower bound = 18 + 4 + 14 = 36. Achievability: Trip 1: 0 -> +9 (collect +9, +8, +5) -> 0, distance 18. Trip 2: 0 -> +2 (collect +2) -> 0, distance 4. Trip 3: 0 -> -7 (collect -7, -6, -3) -> 0, distance 14. Total = 18 + 4 + 14 = 36. The lower bound is met, so the minimum is 36.",
+      "ambiguity_audit": "The item positions, capacity, and depot are fully specified. The lower bound is derived from the necessity of a round trip to the farthest item on each side (each must be reached and the items returned to 0), and the capacity constraint bounds how many items each farthest trip can absorb. A matching achievable plan is exhibited. Dijkstra-based exhaustive search over the full state space confirms 36 is optimal; distractors 32 and 28 are optimistic (below the lower bound), 40 and 44 are suboptimal pairings.",
+      "originality_note": "Custom capacitated line-collection problem; positions and capacity composed fresh. No standard vehicle-routing textbook instance used.",
+      "verification": "Dijkstra shortest-path search over the state space (position, undelivered items, carried items) with capacity 3: optimal total distance = 36. Lower bound 18+4+14 = 36. Verified programmatically.",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_18",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_19",
+      "category": "consistency_meta_reasoning",
+      "difficulty": "medium",
+      "prompt": "Consider four self-referential statements: (1) 'All four of these statements are false.' (2) 'Exactly one of statements 1, 2, and 3 is true.' (3) 'Statement 1 and Statement 4 have the same truth value.' (4) 'An even number of these four statements are true.' Assuming each statement is either true or false, which of the following correctly identifies the true statement(s)?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "Only statement 2 is true."
+        },
+        {
+          "option_id": "B",
+          "text": "Statements 2 and 4 are true."
+        },
+        {
+          "option_id": "C",
+          "text": "Only statement 4 is true."
+        },
+        {
+          "option_id": "D",
+          "text": "Statements 1 and 3 are true."
+        },
+        {
+          "option_id": "E",
+          "text": "None are true."
+        }
+      ],
+      "correct_option_id": "B",
+      "proof": "Statement 1 claims all four are false; if (1) is true then it is false — contradiction, so (1) is false. With (1) false, (3) claims (1) and (4) have the same truth value, i.e., (3) is true iff (4) is false. Test (2) true, (4) true: (2) says exactly one of {1,2,3} is true — (1) is false, (2) is true, (3) is false (since (1) false and (4) true differ) -> exactly one true; (4) says an even number are true — (2) and (4) true = 2, even. Consistent: (F, T, F, T). All other assignments lead to contradiction (verified exhaustively). So statements 2 and 4 are true.",
+      "ambiguity_audit": "All 2^4 = 16 truth assignments are evaluated; exactly one is self-consistent: (F,T,F,T). The statements are bivalent (true/false) by stipulation, removing any ambiguity. Each distractor corresponds to a different assignment, all of which are inconsistent.",
+      "originality_note": "Custom self-referential statement set; composed fresh. No classic 'knights and knaves' or liar-paradox template consulted.",
+      "verification": "Exhaustive truth-table over 16 assignments: exactly one fixed point (F,T,F,T). Statements 2 and 4 true. Verified programmatically.",
+      "source": {
+        "bank": "alternative",
+        "original_id": "alt_19",
+        "original_source_id": null
+      }
+    },
+    {
+      "id": "oorb_20",
+      "category": "consistency_meta_reasoning",
+      "difficulty": "hard",
+      "prompt": "An exam has 5 true/false questions. A student submits the answers: T, T, F, T, F. The student is told that their answer pattern satisfies all of the following conditions:\n1. The number of correct answers is either 2 or 3.\n2. If question 1 is correct, then question 3 is also correct.\n3. Questions 2 and 4 have the same correctness (both correct or both wrong).\n4. Question 5 is correct if and only if question 1 is wrong.\n5. It is not the case that questions 1, 2, and 3 are all correct.\n6. Question 4 is correct.\nWhat is the answer key (the correct sequence of T/F)?",
+      "options": [
+        {
+          "option_id": "A",
+          "text": "F, T, T, T, F"
+        },
+        {
+          "option_id": "B",
+          "text": "F, T, T, T, T"
+        },
+        {
+          "option_id": "C",
+          "text": "T, F, F, F, T"
+        },
+        {
+          "option_id": "D",
+          "text": "F, T, T, F, F"
+        },
+        {
+          "option_id": "E",
+          "text": "F, F, F, F, F"
+        }
+      ],
+      "correct_option_id": "A",
+      "proof": "Student answers: T,T,F,T,F. Let c_i = 1 if answer i is correct. From condition 6: c4=1. From condition 3: c2=c4=1. From condition 4: c5 = not c1. From condition 2: if c1=1 then c3=1. From condition 5: not(c1 and c2 and c3). Since c2=1: not(c1 and c3), so c1 and c3 not both 1. From condition 2: c1→c3. Combined with not(c1 and c3): if c1=1 then c3=1, but c1 and c3 can't both be 1. So c1=0. Then c5 = not c1 = 1. From c1=0: answer 1 (T) is wrong, so key[1]=F. From c2=1: answer 2 (T) is correct, so key[2]=T. From c4=1: answer 4 (T) is correct, so key[4]=T. From c5=1: answer 5 (F) is correct, so key[5]=F. From condition 2: c1=0, so the implication is vacuously true; c3 can be 0 or 1. From condition 1: c1+c2+c3+c4+c5 = 0+1+c3+1+1 = 3+c3 ∈ {2,3}. So c3=0 (giving 3 correct). Answer 3 (F) is wrong, so key[3]=T. Key: F,T,T,T,F. Verified: 3 correct (Q2,Q4,Q5), all conditions satisfied.",
+      "ambiguity_audit": "Unambiguous. Exhaustive enumeration over all 32 possible answer keys yields exactly 1 key consistent with all 6 conditions: F,T,T,T,F. The key insight is that conditions 2, 3, 5, and 6 together force c1=0, which cascades to determine all other answers.",
+      "originality_note": "Newly composed in this pass. The exam-answer-key consistency puzzle with 6 interlocking conditions is original. The reasoning requires combining implication, biconditional, and negation constraints across 5 variables, with the key deduction being that conditions 2+5 force c1=0.",
+      "verification": "exhaustive enumeration; result: key_ftttf; search_space: 32 answer keys, 1 satisfies; correct_count: 3. Verified programmatically.",
+      "source": {
+        "bank": "reviewed",
+        "original_id": "oorb_20",
+        "original_source_id": "new_20"
+      }
+    }
+  ]
+}
