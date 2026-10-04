@@ -1,6 +1,7 @@
 """eval/v2 — Frozen, versioned evaluation data for the Oczy curriculum.
 
-Current data version: v2.2 (2026-07-11 protocol repair — Stage 1 is probe-only,
+Current data version: v2.3 (2026-09-12 nonempty-score and source-binding repair;
+the prior v2.2 protocol remains unchanged. Historical 2026-07-11 protocol repair — Stage 1 is probe-only,
 Stage 3 probes are episode-interleaved, Stage 4 consolidation precedes its
 post-test, and the default split is category-stratified; see
 experiments_logs/2026-07-11_eval_v2_2_protocol_repair.md). Existing episode
@@ -27,6 +28,14 @@ class EvalIntegrityError(RuntimeError):
 
 _DATA_DIR = Path(__file__).resolve().parent
 _MANIFEST_PATH = _DATA_DIR / "MANIFEST.json"
+
+# Runtime scoring, validation, splitting and protocol are instrument assets.
+FROZEN_SOURCE_FILES = (
+    "../../src/oczy/eval_v2/scoring.py",
+    "../../src/oczy/eval_v2/validation.py",
+    "../../src/oczy/experiments/organism_curriculum/dataset.py",
+    "../../src/oczy/experiments/organism_curriculum/run_curriculum.py",
+)
 
 
 def get_data_dir() -> Path:
@@ -81,7 +90,9 @@ def recompute_manifest() -> dict:
             continue
         if fpath.is_file():
             files[fpath.name] = _sha256(fpath)
-    return {"version": "v2.2", "files": files}
+    for relpath in FROZEN_SOURCE_FILES:
+        files[relpath] = _sha256(_DATA_DIR / relpath)
+    return {"version": "v2.3", "files": files}
 
 
 def write_manifest() -> None:

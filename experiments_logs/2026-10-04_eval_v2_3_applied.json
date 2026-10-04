@@ -1,0 +1,34 @@
+{
+  "status": "EVAL_V2_3_APPLIED_VALIDATED",
+  "date": "2026-10-04",
+  "reference_rev": "HEAD",
+  "reference_scoring_sha256": "d4e5240812a0ca5c3e32d9ed660079211d78bda7f3d229ab06df50ff36909c96",
+  "current_scoring_sha256": "edbe215a68c46c10827455c8481342f540b7b737d9097db74a8f616560b27b0f",
+  "counts": {
+    "probes": 120,
+    "reference_blank_correct": 120,
+    "current_blank_correct": 0,
+    "current_whitespace_correct": 0,
+    "current_expected_correct": 120,
+    "reference_expected_correct": 120,
+    "nonempty_comparisons": 960,
+    "nonempty_differences": 0
+  },
+  "manifest_version": "v2.3",
+  "bound_runtime_sources": [
+    "../../src/oczy/eval_v2/scoring.py",
+    "../../src/oczy/eval_v2/validation.py",
+    "../../src/oczy/experiments/organism_curriculum/dataset.py",
+    "../../src/oczy/experiments/organism_curriculum/run_curriculum.py"
+  ],
+  "manifest_verifies_without_bypass": true,
+  "runtime_source_drift_rejected": true,
+  "historical_scores_recomputed": false,
+  "model_runs": 0,
+  "meta_test_accessed": false,
+  "remaining_limitations": [
+    "Nonempty sense/substring false positives remain for the separately frozen A2 sense contract",
+    "No replacement historical or live model scores",
+    "Probe-level split remains unchanged; no unseen-rule claim"
+  ]
+}

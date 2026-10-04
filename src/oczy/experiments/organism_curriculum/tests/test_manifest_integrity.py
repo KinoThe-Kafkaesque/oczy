@@ -43,9 +43,22 @@ def _bump_module():
 
 
 def _copy_eval_v2(tmp_path: Path) -> Path:
-    """Copy the bundled eval/v2 tree (manifest + assets) into ``tmp_path``."""
-    dest = tmp_path / "v2"
-    shutil.copytree(get_data_dir(), dest)
+    """Copy the bundled eval/v2 tree (manifest + assets) into ``tmp_path``.
+
+    The v2.3 manifest also binds the runtime source files referenced through
+    ``FROZEN_SOURCE_FILES``, so those are mirrored at the same relative
+    locations inside a sandboxed mini-repo.  Everything stays under
+    ``tmp_path`` and the copied tree verifies exactly like the real one.
+    """
+    dest = tmp_path / "repo" / "eval" / "v2"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    source_data_dir = Path(eval_v2.__file__).resolve().parent
+    shutil.copytree(source_data_dir, dest)
+    for relpath in eval_v2.FROZEN_SOURCE_FILES:
+        source = (source_data_dir / relpath).resolve()
+        target = (dest / relpath).resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
     return dest
 
 
@@ -110,12 +123,44 @@ def test_eval_change_approved_bypasses(
 def test_recompute_manifest_produces_valid() -> None:
     """``recompute_manifest()`` returns a well-formed manifest of real files."""
     manifest = recompute_manifest()
-    assert manifest["version"] == "v2.2"
+    assert manifest["version"] == "v2.3"
     files = manifest["files"]
     assert files, "manifest should hash at least one file"
     data_dir = get_data_dir()
     for relpath in files:
         assert (data_dir / relpath).exists(), f"missing manifest entry: {relpath}"
+
+
+def test_runtime_sources_are_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The v2.3 manifest binds the runtime scorer/validator/dataset sources.
+
+    Editing any bound source file in a copied tree must raise
+    ``EvalIntegrityError``, so the scoring contract cannot change without a
+    recorded manifest update.
+    """
+    monkeypatch.delenv("EVAL_CHANGE_APPROVED", raising=False)
+
+    pristine_data_dir = get_data_dir()
+    data_dir = _copy_eval_v2(tmp_path)
+    manifest_path = data_dir / "MANIFEST.json"
+    monkeypatch.setattr(eval_v2, "_DATA_DIR", data_dir)
+    monkeypatch.setattr(eval_v2, "_MANIFEST_PATH", manifest_path)
+
+    verify_manifest()  # clean copy verifies
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    bound = [rel for rel in manifest["files"] if rel.startswith("../")]
+    assert bound, "v2.3 manifest should bind runtime source files"
+
+    for relpath in bound:
+        target = (data_dir / relpath).resolve()
+        target.write_text(target.read_text(encoding="utf-8") + "\n# drift\n")
+        with pytest.raises(EvalIntegrityError):
+            verify_manifest()
+        shutil.copyfile((pristine_data_dir / relpath).resolve(), target)
+        verify_manifest()  # restored copy verifies again
 
 
 def test_bump_script_idempotent(
@@ -138,5 +183,5 @@ def test_bump_script_idempotent(
     assert first == second, "bump_eval_version.py is not idempotent"
     # And the regenerated manifest is itself structurally valid.
     parsed = json.loads(second)
-    assert parsed["version"] == "v2.2"
+    assert parsed["version"] == "v2.3"
     assert parsed["files"]

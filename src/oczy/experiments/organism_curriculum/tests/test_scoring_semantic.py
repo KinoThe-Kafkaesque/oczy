@@ -133,3 +133,42 @@ def test_existing_match_modes_unchanged() -> None:
     assert matches("the big cat", "big cat", match_mode="contains")
     assert matches("a red car", "the car is red", match_mode="sense")
     assert not matches("dogs", "cats", match_mode="sense")
+
+
+def test_empty_and_whitespace_answers_rejected() -> None:
+    """eval-v2.3: no empty or whitespace-only answer/expected target may pass
+    any match mode, with or without the semantic fallback."""
+    for blank in ("", " ", "\t", "\n", "  \t\n "):
+        for mode in ("exact", "contains", "sense"):
+            for semantic in (False, True):
+                assert not matches(
+                    blank,
+                    "submit it officially",
+                    ambiguous_token="file",
+                    match_mode=mode,
+                    semantic=semantic,
+                ), f"blank answer passed: {blank!r} mode={mode} semantic={semantic}"
+                assert not matches(
+                    "submit it officially",
+                    blank,
+                    ambiguous_token="file",
+                    match_mode=mode,
+                    semantic=semantic,
+                ), f"blank expected passed: {blank!r} mode={mode} semantic={semantic}"
+
+
+def test_blank_answers_rejected_on_shipped_curriculum() -> None:
+    """Every shipped eval-v2 probe rejects blank answers and still accepts its
+    expected answer under the applied v2.3 scorer."""
+    from oczy.experiments.organism_curriculum.dataset import build_curriculum
+
+    probes = 0
+    for stage in build_curriculum():
+        for episode in stage.episodes:
+            for probe in episode.probes:
+                probes += 1
+                assert not probe_matches("", probe, episode)
+                assert not probe_matches(" \t\n", probe, episode)
+                assert not probe_matches("", probe, episode, semantic=True)
+                assert probe_matches(probe.expected, probe, episode)
+    assert probes == 120, f"expected 120 shipped probes, found {probes}"

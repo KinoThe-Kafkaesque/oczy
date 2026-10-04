@@ -102,6 +102,8 @@ def matches(
     answers that fall in the same canonical sense neighbourhood as the
     expected label for the ambiguous curriculum word.
     """
+    if not _normalize(answer) or not _normalize(expected):
+        return False
     result = _base_match(answer, expected, ambiguous_token, match_mode)
     if result or not semantic or ambiguous_token is None:
         return result
