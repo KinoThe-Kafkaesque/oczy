@@ -1,0 +1,674 @@
+{
+  "after": {
+    "parse_defect_count": 0,
+    "row_count": 0,
+    "summary": {
+      "composition_second_operand_undefined": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "contextual_composition_chain_untyped": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "contextual_composition_first_lookup_untaught": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "contextual_composition_second_lookup_untaught": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "contextual_same_rule_lookup_untaught": {
+        "of": {
+          "total": 93,
+          "train": 81,
+          "tuning": 12
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "contextual_transfer_lookup_untaught": {
+        "of": {
+          "total": 70,
+          "train": 60,
+          "tuning": 10
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "duplicate_teaching_event": {
+        "of": {
+          "total": 105,
+          "train": 90,
+          "tuning": 15
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "tasks"
+      },
+      "fsm_action_mapping_untaught": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "tasks"
+      },
+      "fsm_composition_action_untaught": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "fsm_composition_edge_untaught": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "fsm_composition_goal_untaught": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "fsm_composition_underivable": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "fsm_goal_untaught": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "tasks"
+      },
+      "fsm_same_rule_lookup_untaught": {
+        "of": {
+          "total": 70,
+          "train": 60,
+          "tuning": 10
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "fsm_transfer_edge_untaught": {
+        "of": {
+          "total": 70,
+          "train": 60,
+          "tuning": 10
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "question_target_contradiction": {
+        "of": {
+          "total": 616,
+          "train": 482,
+          "tuning": 134
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "questions"
+      },
+      "specificity_contradiction": {
+        "of": {
+          "total": 105,
+          "train": 90,
+          "tuning": 15
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "specificity_scope_unstated": {
+        "of": {
+          "total": 105,
+          "train": 90,
+          "tuning": 15
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "target_mismatch": {
+        "of": {
+          "total": 548,
+          "train": 471,
+          "tuning": 77
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "transform_composition_underdetermined": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "transform_same_rule_underdetermined": {
+        "of": {
+          "total": 70,
+          "train": 60,
+          "tuning": 10
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "transform_transfer_underdetermined": {
+        "of": {
+          "total": 70,
+          "train": 60,
+          "tuning": 10
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      }
+    }
+  },
+  "after_all_defect_counts_zero": true,
+  "baseline_mismatches": [],
+  "baseline_reproduced": true,
+  "before": {
+    "parse_defect_count": 1,
+    "row_count": 490,
+    "summary": {
+      "composition_second_operand_undefined": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 35,
+        "train": 30,
+        "tuning": 5,
+        "unit": "probes"
+      },
+      "contextual_composition_chain_untyped": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "contextual_composition_first_lookup_untaught": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 18,
+        "train": 14,
+        "tuning": 4,
+        "unit": "probes"
+      },
+      "contextual_composition_second_lookup_untaught": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "contextual_same_rule_lookup_untaught": {
+        "of": {
+          "total": 87,
+          "train": 75,
+          "tuning": 12
+        },
+        "total": 44,
+        "train": 37,
+        "tuning": 7,
+        "unit": "probes"
+      },
+      "contextual_transfer_lookup_untaught": {
+        "of": {
+          "total": 70,
+          "train": 60,
+          "tuning": 10
+        },
+        "total": 30,
+        "train": 25,
+        "tuning": 5,
+        "unit": "probes"
+      },
+      "duplicate_teaching_event": {
+        "of": {
+          "total": 105,
+          "train": 90,
+          "tuning": 15
+        },
+        "total": 1,
+        "train": 1,
+        "tuning": 0,
+        "unit": "tasks"
+      },
+      "fsm_action_mapping_untaught": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 35,
+        "train": 30,
+        "tuning": 5,
+        "unit": "tasks"
+      },
+      "fsm_composition_action_untaught": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 35,
+        "train": 30,
+        "tuning": 5,
+        "unit": "probes"
+      },
+      "fsm_composition_edge_untaught": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 25,
+        "train": 22,
+        "tuning": 3,
+        "unit": "probes"
+      },
+      "fsm_composition_goal_untaught": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "fsm_composition_underivable": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 10,
+        "train": 8,
+        "tuning": 2,
+        "unit": "probes"
+      },
+      "fsm_goal_untaught": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 35,
+        "train": 30,
+        "tuning": 5,
+        "unit": "tasks"
+      },
+      "fsm_same_rule_lookup_untaught": {
+        "of": {
+          "total": 70,
+          "train": 60,
+          "tuning": 10
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "fsm_transfer_edge_untaught": {
+        "of": {
+          "total": 59,
+          "train": 52,
+          "tuning": 7
+        },
+        "total": 59,
+        "train": 52,
+        "tuning": 7,
+        "unit": "probes"
+      },
+      "question_target_contradiction": {
+        "of": {
+          "total": 568,
+          "train": 449,
+          "tuning": 119
+        },
+        "total": 31,
+        "train": 27,
+        "tuning": 4,
+        "unit": "questions"
+      },
+      "specificity_contradiction": {
+        "of": {
+          "total": 105,
+          "train": 90,
+          "tuning": 15
+        },
+        "total": 23,
+        "train": 20,
+        "tuning": 3,
+        "unit": "probes"
+      },
+      "specificity_scope_unstated": {
+        "of": {
+          "total": 105,
+          "train": 90,
+          "tuning": 15
+        },
+        "total": 105,
+        "train": 90,
+        "tuning": 15,
+        "unit": "probes"
+      },
+      "target_mismatch": {
+        "of": {
+          "total": 531,
+          "train": 457,
+          "tuning": 74
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "transform_composition_underdetermined": {
+        "of": {
+          "total": 35,
+          "train": 30,
+          "tuning": 5
+        },
+        "total": 2,
+        "train": 1,
+        "tuning": 1,
+        "unit": "probes"
+      },
+      "transform_same_rule_underdetermined": {
+        "of": {
+          "total": 70,
+          "train": 60,
+          "tuning": 10
+        },
+        "total": 0,
+        "train": 0,
+        "tuning": 0,
+        "unit": "probes"
+      },
+      "transform_transfer_underdetermined": {
+        "of": {
+          "total": 70,
+          "train": 60,
+          "tuning": 10
+        },
+        "total": 3,
+        "train": 1,
+        "tuning": 2,
+        "unit": "probes"
+      }
+    }
+  },
+  "calibration_accessed": false,
+  "catalog_sha256": {
+    "after": "742c38725fb8bc55fba066c748c69a1d6f49f8eebe1700f086612f36921e6181",
+    "before": "c0034bcde0d21e05d151b6a08d34f8cad95c7e4317c8eb919ec3d2fa3fdabb79"
+  },
+  "certificates": {
+    "baseline_not_required": 175,
+    "certificates": 933,
+    "failed": 0,
+    "failures": [],
+    "mutation_checks": 1446,
+    "mutation_checks_by_kind": {
+      "delete_fact": 688,
+      "flip_target": 758
+    },
+    "mutations_detected": 1446,
+    "mutations_detected_by_kind": {
+      "delete_fact": 688,
+      "flip_target": 758
+    },
+    "mutations_missed": [],
+    "verified": 758
+  },
+  "classification": "READ_ONLY_INSTRUMENT_AUDIT",
+  "config": {
+    "root_seed": 20260709,
+    "train_tasks_per_family": 30,
+    "validation_tasks_per_family": 5
+  },
+  "distributions": {
+    "after": {
+      "train": {
+        "answer_token_lengths": {
+          "1": 741,
+          "2": 30,
+          "3": 30
+        },
+        "event_counts": {
+          "2": 15,
+          "3": 12,
+          "4": 35,
+          "5": 28
+        },
+        "families": {
+          "contextual_remap": 30,
+          "finite_state": 30,
+          "rule_transformation": 30
+        },
+        "probes_by_kind": {
+          "composition": 90,
+          "oracle_context": 90,
+          "pre": 150,
+          "same_rule": 201,
+          "specificity": 90,
+          "transfer": 180
+        },
+        "tasks": 90,
+        "teaching_branches": {
+          "consonant_start": 74,
+          "vowel_start": 36
+        }
+      },
+      "tuning": {
+        "answer_token_lengths": {
+          "1": 122,
+          "2": 5,
+          "3": 5
+        },
+        "event_counts": {
+          "2": 3,
+          "3": 1,
+          "4": 5,
+          "5": 6
+        },
+        "families": {
+          "contextual_remap": 5,
+          "finite_state": 5,
+          "rule_transformation": 5
+        },
+        "probes_by_kind": {
+          "composition": 15,
+          "oracle_context": 15,
+          "pre": 25,
+          "same_rule": 32,
+          "specificity": 15,
+          "transfer": 30
+        },
+        "tasks": 15,
+        "teaching_branches": {
+          "consonant_start": 16,
+          "vowel_start": 6
+        }
+      }
+    },
+    "before": {
+      "train": {
+        "answer_token_lengths": {
+          "1": 727,
+          "2": 30,
+          "3": 30
+        },
+        "event_counts": {
+          "2": 20,
+          "3": 26,
+          "4": 21,
+          "5": 23
+        },
+        "families": {
+          "contextual_remap": 30,
+          "finite_state": 30,
+          "rule_transformation": 30
+        },
+        "probes_by_kind": {
+          "composition": 90,
+          "oracle_context": 90,
+          "pre": 150,
+          "same_rule": 195,
+          "specificity": 90,
+          "transfer": 172
+        },
+        "tasks": 90,
+        "teaching_branches": {
+          "consonant_start": 74,
+          "vowel_start": 42
+        }
+      },
+      "tuning": {
+        "answer_token_lengths": {
+          "1": 119,
+          "2": 5,
+          "3": 5
+        },
+        "event_counts": {
+          "2": 5,
+          "3": 1,
+          "4": 4,
+          "5": 5
+        },
+        "families": {
+          "contextual_remap": 5,
+          "finite_state": 5,
+          "rule_transformation": 5
+        },
+        "probes_by_kind": {
+          "composition": 15,
+          "oracle_context": 15,
+          "pre": 25,
+          "same_rule": 32,
+          "specificity": 15,
+          "transfer": 27
+        },
+        "tasks": 15,
+        "teaching_branches": {
+          "consonant_start": 14,
+          "vowel_start": 4
+        }
+      }
+    }
+  },
+  "generator_lineages": {
+    "after": "oczy/meta-cortex/taskgen/v2-dev (new lineage)",
+    "before": "oczy/meta-cortex/taskgen/v1-dev (unchanged)"
+  },
+  "materialized_instrument_cross_check": {
+    "digest_matches_in_memory_v1": true,
+    "public_root": "/home/nyanpasu/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/instrument/instrument/public",
+    "tasks": 105
+  },
+  "meta_test_accessed": false,
+  "model_runs": 0,
+  "schema": "oczy/r20-task-support-check/v1",
+  "scoring_or_instrument_changed": false,
+  "sealed_accessed": false
+}

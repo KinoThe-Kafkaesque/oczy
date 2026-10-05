@@ -1,0 +1,209 @@
+{
+  "amendment_surface": {
+    "oracle_headers_rewritten": 35,
+    "oracle_targets_independently_rederived_from_amended_text": 35,
+    "probes_checked": 933
+  },
+  "base": {
+    "catalog_sha256": "33210eb474a25925815c1112e2d6c6ea889b349c8d137fbcbe0aacac5f035219",
+    "definition_sha256": "ab99c17358a3af3efb577563b8cd33639519084fa88648c3bc1e05dce86d4bee",
+    "dev_view_catalog_sha256": "33210eb474a25925815c1112e2d6c6ea889b349c8d137fbcbe0aacac5f035219",
+    "dev_view_sha256": "593090c405758617ae9f750cf9c1075e999c92f8c7b677affcb04c3855b3ca26",
+    "instrument_id": "meta_cortex/v3",
+    "records_digest": "77b295051eae26348a73c0a2ae2e32506fc097526bc25e3870bda9a3db7cb024",
+    "task_counts": {
+      "meta_train": 90,
+      "meta_validation_tuning": 15
+    }
+  },
+  "calibration_accessed": false,
+  "calibration_view_sha256": "4d1f27d69f62366c5064092ab1c67c29dfd038d6e4cebb1141154588a8eb2111",
+  "catalog_sha256": "33210eb474a25925815c1112e2d6c6ea889b349c8d137fbcbe0aacac5f035219",
+  "classification": "DEV_INSTRUMENT_FREEZE",
+  "definition_sha256": "fd2d8db9012683d4955879481c7f5a91eac16d3c82cde018846605c9378f1031",
+  "determinism": {
+    "diff_exit_code": 0,
+    "diff_output": "",
+    "identical": true,
+    "repro_definition_sha256": "fd2d8db9012683d4955879481c7f5a91eac16d3c82cde018846605c9378f1031"
+  },
+  "dev_seed_table_sha256": "049ce5ff52f1223ad6facf15c200524e8c4569b77de386e03fe572cdcb0dfa3f",
+  "dev_view_sha256": "9363cff3b07994f8c8f21d04809c555f54855d6b9fab20ac0143d1e63a6d4f23",
+  "gate": "G1-equivalent (successor freeze)",
+  "independent_checker": {
+    "all_defect_counts_zero": true,
+    "base_catalog_sha256": "742c38725fb8bc55fba066c748c69a1d6f49f8eebe1700f086612f36921e6181",
+    "certificates": {
+      "baseline_not_required": 175,
+      "certificates": 933,
+      "failed": 0,
+      "mutation_checks": 1446,
+      "mutation_checks_by_kind": {
+        "delete_fact": 688,
+        "flip_target": 758
+      },
+      "mutations_detected": 1446,
+      "mutations_detected_by_kind": {
+        "delete_fact": 688,
+        "flip_target": 758
+      },
+      "verified": 758
+    },
+    "certificates_all_verified": true,
+    "checked_tasks": 105,
+    "defect_counts": {
+      "composition_second_operand_undefined": 0,
+      "contextual_composition_chain_untyped": 0,
+      "contextual_composition_first_lookup_untaught": 0,
+      "contextual_composition_second_lookup_untaught": 0,
+      "contextual_same_rule_lookup_untaught": 0,
+      "contextual_transfer_lookup_untaught": 0,
+      "duplicate_teaching_event": 0,
+      "fsm_action_mapping_untaught": 0,
+      "fsm_composition_action_untaught": 0,
+      "fsm_composition_edge_untaught": 0,
+      "fsm_composition_goal_untaught": 0,
+      "fsm_composition_underivable": 0,
+      "fsm_goal_untaught": 0,
+      "fsm_same_rule_lookup_untaught": 0,
+      "fsm_transfer_edge_untaught": 0,
+      "question_target_contradiction": 0,
+      "specificity_contradiction": 0,
+      "specificity_scope_unstated": 0,
+      "target_mismatch": 0,
+      "transform_composition_underdetermined": 0,
+      "transform_same_rule_underdetermined": 0,
+      "transform_transfer_underdetermined": 0
+    },
+    "nonzero_defect_classes": {},
+    "parse_defect_count": 0,
+    "ran_over": "pinned v3 base tasks (task content unchanged in v4-r20)",
+    "script": "scripts/r20_task_support_check.py",
+    "script_sha256": "4e501038bbab53951ef74aa2e744ec7c84c03b6e6fd1074369d36c19de7e06cb"
+  },
+  "inherited_frozen_hashes": {
+    "endpoint_registry_sha256": "669d6130075e429264a6c9eec470bbf82663559433781adcffa6ed942c9ca796",
+    "scorer_registry_sha256": "e5d746d0477c489157d1699e2ae73dfcc8ac92998719de1a06d92fcff4b1c742"
+  },
+  "instrument_id": "meta_cortex/v4-r20",
+  "leakage_audit": {
+    "audit_scope": "three DEV domains only; v4-r20 carries no sealed meta-test payload. The prompt amendments change probe messages, not rule/assignment/composition/paraphrase fingerprints, so the audit is unaffected by construction.",
+    "meta_test_records_present_in_calibration_view": false,
+    "meta_test_records_present_in_dev_view": false,
+    "meta_test_seed_present_in_public_files": false,
+    "pairwise_overlap": {
+      "meta_train": {
+        "meta_test": {
+          "assignment_fingerprint": 0,
+          "composition_fingerprint": 0,
+          "paraphrase_group_fingerprint": 0,
+          "rule_fingerprint": 0
+        },
+        "meta_validation_calibration": {
+          "assignment_fingerprint": 0,
+          "composition_fingerprint": 0,
+          "paraphrase_group_fingerprint": 0,
+          "rule_fingerprint": 0
+        },
+        "meta_validation_tuning": {
+          "assignment_fingerprint": 0,
+          "composition_fingerprint": 0,
+          "paraphrase_group_fingerprint": 0,
+          "rule_fingerprint": 0
+        }
+      },
+      "meta_validation_calibration": {
+        "meta_test": {
+          "assignment_fingerprint": 0,
+          "composition_fingerprint": 0,
+          "paraphrase_group_fingerprint": 0,
+          "rule_fingerprint": 0
+        }
+      },
+      "meta_validation_tuning": {
+        "meta_test": {
+          "assignment_fingerprint": 0,
+          "composition_fingerprint": 0,
+          "paraphrase_group_fingerprint": 0,
+          "rule_fingerprint": 0
+        },
+        "meta_validation_calibration": {
+          "assignment_fingerprint": 0,
+          "composition_fingerprint": 0,
+          "paraphrase_group_fingerprint": 0,
+          "rule_fingerprint": 0
+        }
+      }
+    },
+    "passed": true,
+    "per_domain_counts": {
+      "meta_test": {
+        "task_count": 0
+      },
+      "meta_train": {
+        "task_count": 90
+      },
+      "meta_validation_calibration": {
+        "task_count": 90
+      },
+      "meta_validation_tuning": {
+        "task_count": 15
+      }
+    },
+    "within_domain_duplicates": {
+      "meta_test": {
+        "assignment_fingerprint": 0,
+        "composition_fingerprint": 0,
+        "paraphrase_group_fingerprint": 0,
+        "rule_fingerprint": 0
+      },
+      "meta_train": {
+        "assignment_fingerprint": 6,
+        "composition_fingerprint": 13,
+        "paraphrase_group_fingerprint": 0,
+        "rule_fingerprint": 11
+      },
+      "meta_validation_calibration": {
+        "assignment_fingerprint": 0,
+        "composition_fingerprint": 0,
+        "paraphrase_group_fingerprint": 0,
+        "rule_fingerprint": 0
+      },
+      "meta_validation_tuning": {
+        "assignment_fingerprint": 0,
+        "composition_fingerprint": 0,
+        "paraphrase_group_fingerprint": 0,
+        "rule_fingerprint": 0
+      }
+    }
+  },
+  "materializer_manifest": {
+    "amendment_diff": {
+      "non_probe_task_fields_changed": 0,
+      "oracle_headers_rewritten": 35,
+      "probe_payloads_changed_outside_amendment_b": 0,
+      "system_messages_added": 933
+    },
+    "manifest_sha256": "fb9c8e6658e997e37f33aa25e8e7f5477b9f7db2a7a55153083b9f2444c15699",
+    "path": "experiments/r20-taskgen-v4-r20-dev/materialization/MANIFEST.json",
+    "self_hash_recomputed_ok": true
+  },
+  "max_new_tokens": 128,
+  "meta_test_accessed": false,
+  "model_runs": 0,
+  "passed": true,
+  "probe_counts_sha256": "4c643a8808481355f5463e1ec7efd1f3fa53e845a679bb4c3ece96c1ae0348e5",
+  "prompt_registry_sha256": "d8bd0b263216f83df83d258850d014b338627e09a355111a87b538b9ab401a54",
+  "registry_drift": [],
+  "schema": "oczy/r20-g1-v4-r20-freeze/v1",
+  "sealed_payload_present": false,
+  "seconds": 1.2,
+  "source_commit": "9031ce2ca95022f95cdad515e2071855eef1d8ac",
+  "support_bundle_sha256": "1195e78362671aecc692d08030c34c6692bd9e00fe73c76023027fa1961a3a62",
+  "task_counts": {
+    "meta_train": 90,
+    "meta_validation_calibration": 90,
+    "meta_validation_tuning": 15
+  },
+  "thresholds_selected": false
+}

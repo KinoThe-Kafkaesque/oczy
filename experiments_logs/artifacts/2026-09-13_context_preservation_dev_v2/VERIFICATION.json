@@ -1,0 +1,24 @@
+{
+  "correction_optimizer_steps": 0,
+  "coverage_and_prompt_hashes_verified": true,
+  "fresh_process_pids": [
+    3137779,
+    3145575,
+    3201407
+  ],
+  "frozen_model_scorer_verified": true,
+  "meta_test_accessed": false,
+  "old_v1_calibration_outputs_reproduced": {
+    "correct": 12,
+    "total": 12
+  },
+  "optimizer_steps": 144,
+  "scores_independently_recomputed": 368,
+  "seconds": 2545.736714313971,
+  "source_input_numeric_hashes_verified": true,
+  "teaching_scores_recomputed": 27,
+  "separate_decoder_seed0_scalar_replay": {
+    "matches": 16,
+    "total": 16
+  }
+}

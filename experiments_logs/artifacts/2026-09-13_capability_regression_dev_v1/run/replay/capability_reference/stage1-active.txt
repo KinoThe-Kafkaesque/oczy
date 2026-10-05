@@ -1,0 +1,4 @@
+Corrected examples for client amber:
+Input oak -> correct output oakvek
+Input pine -> correct output pinevek
+Input elm -> correct output elmvek

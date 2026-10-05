@@ -1,0 +1,4 @@
+Corrected examples:
+- The correct result for cat is catzor.
+- The correct result for dog is dogzor.
+- The correct result for fox is foxzor.

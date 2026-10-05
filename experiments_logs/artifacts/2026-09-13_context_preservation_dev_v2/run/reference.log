@@ -1,0 +1,17 @@
+Skipping import of cpp extensions due to incompatible torch version. Please upgrade to torch >= 2.11.0 (found 2.10.0+cpu).
+reference calibration stage=2 condition=v1_full
+reference calibration stage=2 condition=query_full
+reference calibration stage=2 condition=concise_full
+reference calibration stage=2 condition=concise_table
+reference calibration stage=2 condition=resolved_oracle
+reference calibration stage=2 condition=no_context
+reference calibration stage=2 condition=crossed_example_retrieval
+reference confirmation stage=2 condition=v1_full
+reference confirmation stage=2 condition=query_full
+reference confirmation stage=2 condition=concise_full
+reference confirmation stage=2 condition=concise_table
+reference confirmation stage=2 condition=resolved_oracle
+reference confirmation stage=2 condition=no_context
+reference confirmation stage=2 condition=crossed_example_retrieval
+reference confirmation stage=3 condition=concise_table
+reference confirmation stage=3 condition=resolved_oracle

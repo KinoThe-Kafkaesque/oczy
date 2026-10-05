@@ -1,0 +1,34 @@
+Skipping import of cpp extensions due to incompatible torch version. Please upgrade to torch >= 2.11.0 (found 2.10.0+cpu).
+The following generation flags are not valid and may be ignored: ['temperature', 'top_p', 'top_k']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+{"bank": "none", "input": "lime", "client": "amber", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true, "native_neutral": true}}
+{"bank": "none", "input": "melon", "client": "amber", "matches": {"scalar": true, "old_default": false, "old_neutral": false, "dynamic_default": true, "dynamic_neutral": true, "native_neutral": true}}
+{"bank": "none", "input": "grape", "client": "amber", "matches": {"scalar": true, "old_default": false, "old_neutral": false, "dynamic_default": true, "dynamic_neutral": true, "native_neutral": true}}
+{"bank": "none", "input": "peach", "client": "amber", "matches": {"scalar": true, "old_default": false, "old_neutral": false, "dynamic_default": true, "dynamic_neutral": true, "native_neutral": true}}
+{"bank": "none", "input": "lime", "client": "cobalt", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true, "native_neutral": true}}
+{"bank": "none", "input": "melon", "client": "cobalt", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true, "native_neutral": true}}
+{"bank": "none", "input": "grape", "client": "cobalt", "matches": {"scalar": true, "old_default": false, "old_neutral": false, "dynamic_default": true, "dynamic_neutral": true, "native_neutral": true}}
+{"bank": "none", "input": "peach", "client": "cobalt", "matches": {"scalar": true, "old_default": false, "old_neutral": false, "dynamic_default": true, "dynamic_neutral": true, "native_neutral": true}}
+{"bank": "none", "input": "lime", "client": "silver", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true, "native_neutral": true}}
+{"bank": "none", "input": "melon", "client": "silver", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true, "native_neutral": true}}
+{"bank": "none", "input": "grape", "client": "silver", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true, "native_neutral": true}}
+{"bank": "none", "input": "peach", "client": "silver", "matches": {"scalar": true, "old_default": false, "old_neutral": false, "dynamic_default": true, "dynamic_neutral": true, "native_neutral": true}}
+{"bank": "none", "input": "lime", "client": "quartz", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true, "native_neutral": true}}
+{"bank": "none", "input": "melon", "client": "quartz", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true, "native_neutral": true}}
+{"bank": "none", "input": "grape", "client": "quartz", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true, "native_neutral": true}}
+{"bank": "none", "input": "peach", "client": "quartz", "matches": {"scalar": true, "old_default": false, "old_neutral": false, "dynamic_default": true, "dynamic_neutral": true, "native_neutral": true}}
+{"bank": "joint", "input": "lime", "client": "amber", "matches": {"scalar": true, "old_default": false, "old_neutral": false, "dynamic_default": true, "dynamic_neutral": true}}
+{"bank": "joint", "input": "melon", "client": "amber", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true}}
+{"bank": "joint", "input": "grape", "client": "amber", "matches": {"scalar": true, "old_default": false, "old_neutral": false, "dynamic_default": true, "dynamic_neutral": true}}
+{"bank": "joint", "input": "peach", "client": "amber", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true}}
+{"bank": "joint", "input": "lime", "client": "cobalt", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true}}
+{"bank": "joint", "input": "melon", "client": "cobalt", "matches": {"scalar": true, "old_default": false, "old_neutral": false, "dynamic_default": true, "dynamic_neutral": true}}
+{"bank": "joint", "input": "grape", "client": "cobalt", "matches": {"scalar": true, "old_default": false, "old_neutral": false, "dynamic_default": true, "dynamic_neutral": true}}
+{"bank": "joint", "input": "peach", "client": "cobalt", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true}}
+{"bank": "joint", "input": "lime", "client": "silver", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true}}
+{"bank": "joint", "input": "melon", "client": "silver", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true}}
+{"bank": "joint", "input": "grape", "client": "silver", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true}}
+{"bank": "joint", "input": "peach", "client": "silver", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true}}
+{"bank": "joint", "input": "lime", "client": "quartz", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true}}
+{"bank": "joint", "input": "melon", "client": "quartz", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true}}
+{"bank": "joint", "input": "grape", "client": "quartz", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true}}
+{"bank": "joint", "input": "peach", "client": "quartz", "matches": {"scalar": true, "old_default": true, "old_neutral": true, "dynamic_default": true, "dynamic_neutral": true}}

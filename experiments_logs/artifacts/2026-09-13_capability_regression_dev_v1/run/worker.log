@@ -1,0 +1,74 @@
+Skipping import of cpp extensions due to incompatible torch version. Please upgrade to torch >= 2.11.0 (found 2.10.0+cpu).
+reference stage=1 condition=no_context
+reference stage=1 condition=raw_history
+reference stage=1 condition=latest_example_retrieval
+reference stage=1 condition=complete_oracle
+reference stage=1 condition=zlib_retrieval
+reference stage=2 condition=no_context
+reference stage=2 condition=raw_history
+reference stage=2 condition=latest_example_retrieval
+reference stage=2 condition=complete_oracle
+reference stage=2 condition=zlib_retrieval
+reference stage=3 condition=no_context
+reference stage=3 condition=raw_history
+reference stage=3 condition=latest_example_retrieval
+reference stage=3 condition=complete_oracle
+reference stage=3 condition=zlib_retrieval
+Completed capability_reference: 240 rows
+restore stage=1 seed=0 condition=initial
+restore stage=1 seed=0 condition=learned_restored
+restore stage=1 seed=0 condition=zeroed
+restore stage=2 seed=0 condition=initial
+restore stage=2 seed=0 condition=learned_restored
+restore stage=2 seed=0 condition=zeroed
+restore stage=3 seed=0 condition=initial
+restore stage=3 seed=0 condition=learned_restored
+restore stage=3 seed=0 condition=zeroed
+restore stage=1 seed=1 condition=initial
+restore stage=1 seed=1 condition=learned_restored
+restore stage=2 seed=1 condition=initial
+restore stage=2 seed=1 condition=learned_restored
+restore stage=3 seed=1 condition=initial
+restore stage=3 seed=1 condition=learned_restored
+restore stage=1 seed=2 condition=initial
+restore stage=1 seed=2 condition=learned_restored
+restore stage=2 seed=2 condition=initial
+restore stage=2 seed=2 condition=learned_restored
+restore stage=3 seed=2 condition=initial
+restore stage=3 seed=2 condition=learned_restored
+Completed capability_restore: 336 rows
+action condition=no_context seed=None case=read correct=False
+action condition=no_context seed=None case=case_sensitive_write correct=False
+action condition=no_context seed=None case=read_then_edit correct=False
+action condition=no_context seed=None case=grounded_copy correct=False
+action condition=learned_restored seed=0 case=read correct=False
+action condition=learned_restored seed=0 case=case_sensitive_write correct=False
+action condition=learned_restored seed=0 case=read_then_edit correct=False
+action condition=learned_restored seed=0 case=grounded_copy correct=False
+action condition=learned_restored seed=1 case=read correct=False
+action condition=learned_restored seed=1 case=case_sensitive_write correct=False
+action condition=learned_restored seed=1 case=read_then_edit correct=False
+action condition=learned_restored seed=1 case=grounded_copy correct=False
+action condition=learned_restored seed=2 case=read correct=False
+action condition=learned_restored seed=2 case=case_sensitive_write correct=False
+action condition=learned_restored seed=2 case=read_then_edit correct=False
+action condition=learned_restored seed=2 case=grounded_copy correct=False
+action condition=latest_example_retrieval seed=None case=read correct=False
+action condition=latest_example_retrieval seed=None case=case_sensitive_write correct=False
+action condition=latest_example_retrieval seed=None case=read_then_edit correct=False
+action condition=latest_example_retrieval seed=None case=grounded_copy correct=False
+Completed capability_actions: 20 rows
+Restored pattern 0, seed 0
+Restored pattern 0, seed 1
+Restored pattern 0, seed 2
+Restored pattern 1, seed 0
+Restored pattern 1, seed 1
+Restored pattern 1, seed 2
+Completed pilot_restore_soft: 96 rows
+Completed pilot_restore_text: 16 rows
+Completed direct_operation: 32 rows
+The following generation flags are not valid and may be ignored: ['temperature', 'top_p', 'top_k']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+Completed decoder_single: 32 rows
+Completed decoder_batch4: 32 rows
+Completed candidate_probes: 160 rows
+Completed candidate_actions: 48 rows

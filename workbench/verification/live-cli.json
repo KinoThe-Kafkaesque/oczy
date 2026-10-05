@@ -1,0 +1,47 @@
+{
+  "mode": "exploratory",
+  "client": "amber",
+  "input": "berry",
+  "seed": 0,
+  "target": "berryvek",
+  "rows": [
+    {
+      "condition": "diversity",
+      "generated": " berry",
+      "correct": false
+    },
+    {
+      "condition": "control",
+      "generated": " berryvek",
+      "correct": true
+    },
+    {
+      "condition": "initial",
+      "generated": "berry",
+      "correct": false
+    },
+    {
+      "condition": "no_context",
+      "generated": "berry",
+      "correct": false
+    },
+    {
+      "condition": "chat_diversity",
+      "generated": "berryvek",
+      "correct": true
+    },
+    {
+      "condition": "text_diversity",
+      "generated": " berryvek",
+      "correct": true
+    },
+    {
+      "condition": "direct_oracle",
+      "generated": "berryvek",
+      "correct": true
+    }
+  ],
+  "organ_hash": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+  "manifest_sha256": "e339fd54cedba4a039af0e98c2008b5934b781aff720f5da36ab2242c72c70b6",
+  "optimizer_steps": 0
+}

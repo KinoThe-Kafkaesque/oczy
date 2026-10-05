@@ -1,0 +1,7 @@
+Skipping import of cpp extensions due to incompatible torch version. Please upgrade to torch >= 2.11.0 (found 2.10.0+cpu).
+Restored pattern 0, seed 0
+Restored pattern 0, seed 1
+Restored pattern 0, seed 2
+Restored pattern 1, seed 0
+Restored pattern 1, seed 1
+Restored pattern 1, seed 2

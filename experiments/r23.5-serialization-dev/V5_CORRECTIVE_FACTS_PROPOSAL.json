@@ -1,0 +1,793 @@
+{
+  "schema": "oczy/dev-corrective-facts-proposal/v1",
+  "instrument_id": "meta_cortex/v5",
+  "status": "PROPOSED_NOT_AUTHORIZED",
+  "scope": "DEV_DIAGNOSTIC_ONLY",
+  "parent_manifest_sha256": "d58adb749f4112f2920f08e0dbe0ce5c6a1ee7711f562faee4e41072eccc8764",
+  "base_dev_view_sha256": "bfb1a4003c421df3a14345bdcc6ddabad2d6ae252a5aadd6414d0cf0ba07fea6",
+  "organ_hash": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+  "scorer_sha256": "e5d746d0477c489157d1699e2ae73dfcc8ac92998719de1a06d92fcff4b1c742",
+  "generation": {
+    "mode": "greedy",
+    "max_new_tokens": 32,
+    "soft_bank_width": 0
+  },
+  "selection": "First tuning task of each family, all existing same-rule and oracle probes",
+  "conditions": [
+    "no_context",
+    "teaching_context",
+    "corrective_facts_context",
+    "oracle_context"
+  ],
+  "changed_variable": "Public teaching transcript presentation",
+  "new_prefix": "Corrected examples:\n- {verbatim event.correction in original order}",
+  "optimizer_steps": 0,
+  "meta_test_authorized": false,
+  "calibration_authorized": false,
+  "source_sha256": "3f08b9e79bb4ae3f8214460d6a155745b2e288604827069f36f2615800658ba6",
+  "organ_source_sha256": "8d9c183a73685efcbd2f7d6e952adb6c222aa2cb13443a227145df5ecbe258c9",
+  "cases": [
+    {
+      "family": "contextual_remap",
+      "condition": "no_context",
+      "probe_index": 0,
+      "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "You are in the lavender chamber. dax demands what token?"
+        }
+      ],
+      "prompt_sha256": "cae189d6afc77fe46647ec5c1f005665e8b82400cd7c8e0565dd892a93c92b1a",
+      "expected": "left",
+      "directly_taught": false
+    },
+    {
+      "family": "contextual_remap",
+      "condition": "no_context",
+      "probe_index": 1,
+      "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "You are in the coral chamber. dax demands what token?"
+        }
+      ],
+      "prompt_sha256": "92baffe9ab07f730bdec40d044c987c8461cbb3941444568082247f4862581a6",
+      "expected": "rise",
+      "directly_taught": false
+    },
+    {
+      "family": "contextual_remap",
+      "condition": "no_context",
+      "probe_index": 2,
+      "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "You are in the quartz chamber. dax demands what token?"
+        }
+      ],
+      "prompt_sha256": "390f9aad66e7a50cd32f35d09b32f26180858e6b34062e345888e14e473cc86a",
+      "expected": "left",
+      "directly_taught": false
+    },
+    {
+      "family": "contextual_remap",
+      "condition": "teaching_context",
+      "probe_index": 0,
+      "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "In the coral room, respond to wix."
+        },
+        {
+          "role": "assistant",
+          "content": "wix"
+        },
+        {
+          "role": "user",
+          "content": "In the coral room, wix requires the token left."
+        },
+        {
+          "role": "user",
+          "content": "In the lavender room, respond to wix."
+        },
+        {
+          "role": "assistant",
+          "content": "wix"
+        },
+        {
+          "role": "user",
+          "content": "In the lavender room, wix requires the token rise."
+        },
+        {
+          "role": "user",
+          "content": "You are in the lavender chamber. dax demands what token?"
+        }
+      ],
+      "prompt_sha256": "b4bd56dbcd20c413bb258ea0b4250d31e20cfa1d32628c6a6d208755a7188924",
+      "expected": "left",
+      "directly_taught": false
+    },
+    {
+      "family": "contextual_remap",
+      "condition": "teaching_context",
+      "probe_index": 1,
+      "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "In the coral room, respond to wix."
+        },
+        {
+          "role": "assistant",
+          "content": "wix"
+        },
+        {
+          "role": "user",
+          "content": "In the coral room, wix requires the token left."
+        },
+        {
+          "role": "user",
+          "content": "In the lavender room, respond to wix."
+        },
+        {
+          "role": "assistant",
+          "content": "wix"
+        },
+        {
+          "role": "user",
+          "content": "In the lavender room, wix requires the token rise."
+        },
+        {
+          "role": "user",
+          "content": "You are in the coral chamber. dax demands what token?"
+        }
+      ],
+      "prompt_sha256": "acb50cf4a19a2b7ad5aa9264f030915c763f2153174144c80eb23a8f78f1f658",
+      "expected": "rise",
+      "directly_taught": false
+    },
+    {
+      "family": "contextual_remap",
+      "condition": "teaching_context",
+      "probe_index": 2,
+      "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "In the coral room, respond to wix."
+        },
+        {
+          "role": "assistant",
+          "content": "wix"
+        },
+        {
+          "role": "user",
+          "content": "In the coral room, wix requires the token left."
+        },
+        {
+          "role": "user",
+          "content": "In the lavender room, respond to wix."
+        },
+        {
+          "role": "assistant",
+          "content": "wix"
+        },
+        {
+          "role": "user",
+          "content": "In the lavender room, wix requires the token rise."
+        },
+        {
+          "role": "user",
+          "content": "You are in the quartz chamber. dax demands what token?"
+        }
+      ],
+      "prompt_sha256": "68c4ddd723dade8db35a120abdd88de065974daa466341f6f5205f1d7f453411",
+      "expected": "left",
+      "directly_taught": false
+    },
+    {
+      "family": "contextual_remap",
+      "condition": "corrective_facts_context",
+      "probe_index": 0,
+      "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "Corrected examples:\n- In the coral room, wix requires the token left.\n- In the lavender room, wix requires the token rise."
+        },
+        {
+          "role": "user",
+          "content": "You are in the lavender chamber. dax demands what token?"
+        }
+      ],
+      "prompt_sha256": "616599265ac61411f304258ccd09a639d2222642dcf64549c9adc6012810b847",
+      "expected": "left",
+      "directly_taught": false
+    },
+    {
+      "family": "contextual_remap",
+      "condition": "corrective_facts_context",
+      "probe_index": 1,
+      "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "Corrected examples:\n- In the coral room, wix requires the token left.\n- In the lavender room, wix requires the token rise."
+        },
+        {
+          "role": "user",
+          "content": "You are in the coral chamber. dax demands what token?"
+        }
+      ],
+      "prompt_sha256": "8dc124ddb72b3fd8c4f7216ccd0ebd160ab33de98d6f2d37cf9795ef6e57a9db",
+      "expected": "rise",
+      "directly_taught": false
+    },
+    {
+      "family": "contextual_remap",
+      "condition": "corrective_facts_context",
+      "probe_index": 2,
+      "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "Corrected examples:\n- In the coral room, wix requires the token left.\n- In the lavender room, wix requires the token rise."
+        },
+        {
+          "role": "user",
+          "content": "You are in the quartz chamber. dax demands what token?"
+        }
+      ],
+      "prompt_sha256": "7e3acae1398568340170e7c2fe47e2f8f141a7d1a181b9287f3280ee8b082a64",
+      "expected": "left",
+      "directly_taught": false
+    },
+    {
+      "family": "contextual_remap",
+      "condition": "oracle_context",
+      "probe_index": 0,
+      "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "Complete mapping:\n  coral / dax -> rise\n  coral / wix -> left\n  lavender / dax -> left\n  lavender / wix -> rise\n  quartz / dax -> left\n  quartz / wix -> rise"
+        },
+        {
+          "role": "user",
+          "content": "Given the above mapping, in the lavender room, what token follows dax?"
+        }
+      ],
+      "prompt_sha256": "0fdc2ead6430c34a92cc3dabc92fa8607fdee61d87f6259f6b86cbf43920635a",
+      "expected": "left",
+      "directly_taught": null
+    },
+    {
+      "family": "rule_transformation",
+      "condition": "no_context",
+      "probe_index": 0,
+      "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "What is the transformed output for input nu?"
+        }
+      ],
+      "prompt_sha256": "98e2440221cf914974dc5cc9d22224355285be4952e88a57136a95b568efcc51",
+      "expected": "nurpnu",
+      "directly_taught": true
+    },
+    {
+      "family": "rule_transformation",
+      "condition": "no_context",
+      "probe_index": 1,
+      "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "What is the transformed output for input rho?"
+        }
+      ],
+      "prompt_sha256": "8d24cc19ecdeb4e7cf94409c52cb83f49d8736f06b17f91c25e32e84d48852e6",
+      "expected": "nurprho",
+      "directly_taught": true
+    },
+    {
+      "family": "rule_transformation",
+      "condition": "teaching_context",
+      "probe_index": 0,
+      "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "Apply the rule to: nu"
+        },
+        {
+          "role": "assistant",
+          "content": "nu"
+        },
+        {
+          "role": "user",
+          "content": "The correct result for nu is nurpnu."
+        },
+        {
+          "role": "user",
+          "content": "Apply the rule to: rho"
+        },
+        {
+          "role": "assistant",
+          "content": "rho"
+        },
+        {
+          "role": "user",
+          "content": "The correct result for rho is nurprho."
+        },
+        {
+          "role": "user",
+          "content": "Apply the rule to: xi"
+        },
+        {
+          "role": "assistant",
+          "content": "xi"
+        },
+        {
+          "role": "user",
+          "content": "The correct result for xi is nurpxi."
+        },
+        {
+          "role": "user",
+          "content": "What is the transformed output for input nu?"
+        }
+      ],
+      "prompt_sha256": "4fe589d68f800cf46270489fa57191a7834a98addadb133ceb066192b68e0428",
+      "expected": "nurpnu",
+      "directly_taught": true
+    },
+    {
+      "family": "rule_transformation",
+      "condition": "teaching_context",
+      "probe_index": 1,
+      "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "Apply the rule to: nu"
+        },
+        {
+          "role": "assistant",
+          "content": "nu"
+        },
+        {
+          "role": "user",
+          "content": "The correct result for nu is nurpnu."
+        },
+        {
+          "role": "user",
+          "content": "Apply the rule to: rho"
+        },
+        {
+          "role": "assistant",
+          "content": "rho"
+        },
+        {
+          "role": "user",
+          "content": "The correct result for rho is nurprho."
+        },
+        {
+          "role": "user",
+          "content": "Apply the rule to: xi"
+        },
+        {
+          "role": "assistant",
+          "content": "xi"
+        },
+        {
+          "role": "user",
+          "content": "The correct result for xi is nurpxi."
+        },
+        {
+          "role": "user",
+          "content": "What is the transformed output for input rho?"
+        }
+      ],
+      "prompt_sha256": "4a38f79b644413efa2a2e8b8c982a5800d16bb1a2760b7a5f2b78e50b9ae2fdc",
+      "expected": "nurprho",
+      "directly_taught": true
+    },
+    {
+      "family": "rule_transformation",
+      "condition": "corrective_facts_context",
+      "probe_index": 0,
+      "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "Corrected examples:\n- The correct result for nu is nurpnu.\n- The correct result for rho is nurprho.\n- The correct result for xi is nurpxi."
+        },
+        {
+          "role": "user",
+          "content": "What is the transformed output for input nu?"
+        }
+      ],
+      "prompt_sha256": "b5908c7d3c3f068590790927b1d6481a38838834e9ccfbd03b0122035538ee60",
+      "expected": "nurpnu",
+      "directly_taught": true
+    },
+    {
+      "family": "rule_transformation",
+      "condition": "corrective_facts_context",
+      "probe_index": 1,
+      "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "Corrected examples:\n- The correct result for nu is nurpnu.\n- The correct result for rho is nurprho.\n- The correct result for xi is nurpxi."
+        },
+        {
+          "role": "user",
+          "content": "What is the transformed output for input rho?"
+        }
+      ],
+      "prompt_sha256": "1821ee0731515e2926b5cc40d7039ad6b0cd09895d12abc7faf91e75eaf603c4",
+      "expected": "nurprho",
+      "directly_taught": true
+    },
+    {
+      "family": "rule_transformation",
+      "condition": "oracle_context",
+      "probe_index": 0,
+      "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "Rule: If the input begins with a lowercase vowel (a, e, i, o, u), append pex to the input. Otherwise, prepend nurp to the input.\nWorked examples:\n  nu -> nurpnu\n  rho -> nurprho\n  xi -> nurpxi"
+        },
+        {
+          "role": "user",
+          "content": "Given this rule, what is the output for: gamma?"
+        }
+      ],
+      "prompt_sha256": "14c2512026f54ac2297cda04722942d385ca3ca8ec0cb0e9eabeda360a5d75b0",
+      "expected": "nurpgamma",
+      "directly_taught": null
+    },
+    {
+      "family": "finite_state",
+      "condition": "no_context",
+      "probe_index": 0,
+      "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "Given current state q0 and signal a, which state follows?"
+        }
+      ],
+      "prompt_sha256": "07ed4fd282bf421e437bc7901be7d18625c844b3b5e76c231c8f3cd616bffa2c",
+      "expected": "q2",
+      "directly_taught": true
+    },
+    {
+      "family": "finite_state",
+      "condition": "no_context",
+      "probe_index": 1,
+      "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "Given current state q1 and signal a, which state follows?"
+        }
+      ],
+      "prompt_sha256": "b2f9f6d854f1b770af6f73c3ae51de63f667959e0f1723c68cc90c9590cd079d",
+      "expected": "q2",
+      "directly_taught": true
+    },
+    {
+      "family": "finite_state",
+      "condition": "teaching_context",
+      "probe_index": 0,
+      "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "State: q0. Input: a. What is the next state?"
+        },
+        {
+          "role": "assistant",
+          "content": "q0"
+        },
+        {
+          "role": "user",
+          "content": "From q0, input a transitions to q2."
+        },
+        {
+          "role": "user",
+          "content": "State: q1. Input: a. What is the next state?"
+        },
+        {
+          "role": "assistant",
+          "content": "q1"
+        },
+        {
+          "role": "user",
+          "content": "From q1, input a transitions to q2."
+        },
+        {
+          "role": "user",
+          "content": "State: q1. Input: b. What is the next state?"
+        },
+        {
+          "role": "assistant",
+          "content": "q1"
+        },
+        {
+          "role": "user",
+          "content": "From q1, input b transitions to q2."
+        },
+        {
+          "role": "user",
+          "content": "State: q2. Input: b. What is the next state?"
+        },
+        {
+          "role": "assistant",
+          "content": "q2"
+        },
+        {
+          "role": "user",
+          "content": "From q2, input b transitions to q1."
+        },
+        {
+          "role": "user",
+          "content": "State: q2. Input: a. What is the next state?"
+        },
+        {
+          "role": "assistant",
+          "content": "q2"
+        },
+        {
+          "role": "user",
+          "content": "From q2, input a transitions to q2."
+        },
+        {
+          "role": "user",
+          "content": "Given current state q0 and signal a, which state follows?"
+        }
+      ],
+      "prompt_sha256": "726c9d7bf71ac3c506eb7020bac5b3bdca73eae2ca17c1bb4621b58a076b0021",
+      "expected": "q2",
+      "directly_taught": true
+    },
+    {
+      "family": "finite_state",
+      "condition": "teaching_context",
+      "probe_index": 1,
+      "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "State: q0. Input: a. What is the next state?"
+        },
+        {
+          "role": "assistant",
+          "content": "q0"
+        },
+        {
+          "role": "user",
+          "content": "From q0, input a transitions to q2."
+        },
+        {
+          "role": "user",
+          "content": "State: q1. Input: a. What is the next state?"
+        },
+        {
+          "role": "assistant",
+          "content": "q1"
+        },
+        {
+          "role": "user",
+          "content": "From q1, input a transitions to q2."
+        },
+        {
+          "role": "user",
+          "content": "State: q1. Input: b. What is the next state?"
+        },
+        {
+          "role": "assistant",
+          "content": "q1"
+        },
+        {
+          "role": "user",
+          "content": "From q1, input b transitions to q2."
+        },
+        {
+          "role": "user",
+          "content": "State: q2. Input: b. What is the next state?"
+        },
+        {
+          "role": "assistant",
+          "content": "q2"
+        },
+        {
+          "role": "user",
+          "content": "From q2, input b transitions to q1."
+        },
+        {
+          "role": "user",
+          "content": "State: q2. Input: a. What is the next state?"
+        },
+        {
+          "role": "assistant",
+          "content": "q2"
+        },
+        {
+          "role": "user",
+          "content": "From q2, input a transitions to q2."
+        },
+        {
+          "role": "user",
+          "content": "Given current state q1 and signal a, which state follows?"
+        }
+      ],
+      "prompt_sha256": "cabb2ab4a56dbc784bc57e1f5e3d69ad34e2a77b7f77125a2f565e5960389987",
+      "expected": "q2",
+      "directly_taught": true
+    },
+    {
+      "family": "finite_state",
+      "condition": "corrective_facts_context",
+      "probe_index": 0,
+      "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "Corrected examples:\n- From q0, input a transitions to q2.\n- From q1, input a transitions to q2.\n- From q1, input b transitions to q2.\n- From q2, input b transitions to q1.\n- From q2, input a transitions to q2."
+        },
+        {
+          "role": "user",
+          "content": "Given current state q0 and signal a, which state follows?"
+        }
+      ],
+      "prompt_sha256": "554957a842ed03523de89c63cbb18d423f5d5390ad6b33f412f3b68c34af3349",
+      "expected": "q2",
+      "directly_taught": true
+    },
+    {
+      "family": "finite_state",
+      "condition": "corrective_facts_context",
+      "probe_index": 1,
+      "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "Corrected examples:\n- From q0, input a transitions to q2.\n- From q1, input a transitions to q2.\n- From q1, input b transitions to q2.\n- From q2, input b transitions to q1.\n- From q2, input a transitions to q2."
+        },
+        {
+          "role": "user",
+          "content": "Given current state q1 and signal a, which state follows?"
+        }
+      ],
+      "prompt_sha256": "662533ecd1d36d7bd87a14e8aad21e0df1e8d4a1968614cc7ba22ff7ca782406",
+      "expected": "q2",
+      "directly_taught": true
+    },
+    {
+      "family": "finite_state",
+      "condition": "oracle_context",
+      "probe_index": 0,
+      "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Return only the requested answer token or string. Do not add an explanation, label, or surrounding quotation marks."
+        },
+        {
+          "role": "user",
+          "content": "Complete transition graph:\n  q0 + a -> q2\n  q0 + b -> q1\n  q1 + a -> q2\n  q1 + b -> q2\n  q2 + a -> q2\n  q2 + b -> q1\nActions:\n  q0: proceed\n  q1: yield\n  q2: hold\nGoal: reach q0."
+        },
+        {
+          "role": "user",
+          "content": "Given the above graph, from q0 with input a, what is the next state?"
+        }
+      ],
+      "prompt_sha256": "a4c7aeac39ff9cc90f2fc615cf4f5bca6f6364f2759d282ac1eecae64e24e0d5",
+      "expected": "q2",
+      "directly_taught": null
+    }
+  ],
+  "interpretation": "Keep untaught probes in the table. A presentation effect is neither cortex learning nor a repair of task coverage. Recovery remains undefined if the context-minus-no-context denominator is zero.",
+  "manifest_sha256": "f87fee485939371596921498b9f6d0c227280c3a3d660d4092a5df67ea3b9cc6"
+}

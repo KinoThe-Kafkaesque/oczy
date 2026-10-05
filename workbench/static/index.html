@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Oczy · Learning workbench</title><link rel="stylesheet" href="/style.css"><script defer src="/app.js"></script></head>
+<body>
+<!-- THESIS: Inspect scoped learning through observable output and preserved evidence.
+OWN-WORLD: Extend Oczy findings: ink ground, lavender links, serif titles, restrained ruled tables.
+STORY: Try a context, compare mechanisms, inspect what still fails.
+FIRST VIEWPORT: Compact masthead; wide trial bench; adjacent study status; results immediately below the controls.
+FORM: Functional extension of docs/oczy_findings.html, no replacement identity or concept seed.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance -->
+<a class="skip" href="#main">Skip to workbench</a>
+<header><a class="brand" href="/">Oczy</a><span>Learning workbench</span><nav aria-label="Sections"><a href="#trial">Try a rule</a><a href="#evidence">Evidence</a><a href="#actions">Actions</a></nav><span class="scope">Local DEV</span></header>
+<main id="main">
+<div class="intro"><div><h1>What did it learn?</h1><p>One context, one word. Compare the learned state with examples and an explicitly supplied rule.</p></div><aside><strong id="study-state">Loading evidence…</strong><p id="gate-status">Reading the saved research record.</p><details id="execution-info" hidden><summary>Execution note</summary><p id="recovery-note"></p></details></aside></div>
+<section id="trial" aria-labelledby="trial-title"><div class="section-head"><h2 id="trial-title">Try a rule</h2><span id="trial-mode">Saved evidence</span></div>
+<form id="trial-form"><label>Context<select id="client" name="client"><option value="amber">Amber · append vek</option><option value="cobalt">Cobalt · append mip</option><option value="silver">Silver · taught copy</option><option value="quartz">Quartz · untaught copy</option></select></label><label>Input word<input id="word" name="word" value="berry" pattern="[a-z]{1,24}" maxlength="24" required autocomplete="off" spellcheck="false"></label><label>Seed<select id="seed" name="seed"><option value="0">0</option><option value="1">1</option><option value="2">2</option></select></label><button type="button" id="saved">Show saved trial</button><button type="submit" id="live">Run live comparison</button></form>
+<datalist id="saved-word-options"></datalist>
+
+<p id="trial-status" role="status" aria-live="polite"></p><div class="result-head"><span>Expected under the registered rules</span><code id="target">—</code></div>
+<div class="table-wrap"><table id="comparison"><caption class="sr-only">Outputs from each mechanism</caption><thead><tr><th scope="col">Mechanism</th><th scope="col">Actual output</th><th scope="col">Exact score</th></tr></thead><tbody id="trial-rows"></tbody></table></div>
+<p class="hint">Targets appear here for inspection. The learned-state prompts receive only the context and input. Seed 0 is the fixed default; all three seeds are available.</p>
+<p class="hint">The frozen score normalizes Unicode and trims outer whitespace; it preserves case, punctuation and internal spaces. Live trials are exploratory and do not update learned state or regression results. The direct-rule condition supplies the rule externally.</p></section>
+<section id="evidence" aria-labelledby="evidence-title"><div class="section-head"><h2 id="evidence-title">Capability record</h2><span id="as-of"></span></div><p>Learning success and regression reproducibility answer different questions.</p><div class="table-wrap"><table id="capability-table"><thead><tr><th scope="col">Capability</th><th scope="col">Current evidence</th><th scope="col">Limit</th></tr></thead><tbody id="capabilities"></tbody></table></div>
+<details><summary>Inspect scores by context and seed</summary><div class="table-wrap"><table><thead><tr><th>Split</th><th>Condition</th><th>Seed</th><th>Context</th><th>Correct / total</th></tr></thead><tbody id="counts"></tbody></table></div></details>
+<div class="regression"><h3>Regression replay</h3><p id="regression-status">The new replay has not completed.</p><div id="regression-results"></div></div></section>
+<section id="actions" aria-labelledby="actions-title"><div class="section-head"><h2 id="actions-title">Did the tools do the job?</h2></div><p>Inspect real temporary-file outcomes. A correct filesystem change can still end with the wrong final answer.</p><label class="action-picker">Saved action trial<select id="action-case"></select></label><div id="action-verdict" class="outcome"></div><div class="action-detail"><div><h3>Model and tool transcript</h3><pre id="transcript"></pre></div><div><h3>Verified files after execution</h3><pre id="files"></pre></div></div></section>
+<section class="provenance"><h2>Reproduce the record</h2><p>Source, states and results travel together. Model weights and the pinned Python runtime are configured separately.</p><pre>python -m workbench verify
+python -m workbench serve
+python -m workbench trial amber berry --seed 0</pre><details><summary>Source hashes and evidence boundaries</summary><p>No meta-test access. No best-seed selection. Joint learning does not establish sequential accumulation. A replayed failure remains a capability failure.</p><div id="sources"></div></details></section>
+</main><footer>Oczy · Inspectable DEV research · <span id="footer-date"></span></footer>
+</body></html>

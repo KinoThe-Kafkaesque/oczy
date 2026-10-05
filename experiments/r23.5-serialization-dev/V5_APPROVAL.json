@@ -1,0 +1,11 @@
+{
+  "decision": "approved",
+  "date": "2026-09-12",
+  "manifest_sha256": "f87fee485939371596921498b9f6d0c227280c3a3d660d4092a5df67ea3b9cc6",
+  "scope": "DEV_DIAGNOSTIC_ONLY",
+  "human_reply": "get on the next blocker",
+  "preceding_proposal": "The next step is a separately approved DEV teaching-format comparison.",
+  "interpretation": "The user's instruction to proceed authorizes that next comparison. The implementation adds a correction-facts presentation while preserving all existing examples, queries, targets, scoring and v4 baselines.",
+  "meta_test_authorized": false,
+  "task_generation_changes_authorized": false
+}

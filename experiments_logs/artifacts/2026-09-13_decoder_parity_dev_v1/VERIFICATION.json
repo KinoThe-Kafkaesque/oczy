@@ -1,0 +1,9 @@
+{
+  "all_input_source_state_and_model_hashes_verified": true,
+  "exact_coverage": true,
+  "meta_test_accessed": false,
+  "optimizer_steps": 0,
+  "parity_verdicts_recomputed": 208,
+  "scores_independently_recomputed": 176,
+  "seconds": 293.54449013399426
+}

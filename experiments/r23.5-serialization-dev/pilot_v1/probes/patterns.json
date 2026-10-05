@@ -1,0 +1,1 @@
+{"patterns":[{"index":0,"probes":[{"input":"sun","target":"sunzor"},{"input":"rain","target":"rainzor"},{"input":"snow","target":"snowzor"},{"input":"wind","target":"windzor"}]},{"index":1,"probes":[{"input":"2023-02-17","target":"17/02/2023"},{"input":"2027-12-06","target":"06/12/2027"},{"input":"2022-09-28","target":"28/09/2022"},{"input":"2028-03-14","target":"14/03/2028"}]}]}

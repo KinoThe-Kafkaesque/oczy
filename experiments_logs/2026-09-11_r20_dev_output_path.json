@@ -1,0 +1,2126 @@
+{
+  "schema_version": "oczy/r20-dev-output-path-report/v1",
+  "date": "2026-09-11",
+  "classification": "DEV_DIAGNOSTIC_ONLY",
+  "hypothesis_verdict": null,
+  "meta_test_accessed": false,
+  "remote_submissions": 0,
+  "local_source_commit": "e71268bc9cb01839995e5b3db69d0ad43a9ef04d",
+  "local_changes_uncommitted": true,
+  "summary": {
+    "articulation-before": {
+      "no_context": {
+        "correct": 0,
+        "total": 7
+      },
+      "teaching_context": {
+        "correct": 0,
+        "total": 7
+      },
+      "oracle_context": {
+        "correct": 0,
+        "total": 3
+      }
+    },
+    "articulation-after": {
+      "no_context": {
+        "correct": 0,
+        "total": 7
+      },
+      "teaching_context": {
+        "correct": 0,
+        "total": 7
+      },
+      "oracle_context": {
+        "correct": 0,
+        "total": 3
+      }
+    },
+    "articulation-v3": {
+      "no_context": {
+        "correct": 0,
+        "total": 7
+      },
+      "teaching_context": {
+        "correct": 0,
+        "total": 7
+      },
+      "oracle_context": {
+        "correct": 1,
+        "total": 3
+      }
+    },
+    "articulation-v4": {
+      "no_context": {
+        "correct": 0,
+        "total": 7
+      },
+      "teaching_context": {
+        "correct": 0,
+        "total": 7
+      },
+      "oracle_context": {
+        "correct": 2,
+        "total": 3
+      }
+    }
+  },
+  "family_summary": {
+    "articulation-before": {
+      "contextual_remap/no_context": {
+        "correct": 0,
+        "total": 3
+      },
+      "contextual_remap/teaching_context": {
+        "correct": 0,
+        "total": 3
+      },
+      "contextual_remap/oracle_context": {
+        "correct": 0,
+        "total": 1
+      },
+      "rule_transformation/no_context": {
+        "correct": 0,
+        "total": 2
+      },
+      "rule_transformation/teaching_context": {
+        "correct": 0,
+        "total": 2
+      },
+      "rule_transformation/oracle_context": {
+        "correct": 0,
+        "total": 1
+      },
+      "finite_state/no_context": {
+        "correct": 0,
+        "total": 2
+      },
+      "finite_state/teaching_context": {
+        "correct": 0,
+        "total": 2
+      },
+      "finite_state/oracle_context": {
+        "correct": 0,
+        "total": 1
+      }
+    },
+    "articulation-after": {
+      "contextual_remap/no_context": {
+        "correct": 0,
+        "total": 3
+      },
+      "contextual_remap/teaching_context": {
+        "correct": 0,
+        "total": 3
+      },
+      "contextual_remap/oracle_context": {
+        "correct": 0,
+        "total": 1
+      },
+      "rule_transformation/no_context": {
+        "correct": 0,
+        "total": 2
+      },
+      "rule_transformation/teaching_context": {
+        "correct": 0,
+        "total": 2
+      },
+      "rule_transformation/oracle_context": {
+        "correct": 0,
+        "total": 1
+      },
+      "finite_state/no_context": {
+        "correct": 0,
+        "total": 2
+      },
+      "finite_state/teaching_context": {
+        "correct": 0,
+        "total": 2
+      },
+      "finite_state/oracle_context": {
+        "correct": 0,
+        "total": 1
+      }
+    },
+    "articulation-v3": {
+      "contextual_remap/no_context": {
+        "correct": 0,
+        "total": 3
+      },
+      "contextual_remap/teaching_context": {
+        "correct": 0,
+        "total": 3
+      },
+      "contextual_remap/oracle_context": {
+        "correct": 0,
+        "total": 1
+      },
+      "rule_transformation/no_context": {
+        "correct": 0,
+        "total": 2
+      },
+      "rule_transformation/teaching_context": {
+        "correct": 0,
+        "total": 2
+      },
+      "rule_transformation/oracle_context": {
+        "correct": 0,
+        "total": 1
+      },
+      "finite_state/no_context": {
+        "correct": 0,
+        "total": 2
+      },
+      "finite_state/teaching_context": {
+        "correct": 0,
+        "total": 2
+      },
+      "finite_state/oracle_context": {
+        "correct": 1,
+        "total": 1
+      }
+    },
+    "articulation-v4": {
+      "contextual_remap/no_context": {
+        "correct": 0,
+        "total": 3
+      },
+      "contextual_remap/teaching_context": {
+        "correct": 0,
+        "total": 3
+      },
+      "contextual_remap/oracle_context": {
+        "correct": 0,
+        "total": 1
+      },
+      "rule_transformation/no_context": {
+        "correct": 0,
+        "total": 2
+      },
+      "rule_transformation/teaching_context": {
+        "correct": 0,
+        "total": 2
+      },
+      "rule_transformation/oracle_context": {
+        "correct": 1,
+        "total": 1
+      },
+      "finite_state/no_context": {
+        "correct": 0,
+        "total": 2
+      },
+      "finite_state/teaching_context": {
+        "correct": 0,
+        "total": 2
+      },
+      "finite_state/oracle_context": {
+        "correct": 1,
+        "total": 1
+      }
+    }
+  },
+  "runs": {
+    "articulation-before": {
+      "schema_version": "oczy/r20-articulation-diagnostic/v1",
+      "classification": "DEV_DIAGNOSTIC_ONLY",
+      "meta_test_accessed": false,
+      "source_root": "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/source/src",
+      "organ_source_sha256": "2c354af8550e8dc704308d605a9fc154c514e51f4bbd03b3a8c377bd1e6f74c4",
+      "calibration_accessed": false,
+      "optimizer_steps": 0,
+      "dev_view_sha256": "bfb1a4003c421df3a14345bdcc6ddabad2d6ae252a5aadd6414d0cf0ba07fea6",
+      "scorer_sha256": "e5d746d0477c489157d1699e2ae73dfcc8ac92998719de1a06d92fcff4b1c742",
+      "organ_hash_before": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+      "organ_hash_after": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+      "rows": [
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "no_context",
+          "probe_index": 0,
+          "prompt_sha256": "f19f8da7994e994aea038d349175456ae020248093b877742bf170d4250308cb",
+          "expected": "left",
+          "generated": "I'm sorry, but I can't assist with that.<|im_end|>",
+          "correct": false,
+          "contains_special_tokens": true,
+          "content_only_counterfactual": "I'm sorry, but I can't assist with that.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "no_context",
+          "probe_index": 1,
+          "prompt_sha256": "cdd6147e6ed783e3173627f3f9f9ee2a0676ac4de7a31ec3a082054d64eeb2f0",
+          "expected": "rise",
+          "generated": "I'm sorry, but I can't assist with that.<|im_end|>",
+          "correct": false,
+          "contains_special_tokens": true,
+          "content_only_counterfactual": "I'm sorry, but I can't assist with that.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "no_context",
+          "probe_index": 2,
+          "prompt_sha256": "162a1124151d686f69e46daab3ff0af2b353b4e88070712a7c4c0a5f35c2b38f",
+          "expected": "left",
+          "generated": "As an AI language model, I don't have the ability to physically interact with the world or have access to information about specific tokens or tokens in the context of",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "As an AI language model, I don't have the ability to physically interact with the world or have access to information about specific tokens or tokens in the context of",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "teaching_context",
+          "probe_index": 0,
+          "prompt_sha256": "e31289b83778199b1a8dbc04a8e07316fdfd41fe5f6e2a860c1ce047ee34951a",
+          "expected": "left",
+          "generated": "dax<|im_end|>",
+          "correct": false,
+          "contains_special_tokens": true,
+          "content_only_counterfactual": "dax",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "teaching_context",
+          "probe_index": 1,
+          "prompt_sha256": "dba1724e74ed089e049f2027a6ff41d4103e6ed54af0bb8d4caccf36026150ab",
+          "expected": "rise",
+          "generated": "dax<|im_end|>",
+          "correct": false,
+          "contains_special_tokens": true,
+          "content_only_counterfactual": "dax",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "teaching_context",
+          "probe_index": 2,
+          "prompt_sha256": "25d7943bff211b59768ff8c5a93a7688c26ef0820568a83815090c30e2a25646",
+          "expected": "left",
+          "generated": "dax<|im_end|>",
+          "correct": false,
+          "contains_special_tokens": true,
+          "content_only_counterfactual": "dax",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "oracle_context",
+          "probe_index": 0,
+          "prompt_sha256": "f13846bd7e8aa634d6dfbc4bd296ecfb2c07e658207d4c248eeefbddbccfc04b",
+          "expected": "left",
+          "generated": "In the lavender room, the token that follows dax is wix.<|im_end|>",
+          "correct": false,
+          "contains_special_tokens": true,
+          "content_only_counterfactual": "In the lavender room, the token that follows dax is wix.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "no_context",
+          "probe_index": 0,
+          "prompt_sha256": "4c5d8e75d26652d2115595add49b623ef07bd80bf296a467f3cddd2404a35b80",
+          "expected": "nurpnu",
+          "generated": "The input \"nu\" is a placeholder for a specific context or concept. Without more context, I can't provide a specific transformed output. However, if you",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "The input \"nu\" is a placeholder for a specific context or concept. Without more context, I can't provide a specific transformed output. However, if you",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "no_context",
+          "probe_index": 1,
+          "prompt_sha256": "c7ebc0f85a658ac76b0d72cd3e84ab6a87ad1fb01cde646be7a4ba670d39252e",
+          "expected": "nurprho",
+          "generated": "As an AI language model, I don't have access to specific information about the transformation or transformation rules applied to the input variable rho. Without more context, I",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "As an AI language model, I don't have access to specific information about the transformation or transformation rules applied to the input variable rho. Without more context, I",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "teaching_context",
+          "probe_index": 0,
+          "prompt_sha256": "e9698c1d17c9c96c3915671dd0c41ce2c2e6cbf3c0bbaafec31e4a9229547c22",
+          "expected": "nurpnu",
+          "generated": "The transformed output for input nu is nurpnu.<|im_end|>",
+          "correct": false,
+          "contains_special_tokens": true,
+          "content_only_counterfactual": "The transformed output for input nu is nurpnu.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "teaching_context",
+          "probe_index": 1,
+          "prompt_sha256": "4e3007d3b906d2ec536e724efe582aa4ecce5ac6c9b8d38e658947c302283dd2",
+          "expected": "nurprho",
+          "generated": "The transformed output for input rho is nurprho.<|im_end|>",
+          "correct": false,
+          "contains_special_tokens": true,
+          "content_only_counterfactual": "The transformed output for input rho is nurprho.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "oracle_context",
+          "probe_index": 0,
+          "prompt_sha256": "0b54104186dc2649172675e8c56a81b3ef3223737f2ea02805e9fc01077662da",
+          "expected": "nurpgamma",
+          "generated": "The rule \"conditional with parameters 'pex' and 'nurp'\" is not provided in the given text. Without the specific rule, I cannot determine",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "The rule \"conditional with parameters 'pex' and 'nurp'\" is not provided in the given text. Without the specific rule, I cannot determine",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "no_context",
+          "probe_index": 0,
+          "prompt_sha256": "6112d6788d5627f2f0df93db96d5d1382b6d56c501604e1c7b641878ec19a6b7",
+          "expected": "q2",
+          "generated": "To determine the state that follows given the current state \\( q_0 \\) and the signal \\( a \\), we need to understand the relationship between these two",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "To determine the state that follows given the current state \\( q_0 \\) and the signal \\( a \\), we need to understand the relationship between these two",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "no_context",
+          "probe_index": 1,
+          "prompt_sha256": "bb0ee4f3dc419c05a024a9b97c5de47a2d54ce81ffc0cfc09bb4d5e16d19f36b",
+          "expected": "q2",
+          "generated": "I'm sorry, but I need more information to answer your question accurately. Could you please provide me with the current state q1 and the signal a?<|im_end|>",
+          "correct": false,
+          "contains_special_tokens": true,
+          "content_only_counterfactual": "I'm sorry, but I need more information to answer your question accurately. Could you please provide me with the current state q1 and the signal a?",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "teaching_context",
+          "probe_index": 0,
+          "prompt_sha256": "67c9aedb0cb57b116461bc1cd8c12ea5ce6b2779598a95d20a3fe471bf56cec2",
+          "expected": "q2",
+          "generated": "Given the current state q0 and the signal a, the next state is q0.<|im_end|>",
+          "correct": false,
+          "contains_special_tokens": true,
+          "content_only_counterfactual": "Given the current state q0 and the signal a, the next state is q0.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "teaching_context",
+          "probe_index": 1,
+          "prompt_sha256": "f4d28642791657d5f44d4f9aa5747510cb8a22c70c04b8205c45f3da61ee59be",
+          "expected": "q2",
+          "generated": "Given the current state q1 and the signal a, the next state is q1.<|im_end|>",
+          "correct": false,
+          "contains_special_tokens": true,
+          "content_only_counterfactual": "Given the current state q1 and the signal a, the next state is q1.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "oracle_context",
+          "probe_index": 0,
+          "prompt_sha256": "a909e61ee7de6facb6d577b40c1a1ba98a88e193f3483fd737a758dbfc8acb5b",
+          "expected": "q2",
+          "generated": "From the given transition graph, we can see that the graph is structured such that each state transitions to the next based on the input values. Here's the step",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "From the given transition graph, we can see that the graph is structured such that each state transitions to the next based on the input values. Here's the step",
+          "content_only_counterfactual_correct": false
+        }
+      ]
+    },
+    "articulation-after": {
+      "schema_version": "oczy/r20-articulation-diagnostic/v1",
+      "classification": "DEV_DIAGNOSTIC_ONLY",
+      "meta_test_accessed": false,
+      "source_root": "/home/nyanpasu/Desktop/code/kinoSoft/oczy/src",
+      "organ_source_sha256": "8d9c183a73685efcbd2f7d6e952adb6c222aa2cb13443a227145df5ecbe258c9",
+      "calibration_accessed": false,
+      "optimizer_steps": 0,
+      "dev_view_sha256": "bfb1a4003c421df3a14345bdcc6ddabad2d6ae252a5aadd6414d0cf0ba07fea6",
+      "scorer_sha256": "e5d746d0477c489157d1699e2ae73dfcc8ac92998719de1a06d92fcff4b1c742",
+      "organ_hash_before": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+      "organ_hash_after": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+      "rows": [
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "no_context",
+          "probe_index": 0,
+          "prompt_sha256": "f19f8da7994e994aea038d349175456ae020248093b877742bf170d4250308cb",
+          "expected": "left",
+          "generated": "I'm sorry, but I can't assist with that.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "I'm sorry, but I can't assist with that.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "no_context",
+          "probe_index": 1,
+          "prompt_sha256": "cdd6147e6ed783e3173627f3f9f9ee2a0676ac4de7a31ec3a082054d64eeb2f0",
+          "expected": "rise",
+          "generated": "I'm sorry, but I can't assist with that.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "I'm sorry, but I can't assist with that.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "no_context",
+          "probe_index": 2,
+          "prompt_sha256": "162a1124151d686f69e46daab3ff0af2b353b4e88070712a7c4c0a5f35c2b38f",
+          "expected": "left",
+          "generated": "As an AI language model, I don't have the ability to physically interact with the world or have access to information about specific tokens or tokens in the context of",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "As an AI language model, I don't have the ability to physically interact with the world or have access to information about specific tokens or tokens in the context of",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "teaching_context",
+          "probe_index": 0,
+          "prompt_sha256": "e31289b83778199b1a8dbc04a8e07316fdfd41fe5f6e2a860c1ce047ee34951a",
+          "expected": "left",
+          "generated": "dax",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "dax",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "teaching_context",
+          "probe_index": 1,
+          "prompt_sha256": "dba1724e74ed089e049f2027a6ff41d4103e6ed54af0bb8d4caccf36026150ab",
+          "expected": "rise",
+          "generated": "dax",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "dax",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "teaching_context",
+          "probe_index": 2,
+          "prompt_sha256": "25d7943bff211b59768ff8c5a93a7688c26ef0820568a83815090c30e2a25646",
+          "expected": "left",
+          "generated": "dax",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "dax",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "oracle_context",
+          "probe_index": 0,
+          "prompt_sha256": "f13846bd7e8aa634d6dfbc4bd296ecfb2c07e658207d4c248eeefbddbccfc04b",
+          "expected": "left",
+          "generated": "In the lavender room, the token that follows dax is wix.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "In the lavender room, the token that follows dax is wix.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "no_context",
+          "probe_index": 0,
+          "prompt_sha256": "4c5d8e75d26652d2115595add49b623ef07bd80bf296a467f3cddd2404a35b80",
+          "expected": "nurpnu",
+          "generated": "The input \"nu\" is a placeholder for a specific context or concept. Without more context, I can't provide a specific transformed output. However, if you",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "The input \"nu\" is a placeholder for a specific context or concept. Without more context, I can't provide a specific transformed output. However, if you",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "no_context",
+          "probe_index": 1,
+          "prompt_sha256": "c7ebc0f85a658ac76b0d72cd3e84ab6a87ad1fb01cde646be7a4ba670d39252e",
+          "expected": "nurprho",
+          "generated": "As an AI language model, I don't have access to specific information about the transformation or transformation rules applied to the input variable rho. Without more context, I",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "As an AI language model, I don't have access to specific information about the transformation or transformation rules applied to the input variable rho. Without more context, I",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "teaching_context",
+          "probe_index": 0,
+          "prompt_sha256": "e9698c1d17c9c96c3915671dd0c41ce2c2e6cbf3c0bbaafec31e4a9229547c22",
+          "expected": "nurpnu",
+          "generated": "The transformed output for input nu is nurpnu.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "The transformed output for input nu is nurpnu.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "teaching_context",
+          "probe_index": 1,
+          "prompt_sha256": "4e3007d3b906d2ec536e724efe582aa4ecce5ac6c9b8d38e658947c302283dd2",
+          "expected": "nurprho",
+          "generated": "The transformed output for input rho is nurprho.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "The transformed output for input rho is nurprho.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "oracle_context",
+          "probe_index": 0,
+          "prompt_sha256": "0b54104186dc2649172675e8c56a81b3ef3223737f2ea02805e9fc01077662da",
+          "expected": "nurpgamma",
+          "generated": "The rule \"conditional with parameters 'pex' and 'nurp'\" is not provided in the given text. Without the specific rule, I cannot determine",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "The rule \"conditional with parameters 'pex' and 'nurp'\" is not provided in the given text. Without the specific rule, I cannot determine",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "no_context",
+          "probe_index": 0,
+          "prompt_sha256": "6112d6788d5627f2f0df93db96d5d1382b6d56c501604e1c7b641878ec19a6b7",
+          "expected": "q2",
+          "generated": "To determine the state that follows given the current state \\( q_0 \\) and the signal \\( a \\), we need to understand the relationship between these two",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "To determine the state that follows given the current state \\( q_0 \\) and the signal \\( a \\), we need to understand the relationship between these two",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "no_context",
+          "probe_index": 1,
+          "prompt_sha256": "bb0ee4f3dc419c05a024a9b97c5de47a2d54ce81ffc0cfc09bb4d5e16d19f36b",
+          "expected": "q2",
+          "generated": "I'm sorry, but I need more information to answer your question accurately. Could you please provide me with the current state q1 and the signal a?",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "I'm sorry, but I need more information to answer your question accurately. Could you please provide me with the current state q1 and the signal a?",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "teaching_context",
+          "probe_index": 0,
+          "prompt_sha256": "67c9aedb0cb57b116461bc1cd8c12ea5ce6b2779598a95d20a3fe471bf56cec2",
+          "expected": "q2",
+          "generated": "Given the current state q0 and the signal a, the next state is q0.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "Given the current state q0 and the signal a, the next state is q0.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "teaching_context",
+          "probe_index": 1,
+          "prompt_sha256": "f4d28642791657d5f44d4f9aa5747510cb8a22c70c04b8205c45f3da61ee59be",
+          "expected": "q2",
+          "generated": "Given the current state q1 and the signal a, the next state is q1.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "Given the current state q1 and the signal a, the next state is q1.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "oracle_context",
+          "probe_index": 0,
+          "prompt_sha256": "a909e61ee7de6facb6d577b40c1a1ba98a88e193f3483fd737a758dbfc8acb5b",
+          "expected": "q2",
+          "generated": "From the given transition graph, we can see that the graph is structured such that each state transitions to the next based on the input values. Here's the step",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "From the given transition graph, we can see that the graph is structured such that each state transitions to the next based on the input values. Here's the step",
+          "content_only_counterfactual_correct": false
+        }
+      ]
+    },
+    "articulation-v3": {
+      "schema_version": "oczy/r20-articulation-diagnostic/v1",
+      "classification": "DEV_DIAGNOSTIC_ONLY",
+      "meta_test_accessed": false,
+      "source_root": "/home/nyanpasu/Desktop/code/kinoSoft/oczy/src",
+      "organ_source_sha256": "8d9c183a73685efcbd2f7d6e952adb6c222aa2cb13443a227145df5ecbe258c9",
+      "calibration_accessed": false,
+      "optimizer_steps": 0,
+      "dev_view_sha256": "bfb1a4003c421df3a14345bdcc6ddabad2d6ae252a5aadd6414d0cf0ba07fea6",
+      "scorer_sha256": "e5d746d0477c489157d1699e2ae73dfcc8ac92998719de1a06d92fcff4b1c742",
+      "instrument_id": "meta_cortex/v3",
+      "amendment_manifest_sha256": "5c944abc72fac57b29890da46d9a3b3807c551c5c2b0370c24d771c5616162b5",
+      "diagnostic_source_sha256": "99e290b20dd90bd91975d8f128d453b35dc1859467d2b402adbe38d6471bfdca",
+      "organ_hash_before": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+      "organ_hash_after": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+      "rows": [
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "no_context",
+          "probe_index": 0,
+          "prompt_sha256": "cae189d6afc77fe46647ec5c1f005665e8b82400cd7c8e0565dd892a93c92b1a",
+          "expected": "left",
+          "generated": "dax",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "dax",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "no_context",
+          "probe_index": 1,
+          "prompt_sha256": "92baffe9ab07f730bdec40d044c987c8461cbb3941444568082247f4862581a6",
+          "expected": "rise",
+          "generated": "dax",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "dax",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "no_context",
+          "probe_index": 2,
+          "prompt_sha256": "390f9aad66e7a50cd32f35d09b32f26180858e6b34062e345888e14e473cc86a",
+          "expected": "left",
+          "generated": "None.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "None.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "teaching_context",
+          "probe_index": 0,
+          "prompt_sha256": "b4bd56dbcd20c413bb258ea0b4250d31e20cfa1d32628c6a6d208755a7188924",
+          "expected": "left",
+          "generated": "dax",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "dax",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "teaching_context",
+          "probe_index": 1,
+          "prompt_sha256": "acb50cf4a19a2b7ad5aa9264f030915c763f2153174144c80eb23a8f78f1f658",
+          "expected": "rise",
+          "generated": "dax",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "dax",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "teaching_context",
+          "probe_index": 2,
+          "prompt_sha256": "68c4ddd723dade8db35a120abdd88de065974daa466341f6f5205f1d7f453411",
+          "expected": "left",
+          "generated": "dax demands the token rise.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "dax demands the token rise.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "oracle_context",
+          "probe_index": 0,
+          "prompt_sha256": "0fdc2ead6430c34a92cc3dabc92fa8607fdee61d87f6259f6b86cbf43920635a",
+          "expected": "left",
+          "generated": "rise",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "rise",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "no_context",
+          "probe_index": 0,
+          "prompt_sha256": "98e2440221cf914974dc5cc9d22224355285be4952e88a57136a95b568efcc51",
+          "expected": "nurpnu",
+          "generated": "The transformed output for input nu is nu.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "The transformed output for input nu is nu.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "no_context",
+          "probe_index": 1,
+          "prompt_sha256": "8d24cc19ecdeb4e7cf94409c52cb83f49d8736f06b17f91c25e32e84d48852e6",
+          "expected": "nurprho",
+          "generated": "rho",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "rho",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "teaching_context",
+          "probe_index": 0,
+          "prompt_sha256": "4fe589d68f800cf46270489fa57191a7834a98addadb133ceb066192b68e0428",
+          "expected": "nurpnu",
+          "generated": "The transformed output for input nu is nurpnu.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "The transformed output for input nu is nurpnu.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "teaching_context",
+          "probe_index": 1,
+          "prompt_sha256": "4a38f79b644413efa2a2e8b8c982a5800d16bb1a2760b7a5f2b78e50b9ae2fdc",
+          "expected": "nurprho",
+          "generated": "The transformed output for input rho is nurprho.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "The transformed output for input rho is nurprho.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "oracle_context",
+          "probe_index": 0,
+          "prompt_sha256": "0e681c6e594cca7b9983c15b2a17c01ec372287705bcdfbd0d2c99520d1351ce",
+          "expected": "nurpgamma",
+          "generated": "nu",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "nu",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "no_context",
+          "probe_index": 0,
+          "prompt_sha256": "07ed4fd282bf421e437bc7901be7d18625c844b3b5e76c231c8f3cd616bffa2c",
+          "expected": "q2",
+          "generated": "q1",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "q1",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "no_context",
+          "probe_index": 1,
+          "prompt_sha256": "b2f9f6d854f1b770af6f73c3ae51de63f667959e0f1723c68cc90c9590cd079d",
+          "expected": "q2",
+          "generated": "q1",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "q1",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "teaching_context",
+          "probe_index": 0,
+          "prompt_sha256": "726c9d7bf71ac3c506eb7020bac5b3bdca73eae2ca17c1bb4621b58a076b0021",
+          "expected": "q2",
+          "generated": "q0",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "q0",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "teaching_context",
+          "probe_index": 1,
+          "prompt_sha256": "cabb2ab4a56dbc784bc57e1f5e3d69ad34e2a77b7f77125a2f565e5960389987",
+          "expected": "q2",
+          "generated": "q1",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "q1",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "oracle_context",
+          "probe_index": 0,
+          "prompt_sha256": "a4c7aeac39ff9cc90f2fc615cf4f5bca6f6364f2759d282ac1eecae64e24e0d5",
+          "expected": "q2",
+          "generated": "q2",
+          "correct": true,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "q2",
+          "content_only_counterfactual_correct": true
+        }
+      ]
+    },
+    "articulation-v4": {
+      "schema_version": "oczy/r20-articulation-diagnostic/v1",
+      "classification": "DEV_DIAGNOSTIC_ONLY",
+      "meta_test_accessed": false,
+      "source_root": "/home/nyanpasu/Desktop/code/kinoSoft/oczy/src",
+      "organ_source_sha256": "8d9c183a73685efcbd2f7d6e952adb6c222aa2cb13443a227145df5ecbe258c9",
+      "calibration_accessed": false,
+      "optimizer_steps": 0,
+      "dev_view_sha256": "bfb1a4003c421df3a14345bdcc6ddabad2d6ae252a5aadd6414d0cf0ba07fea6",
+      "scorer_sha256": "e5d746d0477c489157d1699e2ae73dfcc8ac92998719de1a06d92fcff4b1c742",
+      "instrument_id": "meta_cortex/v4",
+      "amendment_manifest_sha256": "d58adb749f4112f2920f08e0dbe0ce5c6a1ee7711f562faee4e41072eccc8764",
+      "diagnostic_source_sha256": "99e290b20dd90bd91975d8f128d453b35dc1859467d2b402adbe38d6471bfdca",
+      "organ_hash_before": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+      "organ_hash_after": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+      "rows": [
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "no_context",
+          "probe_index": 0,
+          "prompt_sha256": "cae189d6afc77fe46647ec5c1f005665e8b82400cd7c8e0565dd892a93c92b1a",
+          "expected": "left",
+          "generated": "dax",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "dax",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "no_context",
+          "probe_index": 1,
+          "prompt_sha256": "92baffe9ab07f730bdec40d044c987c8461cbb3941444568082247f4862581a6",
+          "expected": "rise",
+          "generated": "dax",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "dax",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "no_context",
+          "probe_index": 2,
+          "prompt_sha256": "390f9aad66e7a50cd32f35d09b32f26180858e6b34062e345888e14e473cc86a",
+          "expected": "left",
+          "generated": "None.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "None.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "teaching_context",
+          "probe_index": 0,
+          "prompt_sha256": "b4bd56dbcd20c413bb258ea0b4250d31e20cfa1d32628c6a6d208755a7188924",
+          "expected": "left",
+          "generated": "dax",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "dax",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "teaching_context",
+          "probe_index": 1,
+          "prompt_sha256": "acb50cf4a19a2b7ad5aa9264f030915c763f2153174144c80eb23a8f78f1f658",
+          "expected": "rise",
+          "generated": "dax",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "dax",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "teaching_context",
+          "probe_index": 2,
+          "prompt_sha256": "68c4ddd723dade8db35a120abdd88de065974daa466341f6f5205f1d7f453411",
+          "expected": "left",
+          "generated": "dax demands the token rise.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "dax demands the token rise.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "contextual_remap",
+          "rule_fingerprint": "6504988bf3d452493ebcfa0659fef74e26b5f2c8634b3b5cdb183e3439cbabc5",
+          "condition": "oracle_context",
+          "probe_index": 0,
+          "prompt_sha256": "0fdc2ead6430c34a92cc3dabc92fa8607fdee61d87f6259f6b86cbf43920635a",
+          "expected": "left",
+          "generated": "rise",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "rise",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "no_context",
+          "probe_index": 0,
+          "prompt_sha256": "98e2440221cf914974dc5cc9d22224355285be4952e88a57136a95b568efcc51",
+          "expected": "nurpnu",
+          "generated": "The transformed output for input nu is nu.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "The transformed output for input nu is nu.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "no_context",
+          "probe_index": 1,
+          "prompt_sha256": "8d24cc19ecdeb4e7cf94409c52cb83f49d8736f06b17f91c25e32e84d48852e6",
+          "expected": "nurprho",
+          "generated": "rho",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "rho",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "teaching_context",
+          "probe_index": 0,
+          "prompt_sha256": "4fe589d68f800cf46270489fa57191a7834a98addadb133ceb066192b68e0428",
+          "expected": "nurpnu",
+          "generated": "The transformed output for input nu is nurpnu.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "The transformed output for input nu is nurpnu.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "teaching_context",
+          "probe_index": 1,
+          "prompt_sha256": "4a38f79b644413efa2a2e8b8c982a5800d16bb1a2760b7a5f2b78e50b9ae2fdc",
+          "expected": "nurprho",
+          "generated": "The transformed output for input rho is nurprho.",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "The transformed output for input rho is nurprho.",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "rule_transformation",
+          "rule_fingerprint": "5d0d9504e88e6161018e1178bc198a4bce181d3998b1f5dd94c85375542c6b8c",
+          "condition": "oracle_context",
+          "probe_index": 0,
+          "prompt_sha256": "14c2512026f54ac2297cda04722942d385ca3ca8ec0cb0e9eabeda360a5d75b0",
+          "expected": "nurpgamma",
+          "generated": "nurpgamma",
+          "correct": true,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "nurpgamma",
+          "content_only_counterfactual_correct": true
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "no_context",
+          "probe_index": 0,
+          "prompt_sha256": "07ed4fd282bf421e437bc7901be7d18625c844b3b5e76c231c8f3cd616bffa2c",
+          "expected": "q2",
+          "generated": "q1",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "q1",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "no_context",
+          "probe_index": 1,
+          "prompt_sha256": "b2f9f6d854f1b770af6f73c3ae51de63f667959e0f1723c68cc90c9590cd079d",
+          "expected": "q2",
+          "generated": "q1",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "q1",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "teaching_context",
+          "probe_index": 0,
+          "prompt_sha256": "726c9d7bf71ac3c506eb7020bac5b3bdca73eae2ca17c1bb4621b58a076b0021",
+          "expected": "q2",
+          "generated": "q0",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "q0",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "teaching_context",
+          "probe_index": 1,
+          "prompt_sha256": "cabb2ab4a56dbc784bc57e1f5e3d69ad34e2a77b7f77125a2f565e5960389987",
+          "expected": "q2",
+          "generated": "q1",
+          "correct": false,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "q1",
+          "content_only_counterfactual_correct": false
+        },
+        {
+          "family": "finite_state",
+          "rule_fingerprint": "d34a7a9e08cc5d390eb906fe74a83f36544fa06dda71d2a4506b40ec260983e6",
+          "condition": "oracle_context",
+          "probe_index": 0,
+          "prompt_sha256": "a4c7aeac39ff9cc90f2fc615cf4f5bca6f6364f2759d282ac1eecae64e24e0d5",
+          "expected": "q2",
+          "generated": "q2",
+          "correct": true,
+          "contains_special_tokens": false,
+          "content_only_counterfactual": "q2",
+          "content_only_counterfactual_correct": true
+        }
+      ]
+    }
+  },
+  "v3_to_v4_prompt_and_output_comparison": [
+    {
+      "family": "contextual_remap",
+      "condition": "no_context",
+      "probe_index": 0,
+      "same_prompt": true,
+      "same_generated": true
+    },
+    {
+      "family": "contextual_remap",
+      "condition": "no_context",
+      "probe_index": 1,
+      "same_prompt": true,
+      "same_generated": true
+    },
+    {
+      "family": "contextual_remap",
+      "condition": "no_context",
+      "probe_index": 2,
+      "same_prompt": true,
+      "same_generated": true
+    },
+    {
+      "family": "contextual_remap",
+      "condition": "teaching_context",
+      "probe_index": 0,
+      "same_prompt": true,
+      "same_generated": true
+    },
+    {
+      "family": "contextual_remap",
+      "condition": "teaching_context",
+      "probe_index": 1,
+      "same_prompt": true,
+      "same_generated": true
+    },
+    {
+      "family": "contextual_remap",
+      "condition": "teaching_context",
+      "probe_index": 2,
+      "same_prompt": true,
+      "same_generated": true
+    },
+    {
+      "family": "contextual_remap",
+      "condition": "oracle_context",
+      "probe_index": 0,
+      "same_prompt": true,
+      "same_generated": true
+    },
+    {
+      "family": "rule_transformation",
+      "condition": "no_context",
+      "probe_index": 0,
+      "same_prompt": true,
+      "same_generated": true
+    },
+    {
+      "family": "rule_transformation",
+      "condition": "no_context",
+      "probe_index": 1,
+      "same_prompt": true,
+      "same_generated": true
+    },
+    {
+      "family": "rule_transformation",
+      "condition": "teaching_context",
+      "probe_index": 0,
+      "same_prompt": true,
+      "same_generated": true
+    },
+    {
+      "family": "rule_transformation",
+      "condition": "teaching_context",
+      "probe_index": 1,
+      "same_prompt": true,
+      "same_generated": true
+    },
+    {
+      "family": "rule_transformation",
+      "condition": "oracle_context",
+      "probe_index": 0,
+      "same_prompt": false,
+      "same_generated": false
+    },
+    {
+      "family": "finite_state",
+      "condition": "no_context",
+      "probe_index": 0,
+      "same_prompt": true,
+      "same_generated": true
+    },
+    {
+      "family": "finite_state",
+      "condition": "no_context",
+      "probe_index": 1,
+      "same_prompt": true,
+      "same_generated": true
+    },
+    {
+      "family": "finite_state",
+      "condition": "teaching_context",
+      "probe_index": 0,
+      "same_prompt": true,
+      "same_generated": true
+    },
+    {
+      "family": "finite_state",
+      "condition": "teaching_context",
+      "probe_index": 1,
+      "same_prompt": true,
+      "same_generated": true
+    },
+    {
+      "family": "finite_state",
+      "condition": "oracle_context",
+      "probe_index": 0,
+      "same_prompt": true,
+      "same_generated": true
+    }
+  ],
+  "supporting_artifacts": {
+    "path-probe.json": {
+      "sha256": "4135351b1cb22a362319dbedd20fcade5ed1da66cb9458c286a7fb624774f25b",
+      "data": {
+        "original_path": "/home/nyanpasu/.cache/huggingface/hub/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/7ae557604adf67be50417f59c2c2f167def9a775",
+        "provenance_model_root": "/kaggle/input/models/qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
+        "original_hash": "2621e258b2fe8d37b2b5743f5e1d3d04037d3d0d409bbad71dd2ba18240498ce",
+        "path_only_hash": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+        "restored_hash": "2621e258b2fe8d37b2b5743f5e1d3d04037d3d0d409bbad71dd2ba18240498ce",
+        "expected_remote_hash": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+        "config": {
+          "vocab_size": 151936,
+          "max_position_embeddings": 32768,
+          "hidden_size": 896,
+          "intermediate_size": 4864,
+          "num_hidden_layers": 24,
+          "num_attention_heads": 14,
+          "use_sliding_window": false,
+          "sliding_window": null,
+          "max_window_layers": 21,
+          "num_key_value_heads": 2,
+          "hidden_act": "silu",
+          "initializer_range": 0.02,
+          "rms_norm_eps": 1e-06,
+          "use_cache": true,
+          "attention_dropout": 0.0,
+          "layer_types": [
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention"
+          ],
+          "pad_token_id": 151645,
+          "bos_token_id": 151643,
+          "eos_token_id": 151645,
+          "tie_word_embeddings": true,
+          "rope_parameters": {
+            "rope_theta": 1000000.0,
+            "rope_type": "default"
+          },
+          "return_dict": true,
+          "output_hidden_states": false,
+          "dtype": "float32",
+          "chunk_size_feed_forward": 0,
+          "is_encoder_decoder": false,
+          "architectures": [
+            "Qwen2ForCausalLM"
+          ],
+          "id2label": {
+            "0": "LABEL_0",
+            "1": "LABEL_1"
+          },
+          "label2id": {
+            "LABEL_0": 0,
+            "LABEL_1": 1
+          },
+          "problem_type": null,
+          "_name_or_path": "/home/nyanpasu/.cache/huggingface/hub/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/7ae557604adf67be50417f59c2c2f167def9a775",
+          "transformers_version": "5.0.0",
+          "model_type": "qwen2",
+          "output_attentions": false
+        },
+        "torch": "2.10.0+cpu",
+        "python": "3.12.13 (main, Jun 23 2026, 15:18:55) [Clang 22.1.3 ]"
+      }
+    },
+    "executions.json": {
+      "sha256": "f40bd78920e67c5fffea06c3dc800261f89b762e7530fb2be36b68eb47d32371",
+      "data": [
+        {
+          "name": "articulation-before",
+          "source": "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/source/src",
+          "command": [
+            "bwrap",
+            "--die-with-parent",
+            "--unshare-net",
+            "--tmpfs",
+            "/",
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--symlink",
+            "usr/bin",
+            "/bin",
+            "--symlink",
+            "usr/lib",
+            "/lib",
+            "--symlink",
+            "usr/lib64",
+            "/lib64",
+            "--ro-bind",
+            "/etc",
+            "/etc",
+            "--ro-bind",
+            "/home",
+            "/home",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            "--ro-bind",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/model",
+            "/kaggle/input/models/qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
+            "--bind",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity",
+            "--chdir",
+            "/home/nyanpasu/Desktop/code/kinoSoft/oczy",
+            "--",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/runtime/bin/python",
+            "/home/nyanpasu/Desktop/code/kinoSoft/oczy/scripts/probe_r20_articulation.py",
+            "--public-root",
+            "/home/nyanpasu/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/instrument/instrument/public",
+            "--output",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/articulation-before"
+          ],
+          "exit_code": 0,
+          "seconds": 82.52234071597923
+        },
+        {
+          "name": "articulation-after",
+          "source": "/home/nyanpasu/Desktop/code/kinoSoft/oczy/src",
+          "command": [
+            "bwrap",
+            "--die-with-parent",
+            "--unshare-net",
+            "--tmpfs",
+            "/",
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--symlink",
+            "usr/bin",
+            "/bin",
+            "--symlink",
+            "usr/lib",
+            "/lib",
+            "--symlink",
+            "usr/lib64",
+            "/lib64",
+            "--ro-bind",
+            "/etc",
+            "/etc",
+            "--ro-bind",
+            "/home",
+            "/home",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            "--ro-bind",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/model",
+            "/kaggle/input/models/qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
+            "--bind",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity",
+            "--chdir",
+            "/home/nyanpasu/Desktop/code/kinoSoft/oczy",
+            "--",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/runtime/bin/python",
+            "/home/nyanpasu/Desktop/code/kinoSoft/oczy/scripts/probe_r20_articulation.py",
+            "--public-root",
+            "/home/nyanpasu/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/instrument/instrument/public",
+            "--output",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/articulation-after"
+          ],
+          "exit_code": 0,
+          "seconds": 86.87912444595713
+        },
+        {
+          "name": "cell-reproduction",
+          "source": "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/source/src",
+          "command": [
+            "bwrap",
+            "--die-with-parent",
+            "--unshare-net",
+            "--tmpfs",
+            "/",
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--symlink",
+            "usr/bin",
+            "/bin",
+            "--symlink",
+            "usr/lib",
+            "/lib",
+            "--symlink",
+            "usr/lib64",
+            "/lib64",
+            "--ro-bind",
+            "/etc",
+            "/etc",
+            "--ro-bind",
+            "/home",
+            "/home",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            "--ro-bind",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/model",
+            "/kaggle/input/models/qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
+            "--bind",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity",
+            "--chdir",
+            "/home/nyanpasu/Desktop/code/kinoSoft/oczy",
+            "--",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/runtime/bin/python",
+            "/home/nyanpasu/Desktop/code/kinoSoft/oczy/scripts/reproduce_r20_cell.py",
+            "--public-root",
+            "/home/nyanpasu/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/instrument/instrument/public",
+            "--checkpoint",
+            "/home/nyanpasu/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/local-confirmation/checkpoints/d0",
+            "--reference-shard",
+            "/home/nyanpasu/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/calibration-a8c98d6/results/cal3-d0-t00-03/shard-d0-t00-03.json",
+            "--output",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/cell-reproduction",
+            "--task-index",
+            "0",
+            "--dev-seed-index",
+            "0",
+            "--eval-seed-index",
+            "0"
+          ],
+          "exit_code": 1,
+          "seconds": 583.1383824860677
+        }
+      ]
+    },
+    "approved-amendment-executions.json": {
+      "sha256": "51636b1bf5e4c63708d6b81a2e573eea19511e010fa298001bee7bfdc1eb4a66",
+      "data": [
+        {
+          "name": "articulation-v3",
+          "command": [
+            "bwrap",
+            "--die-with-parent",
+            "--unshare-net",
+            "--tmpfs",
+            "/",
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--symlink",
+            "usr/bin",
+            "/bin",
+            "--symlink",
+            "usr/lib",
+            "/lib",
+            "--symlink",
+            "usr/lib64",
+            "/lib64",
+            "--ro-bind",
+            "/etc",
+            "/etc",
+            "--ro-bind",
+            "/home",
+            "/home",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            "--bind",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity",
+            "--ro-bind",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/model",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/model",
+            "--ro-bind",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/model",
+            "/kaggle/input/models/qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
+            "--chdir",
+            "/home/nyanpasu/Desktop/code/kinoSoft/oczy",
+            "--",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/runtime/bin/python",
+            "/home/nyanpasu/Desktop/code/kinoSoft/oczy/scripts/probe_r20_articulation.py",
+            "--public-root",
+            "/home/nyanpasu/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/instrument/instrument/public",
+            "--repair-instrument",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/instrument-v3",
+            "--output",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/articulation-v3"
+          ],
+          "exit_code": 0,
+          "seconds": 35.8785968410084,
+          "manifest_sha256": "5c944abc72fac57b29890da46d9a3b3807c551c5c2b0370c24d771c5616162b5",
+          "source_commit": "e71268bc9cb01839995e5b3db69d0ad43a9ef04d",
+          "source_state": "local uncommitted reviewed diagnostic changes",
+          "probe_script_sha256": "99e290b20dd90bd91975d8f128d453b35dc1859467d2b402adbe38d6471bfdca"
+        },
+        {
+          "name": "articulation-v4",
+          "command": [
+            "bwrap",
+            "--die-with-parent",
+            "--unshare-net",
+            "--tmpfs",
+            "/",
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--symlink",
+            "usr/bin",
+            "/bin",
+            "--symlink",
+            "usr/lib",
+            "/lib",
+            "--symlink",
+            "usr/lib64",
+            "/lib64",
+            "--ro-bind",
+            "/etc",
+            "/etc",
+            "--ro-bind",
+            "/home",
+            "/home",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            "--bind",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity",
+            "--ro-bind",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/model",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/model",
+            "--ro-bind",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/model",
+            "/kaggle/input/models/qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
+            "--chdir",
+            "/home/nyanpasu/Desktop/code/kinoSoft/oczy",
+            "--",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/runtime/bin/python",
+            "/home/nyanpasu/Desktop/code/kinoSoft/oczy/scripts/probe_r20_articulation.py",
+            "--public-root",
+            "/home/nyanpasu/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/instrument/instrument/public",
+            "--repair-instrument",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/instrument-v4",
+            "--output",
+            "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/articulation-v4"
+          ],
+          "exit_code": 0,
+          "seconds": 41.430397078976966,
+          "manifest_sha256": "d58adb749f4112f2920f08e0dbe0ce5c6a1ee7711f562faee4e41072eccc8764",
+          "source_commit": "e71268bc9cb01839995e5b3db69d0ad43a9ef04d",
+          "source_state": "local uncommitted reviewed diagnostic changes",
+          "probe_script_sha256": "99e290b20dd90bd91975d8f128d453b35dc1859467d2b402adbe38d6471bfdca"
+        }
+      ]
+    },
+    "prompt-distribution-audit.json": {
+      "sha256": "b18848c5bfe2258bf2444d3c7ce9c1007d5311a46727dfdae029c715fe305a90",
+      "data": {
+        "public_tasks_match_frozen_generator": true,
+        "meta_train": 90,
+        "meta_validation": 15,
+        "transformation_template_counts": {
+          "substitution": 9,
+          "permutation": 8,
+          "conditional": 10,
+          "composition": 8
+        },
+        "all_probe_count": 916,
+        "v3_task_hash": "145dc35453970a0ec92294ca54e90dc4ee8b5df3c62311c2e41fc2684eeb15b3",
+        "v4_task_hash": "597bd755c65cbfe17f73d323e20e20d7ce73d003fa53c574b8f9eb4867ea01c5",
+        "no_sealed_or_calibration_payload_accessed": true
+      }
+    },
+    "cell-reproduction/comparison.json": {
+      "sha256": "b0cbe7910ba3efc71e8b39c1f5f5f52a2222affadc9ee1afa49246bc42584ce8",
+      "data": {
+        "schema_version": "oczy/r20-cell-reproduction-diagnostic/v1",
+        "classification": "DEV_DIAGNOSTIC_ONLY",
+        "meta_test_accessed": false,
+        "no_update_repeats_reproduced": false,
+        "calibration_shard_written": false,
+        "organ_hash_before": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+        "organ_hash_after": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+        "theta_hash_before": "97f9a2fc1afd23cfa1a84eee605dd5978faffa7c6df648a37e15d41cee4d923e",
+        "theta_hash_after": "97f9a2fc1afd23cfa1a84eee605dd5978faffa7c6df648a37e15d41cee4d923e",
+        "all_cell_fields_equal": false,
+        "optimizer_steps": 0,
+        "record": {
+          "developmental_seed_index": 0,
+          "evaluation_seed_index": 0,
+          "developmental_seed": 7057119071884125452,
+          "evaluation_seed": 3537091104595233684,
+          "rule_fingerprint": "454b338a067df7427244859f6f3af9a54996dcb11a2dd91505146ccd1b2b4b67",
+          "family": "contextual_remap",
+          "conditions": [
+            {
+              "family": "contextual_remap",
+              "rule_fingerprint": "454b338a067df7427244859f6f3af9a54996dcb11a2dd91505146ccd1b2b4b67",
+              "assignment_fingerprint": "454b338a067df7427244859f6f3af9a54996dcb11a2dd91505146ccd1b2b4b67",
+              "composition_fingerprint": "0c529240a7c3d0d0dbbe5f111cddfb47a132ebefa62358e2fcac754d14426e2e",
+              "paraphrase_group_fingerprint": "94bb223ecf3874339aa49ee17acf45a2d001947e84dace4d2827898b1d78cba4",
+              "developmental_seed_index": 0,
+              "evaluation_seed_index": 0,
+              "developmental_seed": 7057119071884125452,
+              "evaluation_seed": 3537091104595233684,
+              "condition": "update_disabled",
+              "score_vector_hash": "c015371fd8ed2bdf4be6583ee51c4ab207eeb53fc70b7668a32f75e363997912",
+              "same_rule": {
+                "correct": 0,
+                "total": 3
+              },
+              "transfer": {
+                "correct": 0,
+                "total": 2
+              },
+              "composition": {
+                "correct": 0,
+                "total": 1
+              },
+              "specificity": {
+                "correct": 0,
+                "total": 1
+              },
+              "pre_learning_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "immediately_pre_deletion_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "post_deletion_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "theta_hash": "97f9a2fc1afd23cfa1a84eee605dd5978faffa7c6df648a37e15d41cee4d923e",
+              "organ_hash": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+              "state_hash": "b3c705dd2713f9fac8900bba98057f805651fd4c81f20ee3c99488b0b27b2fe6",
+              "optimizer_step_count": 0,
+              "trace_count_after": 0,
+              "fast_zero": true,
+              "slow_zero": true
+            },
+            {
+              "family": "contextual_remap",
+              "rule_fingerprint": "454b338a067df7427244859f6f3af9a54996dcb11a2dd91505146ccd1b2b4b67",
+              "assignment_fingerprint": "454b338a067df7427244859f6f3af9a54996dcb11a2dd91505146ccd1b2b4b67",
+              "composition_fingerprint": "0c529240a7c3d0d0dbbe5f111cddfb47a132ebefa62358e2fcac754d14426e2e",
+              "paraphrase_group_fingerprint": "94bb223ecf3874339aa49ee17acf45a2d001947e84dace4d2827898b1d78cba4",
+              "developmental_seed_index": 0,
+              "evaluation_seed_index": 0,
+              "developmental_seed": 7057119071884125452,
+              "evaluation_seed": 3537091104595233684,
+              "condition": "untrained_rule",
+              "score_vector_hash": "c015371fd8ed2bdf4be6583ee51c4ab207eeb53fc70b7668a32f75e363997912",
+              "same_rule": {
+                "correct": 0,
+                "total": 3
+              },
+              "transfer": {
+                "correct": 0,
+                "total": 2
+              },
+              "composition": {
+                "correct": 0,
+                "total": 1
+              },
+              "specificity": {
+                "correct": 0,
+                "total": 1
+              },
+              "pre_learning_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "immediately_pre_deletion_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "post_deletion_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "theta_hash": "97f9a2fc1afd23cfa1a84eee605dd5978faffa7c6df648a37e15d41cee4d923e",
+              "organ_hash": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+              "state_hash": "fa738d7f783fc9f8bdea014d51dc896b8d3e00808f832a458dfc23d7a9765210",
+              "optimizer_step_count": 0,
+              "trace_count_after": 0,
+              "fast_zero": true,
+              "slow_zero": false
+            },
+            {
+              "family": "contextual_remap",
+              "rule_fingerprint": "454b338a067df7427244859f6f3af9a54996dcb11a2dd91505146ccd1b2b4b67",
+              "assignment_fingerprint": "454b338a067df7427244859f6f3af9a54996dcb11a2dd91505146ccd1b2b4b67",
+              "composition_fingerprint": "0c529240a7c3d0d0dbbe5f111cddfb47a132ebefa62358e2fcac754d14426e2e",
+              "paraphrase_group_fingerprint": "94bb223ecf3874339aa49ee17acf45a2d001947e84dace4d2827898b1d78cba4",
+              "developmental_seed_index": 0,
+              "evaluation_seed_index": 0,
+              "developmental_seed": 7057119071884125452,
+              "evaluation_seed": 3537091104595233684,
+              "condition": "trained",
+              "score_vector_hash": "c015371fd8ed2bdf4be6583ee51c4ab207eeb53fc70b7668a32f75e363997912",
+              "same_rule": {
+                "correct": 0,
+                "total": 3
+              },
+              "transfer": {
+                "correct": 0,
+                "total": 2
+              },
+              "composition": {
+                "correct": 0,
+                "total": 1
+              },
+              "specificity": {
+                "correct": 0,
+                "total": 1
+              },
+              "pre_learning_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "immediately_pre_deletion_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "post_deletion_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "theta_hash": "97f9a2fc1afd23cfa1a84eee605dd5978faffa7c6df648a37e15d41cee4d923e",
+              "organ_hash": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+              "state_hash": "b741ed90d3789ab2b96ae8418abf7d10a96dfd5996437aab36ea3e970ef1f6ea",
+              "optimizer_step_count": 0,
+              "trace_count_after": 0,
+              "fast_zero": true,
+              "slow_zero": false
+            },
+            {
+              "family": "contextual_remap",
+              "rule_fingerprint": "454b338a067df7427244859f6f3af9a54996dcb11a2dd91505146ccd1b2b4b67",
+              "assignment_fingerprint": "454b338a067df7427244859f6f3af9a54996dcb11a2dd91505146ccd1b2b4b67",
+              "composition_fingerprint": "0c529240a7c3d0d0dbbe5f111cddfb47a132ebefa62358e2fcac754d14426e2e",
+              "paraphrase_group_fingerprint": "94bb223ecf3874339aa49ee17acf45a2d001947e84dace4d2827898b1d78cba4",
+              "developmental_seed_index": 0,
+              "evaluation_seed_index": 0,
+              "developmental_seed": 7057119071884125452,
+              "evaluation_seed": 3537091104595233684,
+              "condition": "feedback_shuffled",
+              "score_vector_hash": "c015371fd8ed2bdf4be6583ee51c4ab207eeb53fc70b7668a32f75e363997912",
+              "same_rule": {
+                "correct": 0,
+                "total": 3
+              },
+              "transfer": {
+                "correct": 0,
+                "total": 2
+              },
+              "composition": {
+                "correct": 0,
+                "total": 1
+              },
+              "specificity": {
+                "correct": 0,
+                "total": 1
+              },
+              "pre_learning_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "immediately_pre_deletion_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "post_deletion_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "theta_hash": "97f9a2fc1afd23cfa1a84eee605dd5978faffa7c6df648a37e15d41cee4d923e",
+              "organ_hash": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+              "state_hash": "520a11142be541aa2c39fa8f96ef547b9b5375d9c9b1ac57da324820e5a2e757",
+              "optimizer_step_count": 0,
+              "trace_count_after": 0,
+              "fast_zero": true,
+              "slow_zero": false
+            },
+            {
+              "family": "contextual_remap",
+              "rule_fingerprint": "454b338a067df7427244859f6f3af9a54996dcb11a2dd91505146ccd1b2b4b67",
+              "assignment_fingerprint": "454b338a067df7427244859f6f3af9a54996dcb11a2dd91505146ccd1b2b4b67",
+              "composition_fingerprint": "0c529240a7c3d0d0dbbe5f111cddfb47a132ebefa62358e2fcac754d14426e2e",
+              "paraphrase_group_fingerprint": "94bb223ecf3874339aa49ee17acf45a2d001947e84dace4d2827898b1d78cba4",
+              "developmental_seed_index": 0,
+              "evaluation_seed_index": 0,
+              "developmental_seed": 7057119071884125452,
+              "evaluation_seed": 3537091104595233684,
+              "condition": "state_zeroed",
+              "score_vector_hash": "c015371fd8ed2bdf4be6583ee51c4ab207eeb53fc70b7668a32f75e363997912",
+              "same_rule": {
+                "correct": 0,
+                "total": 3
+              },
+              "transfer": {
+                "correct": 0,
+                "total": 2
+              },
+              "composition": {
+                "correct": 0,
+                "total": 1
+              },
+              "specificity": {
+                "correct": 0,
+                "total": 1
+              },
+              "pre_learning_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "immediately_pre_deletion_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "post_deletion_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "theta_hash": "97f9a2fc1afd23cfa1a84eee605dd5978faffa7c6df648a37e15d41cee4d923e",
+              "organ_hash": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+              "state_hash": "b3c705dd2713f9fac8900bba98057f805651fd4c81f20ee3c99488b0b27b2fe6",
+              "optimizer_step_count": 0,
+              "trace_count_after": 0,
+              "fast_zero": true,
+              "slow_zero": true
+            },
+            {
+              "family": "contextual_remap",
+              "rule_fingerprint": "454b338a067df7427244859f6f3af9a54996dcb11a2dd91505146ccd1b2b4b67",
+              "assignment_fingerprint": "454b338a067df7427244859f6f3af9a54996dcb11a2dd91505146ccd1b2b4b67",
+              "composition_fingerprint": "0c529240a7c3d0d0dbbe5f111cddfb47a132ebefa62358e2fcac754d14426e2e",
+              "paraphrase_group_fingerprint": "94bb223ecf3874339aa49ee17acf45a2d001947e84dace4d2827898b1d78cba4",
+              "developmental_seed_index": 0,
+              "evaluation_seed_index": 0,
+              "developmental_seed": 7057119071884125452,
+              "evaluation_seed": 3537091104595233684,
+              "condition": "state_swapped",
+              "score_vector_hash": "c015371fd8ed2bdf4be6583ee51c4ab207eeb53fc70b7668a32f75e363997912",
+              "same_rule": {
+                "correct": 0,
+                "total": 3
+              },
+              "transfer": {
+                "correct": 0,
+                "total": 2
+              },
+              "composition": {
+                "correct": 0,
+                "total": 1
+              },
+              "specificity": {
+                "correct": 0,
+                "total": 1
+              },
+              "pre_learning_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "immediately_pre_deletion_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "post_deletion_primary": {
+                "correct": 0,
+                "total": 6
+              },
+              "theta_hash": "97f9a2fc1afd23cfa1a84eee605dd5978faffa7c6df648a37e15d41cee4d923e",
+              "organ_hash": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+              "state_hash": "984af2fab43b430e1fd93b4ccb16b5e1098cc1b4589cc8d7b5c5e441e53ef10a",
+              "optimizer_step_count": 0,
+              "trace_count_after": 0,
+              "fast_zero": true,
+              "slow_zero": false
+            }
+          ]
+        }
+      }
+    },
+    "cell-reproduction/differences.json": {
+      "sha256": "75af7df2f521c8dfb2e1cc650f8f8bf86f6ee075d85ed70201b85782672ff79b",
+      "data": {
+        "score_and_non_state_hash_fields_equal": true,
+        "all_cell_fields_equal": false,
+        "differences": [
+          {
+            "condition": "untrained_rule",
+            "field": "state_hash",
+            "local": "fa738d7f783fc9f8bdea014d51dc896b8d3e00808f832a458dfc23d7a9765210",
+            "remote": "43b3af1559da5a45258327d147e4e69460ccde5d22e29f8e37bb055892778a1a"
+          },
+          {
+            "condition": "trained",
+            "field": "state_hash",
+            "local": "b741ed90d3789ab2b96ae8418abf7d10a96dfd5996437aab36ea3e970ef1f6ea",
+            "remote": "1fa514184f3e92543d30b1b6933bdcb5c56c176e6335dc540c1c1f47e334e105"
+          },
+          {
+            "condition": "feedback_shuffled",
+            "field": "state_hash",
+            "local": "520a11142be541aa2c39fa8f96ef547b9b5375d9c9b1ac57da324820e5a2e757",
+            "remote": "ebf6130e8a3553df79bf79090fef6084cfd9ba6b4f7a6bcbd5642ec6fbe71085"
+          },
+          {
+            "condition": "state_swapped",
+            "field": "state_hash",
+            "local": "984af2fab43b430e1fd93b4ccb16b5e1098cc1b4589cc8d7b5c5e441e53ef10a",
+            "remote": "f567876207306bcd6e9624a2ae1b0ead5f3e7aa15f3a8e1ec361156b60702930"
+          }
+        ],
+        "interpretation": "Scores reproduced for one cell; exact state reproduction unresolved. CPU numerical differences are a hypothesis, not established."
+      }
+    },
+    "reproduction-01/reproduction.json": {
+      "sha256": "7d5b62e68369d2bd27c06ee3354fb7bf16e3cbf90aeb11357ef651ba1ffa21d7",
+      "data": {
+        "schema_version": "oczy/r20-local-reproduction/v1",
+        "source_commit": "a8c98d638209a8425b14a0f853e9fc46ae7da581",
+        "runtime_manifest_sha256": "a6214355c1c6b9192d435e62f3add6bef5db8c3a6c1cf3a55cb2a9dbfc91182e",
+        "provenance_sha256": "7964391d3f30ede70aed49b24ed5be8a159072ad8ee3c977b261ef8d34cbc8a7",
+        "model_root": "/kaggle/input/models/qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
+        "expected_organ_hash": "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+        "command": [
+          "bwrap",
+          "--die-with-parent",
+          "--unshare-net",
+          "--tmpfs",
+          "/",
+          "--ro-bind",
+          "/usr",
+          "/usr",
+          "--symlink",
+          "usr/bin",
+          "/bin",
+          "--symlink",
+          "usr/lib",
+          "/lib",
+          "--symlink",
+          "usr/lib64",
+          "/lib64",
+          "--ro-bind",
+          "/etc",
+          "/etc",
+          "--ro-bind",
+          "/home",
+          "/home",
+          "--proc",
+          "/proc",
+          "--dev",
+          "/dev",
+          "--tmpfs",
+          "/tmp",
+          "--ro-bind",
+          "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/reproduction-01/model",
+          "/kaggle/input/models/qwen-lm/qwen2.5/transformers/0.5b-instruct/1",
+          "--bind",
+          "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/reproduction-01",
+          "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/reproduction-01",
+          "--chdir",
+          "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/source",
+          "--",
+          "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/runtime/bin/python",
+          "-m",
+          "oczy.experiments.meta_cortex",
+          "collect-calibration-shard",
+          "--calibration-view",
+          "/home/nyanpasu/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/instrument/instrument/public/CALIBRATION_VIEW.json",
+          "--checkpoint",
+          "/home/nyanpasu/.local/state/oczy/remote-queue/campaigns/r20-int8-dev-calibration-v6/analysis-a8c98d6/local-confirmation/checkpoints/d0",
+          "--model-id",
+          "Qwen/Qwen2.5-0.5B-Instruct",
+          "--organ-hash",
+          "a342431c0fdb02bf1bbed95255795ad52df3e799c821318c6206021a46a3f9ea",
+          "--dev-seed-index",
+          "0",
+          "--eval-seed-indices",
+          "0",
+          "--task-start",
+          "0",
+          "--task-end",
+          "1",
+          "--output",
+          "/home/nyanpasu/.local/state/oczy/diagnostics/2026-09-11-organ-identity/reproduction-01/shard.json"
+        ],
+        "task_index": 0,
+        "evaluation_seed_index": 0,
+        "developmental_seed_index": 0,
+        "network_disabled": true,
+        "meta_test_accessed": false,
+        "exit_code": -15,
+        "elapsed_seconds": 1076.6589936011005,
+        "shard_exists": false
+      }
+    }
+  },
+  "next_unblocker": "Teaching-context articulation: no-context and teaching are both 0/7 in v2/v3/v4. Recovery denominator remains zero; no serialization optimization or R20 promotion authorized by these diagnostics."
+}

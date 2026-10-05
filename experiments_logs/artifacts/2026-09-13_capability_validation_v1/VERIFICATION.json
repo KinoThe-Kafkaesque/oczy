@@ -1,0 +1,58 @@
+{
+  "scientific_audit": {
+    "action_verdicts_recomputed": 20,
+    "fresh_process_pids": [
+      2059412,
+      2068531,
+      2099950,
+      2105311
+    ],
+    "meta_test_accessed": false,
+    "model_and_scorer_unchanged": true,
+    "no_forbidden_registered_files_visible": true,
+    "optimizer_steps": 216,
+    "probe_action_and_update_coverage_exact": true,
+    "scores_independently_recomputed": 576,
+    "seconds": 1875.1399049839965,
+    "source_input_and_state_hashes_verified": true
+  },
+  "pytest": {
+    "focused_tests_passed": 47,
+    "retention_tests_rerun_passed": 3
+  },
+  "ruff": "all changed suite/guard files pass",
+  "authorized_eval_guard": "HEAD...HEAD --allow, EVAL_CHANGE_APPROVED=1, exit 0",
+  "prior_pilot_manifest_unchanged": "c323a00b9bd8740c6574918ddb0c29205ba3e4ed044a805638fd5898b1f4e1ec",
+  "action_execution_components": [
+    {
+      "condition": "no_context",
+      "seed": null,
+      "exact_execution_and_outcome": 3,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 0,
+      "exact_execution_and_outcome": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 1,
+      "exact_execution_and_outcome": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 2,
+      "exact_execution_and_outcome": 1,
+      "total": 4
+    },
+    {
+      "condition": "latest_example_retrieval",
+      "seed": null,
+      "exact_execution_and_outcome": 1,
+      "total": 4
+    }
+  ]
+}

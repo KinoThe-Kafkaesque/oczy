@@ -1,0 +1,1 @@
+The correct result for each animal is its name with the letter "z" added at the end.

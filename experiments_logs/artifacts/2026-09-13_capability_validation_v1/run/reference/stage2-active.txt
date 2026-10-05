@@ -1,0 +1,9 @@
+Corrected examples for client amber:
+Input oak -> correct output oakvek
+Input pine -> correct output pinevek
+Input elm -> correct output elmvek
+
+Corrected examples for client cobalt:
+Input birch -> correct output birchmip
+Input cedar -> correct output cedarmip
+Input ash -> correct output ashmip

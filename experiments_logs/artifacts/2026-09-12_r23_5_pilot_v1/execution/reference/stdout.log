@@ -1,0 +1,3 @@
+Skipping import of cpp extensions due to incompatible torch version. Please upgrade to torch >= 2.11.0 (found 2.10.0+cpu).
+Reference complete for pattern 0
+Reference complete for pattern 1

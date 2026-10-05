@@ -1,0 +1,273 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-14T00:10:39.078768+00:00",
+  "title": "Design System: Oczy Learning Workbench",
+  "extensions": {
+    "colorMeta": {
+      "ground": {
+        "role": "neutral",
+        "displayName": "Ink ground",
+        "tonalRamp": [
+          "oklch(15.00% 0.01144 260.64)",
+          "oklch(26.43% 0.01144 260.64)",
+          "oklch(37.86% 0.01144 260.64)",
+          "oklch(49.29% 0.01144 260.64)",
+          "oklch(60.71% 0.01144 260.64)",
+          "oklch(72.14% 0.01144 260.64)",
+          "oklch(83.57% 0.01144 260.64)",
+          "oklch(95.00% 0.01144 260.64)"
+        ],
+        "tonalRampPurpose": "Synthesized OKLCH preview only; the shipped CSS uses the frontmatter color, not this ramp."
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Inset ink",
+        "tonalRamp": [
+          "oklch(15.00% 0.01570 256.82)",
+          "oklch(26.43% 0.01570 256.82)",
+          "oklch(37.86% 0.01570 256.82)",
+          "oklch(49.29% 0.01570 256.82)",
+          "oklch(60.71% 0.01570 256.82)",
+          "oklch(72.14% 0.01570 256.82)",
+          "oklch(83.57% 0.01570 256.82)",
+          "oklch(95.00% 0.01570 256.82)"
+        ],
+        "tonalRampPurpose": "Synthesized OKLCH preview only; the shipped CSS uses the frontmatter color, not this ramp."
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Slate rule",
+        "tonalRamp": [
+          "oklch(15.00% 0.02962 258.35)",
+          "oklch(26.43% 0.02962 258.35)",
+          "oklch(37.86% 0.02962 258.35)",
+          "oklch(49.29% 0.02962 258.35)",
+          "oklch(60.71% 0.02962 258.35)",
+          "oklch(72.14% 0.02962 258.35)",
+          "oklch(83.57% 0.02962 258.35)",
+          "oklch(95.00% 0.02962 258.35)"
+        ],
+        "tonalRampPurpose": "Synthesized OKLCH preview only; the shipped CSS uses the frontmatter color, not this ramp."
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Reading silver",
+        "tonalRamp": [
+          "oklch(15.00% 0.01446 254.61)",
+          "oklch(26.43% 0.01446 254.61)",
+          "oklch(37.86% 0.01446 254.61)",
+          "oklch(49.29% 0.01446 254.61)",
+          "oklch(60.71% 0.01446 254.61)",
+          "oklch(72.14% 0.01446 254.61)",
+          "oklch(83.57% 0.01446 254.61)",
+          "oklch(95.00% 0.01446 254.61)"
+        ],
+        "tonalRampPurpose": "Synthesized OKLCH preview only; the shipped CSS uses the frontmatter color, not this ramp."
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted slate",
+        "tonalRamp": [
+          "oklch(15.00% 0.02675 255.59)",
+          "oklch(26.43% 0.02675 255.59)",
+          "oklch(37.86% 0.02675 255.59)",
+          "oklch(49.29% 0.02675 255.59)",
+          "oklch(60.71% 0.02675 255.59)",
+          "oklch(72.14% 0.02675 255.59)",
+          "oklch(83.57% 0.02675 255.59)",
+          "oklch(95.00% 0.02675 255.59)"
+        ],
+        "tonalRampPurpose": "Synthesized OKLCH preview only; the shipped CSS uses the frontmatter color, not this ramp."
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Lavender action",
+        "tonalRamp": [
+          "oklch(15.00% 0.11003 274.47)",
+          "oklch(26.43% 0.11003 274.47)",
+          "oklch(37.86% 0.11003 274.47)",
+          "oklch(49.29% 0.11003 274.47)",
+          "oklch(60.71% 0.11003 274.47)",
+          "oklch(72.14% 0.11003 274.47)",
+          "oklch(83.57% 0.11003 274.47)",
+          "oklch(95.00% 0.11003 274.47)"
+        ],
+        "tonalRampPurpose": "Synthesized OKLCH preview only; the shipped CSS uses the frontmatter color, not this ramp."
+      },
+      "pass": {
+        "role": "secondary",
+        "displayName": "Positive mint",
+        "tonalRamp": [
+          "oklch(15.00% 0.11834 157.57)",
+          "oklch(26.43% 0.11834 157.57)",
+          "oklch(37.86% 0.11834 157.57)",
+          "oklch(49.29% 0.11834 157.57)",
+          "oklch(60.71% 0.11834 157.57)",
+          "oklch(72.14% 0.11834 157.57)",
+          "oklch(83.57% 0.11834 157.57)",
+          "oklch(95.00% 0.11834 157.57)"
+        ],
+        "tonalRampPurpose": "Synthesized OKLCH preview only; the shipped CSS uses the frontmatter color, not this ramp."
+      },
+      "fail": {
+        "role": "secondary",
+        "displayName": "Failure rose",
+        "tonalRamp": [
+          "oklch(15.00% 0.12347 10.30)",
+          "oklch(26.43% 0.12347 10.30)",
+          "oklch(37.86% 0.12347 10.30)",
+          "oklch(49.29% 0.12347 10.30)",
+          "oklch(60.71% 0.12347 10.30)",
+          "oklch(72.14% 0.12347 10.30)",
+          "oklch(83.57% 0.12347 10.30)",
+          "oklch(95.00% 0.12347 10.30)"
+        ],
+        "tonalRampPurpose": "Synthesized OKLCH preview only; the shipped CSS uses the frontmatter color, not this ramp."
+      },
+      "pending": {
+        "role": "secondary",
+        "displayName": "Pending amber",
+        "tonalRamp": [
+          "oklch(15.00% 0.11216 80.82)",
+          "oklch(26.43% 0.11216 80.82)",
+          "oklch(37.86% 0.11216 80.82)",
+          "oklch(49.29% 0.11216 80.82)",
+          "oklch(60.71% 0.11216 80.82)",
+          "oklch(72.14% 0.11216 80.82)",
+          "oklch(83.57% 0.11216 80.82)",
+          "oklch(95.00% 0.11216 80.82)"
+        ],
+        "tonalRampPurpose": "Synthesized OKLCH preview only; the shipped CSS uses the frontmatter color, not this ramp."
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Research heading",
+        "purpose": "Recurring serif section headings; 29px at the narrow breakpoint."
+      },
+      "code": {
+        "displayName": "Raw record",
+        "purpose": "Literal transcripts, files, commands and provenance."
+      }
+    },
+    "shadows": [],
+    "motion": [],
+    "breakpoints": [
+      {
+        "name": "form-reflow",
+        "value": "1050px"
+      },
+      {
+        "name": "narrow-record",
+        "value": "650px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary comparison",
+      "kind": "button",
+      "description": "Filled local comparison action.",
+      "html": "<button class=\"ds-button-primary\" type=\"button\">Run live comparison</button>",
+      "css": ".ds-button-primary{font:16px/1.55 system-ui,-apple-system,'Segoe UI',sans-serif;min-height:46px;padding:10px 16px;border:1px solid var(--accent,#a3b3ff);border-radius:6px;background:var(--accent,#a3b3ff);color:#111628;cursor:pointer;font-weight:600;}.ds-button-primary:hover{background:#c0caff}.ds-button-primary:focus-visible{outline:2px solid var(--accent,#a3b3ff);outline-offset:4px}.ds-button-primary:disabled{opacity:.55;cursor:wait}",
+      "refersTo": "button-primary"
+    },
+    {
+      "name": "Saved inspection",
+      "kind": "button",
+      "description": "Secondary access to a saved trial.",
+      "html": "<button class=\"ds-button-secondary\" type=\"button\">Show saved trial</button>",
+      "css": ".ds-button-secondary{font:16px/1.55 system-ui,-apple-system,'Segoe UI',sans-serif;min-height:46px;padding:10px 16px;border:1px solid var(--line,#303a49);border-radius:6px;background:var(--panel,#161b22);color:var(--text,#d7dee7);cursor:pointer;}.ds-button-secondary:hover{background:#283248}.ds-button-secondary:focus-visible{outline:2px solid var(--accent,#a3b3ff);outline-offset:4px}.ds-button-secondary:disabled{opacity:.55;cursor:wait}",
+      "refersTo": "button-secondary"
+    },
+    {
+      "name": "Labeled input",
+      "kind": "input",
+      "description": "Visible labels sit above inset controls.",
+      "html": "<label class=\"ds-field\">Input word<input class=\"ds-input\" value=\"berry\" autocomplete=\"off\" spellcheck=\"false\"></label>",
+      "css": ".ds-field{display:flex;flex-direction:column;gap:8px;font:14px/1.55 system-ui,-apple-system,'Segoe UI',sans-serif;color:var(--text,#d7dee7)}.ds-input{font:inherit;background:var(--panel,#161b22);color:var(--text,#d7dee7);border:1px solid var(--line,#303a49);border-radius:6px;min-height:46px;padding:10px 12px;width:100%;caret-color:var(--accent,#a3b3ff)}.ds-input::placeholder{color:var(--muted,#a1adbd)}.ds-input:focus-visible{outline:2px solid var(--accent,#a3b3ff);outline-offset:4px}",
+      "refersTo": "input"
+    },
+    {
+      "name": "Section navigation",
+      "kind": "nav",
+      "description": "Underlined links expose the document sections.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Sections\"><a href=\"#trial\">Try a rule</a><a href=\"#evidence\">Evidence</a><a href=\"#actions\">Actions</a></nav>",
+      "css": ".ds-nav{display:flex;gap:24px;font:16px/1.55 system-ui,-apple-system,'Segoe UI',sans-serif}.ds-nav a{color:var(--accent,#a3b3ff);text-underline-offset:.25em}.ds-nav a:hover{color:#fff}.ds-nav a:focus-visible{outline:2px solid var(--accent,#a3b3ff);outline-offset:4px}@media(max-width:650px){.ds-nav{width:100%;font-size:14px}}"
+    },
+    {
+      "name": "Local scope marker",
+      "kind": "chip",
+      "description": "Passive outlined environment label; no interactive state.",
+      "html": "<span class=\"ds-scope\">Local DEV</span>",
+      "css": ".ds-scope{display:inline-block;color:var(--pending,#e7ba69);font:13px/1.55 system-ui,-apple-system,'Segoe UI',sans-serif;border:1px solid var(--line,#303a49);padding:4px 9px}"
+    },
+    {
+      "name": "Capability evidence",
+      "kind": "custom",
+      "description": "Ruled result/limitation table with semantic, full-width mobile entries. Example content is illustrative saved evidence, not a current score source.",
+      "html": "<table class=\"ds-capabilities\"><thead><tr><th scope=\"col\">Capability</th><th scope=\"col\">Current evidence</th><th scope=\"col\">Limit</th></tr></thead><tbody><tr><th scope=\"row\">Language interface</th><td><span class=\"ds-capability-label\" aria-hidden=\"true\">Current evidence</span>15/16 new-word direct operations; decoder parity qualified.</td><td><span class=\"ds-capability-label\" aria-hidden=\"true\">Limit</span>The operation is supplied externally; this is not learned selection.</td></tr></tbody></table>",
+      "css": ".ds-capabilities{width:100%;border-collapse:collapse;font:14px/1.55 system-ui,-apple-system,'Segoe UI',sans-serif;font-variant-numeric:tabular-nums;color:var(--text,#d7dee7)}.ds-capabilities th,.ds-capabilities td{text-align:left;vertical-align:top;padding:16px;border-bottom:1px solid var(--line,#303a49)}.ds-capabilities th:first-child,.ds-capabilities td:first-child{padding-left:0}.ds-capabilities th:last-child,.ds-capabilities td:last-child{padding-right:0}.ds-capabilities thead th{font-size:13px;font-weight:500;color:var(--muted,#a1adbd);padding-top:12px;padding-bottom:12px}.ds-capabilities tbody th{font-weight:400}.ds-capability-label{display:none}@media(max-width:650px){.ds-capabilities,.ds-capabilities tbody{display:block}.ds-capabilities thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.ds-capabilities tbody tr{display:block;border-bottom:1px solid var(--line,#303a49);padding:20px 0}.ds-capabilities tbody th,.ds-capabilities tbody td{display:block;border:0;padding:0}.ds-capabilities tbody th{font-size:18px;font-weight:600;margin-bottom:14px}.ds-capabilities td+td{margin-top:14px}.ds-capability-label{display:block;color:var(--muted,#a1adbd);font-size:12px;margin-bottom:4px}}"
+    },
+    {
+      "name": "Raw record panel",
+      "kind": "card",
+      "description": "Literal commands, transcript or file content in a restrained inset panel.",
+      "html": "<pre class=\"ds-record\">python -m workbench verify\npython -m workbench serve\npython -m workbench trial amber berry --seed 0</pre>",
+      "css": ".ds-record{font:13px/1.7 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--panel,#161b22);color:var(--text,#d7dee7);padding:20px;border-radius:8px}",
+      "refersTo": "code-panel"
+    },
+    {
+      "name": "Evidence disclosure",
+      "kind": "custom",
+      "description": "Native disclosure of secondary evidence without changing the principal record.",
+      "html": "<details class=\"ds-disclosure\"><summary>Source hashes and evidence boundaries</summary><p>No meta-test access. No best-seed selection.</p></details>",
+      "css": ".ds-disclosure{margin-top:28px;font:16px/1.55 system-ui,-apple-system,'Segoe UI',sans-serif;color:var(--text,#d7dee7)}.ds-disclosure summary{cursor:pointer;color:var(--accent,#a3b3ff);padding:10px 0}.ds-disclosure summary:focus-visible{outline:2px solid var(--accent,#a3b3ff);outline-offset:4px}.ds-disclosure p{max-width:72ch;color:var(--muted,#a1adbd);margin:12px 0 20px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Research Record",
+    "overview": "This system applies only to `workbench/`. It records the built extension of the existing Oczy findings document: an ink background, lavender actions, serif research headings and flat, ruled evidence. The name describes the incumbent visual world; it does not represent a new identity approval.\n\nThe interface pairs reading with a small set of local controls. Dense results remain inspectable through clear type roles, explicit status words and adjacent limitations. Evidence receives the visual space; controls provide access to it. No imagery, decorative motion or card grid is required by this built world.",
+    "keyCharacteristics": [
+      "Dark ink ground with fine structural rules.",
+      "Serif section headings, sans-serif reading text and monospace raw records.",
+      "Lavender links and primary action; separate colors for outcome status.",
+      "Full-width evidence with limitations kept alongside results."
+    ],
+    "rules": [
+      {
+        "name": "The Written Verdict Rule",
+        "body": "Color accompanies explicit words such as \u201cCorrect,\u201d \u201cIncorrect\u201d or \u201cfailed\u201d; it does not replace the verdict.",
+        "section": "colors"
+      },
+      {
+        "name": "The Raw Record Rule",
+        "body": "Preserve quotation, whitespace and wrapping in generated output. Do not style a cleaned-up interpretation as the actual output.",
+        "section": "typography"
+      },
+      {
+        "name": "The Readable Evidence Rule",
+        "body": "At 650px and below, the prose capability table becomes full-width ruled entries. Each keeps its capability heading, then labeled \u201cCurrent evidence\u201d and \u201cLimit\u201d content. Desktop retains three columns. Preserve the row-header semantics; the repeated visual labels are hidden from assistive technology because the table already supplies the relationships.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat Record Rule",
+        "body": "Keep evidence on the continuous document ground. Reserve filled containers for controls and raw text panels, following the existing visual distinction.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** retain explicit verdict text alongside outcome color.",
+      "**Do** distinguish raw strings and records with monospace and preserved whitespace.",
+      "**Do** keep each capability's limitation readable with its result at narrow widths.",
+      "**Do** use the existing serif, sans-serif and monospace roles consistently.",
+      "**Do** retain visible labels, keyboard outlines and access to scrollable evidence."
+    ],
+    "donts": [
+      "**Don't** turn the continuous evidence record into a decorative card grid.",
+      "**Don't** apply success styling to a capability solely because a historical failure replayed exactly.",
+      "**Don't** visually collapse learned state, retrieved examples and externally supplied rules into one mechanism.",
+      "**Don't** promote workbench-specific layouts or this document's tokens into repository-wide design policy."
+    ]
+  }
+}

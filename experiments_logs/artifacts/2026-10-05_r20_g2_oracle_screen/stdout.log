@@ -1,0 +1,79 @@
+Completed contextual_remap/no_context task 0
+Completed contextual_remap/teaching_context task 0
+Completed contextual_remap/oracle_context task 0
+Completed contextual_remap/no_context task 1
+Completed contextual_remap/teaching_context task 1
+Completed contextual_remap/oracle_context task 1
+Completed contextual_remap/no_context task 2
+Completed contextual_remap/teaching_context task 2
+Completed contextual_remap/oracle_context task 2
+Completed contextual_remap/no_context task 3
+Completed contextual_remap/teaching_context task 3
+Completed contextual_remap/oracle_context task 3
+Completed contextual_remap/no_context task 4
+Completed contextual_remap/teaching_context task 4
+Completed contextual_remap/oracle_context task 4
+Completed rule_transformation/no_context task 0
+Completed rule_transformation/teaching_context task 0
+Completed rule_transformation/oracle_context task 0
+Completed rule_transformation/no_context task 1
+Completed rule_transformation/teaching_context task 1
+Completed rule_transformation/oracle_context task 1
+Completed rule_transformation/no_context task 2
+Completed rule_transformation/teaching_context task 2
+Completed rule_transformation/oracle_context task 2
+Completed rule_transformation/no_context task 3
+Completed rule_transformation/teaching_context task 3
+Completed rule_transformation/oracle_context task 3
+Completed rule_transformation/no_context task 4
+Completed rule_transformation/teaching_context task 4
+Completed rule_transformation/oracle_context task 4
+Completed finite_state/no_context task 0
+Completed finite_state/teaching_context task 0
+Completed finite_state/oracle_context task 0
+Completed finite_state/no_context task 1
+Completed finite_state/teaching_context task 1
+Completed finite_state/oracle_context task 1
+Completed finite_state/no_context task 2
+Completed finite_state/teaching_context task 2
+Completed finite_state/oracle_context task 2
+Completed finite_state/no_context task 3
+Completed finite_state/teaching_context task 3
+Completed finite_state/oracle_context task 3
+Completed finite_state/no_context task 4
+Completed finite_state/teaching_context task 4
+Completed finite_state/oracle_context task 4
+{
+  "gate": "G2",
+  "gate_passed": false,
+  "oracle_by_family": {
+    "contextual_remap": {
+      "correct": 0,
+      "total": 5
+    },
+    "finite_state": {
+      "correct": 0,
+      "total": 5
+    },
+    "rule_transformation": {
+      "correct": 0,
+      "total": 5
+    }
+  },
+  "organ_hash_matches_frozen_binding": true,
+  "scores": {
+    "no_context": {
+      "correct": 0,
+      "total": 32
+    },
+    "oracle_context": {
+      "correct": 0,
+      "total": 15
+    },
+    "teaching_context": {
+      "correct": 4,
+      "total": 32
+    }
+  },
+  "seconds": 431.4
+}

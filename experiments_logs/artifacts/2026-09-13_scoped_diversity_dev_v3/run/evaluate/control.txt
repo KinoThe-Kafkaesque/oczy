@@ -1,0 +1,10 @@
+Corrected examples:
+Client amber, input oak -> correct output oakvek
+Client amber, input pine -> correct output pinevek
+Client amber, input elm -> correct output elmvek
+Client cobalt, input oak -> correct output oakmip
+Client cobalt, input pine -> correct output pinemip
+Client cobalt, input elm -> correct output elmmip
+Client silver, input oak -> correct output oak
+Client silver, input pine -> correct output pine
+Client silver, input elm -> correct output elm

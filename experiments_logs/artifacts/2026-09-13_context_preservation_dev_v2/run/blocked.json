@@ -1,0 +1,1 @@
+{"correction_optimizer_steps":0,"manifest_sha256":"c68b31b35fb9c5f12dd9e68174ee26313145a4c2a3e262255bc2e23bb2454390","phase":"train_correction","reason":"Joint scoped representation failed the frozen fresh-probe/teaching-fit prerequisite"}

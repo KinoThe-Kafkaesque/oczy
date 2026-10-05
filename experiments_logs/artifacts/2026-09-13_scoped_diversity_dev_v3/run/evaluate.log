@@ -1,0 +1,20 @@
+Skipping import of cpp extensions due to incompatible torch version. Please upgrade to torch >= 2.11.0 (found 2.10.0+cpu).
+numeric seed=0 condition=initial
+numeric seed=0 condition=control
+numeric seed=0 condition=diversity
+numeric seed=0 condition=zeroed
+numeric seed=1 condition=initial
+numeric seed=1 condition=control
+numeric seed=1 condition=diversity
+numeric seed=2 condition=initial
+numeric seed=2 condition=control
+numeric seed=2 condition=diversity
+reference condition=no_context
+reference condition=direct_oracle
+reference condition=complete_table
+reference condition=text_control
+reference condition=text_diversity
+reference condition=chat_control
+reference condition=chat_diversity
+reference condition=zlib_control
+reference condition=zlib_diversity

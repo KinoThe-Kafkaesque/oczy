@@ -1,0 +1,1457 @@
+{
+  "instrument_id": "oczy/capability-validation/dev-v1",
+  "manifest_sha256": "74d6614fc332c832761c208e63e753dd85f437b850ebfaeeac196faeccdf53ce",
+  "counts": [
+    {
+      "condition": "no_context",
+      "seed": null,
+      "stage": 1,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "no_context",
+      "seed": null,
+      "stage": 1,
+      "category": "cobalt",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "no_context",
+      "seed": null,
+      "stage": 1,
+      "category": "silver",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "no_context",
+      "seed": null,
+      "stage": 1,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "raw_history",
+      "seed": null,
+      "stage": 1,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "raw_history",
+      "seed": null,
+      "stage": 1,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "raw_history",
+      "seed": null,
+      "stage": 1,
+      "category": "silver",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "raw_history",
+      "seed": null,
+      "stage": 1,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "latest_example_retrieval",
+      "seed": null,
+      "stage": 1,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "latest_example_retrieval",
+      "seed": null,
+      "stage": 1,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "latest_example_retrieval",
+      "seed": null,
+      "stage": 1,
+      "category": "silver",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "latest_example_retrieval",
+      "seed": null,
+      "stage": 1,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "complete_oracle",
+      "seed": null,
+      "stage": 1,
+      "category": "amber",
+      "correct": 1,
+      "total": 4
+    },
+    {
+      "condition": "complete_oracle",
+      "seed": null,
+      "stage": 1,
+      "category": "cobalt",
+      "correct": 2,
+      "total": 4
+    },
+    {
+      "condition": "complete_oracle",
+      "seed": null,
+      "stage": 1,
+      "category": "silver",
+      "correct": 3,
+      "total": 4
+    },
+    {
+      "condition": "complete_oracle",
+      "seed": null,
+      "stage": 1,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zlib_retrieval",
+      "seed": null,
+      "stage": 1,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zlib_retrieval",
+      "seed": null,
+      "stage": 1,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zlib_retrieval",
+      "seed": null,
+      "stage": 1,
+      "category": "silver",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zlib_retrieval",
+      "seed": null,
+      "stage": 1,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "no_context",
+      "seed": null,
+      "stage": 2,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "no_context",
+      "seed": null,
+      "stage": 2,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "no_context",
+      "seed": null,
+      "stage": 2,
+      "category": "silver",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "no_context",
+      "seed": null,
+      "stage": 2,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "raw_history",
+      "seed": null,
+      "stage": 2,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "raw_history",
+      "seed": null,
+      "stage": 2,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "raw_history",
+      "seed": null,
+      "stage": 2,
+      "category": "silver",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "raw_history",
+      "seed": null,
+      "stage": 2,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "latest_example_retrieval",
+      "seed": null,
+      "stage": 2,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "latest_example_retrieval",
+      "seed": null,
+      "stage": 2,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "latest_example_retrieval",
+      "seed": null,
+      "stage": 2,
+      "category": "silver",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "latest_example_retrieval",
+      "seed": null,
+      "stage": 2,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "complete_oracle",
+      "seed": null,
+      "stage": 2,
+      "category": "amber",
+      "correct": 1,
+      "total": 4
+    },
+    {
+      "condition": "complete_oracle",
+      "seed": null,
+      "stage": 2,
+      "category": "cobalt",
+      "correct": 1,
+      "total": 4
+    },
+    {
+      "condition": "complete_oracle",
+      "seed": null,
+      "stage": 2,
+      "category": "silver",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "complete_oracle",
+      "seed": null,
+      "stage": 2,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zlib_retrieval",
+      "seed": null,
+      "stage": 2,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zlib_retrieval",
+      "seed": null,
+      "stage": 2,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zlib_retrieval",
+      "seed": null,
+      "stage": 2,
+      "category": "silver",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zlib_retrieval",
+      "seed": null,
+      "stage": 2,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "no_context",
+      "seed": null,
+      "stage": 3,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "no_context",
+      "seed": null,
+      "stage": 3,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "no_context",
+      "seed": null,
+      "stage": 3,
+      "category": "silver",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "no_context",
+      "seed": null,
+      "stage": 3,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "raw_history",
+      "seed": null,
+      "stage": 3,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "raw_history",
+      "seed": null,
+      "stage": 3,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "raw_history",
+      "seed": null,
+      "stage": 3,
+      "category": "silver",
+      "correct": 1,
+      "total": 4
+    },
+    {
+      "condition": "raw_history",
+      "seed": null,
+      "stage": 3,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "latest_example_retrieval",
+      "seed": null,
+      "stage": 3,
+      "category": "amber",
+      "correct": 1,
+      "total": 4
+    },
+    {
+      "condition": "latest_example_retrieval",
+      "seed": null,
+      "stage": 3,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "latest_example_retrieval",
+      "seed": null,
+      "stage": 3,
+      "category": "silver",
+      "correct": 2,
+      "total": 4
+    },
+    {
+      "condition": "latest_example_retrieval",
+      "seed": null,
+      "stage": 3,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "complete_oracle",
+      "seed": null,
+      "stage": 3,
+      "category": "amber",
+      "correct": 2,
+      "total": 4
+    },
+    {
+      "condition": "complete_oracle",
+      "seed": null,
+      "stage": 3,
+      "category": "cobalt",
+      "correct": 1,
+      "total": 4
+    },
+    {
+      "condition": "complete_oracle",
+      "seed": null,
+      "stage": 3,
+      "category": "silver",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "complete_oracle",
+      "seed": null,
+      "stage": 3,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zlib_retrieval",
+      "seed": null,
+      "stage": 3,
+      "category": "amber",
+      "correct": 1,
+      "total": 4
+    },
+    {
+      "condition": "zlib_retrieval",
+      "seed": null,
+      "stage": 3,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zlib_retrieval",
+      "seed": null,
+      "stage": 3,
+      "category": "silver",
+      "correct": 2,
+      "total": 4
+    },
+    {
+      "condition": "zlib_retrieval",
+      "seed": null,
+      "stage": 3,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 0,
+      "stage": 1,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 0,
+      "stage": 1,
+      "category": "cobalt",
+      "correct": 3,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 0,
+      "stage": 1,
+      "category": "silver",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 0,
+      "stage": 1,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 0,
+      "stage": 1,
+      "category": "amber",
+      "correct": 1,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 0,
+      "stage": 1,
+      "category": "cobalt",
+      "correct": 1,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 0,
+      "stage": 1,
+      "category": "silver",
+      "correct": 1,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 0,
+      "stage": 1,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zeroed",
+      "seed": 0,
+      "stage": 1,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zeroed",
+      "seed": 0,
+      "stage": 1,
+      "category": "cobalt",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "zeroed",
+      "seed": 0,
+      "stage": 1,
+      "category": "silver",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "zeroed",
+      "seed": 0,
+      "stage": 1,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 0,
+      "stage": 2,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 0,
+      "stage": 2,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 0,
+      "stage": 2,
+      "category": "silver",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 0,
+      "stage": 2,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 0,
+      "stage": 2,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 0,
+      "stage": 2,
+      "category": "cobalt",
+      "correct": 3,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 0,
+      "stage": 2,
+      "category": "silver",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 0,
+      "stage": 2,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zeroed",
+      "seed": 0,
+      "stage": 2,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zeroed",
+      "seed": 0,
+      "stage": 2,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zeroed",
+      "seed": 0,
+      "stage": 2,
+      "category": "silver",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "zeroed",
+      "seed": 0,
+      "stage": 2,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 0,
+      "stage": 3,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 0,
+      "stage": 3,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 0,
+      "stage": 3,
+      "category": "silver",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 0,
+      "stage": 3,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 0,
+      "stage": 3,
+      "category": "amber",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 0,
+      "stage": 3,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 0,
+      "stage": 3,
+      "category": "silver",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 0,
+      "stage": 3,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zeroed",
+      "seed": 0,
+      "stage": 3,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zeroed",
+      "seed": 0,
+      "stage": 3,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "zeroed",
+      "seed": 0,
+      "stage": 3,
+      "category": "silver",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "zeroed",
+      "seed": 0,
+      "stage": 3,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 1,
+      "stage": 1,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 1,
+      "stage": 1,
+      "category": "cobalt",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 1,
+      "stage": 1,
+      "category": "silver",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 1,
+      "stage": 1,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 1,
+      "stage": 1,
+      "category": "amber",
+      "correct": 1,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 1,
+      "stage": 1,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 1,
+      "stage": 1,
+      "category": "silver",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 1,
+      "stage": 1,
+      "category": "composition",
+      "correct": 3,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 1,
+      "stage": 2,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 1,
+      "stage": 2,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 1,
+      "stage": 2,
+      "category": "silver",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 1,
+      "stage": 2,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 1,
+      "stage": 2,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 1,
+      "stage": 2,
+      "category": "cobalt",
+      "correct": 2,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 1,
+      "stage": 2,
+      "category": "silver",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 1,
+      "stage": 2,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 1,
+      "stage": 3,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 1,
+      "stage": 3,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 1,
+      "stage": 3,
+      "category": "silver",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 1,
+      "stage": 3,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 1,
+      "stage": 3,
+      "category": "amber",
+      "correct": 1,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 1,
+      "stage": 3,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 1,
+      "stage": 3,
+      "category": "silver",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 1,
+      "stage": 3,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 2,
+      "stage": 1,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 2,
+      "stage": 1,
+      "category": "cobalt",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 2,
+      "stage": 1,
+      "category": "silver",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 2,
+      "stage": 1,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 2,
+      "stage": 1,
+      "category": "amber",
+      "correct": 2,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 2,
+      "stage": 1,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 2,
+      "stage": 1,
+      "category": "silver",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 2,
+      "stage": 1,
+      "category": "composition",
+      "correct": 2,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 2,
+      "stage": 2,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 2,
+      "stage": 2,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 2,
+      "stage": 2,
+      "category": "silver",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 2,
+      "stage": 2,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 2,
+      "stage": 2,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 2,
+      "stage": 2,
+      "category": "cobalt",
+      "correct": 2,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 2,
+      "stage": 2,
+      "category": "silver",
+      "correct": 2,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 2,
+      "stage": 2,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 2,
+      "stage": 3,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 2,
+      "stage": 3,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 2,
+      "stage": 3,
+      "category": "silver",
+      "correct": 4,
+      "total": 4
+    },
+    {
+      "condition": "initial",
+      "seed": 2,
+      "stage": 3,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 2,
+      "stage": 3,
+      "category": "amber",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 2,
+      "stage": 3,
+      "category": "cobalt",
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 2,
+      "stage": 3,
+      "category": "silver",
+      "correct": 1,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 2,
+      "stage": 3,
+      "category": "composition",
+      "correct": 0,
+      "total": 4
+    }
+  ],
+  "accumulation": [
+    {
+      "seed": 0,
+      "new_cobalt": {
+        "correct": 3,
+        "total": 4
+      },
+      "amber_retention": {
+        "previously_correct": 1,
+        "retained": 0,
+        "lost_inputs": [
+          "fig"
+        ],
+        "all_old": {
+          "correct": 1,
+          "total": 4
+        },
+        "all_after": {
+          "correct": 0,
+          "total": 4
+        }
+      }
+    },
+    {
+      "seed": 1,
+      "new_cobalt": {
+        "correct": 2,
+        "total": 4
+      },
+      "amber_retention": {
+        "previously_correct": 1,
+        "retained": 0,
+        "lost_inputs": [
+          "pear"
+        ],
+        "all_old": {
+          "correct": 1,
+          "total": 4
+        },
+        "all_after": {
+          "correct": 0,
+          "total": 4
+        }
+      }
+    },
+    {
+      "seed": 2,
+      "new_cobalt": {
+        "correct": 2,
+        "total": 4
+      },
+      "amber_retention": {
+        "previously_correct": 2,
+        "retained": 0,
+        "lost_inputs": [
+          "plum",
+          "fig"
+        ],
+        "all_old": {
+          "correct": 2,
+          "total": 4
+        },
+        "all_after": {
+          "correct": 0,
+          "total": 4
+        }
+      }
+    }
+  ],
+  "correction": [
+    {
+      "seed": 0,
+      "replacement_amber": {
+        "correct": 4,
+        "total": 4
+      },
+      "cobalt_retention": {
+        "previously_correct": 3,
+        "retained": 0,
+        "lost_inputs": [
+          "pear",
+          "plum",
+          "fig"
+        ],
+        "all_old": {
+          "correct": 3,
+          "total": 4
+        },
+        "all_after": {
+          "correct": 0,
+          "total": 4
+        }
+      }
+    },
+    {
+      "seed": 1,
+      "replacement_amber": {
+        "correct": 1,
+        "total": 4
+      },
+      "cobalt_retention": {
+        "previously_correct": 2,
+        "retained": 0,
+        "lost_inputs": [
+          "pear",
+          "plum"
+        ],
+        "all_old": {
+          "correct": 2,
+          "total": 4
+        },
+        "all_after": {
+          "correct": 0,
+          "total": 4
+        }
+      }
+    },
+    {
+      "seed": 2,
+      "replacement_amber": {
+        "correct": 0,
+        "total": 4
+      },
+      "cobalt_retention": {
+        "previously_correct": 2,
+        "retained": 0,
+        "lost_inputs": [
+          "pear",
+          "fig"
+        ],
+        "all_old": {
+          "correct": 2,
+          "total": 4
+        },
+        "all_after": {
+          "correct": 0,
+          "total": 4
+        }
+      }
+    }
+  ],
+  "composition": [
+    {
+      "seed": 0,
+      "stage": 2,
+      "correct": 0,
+      "total": 4,
+      "both_single_rule_prerequisites_correct": 0,
+      "correct_where_both_prerequisites_correct": 0
+    },
+    {
+      "seed": 0,
+      "stage": 3,
+      "correct": 0,
+      "total": 4,
+      "both_single_rule_prerequisites_correct": 0,
+      "correct_where_both_prerequisites_correct": 0
+    },
+    {
+      "seed": 1,
+      "stage": 2,
+      "correct": 0,
+      "total": 4,
+      "both_single_rule_prerequisites_correct": 0,
+      "correct_where_both_prerequisites_correct": 0
+    },
+    {
+      "seed": 1,
+      "stage": 3,
+      "correct": 0,
+      "total": 4,
+      "both_single_rule_prerequisites_correct": 0,
+      "correct_where_both_prerequisites_correct": 0
+    },
+    {
+      "seed": 2,
+      "stage": 2,
+      "correct": 0,
+      "total": 4,
+      "both_single_rule_prerequisites_correct": 0,
+      "correct_where_both_prerequisites_correct": 0
+    },
+    {
+      "seed": 2,
+      "stage": 3,
+      "correct": 0,
+      "total": 4,
+      "both_single_rule_prerequisites_correct": 0,
+      "correct_where_both_prerequisites_correct": 0
+    }
+  ],
+  "compression": [
+    {
+      "active_example_bytes": 143,
+      "chronological_example_bytes": 143,
+      "raw_sha256": "dc0da80ff88573905bfbef066f606c8947b835a6f9e06d455c0ac9592d8c0159",
+      "required_decoder_metadata": "codec and UTF-8 fixed in shared contract",
+      "stage": 1,
+      "zlib_file_bytes": 91,
+      "zlib_roundtrip_exact": true,
+      "zlib_sha256": "d6791016d89df80cf69fbb646c5dd2eb45117e76d90e8cf0889935673aa5f5e9",
+      "neural_payload_bytes": 28672,
+      "neural_file_bytes": 28800,
+      "neural_storage_below_examples": false,
+      "zlib_generations_match_raw_exactly": true,
+      "zlib_storage_below_examples": true,
+      "retrieval_accuracy": {
+        "correct": 0,
+        "total": 16
+      }
+    },
+    {
+      "active_example_bytes": 295,
+      "chronological_example_bytes": 295,
+      "raw_sha256": "e0fe42d430fdae52d796180abcb231585bab4c9c6ea5bd46c46577573f8acaf9",
+      "required_decoder_metadata": "codec and UTF-8 fixed in shared contract",
+      "stage": 2,
+      "zlib_file_bytes": 128,
+      "zlib_roundtrip_exact": true,
+      "zlib_sha256": "9e82bd88629e2070cd1e13f6ecdc3de759b040dc83d8be39c82fd7716081246e",
+      "neural_payload_bytes": 28672,
+      "neural_file_bytes": 28800,
+      "neural_storage_below_examples": false,
+      "zlib_generations_match_raw_exactly": true,
+      "zlib_storage_below_examples": true,
+      "retrieval_accuracy": {
+        "correct": 0,
+        "total": 16
+      }
+    },
+    {
+      "active_example_bytes": 295,
+      "chronological_example_bytes": 440,
+      "raw_sha256": "a45af0facbf4810682057f51a6fec3135c299eb59b3437dd31d58949625da98f",
+      "required_decoder_metadata": "codec and UTF-8 fixed in shared contract",
+      "stage": 3,
+      "zlib_file_bytes": 129,
+      "zlib_roundtrip_exact": true,
+      "zlib_sha256": "97fdbaa4a0e6493858bb63f82581e481928d77a7a239bc38803bffa453a54d2c",
+      "neural_payload_bytes": 28672,
+      "neural_file_bytes": 28800,
+      "neural_storage_below_examples": false,
+      "zlib_generations_match_raw_exactly": true,
+      "zlib_storage_below_examples": true,
+      "retrieval_accuracy": {
+        "correct": 3,
+        "total": 16
+      }
+    }
+  ],
+  "actions": [
+    {
+      "condition": "no_context",
+      "seed": null,
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 0,
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 1,
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "learned_restored",
+      "seed": 2,
+      "correct": 0,
+      "total": 4
+    },
+    {
+      "condition": "latest_example_retrieval",
+      "seed": null,
+      "correct": 0,
+      "total": 4
+    }
+  ],
+  "verification": {
+    "source_input_and_state_hashes_verified": true,
+    "model_and_scorer_unchanged": true,
+    "probe_action_and_update_coverage_exact": true,
+    "scores_independently_recomputed": 576,
+    "action_verdicts_recomputed": 20,
+    "optimizer_steps": 216,
+    "fresh_process_pids": [
+      2059412,
+      2068531,
+      2099950,
+      2105311
+    ],
+    "no_forbidden_registered_files_visible": true,
+    "seconds": 1875.1399049839965,
+    "meta_test_accessed": false
+  }
+}
