@@ -121,7 +121,7 @@ one more reason v3 and v4-r20 runs are not comparable.
   --report experiments/r20-taskgen-v4-r20-dev/g1_report.json
 ```
 
-Exit code **0**, 0.6 s. Report `passed: true`
+Exit code **0**, 1.2 s. Report `passed: true`
 (`schema: oczy/r20-g1-v4-r20-freeze/v1`).
 
 Artifact: `experiments/r20-taskgen-v4-r20-dev/instrument/` (11 hash-listed
