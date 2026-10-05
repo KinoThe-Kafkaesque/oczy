@@ -1,9 +1,17 @@
 # Oczy — Current Project State
 
-**Last updated:** 2026-08-06
+**Last updated:** 2026-10-05 (R20 successor instrument `meta_cortex/v4-r20`
+frozen and its G2 oracle screen passed 7/15; all other experimental evidence
+remains as of 2026-09-14)
 
 **Evidence cutoff:** repository and local experiment artifacts inspected through
-2026-08-06
+2026-09-14, plus the 2026-10-04 eval-v2.3 repair
+([record](experiments_logs/2026-10-04_eval_v2_3_applied.md)) and the 2026-10-05
+R20 successor freeze and G2 screen
+([freeze](experiments_logs/2026-10-05_r20_g1_v4_r20_instrument_freeze.md),
+[screen](experiments_logs/2026-10-05_r20_g2_v4_r20_oracle_screen.md)). Dated
+historical subsections remain as evidence of their original
+stage; the snapshot below supersedes their old availability and next-step claims.
 
 **Purpose:** canonical living handoff for what Oczy is, what has actually been
 demonstrated, what changed in the research direction, and where the remaining
@@ -22,6 +30,124 @@ Use the sources in this order:
 4. [`research/README.md`](research/README.md) and [`experiments/README.md`](experiments/README.md)
    index hypotheses and experiment specifications. A specification is not an
    implementation or a result.
+
+## Current progress and blockers — September 14
+
+| Workstream | Current result / status | Next gate |
+|---|---|---|
+| R24-v3 FiLM toy organ | **ACCEPT, narrow fixed-three-event toy existence**. Five of five registered TEST seeds pass; C3 2413/15250 (15.82%) versus no-update 195/15250 (1.28%). All 12 campaign jobs completed. | No language-model or full-rule-recovery claim; Qwen coupling remains unproved. |
+| R24-v3 additive organ | **BLOCKED at organ qualification**, oracle 28.375% versus FiLM 100%; no Phase C. | Improve articulation under a separately frozen comparison. |
+| R18 Amendment A1 | **TESTED-PARTIAL**, teacher gate 5/5; student effect positive 4/5. | The null seed prevents full acceptance; original teacher condition remains blocked. |
+| R19 | **BLOCKED at DEV articulation gate**. | A valid interface improvement, not a repeat of the failed unchanged gate. |
+| R20 v2 | **SUCCESSOR INSTRUMENT FROZEN; G2 PASSED 7/15 (partial).** S1 (adopt `taskgen_v2.py` as the new DEV lineage), S2 (versioned batch decoder, batched experiments only) and S3 (`organ.py` `skip_special_tokens`, adopt with a version bump) were approved by the user via the manager on 2026-10-04; the signatures authorize instrument construction and adoption only. S3's condition was discharged first: the decode change alters the text of 11 of 68 recorded probe rows and moves 0 recorded scores, quarantined to v2-lineage runs. `meta_cortex/v3` was frozen (`definition_sha256` `ab99c173…`), inheriting v2's registries byte-for-byte, with 90/15/90 tasks, a passed leakage audit, 22/22 defect classes at 0, 758/758 derivation-backed certificates verified, and a locally reproduced organ identity `a342431c…`. **G2 then failed on v3: oracle context 0/15** (retrieval bar 4/32, no-context floor 0/32) — a mouth–cortex articulation block, not a cortex refutation. The user then funded Option A (2026-10-05, kanban `t_37e96ee1`): the successor instrument **`meta_cortex/v4-r20`** was frozen (`definition_sha256` `fd2d8db9…`) carrying the 2026-09-11 prompt amendments (bare-answer system instruction on 933/933 probes; complete transformation oracle descriptions on 35 headers) and an authorized `max_new_tokens` 32→128, with the task content byte-identical to the pinned v3 view. **G2 under the successor PASSED: oracle context 7/15** (retrieval bar 9/32, floor 2/32) — finite_state 5/5, contextual_remap 2/5, **rule_transformation 0/5**. | **Sequence stopped before G3 by the session, deliberately.** The pass is real but not clean (transformation oracle 0/5), so the "if G2 passes cleanly" condition was left to a human ruling. v1/v2/v3/v4-r20 scores are not comparable. G4/G5 untouched; G5 still requires explicit human sign-off on the exact candidate manifest hash. Old scores remain intact. |
+| R20 local reproduction | Model-path hash mismatch isolated and resolved without weakening the hash gate. One six-condition cell reproduces all scores; four nonzero state hashes still differ. | Exact numerical-state reproduction remains unresolved; no replacement shard produced. |
+| Legacy eval-v2 / tool curriculum | **AUDIT PARTIALLY UNBLOCKED (2026-10-04).** Eval-v2.3 applied under human sign-off (kanban task `t_b2e72297`): blank/whitespace answers now rejected on all 120 probes (previously 120/120 passed), expected answers 120/120, 960/960 nonempty comparisons identical to the old scorer, manifest v2.3 binds runtime sources. Wrong-sense and tool-call/parameter foils still pass. | Separately frozen A2 sense contract, B task support and C tool-output contracts; no capability claim on eval-v2 until those land. |
+| R23.5 DEV pilot v1 | **Learned numeric-state persistence observed.** Fresh-process suffix scores 4/4, 4/4, 3/4 across three seeds; dates 2/4, 2/4, 4/4. Initial/zeroed/swapped controls all zero. Raw context is 3/4 suffix, 0/4 dates; date recovery is undefined. | Complete the requested instrument audit/repair gates before fresh-pattern confirmation. No compression: each state is 28,672 bytes versus 139/172 bytes raw text. No full-study or cortex-writer claim. |
+| Six-capability DEV v1 | **COMPLETE, capability failures measured.** All 216 updates and 27/27 teaching fits pass, but adding/correcting a rule loses every previously correct unrelated-rule response across three seeds. Two-rule composition is 0/24 with missing component prerequisites. Learned-bank exact tool execution/outcomes are 1/12 versus no-bank 3/4; every strict final-response trial fails. Neural storage is 28,800 bytes versus 143–295 bytes of active examples. | Scoped acquisition and preservation of unrelated behavior. Initial/zeroed action controls are now measured in the separate regression study below; old scores remain intact. No broad capability acceptance. |
+| Context/preservation DEV v2 | **COMPLETE; correction prerequisite failed.** All 144 updates and 27/27 crossed teaching fits pass, but new-word affix application is only 6/24. Untaught quartz copying falls from 12/12 to 7/12. Fresh-process totals are 8/16, 11/16 and 4/16. Zero correction updates run. | Generalize scoped rules to new inputs and preserve neutral behavior before testing the preservation penalty. The separately frozen teaching-diversity follow-up is complete below; reliable scoped acquisition still precedes a preservation-penalty comparison. |
+| Language interface DEV v3 | **COMPLETE, bounded primitive improvement.** Minimal direct operations score 15/16 on calibration and 15/16 on new words, versus prior oracle-selected wording 9/16 and 8/16. Scoped rule tables and retrieval remain unreliable. | Learn context selection while retaining the simpler operation interface. Direct operation prompts supply the rule externally and do not validate learned selection. |
+| Decoder parity DEV v1 | **QUALIFIED, bounded repair.** New versioned batch path matches scalar on 32/32 single-item and 32/32 padded-batch responses, including a learned bank; original batch matches 21/32. The ablation isolates fixed continuation positions. | Adopt only through a new versioned batched experiment. Old organ and scores remain unchanged; scalar-only learning failures are not explained away. |
+| Scoped diversity DEV v3 | **COMPLETE, partial gain; acquisition gate failed.** More varied teaching yields 12/24 new-word affix answers versus matched control 5/24; neutral copying is 19/24 for both, versus initial 24/24. Teaching fits are 67/81. All 608 evaluations completed; controller bookkeeping failed afterward and gate recovery is documented separately. | No correction updates or acceptance. A next mechanism must improve both contexts across seeds while retaining neutral behavior; additional teaching examples alone did not achieve this. |
+| Capability regression DEV v1 | **COMPLETE: 804/804 historical comparisons exact**, plus 160 candidate probes and 48 actual tool trials. Old failures reproduce too. New candidate composition is 0/12 and tool core 0/12; initial banks achieve tool core 5/12 and a zeroed bank 0/4. | Prefix insertion and learning both need scrutiny. No reliable-action claim; the frozen final-answer placeholder remains a separate interface defect. |
+| Local learning workbench | **PACKAGED AND VERIFIED:** saved/live comparisons, all three seeds, capability and regression evidence, real tool transcripts and files. Browser, repository CLI and unpacked-bundle CLI agree on all seven tested outputs. The archive seals 607 files; both embedded research archives pass checksums. | Source/evidence/states package; model weights and pinned runtime remain external. Exploratory trials never train or change frozen scores. |
+| R21 / R22 Stage B | **DEPENDENCY BLOCKED** on R20. R22 Stage A remains independent specification work. | R20 acceptance for downstream integration. |
+| R25–R30 | Draft follow-up work, not completed experimental evidence. | A frozen, interpretable language interface before expensive coupling/cortex campaigns. |
+
+The September 14 follow-up completes the next isolated teaching-diversity study
+and a fresh-process regression replay. Under the same 144 updates and 1,296
+example losses, diversity improves the matched new-word affix count from 5/24
+to 12/24, but leaves neutral copying at 19/24 and fails reliable acquisition.
+Seed 2 loses one total correct response versus its control. Correction remains
+blocked with zero updates. The externally selected direct-operation prompt
+gets 16/16 on this new cohort; the full table gets 5/16. These supply rules
+outside the learner and do not establish learned selection.
+
+All 112 repeated prior calibration control outputs and all 804 historical
+regression comparisons match exactly. The candidate's original-wording probes
+and tool trials still fail: action core is 0/12 for both trained conditions
+versus initial 5/12. Zeroed-prefix action core is 0/4, so inserting a prefix
+already causes interference; learning adds further degradation relative to
+initial states. Strict final-answer success is 0/48, with the known frozen
+placeholder defect retained. Regression verification covers all 1,012 rows.
+
+The diversity controller exited 1 after completed evaluation because it tried
+to rewrite a write-once execution record. A separate, source-hashed recovery
+verified all completed outputs and applied the unchanged admission function,
+with no model calls. Evaluation child exit status, duration and pre-run firewall
+record were not durably retained; those provenance limits remain explicit.
+No old instrument, score or threshold was edited. No meta-test, remote job,
+old-loop restart or production operation occurred. The focused suite passes
+122 tests. Both research archives pass independent checksum verification.
+[Diversity report](experiments_logs/2026-09-13_scoped_diversity_dev_v3.md),
+[regression report](experiments_logs/2026-09-13_capability_regression_dev_v1.md),
+[workbench and packaging instructions](workbench/README.md).
+
+The final [workbench bundle](exports/oczy-workbench-dev-v1.tar.gz) was unpacked
+outside the repository and verified using standard-library Python. Its live
+seven-condition CLI trial matches the repository CLI object exactly, including
+raw strings, scores and model/instrument identities, with zero optimizer steps.
+[Bundle verification](exports/oczy-workbench-dev-v1.verification.json).
+The UI review's one mobile reading fix is scored resolved; its verdict is scoped
+to that fix. Full-page screenshot capture was unavailable, and viewport segments
+were checked instead. The local server remains available at port 8765.
+
+The September 13 follow-up completes three separately frozen local DEV studies.
+Joint learning now fits the same input differently for each teaching context,
+but fails new-word acquisition and its predeclared correction gate. The simpler
+operation interface reaches 15/16 on new words only when the operation is supplied
+externally. A separate batch decoder fixes advancing positions and makes neutral
+generation settings explicit, matching scalar on all 64 qualification comparisons.
+Its repair does not explain away scalar-only learning errors. All results and
+artifacts are audited; 73 focused checks pass. These three studies are finished;
+no remote job, old-loop restart or meta-test was started by this follow-up.
+[Combined context/preservation report](experiments_logs/2026-09-13_context_preservation_dev_v2.md),
+[language interface](experiments_logs/2026-09-13_language_interface_dev_v3.md),
+[decoder repair](experiments_logs/2026-09-13_decoder_parity_dev_v1.md).
+
+The requested six-capability validation completed September 13 in four offline
+local processes. Context leakage and loss of previously correct responses are
+observed with initial/zeroed numeric controls. Correcting amber succeeds on
+4/4, 1/4 and 0/4 new inputs, while cobalt retention is 0/3, 0/2 and 0/2.
+The no-bank actor correctly executes three real filesystem tasks, but echoes
+the final-answer placeholder; learned-bank action execution succeeds on only
+one of twelve trials. The final-response defect is reported separately from
+actual tool and filesystem outcomes. Ordinary zlib compression preserves raw
+retrieval outputs in 91–129 bytes, but raw retrieval remains weak.
+All 576 probe scores and 20 action verdicts were independently recomputed;
+47 focused checks pass. No existing eval was changed or meta-test accessed.
+[Six-capability report](experiments_logs/2026-09-13_capability_validation_v1.md).
+
+The curriculum/eval audit completed September 12 with no model
+runs or sealed-data access. The guard now covers current instrument paths and
+staged/unstaged/untracked changes. On 2026-10-04 the human-authorized eval-v2.3
+repair (A1 of the [repair plan](experiments/eval-audit-repair-v1/REPAIR_PLAN.md))
+was applied and validated — blank answers rejected on all 120 shipped probes,
+960/960 nonempty comparisons unchanged, manifest v2.3 binding runtime sources;
+see [the record](experiments_logs/2026-10-04_eval_v2_3_applied.md). A2/B/C
+repairs remain unapplied.
+The blank-answer defect belonged to the old eval-v2 scorer; R20/R23.5 use a
+separate normalized exact scorer and their recorded outputs remain unchanged.
+
+The requested held-out serialization pilot completed September 12 under the
+user's “go ahead.” All 144 fixed-budget updates and four isolated phases
+completed, preserving model/scorer identities. Suffix recovery is 133.3%,
+133.3% and 100% across seeds, above the unchanged 30% reference; the model-written
+text summaries fail on both patterns. Fresh-pattern confirmation is the next
+scientific gate. Smaller state or a different coupling mechanism requires a
+separate comparison, and the old autonomous services were not restarted.
+
+Before a full R20 rerun, repair its task-support defects: 44/87 public contextual
+same-rule queries are untaught, all 35 contextual compositions use an undefined
+second input, and all 35 finite-state compositions require untaught actions.
+The original task generator and thresholds have not been modified. No meta-test
+was accessed or remote experiment launched in these diagnostics.
+
+Sources: [R24-v3 closure](experiments_logs/2026-08-09_campaign_r24_v3_toy_existence.md),
+[R20 corrected calibration](experiments_logs/2026-08-05_r20_corrected_dev_calibration.json),
+[September 11 diagnosis and amendments](experiments_logs/2026-09-11_campaign_r20_dev_output_path.md),
+[September 12 teaching-format result and coverage audit](experiments_logs/2026-09-12_campaign_dev_teaching_format.md),
+[September 12 serialization pilot](experiments_logs/2026-09-12_campaign_r23_5_pilot_v1.md),
+[curriculum/evaluation audit](experiments_logs/2026-09-12_curriculum_eval_audit.md).
 
 ## 1. What the project is
 
@@ -61,9 +187,11 @@ That distinction is now explicit:
 
 ## 2. Honest current verdict
 
-The original changed-dynamics thesis has **not yet been demonstrated**. The
-repository has strong experimental infrastructure and several useful
-refutations, but the mechanisms that reliably changed answers so far were
+The full language-agent changed-dynamics thesis has **not yet been demonstrated**.
+R24-v3 now demonstrates a narrow causal toy-organ existence result under its
+fixed three-event protocol, with 15.82% TEST exact accuracy. It does not establish
+full-rule recovery or control of a frozen language model. Before that result,
+the mechanisms that reliably changed language-model answers were
 retrieval-like paths: visible prefix content, KV content equivalent to a
 prefix, logit manipulation, and the scope-slot reranker. None establishes a
 cortex that learns an unseen rule from experience and later expresses it
@@ -76,6 +204,14 @@ for compressing contextual behavior into a small weight delta, not a
 project-level demonstration of the full cortex thesis. Human adjudication on
 2026-08-06 classifies the amended R18 condition **TESTED-PARTIAL with gate
 resolved**; the original local-teacher condition remains BLOCKED.
+
+The September 12 R23.5 DEV pilot now supplies a narrower language-model
+result: a soft prompt optimized on three examples can survive numeric-only
+reload and answer unseen suffix/date inputs through the frozen Qwen organ.
+Initial, zeroed and swapped states fail. This uses a separate gradient
+optimizer per pattern, only two simple patterns and four probes each, and
+more storage than raw text. It does not establish a meta-trained cortex
+writer, broad rule learning, compression or full R23.5 acceptance.
 
 The July 9 direction is still scientifically plausible and worth testing, but
 it is high risk. The project now has a sharper central experiment instead of a
@@ -497,7 +633,7 @@ Stage B cortex integration conditional on Research/20 acceptance.
 |---|---|---|---|
 | 1 | [`research/18-consolidation-as-distillation.md`](research/18-consolidation-as-distillation.md) | Plastic-LM-weight comparator: distill transient context into LoRA, delete traces, test survival | **TESTED-PARTIAL with gate resolved** (human-adjudicated 2026-08-06). Original local 0.5B-teacher condition remains **BLOCKED** (`teacher_dev_delta=0.1765 < 0.2` on all five seeds; mechanism diagnosis `33169cc`; identical original-condition reruns retired). Under A1, the provider-pinned frontier DEV-gate teacher passed 5/5 (`teacher_dev_delta` mean 0.4941) without changing the student, local LoRA target, metric, split, or threshold. Unchanged student effect: `distill_delta_holdout` mean 0.2667, CI95 [0.136, 0.397], 4/5 positive with seed 2 null; specificity mean 0.0261. The 1/5 null prevents full H-DISTILL acceptance |
 | 2 | [`research/19-lm-as-language-organ.md`](research/19-lm-as-language-organ.md) | Direct diagnostic with matched label-prefix and latent-control articulation arms | Implemented; DEV calibration **BLOCKED** at pre-registered DEV articulation gate (2026-07-12, source `bd1ead9a`): v4 infrastructure succeeded (exit 0, artifacts collected), but `signoff_dev_articulation_gate=false`; `holdout_accessed=false`, no signoff requested. `parameter_total=60388/64000`, `dev_confidence_mean=0.0525482`, `dev_specificity_acc=0.134328`, `oracle_ceiling=0.357143`, `raw_trace_count=0`. No scientific verdict beyond BLOCKED. R20 remains separately blocked. |
-| 3 | [`research/20-meta-trained-cortex-frozen-language-organ.md`](research/20-meta-trained-cortex-frozen-language-organ.md) | Core test: meta-learn write/read/consolidate/articulate, then learn an unseen rule online through state only | **INT8 v2 DEV implementation complete and one-step smoke-verified** (2026-07-15); meta-test remains **BLOCKED** — v2 checkpoints, calibration distributions, power analysis, candidate manifest, and human signoff must be regenerated |
+| 3 | [`research/20-meta-trained-cortex-frozen-language-organ.md`](research/20-meta-trained-cortex-frozen-language-organ.md) | Core test: meta-learn write/read/consolidate/articulate, then learn an unseen rule online through state only | **BLOCKED/no-go.** Corrected v6 recorded complete coverage but zero effects and no finite powered design. V5 now demonstrates 4/7 text-fact readout versus 0/7 original teaching, but the September 12 public audit identifies untaught lookups and undefined composition semantics. Repair/version the instrument before full reuse; meta-test remains unsigned. |
 | 4 | [`research/21-cortex-routed-frozen-specialist-organs.md`](research/21-cortex-routed-frozen-specialist-organs.md) | Conditional extension: cortex routes between frozen language and action/tool organs using recurrent goal state | New specification; do not start before Research/20 accepts |
 | 5 | [`research/22-parametric-memory-decoding-zero-shot-lora-routing.md`](research/22-parametric-memory-decoding-zero-shot-lora-routing.md) | Stage A: test zero-shot PMD addressability over a shared frozen backbone and LoRA EPM bank; Stage B: later cortex integration | **Specification only / PENDING**; Stage A is independent of Research/20, Stage B remains **BLOCKED** on Research/20 acceptance, retrieval is mandatory, no implementation exists, and no scientific claim is made |
 
@@ -763,19 +899,18 @@ source `e26d8291879d`, exit 0, audit_status ok; see §4 R20 DEV-only
 smoke). This is infrastructure/mechanism smoke only; no ACCEPT or
 REFUTE verdict is issued.
 
-The meta-test remains **BLOCKED**. The following do not exist and must
-be built and signed off before any meta-test run:
+The v2 instrument, manifests, checkpoints, calibration distributions and
+power analysis now exist. The corrected v6 campaign is complete, but all
+effects are zero and power feasibility is blocked. The September 11 v3/v4
+prompt amendments are DEV diagnostics, not signed candidate replacements.
 
-1. a frozen `meta_cortex/v1` measuring instrument (separate task
-   generator, task-level train/dev/test split)
-2. a hash-checked manifest with leakage audit
-3. threshold distributions measured against real data
-4. power analysis
-5. explicit human sign-off
-
-No signoff has been requested or granted. The next legitimate step is
-to propose and freeze the instrument and obtain human signoff — not to
-run the meta-test.
+The meta-test remains **BLOCKED**. V5 provides a small text-fact readout signal,
+but task-support/composition defects now require instrument repair and a new
+version before full reuse. Then pass the required oracle gates and produce
+valid recalibration/power evidence for the resulting frozen instrument. A
+candidate still requires explicit human sign-off before meta-test access.
+The September 11 v3/v4 and September 12 v5 authorizations cover DEV prompt
+comparisons only.
 
 After signoff, the remaining adjudication order is:
 

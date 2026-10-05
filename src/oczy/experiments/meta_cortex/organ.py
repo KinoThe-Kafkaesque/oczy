@@ -945,7 +945,10 @@ class QwenFrozenOrgan:
 
         if not generated_ids:
             return ""
-        return self._tokenizer.decode(generated_ids)
+        # EOS/chat control tokens terminate the transport, not the answer.
+        # Their printable spelling would make "left<|im_end|>" fail the
+        # frozen exact-text scorer even though the answer token is correct.
+        return self._tokenizer.decode(generated_ids, skip_special_tokens=True)
 
     # ------------------------------------------------------------------
     # Protocol: generate_batch
@@ -1075,7 +1078,7 @@ class QwenFrozenOrgan:
                     trimmed.append(tid)
                     if tid == eos_id:
                         break
-                decoded = self._tokenizer.decode(trimmed) if trimmed else ""
+                decoded = self._tokenizer.decode(trimmed, skip_special_tokens=True) if trimmed else ""
             else:
                 # Trim trailing pad tokens, keeping EOS tokens intact.
                 trimmed = []
@@ -1083,7 +1086,7 @@ class QwenFrozenOrgan:
                     if tid == pad_id:
                         break
                     trimmed.append(tid)
-                decoded = self._tokenizer.decode(trimmed) if trimmed else ""
+                decoded = self._tokenizer.decode(trimmed, skip_special_tokens=True) if trimmed else ""
             results.append(decoded)
         return results
 

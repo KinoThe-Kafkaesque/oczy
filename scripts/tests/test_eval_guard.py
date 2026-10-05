@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,12 +19,18 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 GUARD_SCRIPT = REPO_ROOT / "scripts" / "eval_guard.py"
 
 PROTECTED_REL_PATHS = [
+    "experiments/scoped-diversity-dev-v3/probes/data.json",
+    "scripts/diversity_dev/evaluate.py",
+    "experiments/capability-regression-dev-v1/MANIFEST.json",
+    "scripts/regression_dev/worker.py",
     "experiments/organism_curriculum/foo.txt",
     "research/notes.md",
     "lanes/lane_a.txt",
     "eval/run.py",
     "src/oczy/experiments/organism_curriculum/scoring.py",
     "src/oczy/experiments/organism_curriculum/validation.py",
+    "experiments/capability-validation-v1/probes/data.json",
+    "scripts/capability_validation_actions.py",
 ]
 
 
@@ -69,7 +76,7 @@ def _run_guard(
     env = {k: v for k, v in os.environ.items() if k != "EVAL_CHANGE_APPROVED"}
     if env_override:
         env.update(env_override)
-    cmd = ["python", str(GUARD_SCRIPT)]
+    cmd = [sys.executable, str(GUARD_SCRIPT)]
     if args:
         cmd.extend(args)
     return subprocess.run(
@@ -131,3 +138,105 @@ def test_allow_with_env_var(tmp_path: Path) -> None:
         env_override={"EVAL_CHANGE_APPROVED": "1"},
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("rel", [
+    "src/oczy/eval_v2/scoring.py",
+    "src/oczy/eval_v2/validation.py",
+    "src/oczy/experiments/tool_calling_curriculum/scoring.py",
+    "src/oczy/experiments/meta_cortex/taskgen.py",
+    "src/oczy/experiments/meta_cortex/calibration.py",
+    "src/oczy/experiments/r24_tiny_decoder/toy_catalog_v3.py",
+    "src/oczy/experiments/meta_cortex/taskgen_v2.py",
+    "src/oczy/experiments/meta_cortex/instrument_v3.py",
+    "src/oczy/experiments/meta_cortex/instrument_v4_r20.py",
+    "src/oczy/experiments/meta_cortex/organ.py",
+    "scripts/r20_task_support_check.py",
+    "scripts/freeze_r20_v3_instrument.py",
+    "scripts/freeze_r20_v4_r20_instrument.py",
+    "scripts/materialize_r20_v4_r20.py",
+    "scripts/probe_r20_v4_r20_oracle.py",
+])
+def test_current_instrument_paths_are_protected(tmp_path: Path, rel: str) -> None:
+    _init_repo(tmp_path)
+    _commit_change(tmp_path, rel, "modified instrument\n", "change instrument")
+    result = _run_guard(tmp_path, args=["HEAD~1...HEAD"])
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert rel in result.stderr
+
+
+@pytest.mark.parametrize("rel", [
+    "experiments/r20-taskgen-v3-dev/instrument/DEFINITION.json",
+    "experiments/r20-taskgen-v3-dev/instrument/public/DEV_VIEW.json",
+    "experiments/r20-taskgen-v3-dev/instrument/public/tasks/meta_train.jsonl",
+    "experiments/r20-taskgen-v3-dev/instrument/public/audits/leakage_summary.json",
+    "experiments/r20-task-support-repair-v1/SIGNOFF_CHAIN.md",
+])
+def test_frozen_v3_instrument_tree_is_protected(tmp_path: Path, rel: str) -> None:
+    """The frozen meta_cortex/v3 DEV instrument is the measuring instrument.
+
+    Gate G1 requires the guard to refuse a byte change anywhere in the frozen
+    tree, including the sign-off record it was authorized by.
+    """
+    _init_repo(tmp_path)
+    _commit_change(tmp_path, rel, "tampered\n", "tamper frozen instrument")
+    result = _run_guard(tmp_path, args=["HEAD~1...HEAD"])
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert rel in result.stderr
+
+
+@pytest.mark.parametrize("rel", [
+    "experiments/r20-taskgen-v4-r20-dev/instrument/DEFINITION.json",
+    "experiments/r20-taskgen-v4-r20-dev/instrument/public/DEV_VIEW.json",
+    "experiments/r20-taskgen-v4-r20-dev/instrument/public/tasks/meta_train.jsonl",
+    "experiments/r20-taskgen-v4-r20-dev/materialization/MANIFEST.json",
+    "experiments/r20-taskgen-v4-r20-dev/g1_report.json",
+])
+def test_frozen_v4_r20_instrument_tree_is_protected(tmp_path: Path, rel: str) -> None:
+    """The successor meta_cortex/v4-r20 DEV instrument is also a measuring
+    instrument: its freeze, amendment manifest and gate report must be
+    protected exactly as the v3 tree is.
+    """
+    _init_repo(tmp_path)
+    _commit_change(tmp_path, rel, "tampered\n", "tamper frozen successor instrument")
+    result = _run_guard(tmp_path, args=["HEAD~1...HEAD"])
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert rel in result.stderr
+
+
+@pytest.mark.parametrize("state", ["unstaged", "staged", "untracked", "staged_then_reverted", "deleted", "renamed"])
+def test_workspace_instrument_changes_are_checked(tmp_path: Path, state: str) -> None:
+    _init_repo(tmp_path)
+    rel = "eval/run.py"
+    if state == "untracked":
+        rel = "eval/new.py"
+    path = tmp_path / rel
+    if state == "deleted":
+        path.unlink()
+    elif state == "renamed":
+        _run_git("mv", rel, "README2.md", cwd=tmp_path)
+    else:
+        path.write_text("changed\n")
+        if state in ("staged", "staged_then_reverted"):
+            _run_git("add", rel, cwd=tmp_path)
+        if state == "staged_then_reverted":
+            path.write_text("initial\n")
+    result = _run_guard(tmp_path, args=["HEAD...HEAD"])
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert rel in result.stderr
+
+
+def test_noninstrument_learner_changes_remain_allowed(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _commit_change(tmp_path, "src/oczy/experiments/meta_cortex/model.py", "learner change\n", "change learner")
+    (tmp_path / "notes.txt").write_text("untracked notes\n")
+    result = _run_guard(tmp_path, args=["HEAD~1...HEAD"])
+    assert result.returncode == 0, result.stderr
+
+
+def test_explicit_invalid_range_does_not_silently_check_another_range(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _commit_change(tmp_path, "README.md", "unrelated\n", "readme")
+    result = _run_guard(tmp_path, args=["missing-ref...HEAD"])
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "missing-ref" in result.stderr
