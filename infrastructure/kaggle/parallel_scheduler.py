@@ -2362,6 +2362,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Seconds before an unrenewed slot lease expires (default {DEFAULT_LEASE_TTL:g}).",
     )
 
+    run_p.add_argument(
+        "--hook",
+        action="append",
+        default=[],
+        metavar="SPEC",
+        help=(
+            "Subscribe to scheduler events (repeatable): a JSON subscription object or "
+            "type:arg shorthand (inbox:DIR, jsonl:FILE, command:'ARGV', webhook:ENVFILE). "
+            "Batch-level/job-level 'hooks' fields are also honored. See scheduler_hooks.py."
+        ),
+    )
+
     status_p = sub.add_parser("status", help="Print status summary for a batch.")
     status_p.add_argument("batch", help="Path to batch manifest JSON.")
     status_p.add_argument(
@@ -2486,6 +2498,19 @@ def main(
             clock=clock,
             sleeper=sleeper,
         )
+        try:
+            _here = str(Path(__file__).resolve().parent)
+            if _here not in _sys.path:
+                _sys.path.insert(0, _here)
+            from scheduler_hooks import attach_hooks, parse_hook_arg
+
+            scheduler = attach_hooks(
+                scheduler, cli_hooks=[parse_hook_arg(h) for h in args.hook]
+            )
+        except Exception as exc:  # hooks are optional; never block a run
+            if args.hook:
+                parser.error(f"invalid --hook: {exc}")
+            print(f"[hooks] unavailable: {exc}", file=_sys.stderr)
         try:
             summary = scheduler.run(
                 args.batch,
