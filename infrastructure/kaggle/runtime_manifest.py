@@ -34,8 +34,18 @@ RUNTIME_MANIFEST_SCHEMA_VERSION: str = "oczy/runtime-manifest/v2"
 
 # Recognised model load conventions (must match exactly).
 _VALID_CONVENTIONS: frozenset[str] = frozenset(
-    {"transformers-pretrained-directory", "llama-cpp-gguf-file", "none"}
+    {
+        "transformers-pretrained-directory",
+        "llama-cpp-gguf-file",
+        "timesfm-safetensors-directory",
+        "none",
+    }
 )
+
+# Time-series (non-LLM) convention: weights + config only, no tokenizer,
+# chat template or greedy-generation contract.
+_TIMESFM_CONVENTION: str = "timesfm-safetensors-directory"
+_TIMESFM_REQUIRED_ROLES: frozenset[str] = frozenset({"weights", "config"})
 
 # Recognised artifact roles.
 _VALID_ROLES: frozenset[str] = frozenset(
@@ -55,6 +65,21 @@ _OBSERVED_PACKAGES: tuple[str, ...] = (
     "tokenizers",
     "safetensors",
 )
+
+# Packages observed for the TimesFM convention (LLM set above is unchanged).
+_TIMESFM_OBSERVED_PACKAGES: tuple[str, ...] = (
+    "torch",
+    "safetensors",
+    "timesfm",
+    "numpy",
+    "huggingface_hub",
+)
+
+
+def _packages_for_convention(convention: str | None) -> tuple[str, ...]:
+    if convention == _TIMESFM_CONVENTION:
+        return _TIMESFM_OBSERVED_PACKAGES
+    return _OBSERVED_PACKAGES
 
 # File-hash chunk size (8 MiB, matches existing Qwen probe pattern).
 _CHUNK_SIZE: int = 8 * 1024 * 1024
@@ -463,11 +488,20 @@ def _validate_model_block(model: dict[str, Any]) -> None:
         covered_roles: set[str] = set()
         for f in artifacts:
             covered_roles.update(f["roles"])
-        missing_roles = _REQUIRED_MODEL_ROLES - covered_roles
+        is_timesfm = convention == _TIMESFM_CONVENTION
+        required_roles = _TIMESFM_REQUIRED_ROLES if is_timesfm else _REQUIRED_MODEL_ROLES
+        missing_roles = required_roles - covered_roles
         if missing_roles:
             raise RuntimeManifestError(
                 f"model-bearing manifest missing required roles: {sorted(missing_roles)}"
             )
+        if is_timesfm:
+            for key in ("tokenizer_sha256", "chat_template_sha256"):
+                if model[key] is not None:
+                    raise RuntimeManifestError(f"timesfm convention: `{key}` must be null")
+            for key in ("model_weights_sha256", "model_config_sha256"):
+                if model[key] is None:
+                    raise RuntimeManifestError(f"timesfm convention: `{key}` is required")
 
         # Validate component hashes.
         _ROLE_HASH_KEYS = {
@@ -492,9 +526,9 @@ def _validate_model_block(model: dict[str, Any]) -> None:
                     )
 
 
-def _validate_packages(packages: Any) -> None:
+def _validate_packages(packages: Any, convention: str | None = None) -> None:
     """Validate the ``packages`` block."""
-    required = list(_OBSERVED_PACKAGES)
+    required = list(_packages_for_convention(convention))
     if not isinstance(packages, dict):
         raise RuntimeManifestError("`packages` must be an object")
     actual = set(packages.keys())
@@ -565,13 +599,14 @@ def validate_runtime_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(pv, str) or pv == "":
         raise RuntimeManifestError("`python_version` must be a nonempty string")
 
-    # packages
-    _validate_packages(manifest["packages"])
-
     # model
     model = manifest["model"]
     if not isinstance(model, dict):
         raise RuntimeManifestError("`model` must be an object")
+
+    # packages (key set depends on convention; LLM set unchanged)
+    _validate_packages(manifest["packages"], model.get("resolved_model_convention"))
+
     _validate_model_block(model)
 
     # greedy_generation
@@ -579,9 +614,12 @@ def validate_runtime_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     if gg is not None and not isinstance(gg, dict):
         raise RuntimeManifestError("`greedy_generation` must be an object or null")
     is_no_model = model.get("resolved_model_convention") == "none"
+    is_timesfm = model.get("resolved_model_convention") == _TIMESFM_CONVENTION
     if is_no_model and gg is not None:
         raise RuntimeManifestError("no-model branch: `greedy_generation` must be null")
-    if not is_no_model and gg is None:
+    if is_timesfm and gg is not None:
+        raise RuntimeManifestError("timesfm convention: `greedy_generation` must be null")
+    if not is_no_model and not is_timesfm and gg is None:
         raise RuntimeManifestError(
             "model-bearing branch: `greedy_generation` must not be null"
         )
@@ -686,14 +724,14 @@ def _try_package_version(name: str) -> str | None:
         return None
 
 
-def _observe_packages() -> dict[str, str]:
+def _observe_packages(convention: str | None = None) -> dict[str, str]:
     """Observe current Python and package versions.
 
     Returns ``{name: version_string}`` for each package in *_OBSERVED_PACKAGES*.
     Raises :class:`RuntimeManifestError` if any required package is not found.
     """
     packages: dict[str, str] = {}
-    for name in _OBSERVED_PACKAGES:
+    for name in _packages_for_convention(convention):
         ver = _try_package_version(name)
         if ver is None:
             raise RuntimeManifestError(
@@ -724,13 +762,17 @@ def _observe_directory(
     recorded (``other`` role) — the caller or campaign preparation decides
     whether the inventory matches the expected manifest.
     """
-    if convention not in ("transformers-pretrained-directory", "llama-cpp-gguf-file"):
+    if convention not in (
+        "transformers-pretrained-directory",
+        "llama-cpp-gguf-file",
+        _TIMESFM_CONVENTION,
+    ):
         raise RuntimeManifestError(f"unsupported observation convention: {convention!r}")
 
     if not root.exists():
         raise RuntimeManifestError(f"model root does not exist: {root}")
 
-    if convention == "transformers-pretrained-directory":
+    if convention in ("transformers-pretrained-directory", _TIMESFM_CONVENTION):
         if not root.is_dir():
             raise RuntimeManifestError(
                 f"expected directory for {convention!r}, got: {root}"
@@ -911,10 +953,15 @@ def observe_runtime_manifest(
             raise RuntimeManifestError("model-bearing: `model_root` is required")
         if logical_model_id is None:
             raise RuntimeManifestError("model-bearing: `logical_model_id` is required")
-        if generation_config is None:
+        if resolved_model_convention == _TIMESFM_CONVENTION:
+            if generation_config is not None:
+                raise RuntimeManifestError(
+                    "timesfm convention: `generation_config` must be None"
+                )
+        elif generation_config is None:
             raise RuntimeManifestError("model-bearing: `generation_config` is required")
 
-    packages = _observe_packages()
+    packages = _observe_packages(resolved_model_convention)
     python_version = platform.python_version().strip()
 
     if is_no_model:
