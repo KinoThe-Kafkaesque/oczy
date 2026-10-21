@@ -80,6 +80,7 @@
             "transformers-pretrained-directory",
             "llama-cpp-gguf-file",
             "timesfm-safetensors-directory",
+            "timestral-safetensors-directory",
             "none"
           ],
           "description": "Load convention, not download transport."

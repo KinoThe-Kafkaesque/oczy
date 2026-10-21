@@ -38,6 +38,7 @@ _VALID_CONVENTIONS: frozenset[str] = frozenset(
         "transformers-pretrained-directory",
         "llama-cpp-gguf-file",
         "timesfm-safetensors-directory",
+        "timestral-safetensors-directory",
         "none",
     }
 )
@@ -46,6 +47,9 @@ _VALID_CONVENTIONS: frozenset[str] = frozenset(
 # chat template or greedy-generation contract.
 _TIMESFM_CONVENTION: str = "timesfm-safetensors-directory"
 _TIMESFM_REQUIRED_ROLES: frozenset[str] = frozenset({"weights", "config"})
+# Timestral (Mistral AI) follows the same time-series rules with its own package set.
+_TIMESTRAL_CONVENTION: str = "timestral-safetensors-directory"
+_TIMESERIES_CONVENTIONS: frozenset[str] = frozenset({_TIMESFM_CONVENTION, _TIMESTRAL_CONVENTION})
 
 # Recognised artifact roles.
 _VALID_ROLES: frozenset[str] = frozenset(
@@ -76,9 +80,21 @@ _TIMESFM_OBSERVED_PACKAGES: tuple[str, ...] = (
 )
 
 
+# Packages observed for the Timestral convention.
+_TIMESTRAL_OBSERVED_PACKAGES: tuple[str, ...] = (
+    "torch",
+    "safetensors",
+    "timestral",
+    "numpy",
+    "huggingface_hub",
+)
+
+
 def _packages_for_convention(convention: str | None) -> tuple[str, ...]:
     if convention == _TIMESFM_CONVENTION:
         return _TIMESFM_OBSERVED_PACKAGES
+    if convention == _TIMESTRAL_CONVENTION:
+        return _TIMESTRAL_OBSERVED_PACKAGES
     return _OBSERVED_PACKAGES
 
 # File-hash chunk size (8 MiB, matches existing Qwen probe pattern).
@@ -488,7 +504,7 @@ def _validate_model_block(model: dict[str, Any]) -> None:
         covered_roles: set[str] = set()
         for f in artifacts:
             covered_roles.update(f["roles"])
-        is_timesfm = convention == _TIMESFM_CONVENTION
+        is_timesfm = convention in _TIMESERIES_CONVENTIONS
         required_roles = _TIMESFM_REQUIRED_ROLES if is_timesfm else _REQUIRED_MODEL_ROLES
         missing_roles = required_roles - covered_roles
         if missing_roles:
@@ -614,7 +630,7 @@ def validate_runtime_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     if gg is not None and not isinstance(gg, dict):
         raise RuntimeManifestError("`greedy_generation` must be an object or null")
     is_no_model = model.get("resolved_model_convention") == "none"
-    is_timesfm = model.get("resolved_model_convention") == _TIMESFM_CONVENTION
+    is_timesfm = model.get("resolved_model_convention") in _TIMESERIES_CONVENTIONS
     if is_no_model and gg is not None:
         raise RuntimeManifestError("no-model branch: `greedy_generation` must be null")
     if is_timesfm and gg is not None:
@@ -766,13 +782,14 @@ def _observe_directory(
         "transformers-pretrained-directory",
         "llama-cpp-gguf-file",
         _TIMESFM_CONVENTION,
+        _TIMESTRAL_CONVENTION,
     ):
         raise RuntimeManifestError(f"unsupported observation convention: {convention!r}")
 
     if not root.exists():
         raise RuntimeManifestError(f"model root does not exist: {root}")
 
-    if convention in ("transformers-pretrained-directory", _TIMESFM_CONVENTION):
+    if convention in ("transformers-pretrained-directory", _TIMESFM_CONVENTION, _TIMESTRAL_CONVENTION):
         if not root.is_dir():
             raise RuntimeManifestError(
                 f"expected directory for {convention!r}, got: {root}"
@@ -953,7 +970,7 @@ def observe_runtime_manifest(
             raise RuntimeManifestError("model-bearing: `model_root` is required")
         if logical_model_id is None:
             raise RuntimeManifestError("model-bearing: `logical_model_id` is required")
-        if resolved_model_convention == _TIMESFM_CONVENTION:
+        if resolved_model_convention in _TIMESERIES_CONVENTIONS:
             if generation_config is not None:
                 raise RuntimeManifestError(
                     "timesfm convention: `generation_config` must be None"
