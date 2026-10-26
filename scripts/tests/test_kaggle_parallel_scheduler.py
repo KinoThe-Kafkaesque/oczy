@@ -2574,3 +2574,20 @@ def test_kaggle_submit_interval_default_constant() -> None:
         "DEFAULT_KAGGLE_SUBMIT_INTERVAL not defined in scheduler module"
     )
     assert DEFAULT_KAGGLE_SUBMIT_INTERVAL == 60.0
+
+
+def test_cli_client_push_raises_on_kernel_push_error_with_exit_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Kaggle CLI reports push rejections on stdout with exit code 0;
+    the client must raise instead of returning a kernel id that 404s."""
+    import subprocess as sp
+    from types import SimpleNamespace
+
+    def _fake_run(argv: list[str], **_kw: Any) -> Any:
+        return SimpleNamespace(returncode=0, stdout="Kernel push error: Maximum batch GPU session count of 5 reached.\n", stderr="")
+
+    monkeypatch.setattr(sp, "run", _fake_run)
+    kd = _make_kernel_dir(tmp_path, "k0", "owner/k0")
+    with pytest.raises(RuntimeError, match="push rejected"):
+        KaggleCliClient(push_timeout=300).push(str(kd), timeout=300)

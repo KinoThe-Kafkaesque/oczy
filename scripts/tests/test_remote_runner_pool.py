@@ -545,3 +545,28 @@ def test_slot_leases_enforce_capacity_ownership_and_expiry(tmp_path: Path) -> No
         account_id="kaggle-a", job_name="job-b", owner_id="queue-b"
     )
     assert store.snapshot()["leases"] == []
+
+
+def test_kaggle_private_notebook_stubs_do_not_degrade_account(tmp_path: Path) -> None:
+    """Kaggle's list API returns redacted "[Private Notebook]" stubs (empty ref,
+    no author); they are skipped, while other ref-less items still degrade."""
+    stub = {"ref": "", "title": "[Private Notebook]", "author": "", "lastRunTime": "2010-01-01T00:00:00"}
+
+    def runner_with(extra: dict) -> FakePoolRunner:
+        r = FakePoolRunner()
+        base = r.__call__
+
+        def call(argv, env, timeout):
+            out = base(argv, env, timeout)
+            if argv[:3] == ["kaggle", "kernels", "list"]:
+                return _completed(argv, stdout=json.dumps(json.loads(out.stdout) + [extra]))
+            return out
+        return call
+
+    config = load_pool_config(_write_config(tmp_path))
+    snap = inspect_pool(config, runner=runner_with(stub), limit=20, timeout=7.0)
+    assert snap.accounts[0].status == ACCOUNT_OK
+    assert {j.job_id for j in snap.jobs if j.provider == "kaggle"} == {"owner/job-a", "owner/job-b"}
+    bad = dict(stub, title="Something else")
+    snap = inspect_pool(config, runner=runner_with(bad), limit=20, timeout=7.0)
+    assert snap.accounts[0].status == _pool.ACCOUNT_DEGRADED

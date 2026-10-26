@@ -399,7 +399,7 @@ class KaggleCliClient:
     def push(self, kernel_dir: str, *, timeout: float | None = None) -> str:
         """Submit a kernel, sending *timeout* as the Kaggle run-time limit."""
         to = timeout if timeout is not None else self.push_timeout
-        _run_kaggle(
+        push_out = _run_kaggle(
             [
                 "kaggle", "kernels", "push", "-p", kernel_dir,
                 "--timeout", str(int(to)),
@@ -407,6 +407,10 @@ class KaggleCliClient:
             timeout=DEFAULT_PUSH_SUBPROCESS_TIMEOUT,
             env_overrides=self.env_overrides,
         )
+        # The Kaggle CLI reports push rejections on stdout with exit 0
+        # ("Kernel push error: ..."); fail fast instead of polling a 404.
+        if "kernel push error" in (push_out or "").lower():
+            raise RuntimeError(f"kaggle kernels push rejected: {push_out.strip()[:500]}")
         meta_path = Path(kernel_dir) / "kernel-metadata.json"
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         return meta["id"]

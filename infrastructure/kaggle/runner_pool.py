@@ -750,6 +750,11 @@ def _inspect_kaggle_account(
             continue
         ref = item.get("ref") or item.get("id")
         if not isinstance(ref, str) or not ref.strip():
+            # Kaggle's list API returns redacted "[Private Notebook]" stubs
+            # (empty ref, 2010 sentinel lastRunTime) for notebooks this token
+            # cannot see; they are not this account's jobs, so skip them.
+            if item.get("title") == "[Private Notebook]" and not item.get("author"):
+                continue
             degraded = True
             continue
         ref = ref.strip()
